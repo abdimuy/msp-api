@@ -11,6 +11,31 @@
 - Gate by env var `INTEGRATION=1`. Never `//go:build` tags.
 - All tests `t.Parallel()`. No `time.Sleep`. No mocking libs.
 
+## How the Postgres comes up
+
+`make test-integration` (and `make test-all`) automatically:
+
+1. Calls `make db-test-up` — boots `msp-postgres-test` on `:5499` if it
+   isn't already running, applies any pending migrations, marks the
+   template DB `IS_TEMPLATE true`. Idempotent: re-running while the
+   container is up is a no-op aside from `migrate up`.
+2. Exports `TEST_DATABASE_URL`, so every package's `TestMain` reuses that
+   single Postgres via `testutil.NewTestDatabasePool()`. Each package gets
+   its own DB cloned from `msp_template` (~50 ms), but no test process
+   boots its own container.
+
+Day-to-day flow:
+
+```sh
+make test-integration   # boots msp-postgres-test once, runs all packages against it
+make db-test-reset      # after editing migrations: wipes the template DB and re-applies
+make db-test-down       # free :5499 when done
+```
+
+Running `go test` directly without make (e.g. from an IDE) and without
+`TEST_DATABASE_URL` set falls back to **per-process testcontainers** —
+slower with many packages, but zero-config and works offline.
+
 ## Hard rules
 
 1. `t.Parallel()` on every test.
@@ -66,7 +91,9 @@ func TestMain(m *testing.M) {
         os.Exit(0)
     }
     testPool = testutil.NewTestDatabasePool()
-    os.Exit(m.Run())
+    code := m.Run()
+    testutil.DropPackageDBs() // drop the per-package DB so it doesn't accumulate in msp-postgres-test
+    os.Exit(code)
 }
 ```
 

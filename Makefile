@@ -1,4 +1,4 @@
-.PHONY: help setup build run dev test test-unit test-integration lint lint-fix fmt generate migrate-up migrate-down migrate-create migrate-version clean
+.PHONY: help setup build run dev test test-unit test-integration test-all lint lint-fix fmt generate migrate-up migrate-down migrate-create migrate-version clean db-test-up db-test-down db-test-reset db-test-prune db-test-url
 
 # ── Config ───────────────────────────────────────────────────────────
 APP_NAME      := msp-api
@@ -66,11 +66,11 @@ test: test-unit ## Run unit tests (default)
 test-unit: ## Run unit tests with race detector (skips integration)
 	$(GO) test ./... -race -count=1 -short -timeout 180s
 
-test-integration: ## Run integration tests (needs Postgres + optional Firebird)
-	INTEGRATION=1 $(GO) test ./... -race -count=1 -timeout 600s
+test-integration: db-test-up ## Run integration tests against ONE shared Postgres (all packages reuse msp-postgres-test)
+	TEST_DATABASE_URL="$(TEST_DATABASE_URL)" INTEGRATION=1 $(GO) test ./... -race -count=1 -timeout 600s
 
-test-all: ## Run all tests (unit + integration)
-	INTEGRATION=1 $(GO) test ./... -race -count=1 -timeout 600s
+test-all: db-test-up ## Run all tests (unit + integration) sharing one Postgres
+	TEST_DATABASE_URL="$(TEST_DATABASE_URL)" INTEGRATION=1 $(GO) test ./... -race -count=1 -timeout 600s
 
 coverage: ## Generate coverage report
 	$(GO) test ./... -race -count=1 -short -coverprofile=coverage.out -covermode=atomic
@@ -151,3 +151,56 @@ db-shell: ## psql shell into local Postgres
 db-reset: db-down db-up ## Recreate local Postgres from scratch
 	@sleep 2
 	@$(MAKE) migrate-up
+
+# ── Postgres for integration tests (separate container, port 5499) ───
+# `make test-integration` automatically calls `db-test-up` and exports
+# TEST_DATABASE_URL, so every package reuses ONE Postgres instead of each
+# spawning its own testcontainers Postgres. Use `db-test-reset` after
+# changing migrations to wipe the template DB; `db-test-down` to free the
+# port. Running `go test` directly without `make` falls back to
+# testcontainers (per-process), so IDE/ad-hoc runs still work.
+TEST_DB_PORT     ?= 5499
+TEST_DB_USER     ?= test
+TEST_DB_PASS     ?= test
+TEST_DB_NAME     ?= msp_template
+TEST_DATABASE_URL := postgres://$(TEST_DB_USER):$(TEST_DB_PASS)@localhost:$(TEST_DB_PORT)/$(TEST_DB_NAME)?sslmode=disable
+
+db-test-up: ## Ensure integration-test Postgres is running on :5499 (idempotent: starts if down, applies pending migrations, marks template)
+	@if ! docker ps --format '{{.Names}}' | grep -q '^msp-postgres-test$$'; then \
+		docker rm -f msp-postgres-test >/dev/null 2>&1 || true; \
+		docker run -d --name msp-postgres-test \
+			-e POSTGRES_USER=$(TEST_DB_USER) -e POSTGRES_PASSWORD=$(TEST_DB_PASS) -e POSTGRES_DB=$(TEST_DB_NAME) \
+			-p $(TEST_DB_PORT):5432 \
+			--restart unless-stopped \
+			postgres:17-alpine >/dev/null; \
+		echo "⏳ Waiting for Postgres to accept connections..."; \
+		for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do \
+			docker exec msp-postgres-test pg_isready -U $(TEST_DB_USER) -d $(TEST_DB_NAME) >/dev/null 2>&1 && break; \
+			sleep 1; \
+		done; \
+	fi
+	@migrate -path $(MIGRATIONS_DIR) -database "$(TEST_DATABASE_URL)" up >/dev/null 2>&1 || \
+		migrate -path $(MIGRATIONS_DIR) -database "$(TEST_DATABASE_URL)" up
+	@docker exec -e PGPASSWORD=$(TEST_DB_PASS) msp-postgres-test \
+		psql -U $(TEST_DB_USER) -d postgres -c "ALTER DATABASE $(TEST_DB_NAME) IS_TEMPLATE true" >/dev/null 2>&1 || true
+	@echo "✔ Test Postgres ready on :$(TEST_DB_PORT) (DSN: $(TEST_DATABASE_URL))"
+
+db-test-down: ## Stop and remove the integration-test Postgres container
+	docker rm -f msp-postgres-test 2>/dev/null || true
+
+db-test-reset: db-test-down db-test-up ## Forcibly recreate the integration-test Postgres (wipes template DB)
+
+db-test-prune: ## Drop leftover test_* DBs inside msp-postgres-test (defensive sweep)
+	@docker exec -e PGPASSWORD=$(TEST_DB_PASS) msp-postgres-test \
+		psql -U $(TEST_DB_USER) -d postgres -At -c \
+		"SELECT datname FROM pg_database WHERE datname LIKE 'test%'" 2>/dev/null \
+		| while read db; do \
+			[ -z "$$db" ] && continue; \
+			docker exec -e PGPASSWORD=$(TEST_DB_PASS) msp-postgres-test \
+				psql -U $(TEST_DB_USER) -d postgres -c "DROP DATABASE IF EXISTS \"$$db\" WITH (FORCE)" >/dev/null; \
+			echo "  dropped $$db"; \
+		done
+	@echo "✔ Pruned leftover test_* DBs"
+
+db-test-url: ## Print TEST_DATABASE_URL for the integration-test container
+	@echo "$(TEST_DATABASE_URL)"
