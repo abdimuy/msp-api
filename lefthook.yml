@@ -22,8 +22,16 @@ pre-commit:
 
     lint-staged:
       glob: "*.go"
-      # Lint only NEW issues vs main — fast on incremental changes.
-      run: golangci-lint run --new-from-rev=origin/main --fix {staged_files}
+      # `--new-from-rev` only reports issues introduced by the staged diff,
+      # so the first run on a clean repo is fast and incremental commits
+      # focus on what changed. Falls back to scanning the entire module
+      # when origin/main does not exist yet.
+      run: |
+        if git rev-parse --verify origin/main >/dev/null 2>&1; then
+          golangci-lint run --new-from-rev=origin/main --fix ./...
+        else
+          golangci-lint run --fix ./...
+        fi
       stage_fixed: true
 
     build-check:

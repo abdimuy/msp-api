@@ -192,6 +192,8 @@ linters:
           alias: apperror
         - pkg: github.com/abdimuy/msp-api/internal/platform/domain
           alias: platform
+        - pkg: github.com/go-playground/validator/v10
+          alias: pv
 
     # ── tagliatelle ──────────────────────────────────────────────────
     tagliatelle:
