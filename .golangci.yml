@@ -271,6 +271,7 @@ linters:
       # NewRequest vs NewRequestWithContext, etc.).
       - path: _test\.go
         linters:
+          - contextcheck   # tests intentionally mix tx-ctx with raw pool reads
           - cyclop
           - dupl
           - err113
