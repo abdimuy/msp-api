@@ -1,0 +1,117 @@
+# Git hooks runner. Run `lefthook install` once after cloning to activate.
+# Targets: pre-commit < 10s, pre-push < 90s.
+
+# ── Pre-commit: shape + fast invariants (parallel) ──────────────────
+pre-commit:
+  parallel: true
+  commands:
+    format-check:
+      glob: "*.go"
+      run: |
+        unformatted=$(gofmt -l {staged_files})
+        if [ -n "$unformatted" ]; then
+          echo "❌ Files not gofmt'd:"
+          echo "$unformatted"
+          echo "Run: gofumpt -w ."
+          exit 1
+        fi
+
+    vet:
+      glob: "*.go"
+      run: go vet ./...
+
+    lint-staged:
+      glob: "*.go"
+      # Lint only NEW issues vs main — fast on incremental changes.
+      run: golangci-lint run --new-from-rev=origin/main --fix {staged_files}
+      stage_fixed: true
+
+    build-check:
+      glob: "*.go"
+      run: go build ./...
+
+    mod-tidy:
+      glob: "*.go"
+      run: |
+        go mod tidy
+        if ! git diff --exit-code go.mod go.sum >/dev/null 2>&1; then
+          echo "❌ go.mod/go.sum out of sync. Stage the changes after `go mod tidy`."
+          exit 1
+        fi
+
+    secrets-check:
+      run: |
+        for f in {staged_files}; do
+          # Allow .env.example, .env.sample, .env.template — those are public templates.
+          case "$f" in
+            *.env.example|*.env.sample|*.env.template|.env.example|.env.sample|.env.template)
+              continue
+              ;;
+          esac
+          case "$f" in
+            *.env|*.env.local|*.env.development|*.env.production|*.env.staging|*.env.test|.env|.env.local|.env.production|.env.staging)
+              echo "❌ Blocked secret file: $f"
+              exit 1
+              ;;
+            *.pem|*.key|*.crt|*.p12|*.pfx|credentials.json|service-account.json|*serviceAccount*.json)
+              echo "❌ Blocked secret file: $f"
+              exit 1
+              ;;
+          esac
+        done
+        # Content scan — skip empty file list to avoid grep -r over the cwd.
+        files="{staged_files}"
+        if [ -n "$files" ]; then
+          if grep -nE '(AKIA[0-9A-Z]{16}|aws_secret_access_key|-----BEGIN [A-Z ]*PRIVATE KEY-----)' $files 2>/dev/null; then
+            echo "❌ Possible secret in staged content."
+            exit 1
+          fi
+        fi
+
+    no-debug:
+      glob: "*.go"
+      run: |
+        offenders=$(grep -nE 'fmt\.Print(ln|f)?\(' {staged_files} 2>/dev/null | grep -v '_test\.go' || true)
+        if [ -n "$offenders" ]; then
+          echo "❌ Remove fmt.Print* statements (use slog):"
+          echo "$offenders"
+          exit 1
+        fi
+
+    no-todo-fixme:
+      glob: "*.go"
+      run: |
+        if grep -nE '//\s*(TODO|FIXME|XXX|HACK)\b' {staged_files} 2>/dev/null | grep -v '_test\.go'; then
+          echo "⚠️  Found TODO/FIXME/XXX/HACK in non-test files. Either fix or open an issue."
+          exit 1
+        fi
+
+# ── Pre-push: full gate (parallel) ──────────────────────────────────
+pre-push:
+  parallel: true
+  commands:
+    lint-full:
+      glob: "*.go"
+      run: golangci-lint run ./...
+
+    test-unit:
+      glob: "*.go"
+      # -short skips integration tests (those that need a real DB).
+      # Run integration tests manually: INTEGRATION=1 go test ./...
+      run: go test ./... -race -count=1 -short -timeout 180s
+
+# ── Commit-msg: enforce conventional-ish commits ────────────────────
+commit-msg:
+  commands:
+    format:
+      run: |
+        msg=$(cat {1})
+        # Allow merge / revert / fixup commits without enforcement
+        echo "$msg" | grep -qE '^(Merge|Revert|fixup!|squash!|amend!)' && exit 0
+        # Format: type(scope?): subject — type ∈ feat|fix|chore|docs|refactor|test|perf|build|ci|style
+        if ! echo "$msg" | grep -qE '^(feat|fix|chore|docs|refactor|test|perf|build|ci|style)(\([a-z0-9_-]+\))?: .+'; then
+          echo "❌ Commit message must follow: <type>(<scope>): <subject>"
+          echo "   types: feat|fix|chore|docs|refactor|test|perf|build|ci|style"
+          echo "   example: feat(clientes): add Microsip pull"
+          exit 1
+        fi

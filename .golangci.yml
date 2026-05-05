@@ -1,0 +1,311 @@
+version: "2"
+
+# Strict configuration aimed at catching AI-generated mistakes:
+# enforces architectural boundaries (vertical slices), error wrapping,
+# context propagation, complexity limits, naming, imports, and exhaustive
+# switches over enum/state VOs. Test files get a relaxed subset.
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  default: none
+  enable:
+    # ── Critical (default Go) ────────────────────────────────────────
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+    # ── Bug detection ────────────────────────────────────────────────
+    - asasalint
+    - asciicheck             # no non-ASCII identifiers
+    - bidichk                # dangerous unicode sequences
+    - bodyclose
+    - containedctx           # no context.Context inside structs
+    - contextcheck           # propagate context, never replace it
+    - durationcheck
+    - err113                 # use wrapped errors / sentinels, never raw fmt.Errorf returns
+    - errchkjson
+    - errorlint
+    - exhaustive             # exhaustive switch over enum/state VOs
+    - fatcontext             # nested contexts in loops
+    - forcetypeassert        # type assertions without ok check
+    - gocheckcompilerdirectives
+    - intrange
+    - makezero
+    - mirror
+    - musttag
+    - nilerr
+    - nilnesserr
+    - nilnil
+    - noctx
+    - nosprintfhostport
+    - predeclared
+    - reassign
+    - recvcheck              # consistent pointer/value receivers
+    - rowserrcheck
+    - sqlclosecheck
+    - unparam                # unused function parameters (relaxed below for tests)
+    - usestdlibvars
+    - wastedassign
+
+    # ── Security ─────────────────────────────────────────────────────
+    - gosec
+
+    # ── Style & consistency ──────────────────────────────────────────
+    - errname
+    - dupword
+    - gocritic
+    - godot                  # comments end with a period
+    - goprintffuncname
+    - importas               # enforce import aliases
+    - misspell
+    - nakedret               # no naked returns
+    - nonamedreturns         # named returns hide intent
+    - revive
+    - tagliatelle            # struct tag naming (snake_case for json)
+    - unconvert
+    - whitespace
+
+    # ── Performance ──────────────────────────────────────────────────
+    - perfsprint
+    - prealloc
+
+    # ── Complexity ───────────────────────────────────────────────────
+    - cyclop
+    - funlen
+    - gocognit
+    - nestif
+
+    # ── Code organization ────────────────────────────────────────────
+    - depguard               # enforce vertical-slices boundaries
+    - dupl                   # duplicate code blocks
+    - goconst                # repeated strings → constants
+    - interfacebloat         # interfaces should be small
+
+    # ── Testing ──────────────────────────────────────────────────────
+    - paralleltest
+    - testifylint
+    - thelper
+    - tparallel
+    - usetesting
+
+  settings:
+    # ── Complexity caps ──────────────────────────────────────────────
+    cyclop:
+      max-complexity: 15
+      package-average: 10.0
+
+    funlen:
+      lines: 80
+      statements: 50
+      ignore-comments: true
+
+    gocognit:
+      min-complexity: 25
+
+    nestif:
+      min-complexity: 4
+
+    # ── Exhaustive ───────────────────────────────────────────────────
+    exhaustive:
+      default-signifies-exhaustive: false
+      check:
+        - switch
+        - map
+
+    # ── revive ───────────────────────────────────────────────────────
+    revive:
+      enable-all-rules: false
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: early-return
+        - name: empty-block
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: exported
+          arguments:
+            - "checkPrivateReceivers"
+            - "disableStutteringCheck"
+        - name: get-return
+        - name: identical-branches
+        - name: if-return
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: string-of-int
+        - name: superfluous-else
+        - name: time-equal
+        - name: time-naming
+        - name: unconditional-recursion
+        - name: unexported-return
+        - name: unhandled-error
+        - name: unnecessary-stmt
+        - name: unreachable-code
+        - name: useless-break
+        - name: var-declaration
+        - name: var-naming
+        - name: waitgroup-by-value
+
+    # ── gocritic ─────────────────────────────────────────────────────
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+        - opinionated
+      disabled-checks:
+        - ifElseChain
+        - hugeParam        # our HydrateParams structs are intentionally large
+        - rangeValCopy     # noisy for read-only iteration
+
+    # ── gosec ────────────────────────────────────────────────────────
+    gosec:
+      excludes:
+        - G115             # int conversion overflow — handled via VOs
+
+    # ── testifylint ──────────────────────────────────────────────────
+    testifylint:
+      enable-all: true
+
+    # ── perfsprint ───────────────────────────────────────────────────
+    perfsprint:
+      strconcat: true
+
+    # ── importas ─────────────────────────────────────────────────────
+    importas:
+      no-unaliased: false
+      no-extra-aliases: true
+      alias:
+        - pkg: github.com/abdimuy/msp-api/internal/platform/apperror
+          alias: apperror
+        - pkg: github.com/abdimuy/msp-api/internal/platform/domain
+          alias: platform
+
+    # ── tagliatelle ──────────────────────────────────────────────────
+    tagliatelle:
+      case:
+        rules:
+          json: snake
+          yaml: snake
+          xml: camel
+          db: snake
+
+    # ── interfacebloat ───────────────────────────────────────────────
+    interfacebloat:
+      max: 8
+
+    # ── goconst ──────────────────────────────────────────────────────
+    goconst:
+      min-len: 4
+      min-occurrences: 4
+
+    # ── dupl ─────────────────────────────────────────────────────────
+    dupl:
+      threshold: 150
+
+    # ── depguard — vertical slices boundaries ────────────────────────
+    # Enforces:
+    #   domain → only stdlib, uuid, platform/domain, apperror
+    #   ports  → only stdlib, uuid, contracts of producer modules
+    #   app    → domain + ports of own module + platform
+    #   infra  → anything inside own module + platform
+    # Cross-module: only via {module} (contracts) — never internal/{x}/domain or app
+    depguard:
+      rules:
+        domain-pure:
+          list-mode: lax
+          files:
+            - "**/internal/*/domain/*.go"
+          deny:
+            - pkg: "github.com/abdimuy/msp-api/internal"
+              desc: "domain layer must not import other internal packages except platform/domain and platform/apperror"
+          allow:
+            - $gostd
+            - github.com/google/uuid
+            - github.com/shopspring/decimal
+            - github.com/abdimuy/msp-api/internal/platform/domain
+            - github.com/abdimuy/msp-api/internal/platform/apperror
+
+        app-no-infra:
+          list-mode: lax
+          files:
+            - "**/internal/*/app/**/*.go"
+          deny:
+            - pkg: "github.com/abdimuy/msp-api/internal/*/infra"
+              desc: "app layer must not import infra — depend on ports instead"
+
+        no-cross-module-internals:
+          list-mode: lax
+          files:
+            - "**/internal/!(platform)/**/*.go"
+          deny:
+            - pkg: "github.com/abdimuy/msp-api/internal/*/domain"
+              desc: "do not import another module's domain — use its contracts via the module root package"
+            - pkg: "github.com/abdimuy/msp-api/internal/*/app"
+              desc: "do not import another module's app — use its contracts and a port"
+            - pkg: "github.com/abdimuy/msp-api/internal/*/infra"
+              desc: "do not import another module's infra — use its contracts and a port"
+
+  exclusions:
+    presets:
+      - common-false-positives
+    rules:
+      # Test files: relaxed subset (still catch real bugs)
+      - path: _test\.go
+        linters:
+          - cyclop
+          - dupl
+          - err113
+          - errcheck
+          - forcetypeassert
+          - funlen
+          - gocognit
+          - goconst
+          - gosec
+          - prealloc
+          - unparam
+
+      # Generated code (sqlc, mocks, oapi-codegen) — skip entirely
+      - path: internal/generated/
+        linters:
+          - all
+
+      # main packages may have a longer init/wiring func
+      - path: cmd/.*/main\.go
+        linters:
+          - funlen
+          - gocognit
+          - cyclop
+
+      # Package-level error sentinels are the err113 escape hatch
+      - text: "err113: do not define dynamic errors"
+        path: ".*_errors\\.go$"
+        linters:
+          - err113
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/abdimuy/msp-api
+    gofumpt:
+      extra-rules: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
