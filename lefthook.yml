@@ -78,8 +78,13 @@ pre-commit:
 
     no-debug:
       glob: "*.go"
+      # Block fmt.Print* in application code; allow it in cmd/* (CLI output)
+      # and in test files.
       run: |
-        offenders=$(grep -nE 'fmt\.Print(ln|f)?\(' {staged_files} 2>/dev/null | grep -v '_test\.go' || true)
+        offenders=$(grep -nE 'fmt\.Print(ln|f)?\(' {staged_files} 2>/dev/null \
+          | grep -v '_test\.go' \
+          | grep -v '^cmd/' \
+          || true)
         if [ -n "$offenders" ]; then
           echo "❌ Remove fmt.Print* statements (use slog):"
           echo "$offenders"
