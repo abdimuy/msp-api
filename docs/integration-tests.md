@@ -216,7 +216,10 @@ make test-integration INTEGRATION=1 go test ./...
 make test-all         unit + integration
 ```
 
-CI runs `make test` per PR; `make test-integration` on merge to `main`.
+Everything runs locally — there is no remote CI. The lefthook `pre-push`
+hook runs `make test` on every push. Run `make test-integration` manually
+when changes touch repo / handler / outbox / migrations code; Docker Desktop
+must be running.
 
 ## Agent checklist (per module)
 

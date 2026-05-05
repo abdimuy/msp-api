@@ -74,6 +74,17 @@ The "modern stack" version of this app is **bonanza-api** — a separate project
 
 If/when we need to store files (photos of cobranza receipts, INE photos, etc.) the chosen backend will be **Cloudflare R2** (S3-compatible, cheap, zero infra) accessed via `minio-go/v7`. We do **not** add this until a module needs it — no preemptive `internal/platform/storage/`.
 
+### 7. Everything runs locally — no remote CI/CD
+
+This project does **not** use GitHub Actions, GitLab CI, or any other remote CI provider. The full quality gate runs on the developer's machine via lefthook hooks:
+
+- `pre-commit`: gofmt, go vet, golangci-lint (on staged), build, secrets check, no-debug, mod tidy.
+- `pre-push`: full `golangci-lint run ./...` + `go test -race -short ./...`.
+
+Integration tests (`make test-integration`) run on demand on the developer's machine — they require Docker Desktop locally for the testcontainers Postgres. Do not write GitHub Actions workflows, do not add `.github/`, do not document CI badges.
+
+If we ever add coverage gates, mutation testing, or scheduled benchmarks, they go into Make targets and lefthook hooks, not into a remote pipeline.
+
 ## Architecture summary
 
 ```
