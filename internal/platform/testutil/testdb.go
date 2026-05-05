@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -25,18 +26,49 @@ const (
 
 var (
 	templateOnce sync.Once
-	adminDSN     string // DSN that targets the template DB (admin privileges)
-	errTemplate  error  // captured by templateOnce; ensureTemplate returns it on subsequent calls
+	adminDSN     string        // DSN that targets the template DB (admin privileges).
+	adminPool    *pgxpool.Pool // Pool to the `postgres` system DB; reused for CREATE/DROP.
+	errTemplate  error
 
 	// dbCounter ensures unique per-package DB names even if Now() collides.
 	dbCounter atomic.Uint64
+
+	// pkgDBs tracks DBs created via NewTestDatabasePool so DropPackageDBs can
+	// drop them at TestMain exit. NewTestDatabase (per-test) cleans itself via
+	// tb.Cleanup and is not tracked here.
+	pkgDBs   []string
+	pkgDBsMu sync.Mutex
 )
 
-// ensureTemplate boots the Postgres container and runs migrations once per
-// `go test` process. Subsequent callers reuse the template DB.
+// ensureTemplate prepares the template DB used to clone per-test databases.
+//
+// Two paths:
+//
+//  1. TEST_DATABASE_URL set — reuse an existing Postgres instance. The DSN
+//     must point to a DB already populated with migrations and (ideally)
+//     marked IS_TEMPLATE. `make db-test-up` does both.
+//  2. Otherwise — boot a Postgres container via testcontainers, run all
+//     up migrations against the template DB, and mark it IS_TEMPLATE.
+//
+// In either path adminDSN points at the template DB, while adminPool stays
+// connected to the `postgres` system DB so we can clone the template without
+// holding open connections to it (Postgres rejects CREATE DATABASE FROM
+// TEMPLATE while any session is attached to the template).
 func ensureTemplate() error {
 	templateOnce.Do(func() {
-		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
+		if dsn := os.Getenv("TEST_DATABASE_URL"); dsn != "" {
+			adminDSN = dsn
+			pool, err := pgxpool.New(ctx, replaceDBName(dsn, "postgres"))
+			if err != nil {
+				errTemplate = fmt.Errorf("testutil: connect postgres system db: %w", err)
+				return
+			}
+			adminPool = pool
+			return
+		}
 
 		container, err := postgres.Run(
 			ctx, "postgres:17-alpine",
@@ -62,10 +94,34 @@ func ensureTemplate() error {
 		}
 		adminDSN = dsn
 
-		if err := runMigrations(dsn); err != nil {
+		// Migrations run through a short-lived pool to the template DB itself;
+		// closed before flagging IS_TEMPLATE so no sessions remain attached.
+		tplPool, err := pgxpool.New(ctx, dsn)
+		if err != nil {
+			errTemplate = fmt.Errorf("testutil: connect template db: %w", err)
+			return
+		}
+		if err := runMigrations(ctx, tplPool); err != nil {
+			tplPool.Close()
 			errTemplate = fmt.Errorf("testutil: %w", err)
 			return
 		}
+		tplPool.Close()
+
+		systemPool, err := pgxpool.New(ctx, replaceDBName(dsn, "postgres"))
+		if err != nil {
+			errTemplate = fmt.Errorf("testutil: connect postgres system db: %w", err)
+			return
+		}
+		if _, err := systemPool.Exec(
+			ctx,
+			fmt.Sprintf(`ALTER DATABASE %q IS_TEMPLATE true`, templateDBName),
+		); err != nil {
+			systemPool.Close()
+			errTemplate = fmt.Errorf("testutil: mark template: %w", err)
+			return
+		}
+		adminPool = systemPool
 	})
 	return errTemplate
 }
@@ -90,7 +146,42 @@ func NewTestDatabasePool() *pgxpool.Pool {
 	if err != nil {
 		panic(err)
 	}
+	pkgDBsMu.Lock()
+	pkgDBs = append(pkgDBs, name)
+	pkgDBsMu.Unlock()
 	return pool
+}
+
+// DropPackageDBs drops every DB created by NewTestDatabasePool in this
+// process. Idempotent and safe to call when no DBs were created. Intended
+// for TestMain so per-package DBs don't accumulate inside a long-running
+// shared Postgres (msp-postgres-test):
+//
+//	func TestMain(m *testing.M) {
+//	    if os.Getenv("INTEGRATION") != "" || os.Getenv("TEST_DATABASE_URL") != "" {
+//	        testPool = testutil.NewTestDatabasePool()
+//	    }
+//	    code := m.Run()
+//	    testutil.DropPackageDBs()
+//	    os.Exit(code)
+//	}
+//
+// With per-process testcontainers the cleanup is unnecessary (the whole
+// container is reaped at process exit), but calling it is still cheap.
+func DropPackageDBs() {
+	pkgDBsMu.Lock()
+	names := pkgDBs
+	pkgDBs = nil
+	pkgDBsMu.Unlock()
+
+	if adminPool == nil || len(names) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for _, n := range names {
+		dropDatabase(ctx, n)
+	}
 }
 
 // NewTestDatabase creates an isolated DB scoped to a single test, dropped
@@ -118,17 +209,12 @@ func NewTestDatabase(tb testing.TB) *pgxpool.Pool {
 	return pool
 }
 
+// createDBFromTemplate clones the template DB through the cached adminPool
+// (connected to the postgres system DB) and returns a pool to the new DB.
 func createDBFromTemplate(name string) (*pgxpool.Pool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	adminPool, err := pgxpool.New(ctx, adminDSN)
-	if err != nil {
-		return nil, fmt.Errorf("connect admin: %w", err)
-	}
-	defer adminPool.Close()
-
-	// Quoted identifier — name is sanitized but quote anyway for safety.
 	if _, err := adminPool.Exec(
 		ctx,
 		fmt.Sprintf(`CREATE DATABASE %q TEMPLATE %q`, name, templateDBName),
@@ -145,14 +231,9 @@ func createDBFromTemplate(name string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-// dropDatabase removes the database; ignored when it doesn't exist.
+// dropDatabase removes the database, terminating live sessions if needed.
 func dropDatabase(ctx context.Context, name string) {
-	adminPool, err := pgxpool.New(ctx, adminDSN)
-	if err != nil {
-		return
-	}
-	defer adminPool.Close()
-	_, _ = adminPool.Exec(ctx, fmt.Sprintf(`DROP DATABASE IF EXISTS %q`, name))
+	_, _ = adminPool.Exec(ctx, fmt.Sprintf(`DROP DATABASE IF EXISTS %q WITH (FORCE)`, name))
 }
 
 func nextDBName(suffix string) string {

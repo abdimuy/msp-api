@@ -1,63 +1,89 @@
 package testutil
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
+	"strings"
 
-	"github.com/golang-migrate/migrate/v4"
-
-	// Drivers registered via blank imports.
-	_ "github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// errMigrationsDirNotFound is returned when no ancestor of the cwd contains
-// both a go.mod and a migrations/ directory.
-var errMigrationsDirNotFound = errors.New("could not find migrations/ — no ancestor has both go.mod and migrations/")
+var (
+	errMigrationsDirNotFound = errors.New(
+		"could not find migrations/ — no ancestor of testutil/migrations.go contains both go.mod and migrations/",
+	)
+	errCallerUnknown = errors.New("runtime.Caller(0) failed")
+)
 
-// runMigrations applies every up migration under <repo>/migrations to the
-// given Postgres DSN.
+// runMigrations applies every *.up.sql migration under <repo>/migrations to
+// the given pool, in lexical order.
 //
-// The DSN is rewritten from "postgres://" to the "pgx5://" driver scheme
-// expected by golang-migrate's Postgres driver registration.
-func runMigrations(dsn string) error {
+// The template DB is single-use, so we skip the schema_migrations bookkeeping
+// that golang-migrate would do — it shaves ~250 ms off the boot path and
+// removes the dependency from the test build. The `migrate` CLI is still the
+// source of truth for dev/prod (`make migrate-*`).
+func runMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	dir, err := findMigrationsDir()
 	if err != nil {
 		return fmt.Errorf("testutil: %w", err)
 	}
 
-	m, err := migrate.New("file://"+dir, dsn)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return fmt.Errorf("testutil: migrate.New: %w", err)
+		return fmt.Errorf("testutil: read migrations dir: %w", err)
 	}
-	defer func() { _, _ = m.Close() }()
 
-	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-		return fmt.Errorf("testutil: migrate.Up: %w", err)
+	var files []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if strings.HasSuffix(e.Name(), ".up.sql") {
+			files = append(files, e.Name())
+		}
+	}
+	sort.Strings(files)
+
+	migFS := os.DirFS(dir)
+	for _, f := range files {
+		sql, err := fs.ReadFile(migFS, f)
+		if err != nil {
+			return fmt.Errorf("testutil: read migration %s: %w", f, err)
+		}
+		if _, err := pool.Exec(ctx, string(sql)); err != nil {
+			return fmt.Errorf("testutil: execute migration %s: %w", f, err)
+		}
 	}
 	return nil
 }
 
-// findMigrationsDir walks up from the current working directory looking for
-// a `migrations/` folder next to a `go.mod` (the repo root). Returns an
-// absolute path.
+// findMigrationsDir walks up from the directory of THIS source file looking
+// for a `migrations/` folder next to a `go.mod`. Independent of the cwd from
+// which `go test` was invoked, so the lookup works no matter which package
+// triggers ensureTemplate.
 func findMigrationsDir() (string, error) {
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("getwd: %w", err)
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		return "", errCallerUnknown
 	}
-	for {
+	dir := filepath.Dir(filename)
+	for range 10 {
 		if hasFile(dir, "go.mod") && hasDir(dir, "migrations") {
 			return filepath.Join(dir, "migrations"), nil
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "", errMigrationsDirNotFound
+			break
 		}
 		dir = parent
 	}
+	return "", errMigrationsDirNotFound
 }
 
 func hasFile(dir, name string) bool {

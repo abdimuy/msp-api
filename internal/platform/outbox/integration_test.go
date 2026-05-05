@@ -25,7 +25,9 @@ func TestMain(m *testing.M) {
 	if os.Getenv("INTEGRATION") != "" || os.Getenv("TEST_DATABASE_URL") != "" {
 		testPool = testutil.NewTestDatabasePool()
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	testutil.DropPackageDBs()
+	os.Exit(code)
 }
 
 func requirePool(t *testing.T) {
