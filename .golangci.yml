@@ -264,7 +264,11 @@ linters:
     presets:
       - common-false-positives
     rules:
-      # Test files: relaxed subset (still catch real bugs)
+      # Test files: relaxed subset (still catch real bugs).
+      # We keep testifylint, paralleltest, revive on — they catch real test
+      # quality issues. We relax linters that produce noise specific to tests
+      # (httpNoBody warnings, missing struct tags on anonymous decode targets,
+      # NewRequest vs NewRequestWithContext, etc.).
       - path: _test\.go
         linters:
           - cyclop
@@ -275,9 +279,15 @@ linters:
           - funlen
           - gocognit
           - goconst
+          - gocritic
           - gosec
+          - misspell
+          - musttag
+          - nilnil
+          - noctx
           - prealloc
           - unparam
+          - unused
 
       # Generated code (sqlc, mocks, oapi-codegen) — skip entirely
       - path: internal/generated/
