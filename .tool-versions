@@ -1,0 +1,5 @@
+go 1.25.0
+golangci-lint 2.11.3
+lefthook 2.1.3
+air 1.63.7
+gomigrate 4.19.1
