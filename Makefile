@@ -131,25 +131,25 @@ clean: ## Remove build artifacts
 # ── CI helpers ───────────────────────────────────────────────────────
 ci-check: vet lint test-unit ## Run checks expected to pass in CI
 
-# ── Local Postgres via Docker (dev only) ─────────────────────────────
-db-up: ## Start local Postgres (Docker, dev only)
-	docker run -d --name msp-postgres \
-		-e POSTGRES_USER=$(DB_USER) -e POSTGRES_PASSWORD=$(DB_PASS) -e POSTGRES_DB=$(DB_NAME) \
-		-p $(DB_PORT):5432 \
-		--restart unless-stopped \
-		postgres:17-alpine
+# ── Local Postgres via Docker Compose (dev only) ─────────────────────
+# Definition lives in compose.yml. We block on the healthcheck via --wait
+# so callers can pipe straight into migrate-up without sleeping.
+db-up: ## Start local Postgres (compose, blocks until healthy)
+	docker compose up -d --wait postgres
 
-db-down: ## Stop and remove local Postgres
-	docker rm -f msp-postgres 2>/dev/null || true
+db-down: ## Stop local Postgres (KEEPS data volume)
+	docker compose down
+
+db-down-volume: ## Stop local Postgres AND wipe its data volume
+	docker compose down --volumes
 
 db-logs: ## Tail local Postgres logs
-	docker logs -f msp-postgres
+	docker compose logs -f postgres
 
 db-shell: ## psql shell into local Postgres
-	docker exec -it msp-postgres psql -U $(DB_USER) -d $(DB_NAME)
+	docker compose exec postgres psql -U $(DB_USER) -d $(DB_NAME)
 
-db-reset: db-down db-up ## Recreate local Postgres from scratch
-	@sleep 2
+db-reset: db-down-volume db-up ## Recreate local Postgres from scratch (WIPES data)
 	@$(MAKE) migrate-up
 
 # ── Postgres for integration tests (separate container, port 5499) ───

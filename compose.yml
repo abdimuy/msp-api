@@ -1,0 +1,36 @@
+# Dev-only stack. Production targets Windows Server 2016 + nssm — never deploy
+# this file's services to prod. See CLAUDE.md rule 5.
+#
+# Usage:
+#   docker compose up -d --wait postgres   # start, block until healthy
+#   docker compose down                    # stop, KEEP data volume
+#   docker compose down --volumes          # stop, WIPE data volume
+#
+# Environment is read from .env (auto-loaded by compose). The PG_* vars are the
+# same ones the Go binary consumes via internal/platform/config.
+
+name: msp-api
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: msp-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PG_USER:-msp}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-msp}
+      POSTGRES_DB: ${PG_DATABASE:-msp_dev}
+    ports:
+      - "${PG_PORT:-5432}:5432"
+    volumes:
+      - msp-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-msp} -d ${PG_DATABASE:-msp_dev}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  msp-postgres-data:
+    name: msp-postgres-data
