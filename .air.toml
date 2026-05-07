@@ -4,6 +4,7 @@ tmp_dir = "tmp"
 [build]
   cmd = "go build -o ./tmp/api ./cmd/api"
   bin = "./tmp/api"
+  args_bin = ["serve"]
   include_ext = ["go", "yaml", "yml", "toml", "sql"]
   include_dir = ["cmd", "internal", "queries", "migrations"]
   exclude_dir = ["bin", "tmp", "vendor", "testdata", ".git", "node_modules", "dist", "coverage"]
