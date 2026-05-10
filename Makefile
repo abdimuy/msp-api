@@ -124,6 +124,49 @@ migrate-force: ## Force set migration version (dangerous, recovery only). Usage:
 	@[ -n "$(VERSION)" ] || (echo "❌ VERSION required: make migrate-force VERSION=N" && exit 1)
 	migrate -path $(MIGRATIONS_DIR) -database "$(DATABASE_URL)" force $(VERSION)
 
+# ── Firebird migrations (DEV) ────────────────────────────────────────
+# `golang-migrate` no soporta Firebird, así que aplicamos los .sql via isql
+# dentro del container `mueblera-firebird`. Estos targets son para desarrollo
+# local — en producción se aplican manualmente con autorización del DBA.
+
+FB_MIGRATIONS_DIR    := migrations-firebird
+FB_SEEDS_DIR         := seeds-firebird
+FB_CONTAINER         ?= mueblera-firebird
+FB_USER              ?= SYSDBA
+FB_PASSWORD          ?= masterkey
+FB_DATABASE          ?= /firebird/data/MUEBLERA.FDB
+
+# Apply all *.up.sql migrations in order. Skips ones already in MSP_MIGRATIONS.
+fb-migrate-up: ## Apply all Firebird migrations (dev only)
+	@for f in $$(ls $(FB_MIGRATIONS_DIR)/*.up.sql | sort); do \
+		echo "▶ $$f"; \
+		docker exec -i $(FB_CONTAINER) /usr/local/firebird/bin/isql \
+			-u $(FB_USER) -p $(FB_PASSWORD) -ch UTF8 $(FB_DATABASE) < $$f \
+			|| (echo "❌ Failed at $$f" && exit 1); \
+	done
+	@echo "✔ Firebird migrations applied"
+
+# Rollback the latest migration. Usage: make fb-migrate-down N=000002
+fb-migrate-down: ## Rollback one Firebird migration. Usage: make fb-migrate-down N=000002
+	@[ -n "$(N)" ] || (echo "❌ N required: make fb-migrate-down N=000002" && exit 1)
+	@f=$$(ls $(FB_MIGRATIONS_DIR)/$(N)_*.down.sql 2>/dev/null); \
+	[ -n "$$f" ] || (echo "❌ No down migration found for N=$(N)" && exit 1); \
+	echo "▶ $$f"; \
+	docker exec -i $(FB_CONTAINER) /usr/local/firebird/bin/isql \
+		-u $(FB_USER) -p $(FB_PASSWORD) -ch UTF8 $(FB_DATABASE) < $$f
+
+# List applied Firebird migrations
+fb-migrate-status: ## Show applied Firebird migrations
+	@docker exec -i $(FB_CONTAINER) /usr/local/firebird/bin/isql \
+		-u $(FB_USER) -p $(FB_PASSWORD) -ch UTF8 $(FB_DATABASE) <<<"SELECT ID, NAME, APPLIED_AT FROM MSP_MIGRATIONS ORDER BY ID;"
+
+# Apply seed admin (requires seeds-firebird/000001_admin_user.sql to exist — see .example)
+fb-seed-admin: ## Apply admin seed file (must be created from the .example template)
+	@[ -f $(FB_SEEDS_DIR)/000001_admin_user.sql ] || \
+		(echo "❌ Missing $(FB_SEEDS_DIR)/000001_admin_user.sql — copy from .example and fill in values" && exit 1)
+	docker exec -i $(FB_CONTAINER) /usr/local/firebird/bin/isql \
+		-u $(FB_USER) -p $(FB_PASSWORD) -ch UTF8 $(FB_DATABASE) < $(FB_SEEDS_DIR)/000001_admin_user.sql
+
 # ── Clean ────────────────────────────────────────────────────────────
 clean: ## Remove build artifacts
 	rm -rf bin/ tmp/ dist/ coverage.out coverage.html

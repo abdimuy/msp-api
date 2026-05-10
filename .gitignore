@@ -12,6 +12,10 @@ serviceAccountKey.json
 *.pem
 *.key
 
+# Firebird seeds with real values (only .example templates are committed)
+seeds-firebird/*.sql
+!seeds-firebird/*.sql.example
+
 uploads/
 private_files/
 
