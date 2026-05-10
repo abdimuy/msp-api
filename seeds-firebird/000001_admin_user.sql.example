@@ -1,0 +1,79 @@
+-- ============================================================================
+-- Seed: usuario admin inicial + rol ADMIN inmutable + permisos catálogo
+-- ============================================================================
+-- Cómo usar:
+--   1. Copia este archivo a 000001_admin_user.sql (sin .example).
+--   2. Edita los placeholders entre <...> con los valores reales.
+--   3. Aplícalo con `make fb-seed-admin` (o vía isql directamente).
+--   4. NO COMMITEES el archivo sin .example al repo — contiene valores
+--      específicos del entorno y, eventualmente, el Firebase UID real.
+--
+-- Lo que crea:
+--   - Usuario admin (referencia a sí mismo para auditoría — patrón bootstrap)
+--   - Rol ADMIN con INMUTABLE=TRUE
+--   - Asignación admin → rol ADMIN
+--   - Catálogo inicial de permisos (después el código Go sincroniza al arrancar)
+--   - Todas las (rol ADMIN, permiso) en la junction
+-- ============================================================================
+
+-- 1) Admin user (self-FK se satisface en el mismo INSERT)
+INSERT INTO MSP_USUARIOS (
+  ID, FIREBASE_UID, EMAIL, NOMBRE, TELEFONO, ALMACEN_ID, ACTIVO,
+  CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY
+) VALUES (
+  '00000000-0000-4000-8000-000000000001',
+  '<FIREBASE_UID_DEL_ADMIN>',
+  '<admin-email>',
+  '<Nombre Apellido>',
+  NULL,
+  NULL,
+  TRUE,
+  CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+  '00000000-0000-4000-8000-000000000001',
+  '00000000-0000-4000-8000-000000000001'
+);
+
+-- 2) Rol ADMIN inmutable
+INSERT INTO MSP_ROLES (
+  ID, NOMBRE, DESCRIPCION, INMUTABLE, ACTIVO,
+  CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY
+) VALUES (
+  '00000000-0000-4000-8000-000000000002',
+  'ADMIN',
+  'Acceso total al sistema',
+  TRUE,
+  TRUE,
+  CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+  '00000000-0000-4000-8000-000000000001',
+  '00000000-0000-4000-8000-000000000001'
+);
+
+-- 3) Asignar rol ADMIN al admin user
+INSERT INTO MSP_USUARIOS_ROLES (USUARIO_ID, ROL_ID, CREATED_AT, CREATED_BY)
+VALUES (
+  '00000000-0000-4000-8000-000000000001',
+  '00000000-0000-4000-8000-000000000002',
+  CURRENT_TIMESTAMP,
+  '00000000-0000-4000-8000-000000000001'
+);
+
+-- 4) Catálogo inicial de permisos
+INSERT INTO MSP_PERMISOS (CODIGO, DESCRIPCION, CATEGORIA) VALUES ('venta:crear',        'Crear ventas',         'ventas');
+INSERT INTO MSP_PERMISOS (CODIGO, DESCRIPCION, CATEGORIA) VALUES ('venta:editar',       'Editar ventas',        'ventas');
+INSERT INTO MSP_PERMISOS (CODIGO, DESCRIPCION, CATEGORIA) VALUES ('venta:cancelar',     'Cancelar ventas',      'ventas');
+INSERT INTO MSP_PERMISOS (CODIGO, DESCRIPCION, CATEGORIA) VALUES ('venta:ver:propias',  'Ver ventas propias',   'ventas');
+INSERT INTO MSP_PERMISOS (CODIGO, DESCRIPCION, CATEGORIA) VALUES ('venta:ver:todas',    'Ver todas las ventas', 'ventas');
+INSERT INTO MSP_PERMISOS (CODIGO, DESCRIPCION, CATEGORIA) VALUES ('cobranza:registrar', 'Registrar pagos',      'cobranza');
+INSERT INTO MSP_PERMISOS (CODIGO, DESCRIPCION, CATEGORIA) VALUES ('cobranza:ver:todas', 'Ver toda la cobranza', 'cobranza');
+INSERT INTO MSP_PERMISOS (CODIGO, DESCRIPCION, CATEGORIA) VALUES ('usuario:crear',      'Crear usuarios',       'administracion');
+INSERT INTO MSP_PERMISOS (CODIGO, DESCRIPCION, CATEGORIA) VALUES ('usuario:editar',     'Editar usuarios',      'administracion');
+INSERT INTO MSP_PERMISOS (CODIGO, DESCRIPCION, CATEGORIA) VALUES ('usuario:desactivar', 'Desactivar usuarios',  'administracion');
+INSERT INTO MSP_PERMISOS (CODIGO, DESCRIPCION, CATEGORIA) VALUES ('rol:editar',         'Editar roles',         'administracion');
+INSERT INTO MSP_PERMISOS (CODIGO, DESCRIPCION, CATEGORIA) VALUES ('reporte:ver',        'Ver reportes',         'administracion');
+
+-- 5) Asignar TODOS los permisos al rol ADMIN
+INSERT INTO MSP_ROLES_PERMISOS (ROL_ID, PERMISO_CODIGO, CREATED_AT, CREATED_BY)
+  SELECT '00000000-0000-4000-8000-000000000002', CODIGO, CURRENT_TIMESTAMP, '00000000-0000-4000-8000-000000000001'
+  FROM MSP_PERMISOS;
+
+COMMIT;
