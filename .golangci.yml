@@ -192,6 +192,20 @@ linters:
           alias: apperror
         - pkg: github.com/abdimuy/msp-api/internal/platform/domain
           alias: platform
+        - pkg: github.com/abdimuy/msp-api/internal/platform/idempotency/postgres
+          alias: idempotencypg
+        - pkg: github.com/abdimuy/msp-api/internal/auth/infra/firebird
+          alias: authfb
+        - pkg: github.com/abdimuy/msp-api/internal/auth/app
+          alias: authapp
+        - pkg: github.com/abdimuy/msp-api/internal/auth/domain
+          alias: authdomain
+        - pkg: github.com/abdimuy/msp-api/internal/ventas/app
+          alias: ventasapp
+        - pkg: github.com/abdimuy/msp-api/internal/ventas/domain
+          alias: ventasdomain
+        - pkg: github.com/abdimuy/msp-api/internal/ventas/ports/outbound
+          alias: ventasoutbound
         - pkg: github.com/go-playground/validator/v10
           alias: pv
 
@@ -219,11 +233,16 @@ linters:
 
     # ── depguard — vertical slices boundaries ────────────────────────
     # Enforces:
-    #   domain → only stdlib, uuid, platform/domain, apperror
+    #   domain → only stdlib, uuid, platform/domain, apperror, audit
     #   ports  → only stdlib, uuid, contracts of producer modules
     #   app    → domain + ports of own module + platform
     #   infra  → anything inside own module + platform
     # Cross-module: only via {module} (contracts) — never internal/{x}/domain or app
+    #
+    # Black-box test files (package domain_test) need to import their own
+    # domain package; the rule's file glob captures _test.go so we allow
+    # imports of any internal/*/domain/* path — the no-cross-module-internals
+    # rule still forbids importing OTHER modules' domain.
     depguard:
       rules:
         domain-pure:
@@ -232,13 +251,16 @@ linters:
             - "**/internal/*/domain/*.go"
           deny:
             - pkg: "github.com/abdimuy/msp-api/internal"
-              desc: "domain layer must not import other internal packages except platform/domain and platform/apperror"
+              desc: "domain layer must not import other internal packages except platform/domain, platform/apperror, platform/audit"
           allow:
             - $gostd
             - github.com/google/uuid
             - github.com/shopspring/decimal
             - github.com/abdimuy/msp-api/internal/platform/domain
             - github.com/abdimuy/msp-api/internal/platform/apperror
+            - github.com/abdimuy/msp-api/internal/platform/audit
+            - github.com/abdimuy/msp-api/internal/auth/domain
+            - github.com/abdimuy/msp-api/internal/ventas/domain
 
         app-no-infra:
           list-mode: lax
