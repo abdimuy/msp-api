@@ -15,6 +15,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/abdimuy/msp-api/internal/platform/config"
+	"github.com/abdimuy/msp-api/internal/platform/firebird"
 	"github.com/abdimuy/msp-api/internal/platform/healthcheck"
 	"github.com/abdimuy/msp-api/internal/platform/lifecycle"
 	"github.com/abdimuy/msp-api/internal/platform/logger"
@@ -34,7 +35,7 @@ func main() {
 		Use:   "msp-api",
 		Short: "msp-api server and tooling",
 	}
-	root.AddCommand(serveCmd(), versionCmd())
+	root.AddCommand(serveCmd(), versionCmd(), authBootstrapCmd())
 
 	if err := root.Execute(); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
@@ -71,15 +72,33 @@ func appOptions() []fx.Option {
 			config.Load,
 			provideLogger,
 			providePostgresPool,
-			provideTxManager,
+			providePostgresTxManager,
+			provideFirebirdPool,
+			provideFirebirdTxManager,
 			provideHealthService,
 			provideOutboxRegistry,
 			provideOutboxDispatcher,
+			provideAuthUsuarioRepo,
+			provideAuthRolRepo,
+			provideAuthPermisoRepo,
+			provideAuthClock,
+			provideAuthFirebase,
+			provideAuthOutboxEnqueuer,
+			provideAuthService,
+			provideIdempotencyStore,
+			provideVentasRepo,
+			provideVentasStorage,
+			provideVentasClock,
+			provideVentasOutboxEnqueuer,
+			provideVentasImageProcessor,
+			provideVentasService,
 			provideHTTPServer,
 		),
 		fx.Invoke(
 			registerPostgresLifecycle,
+			registerFirebirdLifecycle,
 			registerOutboxLifecycle,
+			invokeAuthCatalogSync,
 			registerHTTPLifecycle,
 			registerProbes,
 		),
@@ -102,9 +121,19 @@ func providePostgresPool(cfg *config.Config) (*postgres.Pool, error) {
 	return postgres.New(cfg.Postgres)
 }
 
-// provideTxManager wraps the pool with the application tx manager.
-func provideTxManager(p *postgres.Pool) *transaction.Manager {
+// providePostgresTxManager wraps the pool with the application tx manager.
+func providePostgresTxManager(p *postgres.Pool) *transaction.Manager {
 	return transaction.NewManager(p.Pool)
+}
+
+// provideFirebirdPool builds the Firebird connection pool from config.
+func provideFirebirdPool(cfg *config.Config) (*firebird.Pool, error) {
+	return firebird.New(cfg.Firebird)
+}
+
+// provideFirebirdTxManager wraps the Firebird pool with a transaction manager.
+func provideFirebirdTxManager(p *firebird.Pool) *firebird.TxManager {
+	return firebird.NewTxManager(p.DB)
 }
 
 // provideHealthService returns a fresh health-check registry.
@@ -129,6 +158,11 @@ func registerPostgresLifecycle(lc fx.Lifecycle, p *postgres.Pool) {
 	lifecycle.Append(lc, "postgres", p)
 }
 
+// registerFirebirdLifecycle hooks the Firebird pool into the fx lifecycle.
+func registerFirebirdLifecycle(lc fx.Lifecycle, p *firebird.Pool) {
+	lifecycle.Append(lc, "firebird", p)
+}
+
 // registerOutboxLifecycle hooks the dispatcher into the fx lifecycle.
 func registerOutboxLifecycle(lc fx.Lifecycle, d *outbox.Dispatcher) {
 	lifecycle.Append(lc, "outbox-dispatcher", d)
@@ -136,9 +170,13 @@ func registerOutboxLifecycle(lc fx.Lifecycle, d *outbox.Dispatcher) {
 
 // registerProbes registers the readiness probes for the dependencies the
 // API needs to declare itself healthy.
-func registerProbes(svc *healthcheck.Service, pool *postgres.Pool) {
+func registerProbes(svc *healthcheck.Service, pgPool *postgres.Pool, fbPool *firebird.Pool) {
 	svc.Register(healthcheck.ProbeFunc{
 		N: "postgres",
-		F: pool.HealthCheck,
+		F: pgPool.HealthCheck,
+	})
+	svc.Register(healthcheck.ProbeFunc{
+		N: "firebird",
+		F: fbPool.HealthCheck,
 	})
 }

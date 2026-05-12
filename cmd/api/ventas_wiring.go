@@ -1,0 +1,54 @@
+package main
+
+import (
+	"github.com/abdimuy/msp-api/internal/platform/config"
+	"github.com/abdimuy/msp-api/internal/platform/firebird"
+	"github.com/abdimuy/msp-api/internal/platform/imageprocessor"
+	"github.com/abdimuy/msp-api/internal/platform/transaction"
+	ventasapp "github.com/abdimuy/msp-api/internal/ventas/app"
+	"github.com/abdimuy/msp-api/internal/ventas/infra/storage"
+	"github.com/abdimuy/msp-api/internal/ventas/infra/ventfb"
+	"github.com/abdimuy/msp-api/internal/ventas/infra/ventoutbox"
+	ventasoutbound "github.com/abdimuy/msp-api/internal/ventas/ports/outbound"
+)
+
+// provideVentasRepo builds the Firebird-backed VentaRepo.
+func provideVentasRepo(p *firebird.Pool) ventasoutbound.VentaRepo {
+	return ventfb.NewVentaRepo(p)
+}
+
+// provideVentasStorage selects the StorageProvider implementation from
+// config.Storage. The factory returns the Filesystem provider in v1; an
+// R2 stub stands in for the future Cloudflare R2 adapter (see ADR-0003).
+func provideVentasStorage(cfg *config.Config) (ventasoutbound.StorageProvider, error) {
+	return storage.New(cfg.Storage)
+}
+
+// provideVentasClock returns the production clock used by every ventas service.
+func provideVentasClock() ventasoutbound.Clock { return ventasoutbound.ProductionClock{} }
+
+// provideVentasOutboxEnqueuer builds the ventas-module wrapper around the
+// platform outbox, using the Postgres transaction manager.
+func provideVentasOutboxEnqueuer(txMgr *transaction.Manager) ventasoutbound.OutboxEnqueuer {
+	return ventoutbox.NewEnqueuer(txMgr)
+}
+
+// provideVentasImageProcessor selects the image-processing implementation
+// for the ventas module. When IMAGEPROCESSOR_ENABLED=false the factory
+// returns the NoOp passthrough so uploads land verbatim on disk.
+func provideVentasImageProcessor(cfg *config.Config) (ventasoutbound.ImageProcessor, error) {
+	return imageprocessor.New(cfg.ImageProcessor)
+}
+
+// provideVentasService assembles the ventas application service. Multi-step
+// writes are coordinated through the supplied Firebird transaction manager.
+func provideVentasService(
+	repo ventasoutbound.VentaRepo,
+	store ventasoutbound.StorageProvider,
+	clock ventasoutbound.Clock,
+	outbox ventasoutbound.OutboxEnqueuer,
+	imageProc ventasoutbound.ImageProcessor,
+	fbTxMgr *firebird.TxManager,
+) *ventasapp.Service {
+	return ventasapp.NewService(repo, store, clock, outbox, imageProc, fbTxMgr)
+}
