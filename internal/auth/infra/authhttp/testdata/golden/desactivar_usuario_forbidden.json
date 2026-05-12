@@ -1,0 +1,11 @@
+{
+  "type": "about:blank",
+  "title": "Forbidden",
+  "status": 403,
+  "detail": "permiso denegado",
+  "instance": "/usuarios/00000000-0000-0000-0000-000000000002",
+  "code": "permission_denied",
+  "fields": {
+    "required_permission": "usuarios:desactivar"
+  }
+}

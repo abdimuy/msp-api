@@ -1,0 +1,15 @@
+{
+  "type": "about:blank",
+  "title": "Unprocessable Entity",
+  "status": 422,
+  "detail": "uno o más campos no son válidos",
+  "instance": "/usuarios/00000000-0000-0000-0000-000000000002",
+  "code": "validation_failed",
+  "errors": [
+    {
+      "field": "email",
+      "code": "email",
+      "message": "\"email\" no es un correo válido"
+    }
+  ]
+}

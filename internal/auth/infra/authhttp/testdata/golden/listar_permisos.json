@@ -1,0 +1,14 @@
+{
+  "items": [
+    {
+      "categoria": "test",
+      "codigo": "roles:listar",
+      "description": "test permission"
+    },
+    {
+      "categoria": "test",
+      "codigo": "usuarios:listar",
+      "description": "test permission"
+    }
+  ]
+}

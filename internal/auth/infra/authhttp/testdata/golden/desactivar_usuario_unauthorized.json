@@ -1,0 +1,8 @@
+{
+  "type": "about:blank",
+  "title": "Unauthorized",
+  "status": 401,
+  "detail": "encabezado authorization ausente",
+  "instance": "/usuarios/00000000-0000-0000-0000-000000000002",
+  "code": "missing_authorization"
+}

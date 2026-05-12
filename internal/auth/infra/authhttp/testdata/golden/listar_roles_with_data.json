@@ -1,0 +1,20 @@
+{
+  "items": [
+    {
+      "activo": true,
+      "created_at": "2026-01-01T12:00:00Z",
+      "id": "00000000-0000-0000-0000-000000000002",
+      "inmutable": false,
+      "nombre": "supervisor",
+      "updated_at": "2026-01-01T12:00:00Z"
+    },
+    {
+      "activo": true,
+      "created_at": "2026-01-01T12:00:00Z",
+      "id": "00000000-0000-0000-0000-000000000003",
+      "inmutable": false,
+      "nombre": "vendedor",
+      "updated_at": "2026-01-01T12:00:00Z"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "type": "about:blank",
+  "title": "Not Found",
+  "status": 404,
+  "detail": "rol no encontrado",
+  "instance": "/roles/00000000-0000-0000-0000-000000000007",
+  "code": "rol_not_found"
+}

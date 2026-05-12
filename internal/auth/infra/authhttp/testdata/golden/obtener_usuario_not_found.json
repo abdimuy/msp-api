@@ -1,0 +1,8 @@
+{
+  "type": "about:blank",
+  "title": "Not Found",
+  "status": 404,
+  "detail": "usuario no encontrado",
+  "instance": "/usuarios/00000000-0000-0000-0000-000000000007",
+  "code": "usuario_not_found"
+}

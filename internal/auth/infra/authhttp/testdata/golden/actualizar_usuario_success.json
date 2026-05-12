@@ -1,0 +1,8 @@
+{
+  "activo": true,
+  "created_at": "2026-01-01T12:00:00Z",
+  "email": "newemail@example.com",
+  "firebase_uid": "fbuid-t",
+  "id": "00000000-0000-0000-0000-000000000002",
+  "nombre": "New Name"
+}
