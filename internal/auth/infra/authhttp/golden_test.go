@@ -47,7 +47,7 @@ func goldenAssert(t *testing.T, name string, gotBody []byte) {
 		// in this file exercise that path (we never call goldenAssert on a
 		// 204 No Content body), so this is a defensive fallback only.
 		pretty.Reset()
-		pretty.Write(gotBody)
+		_, _ = pretty.Write(gotBody)
 	}
 
 	if *updateGolden {
