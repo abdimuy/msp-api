@@ -41,7 +41,13 @@ func MountRouter(r chi.Router, svc *ventasapp.Service) huma.API {
 	}
 
 	api := humachi.New(r, config)
-	registerOperations(api, NewHandlers(svc))
+	handlers := NewHandlers(svc)
+	registerOperations(api, handlers)
+	// GET imagen is a raw chi route because Huma's response model assumes
+	// structured payloads; streaming arbitrary-size binary blobs (with
+	// ETag + Cache-Control) is cleaner with the standard http.ResponseWriter.
+	// Documented manually in api/openapi.yaml.
+	mountObtenerImagen(r, handlers)
 	return api
 }
 

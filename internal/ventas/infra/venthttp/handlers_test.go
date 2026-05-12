@@ -170,6 +170,18 @@ func buildRouter(t *testing.T, svc *ventasapp.Service, cu auth.CurrentUser) http
 	return r
 }
 
+// buildRouterNoAuth mounts the ventas routes WITHOUT planting a
+// CurrentUser, so every request lands at the handler anonymously. Used
+// by negative-path tests that pin the 401 unauthenticated response on
+// endpoints that bypass Huma's own auth model (eg. the streaming GET
+// imagen handler).
+func buildRouterNoAuth(t *testing.T, svc *ventasapp.Service) http.Handler {
+	t.Helper()
+	r := chi.NewRouter()
+	venthttp.MountRouter(r, svc)
+	return r
+}
+
 // fullPerms returns a CurrentUser with every ventas permission code so tests
 // pass the authorization checks by default.
 func fullPerms(id uuid.UUID) auth.CurrentUser {
