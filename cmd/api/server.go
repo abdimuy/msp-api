@@ -11,12 +11,27 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.uber.org/fx"
 
+	authapp "github.com/abdimuy/msp-api/internal/auth/app"
+	"github.com/abdimuy/msp-api/internal/auth/infra/authhttp"
+	"github.com/abdimuy/msp-api/internal/auth/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/config"
 	"github.com/abdimuy/msp-api/internal/platform/healthcheck"
+	"github.com/abdimuy/msp-api/internal/platform/idempotency"
 	"github.com/abdimuy/msp-api/internal/platform/middleware"
+	ventasapp "github.com/abdimuy/msp-api/internal/ventas/app"
+	"github.com/abdimuy/msp-api/internal/ventas/infra/venthttp"
 )
+
+// otelMiddleware wraps the chi-served handler chain in otelhttp, so every
+// incoming request gets a server span. Sits BEFORE RequestID so the span is
+// the outermost context and the request_id slot inside the span can later be
+// correlated by the access-log middleware.
+func otelMiddleware(next http.Handler) http.Handler {
+	return otelhttp.NewHandler(next, "msp-api.http")
+}
 
 // httpServer wraps *http.Server so we can implement the lifecycle.Hooks
 // interface and orchestrate graceful shutdown.
@@ -50,13 +65,25 @@ func (s *httpServer) Stop(ctx context.Context) error {
 	return s.srv.Shutdown(shutdownCtx)
 }
 
-// provideHTTPServer wires the chi router with the standard middleware stack
-// and the platform endpoints (healthz/readyz/version).
-func provideHTTPServer(cfg *config.Config, health *healthcheck.Service) *httpServer {
+// provideHTTPServer wires the chi router with the standard middleware stack,
+// the platform endpoints (healthz/readyz/version), and mounts the per-module
+// routers under /v2.
+func provideHTTPServer(
+	cfg *config.Config,
+	health *healthcheck.Service,
+	authSvc *authapp.Service,
+	authFirebase outbound.FirebaseClient,
+	authUsuarios outbound.UsuarioRepo,
+	idemStore idempotency.Store,
+	ventasSvc *ventasapp.Service,
+) *httpServer {
 	r := chi.NewRouter()
 
-	// Middleware applied to every request.
+	// Middleware applied to every request. otelMiddleware sits outermost so
+	// every other middleware runs inside a server span; RequestID then adds
+	// the request_id attribute the access log correlates against.
 	r.Use(
+		otelMiddleware,
 		middleware.RequestID,
 		middleware.Recovery,
 		middleware.AccessLog,
@@ -72,9 +99,26 @@ func provideHTTPServer(cfg *config.Config, health *healthcheck.Service) *httpSer
 	r.Get("/readyz", health.Readiness)
 	r.Get("/version", versionHandler)
 
-	// API surface. Module routers will mount under /v2 once they exist.
-	r.Route("/v2", func(_ chi.Router) {
-		// modules will register here.
+	// Shared chi middlewares for protected modules under /v2.
+	authn := authhttp.NewAuthnMiddleware(authFirebase, authUsuarios)
+	idem := idempotency.Middleware(idempotency.Config{
+		Store:      idemStore,
+		TTL:        24 * time.Hour,
+		Methods:    []string{http.MethodPost, http.MethodPatch},
+		RequireKey: false,
+	})
+
+	// API surface. Module routers mount under /v2.
+	r.Route("/v2", func(r chi.Router) {
+		authhttp.MountRouter(r, authSvc, authFirebase, authUsuarios, idemStore)
+
+		// Ventas routes share the authentication and idempotency chi
+		// middlewares; per-route authorization (RequirePermission) is enforced
+		// inside each Huma handler against the planted CurrentUser.
+		r.Group(func(r chi.Router) {
+			r.Use(authn.Handler, idem)
+			venthttp.MountRouter(r, ventasSvc)
+		})
 	})
 
 	return &httpServer{

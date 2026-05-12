@@ -1,0 +1,714 @@
+openapi: 3.1.0
+info:
+  title: msp-api Auth Module
+  version: "0.1.0"
+  description: |
+    HTTP contract for the auth module of msp-api. Covers Firebase-backed login,
+    the current user projection, and CRUD over usuarios, roles, and the
+    permission catalog. All error responses follow RFC 9457 Problem Details.
+servers:
+  - url: /v2
+    description: API v2 sub-router (all auth paths are mounted under /v2)
+security:
+  - bearerAuth: []
+tags:
+  - name: auth
+    description: Anonymous session endpoints.
+  - name: session
+    description: Authenticated session introspection.
+  - name: usuarios
+    description: User CRUD and role assignment.
+  - name: roles
+    description: Role CRUD and permission assignment.
+  - name: permisos
+    description: Permission catalog.
+
+paths:
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Verify a Firebase ID token and return the CurrentUser projection.
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUser"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /me:
+    get:
+      tags: [session]
+      summary: Return the authenticated user's CurrentUser projection.
+      operationId: getMe
+      responses:
+        "200":
+          description: Current user payload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUser"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /usuarios/:
+    get:
+      tags: [usuarios]
+      summary: List usuarios (cursor-paginated).
+      operationId: listarUsuarios
+      parameters:
+        - $ref: "#/components/parameters/AfterCursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of usuarios.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsuarioListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /usuarios/{id}:
+    parameters:
+      - $ref: "#/components/parameters/UsuarioID"
+    get:
+      tags: [usuarios]
+      summary: Get a single usuario by ID.
+      operationId: obtenerUsuario
+      responses:
+        "200":
+          description: Usuario found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Usuario"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+    patch:
+      tags: [usuarios]
+      summary: Update an existing usuario.
+      operationId: actualizarUsuario
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActualizarUsuarioRequest"
+      responses:
+        "200":
+          description: Updated usuario.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Usuario"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+    delete:
+      tags: [usuarios]
+      summary: Deactivate a usuario (soft delete).
+      operationId: desactivarUsuario
+      responses:
+        "204":
+          description: Usuario deactivated.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /usuarios/{id}/roles:
+    parameters:
+      - $ref: "#/components/parameters/UsuarioID"
+    post:
+      tags: [usuarios]
+      summary: Assign a role to a usuario.
+      operationId: asignarRolAUsuario
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AsignarRolRequest"
+      responses:
+        "204":
+          description: Role assigned.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /usuarios/{id}/roles/{rol_id}:
+    parameters:
+      - $ref: "#/components/parameters/UsuarioID"
+      - $ref: "#/components/parameters/RolIDPath"
+    delete:
+      tags: [usuarios]
+      summary: Revoke a role from a usuario.
+      operationId: revocarRolDeUsuario
+      responses:
+        "204":
+          description: Role revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /roles/:
+    get:
+      tags: [roles]
+      summary: List roles (cursor-paginated).
+      operationId: listarRoles
+      parameters:
+        - $ref: "#/components/parameters/AfterCursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of roles.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RolListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+    post:
+      tags: [roles]
+      summary: Create a new role.
+      operationId: crearRol
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CrearRolRequest"
+      responses:
+        "201":
+          description: Role created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Rol"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /roles/{id}:
+    parameters:
+      - $ref: "#/components/parameters/RolID"
+    get:
+      tags: [roles]
+      summary: Get a single role by ID.
+      operationId: obtenerRol
+      responses:
+        "200":
+          description: Role found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Rol"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+    patch:
+      tags: [roles]
+      summary: Update a role's name or description.
+      operationId: actualizarRol
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActualizarRolRequest"
+      responses:
+        "200":
+          description: Updated role.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Rol"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+    delete:
+      tags: [roles]
+      summary: Deactivate a role.
+      operationId: desactivarRol
+      responses:
+        "204":
+          description: Role deactivated.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /roles/{id}/permisos:
+    parameters:
+      - $ref: "#/components/parameters/RolID"
+    post:
+      tags: [roles]
+      summary: Assign a permission to a role.
+      operationId: asignarPermisoARol
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AsignarPermisoRequest"
+      responses:
+        "204":
+          description: Permission assigned.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /roles/{id}/permisos/{codigo}:
+    parameters:
+      - $ref: "#/components/parameters/RolID"
+      - $ref: "#/components/parameters/PermisoCodigo"
+    delete:
+      tags: [roles]
+      summary: Revoke a permission from a role.
+      operationId: revocarPermisoDeRol
+      responses:
+        "204":
+          description: Permission revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /permisos:
+    get:
+      tags: [permisos]
+      summary: List every permission code in the catalog.
+      operationId: listarPermisos
+      responses:
+        "200":
+          description: Permission catalog.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PermisoListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Firebase ID Token
+
+  parameters:
+    UsuarioID:
+      name: id
+      in: path
+      required: true
+      description: Usuario UUID.
+      schema:
+        type: string
+        format: uuid
+    RolID:
+      name: id
+      in: path
+      required: true
+      description: Role UUID.
+      schema:
+        type: string
+        format: uuid
+    RolIDPath:
+      name: rol_id
+      in: path
+      required: true
+      description: Role UUID.
+      schema:
+        type: string
+        format: uuid
+    PermisoCodigo:
+      name: codigo
+      in: path
+      required: true
+      description: Permission code.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 60
+    AfterCursor:
+      name: after
+      in: query
+      required: false
+      description: Opaque cursor returned by a previous list response.
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Page size (1..500, default 50).
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 50
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid authentication.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Forbidden:
+      description: The authenticated user lacks the required permission or is inactive.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    NotFound:
+      description: The requested resource does not exist.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    UnprocessableEntity:
+      description: The request body or parameters failed validation.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+
+  schemas:
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [id_token]
+      properties:
+        id_token:
+          type: string
+          minLength: 1
+          description: Firebase ID token issued by the client SDK.
+
+    ActualizarUsuarioRequest:
+      type: object
+      additionalProperties: false
+      required: [email, nombre]
+      properties:
+        email:
+          type: string
+          format: email
+        nombre:
+          type: string
+          minLength: 1
+          maxLength: 200
+        telefono:
+          type:
+            - string
+            - "null"
+        almacen_id:
+          type:
+            - integer
+            - "null"
+
+    AsignarRolRequest:
+      type: object
+      additionalProperties: false
+      required: [rol_id]
+      properties:
+        rol_id:
+          type: string
+          format: uuid
+
+    CrearRolRequest:
+      type: object
+      additionalProperties: false
+      required: [nombre]
+      properties:
+        nombre:
+          type: string
+          minLength: 1
+          maxLength: 50
+        description:
+          type:
+            - string
+            - "null"
+
+    ActualizarRolRequest:
+      type: object
+      additionalProperties: false
+      required: [nombre]
+      properties:
+        nombre:
+          type: string
+          minLength: 1
+          maxLength: 50
+        description:
+          type:
+            - string
+            - "null"
+
+    AsignarPermisoRequest:
+      type: object
+      additionalProperties: false
+      required: [codigo]
+      properties:
+        codigo:
+          type: string
+          minLength: 1
+          maxLength: 60
+
+    Usuario:
+      type: object
+      additionalProperties: false
+      required: [id, firebase_uid, email, nombre, activo, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        firebase_uid:
+          type: string
+        email:
+          type: string
+          format: email
+        nombre:
+          type: string
+        telefono:
+          type:
+            - string
+            - "null"
+        almacen_id:
+          type:
+            - integer
+            - "null"
+        activo:
+          type: boolean
+        created_at:
+          type: string
+        updated_at:
+          type: string
+
+    Rol:
+      type: object
+      additionalProperties: false
+      required: [id, nombre, inmutable, activo, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        nombre:
+          type: string
+        description:
+          type:
+            - string
+            - "null"
+        inmutable:
+          type: boolean
+        activo:
+          type: boolean
+        created_at:
+          type: string
+        updated_at:
+          type: string
+
+    Permiso:
+      type: object
+      additionalProperties: false
+      required: [codigo, description, categoria]
+      properties:
+        codigo:
+          type: string
+        description:
+          type: string
+        categoria:
+          type: string
+
+    CurrentUser:
+      type: object
+      additionalProperties: false
+      required: [id, firebase_uid, email, nombre, permisos]
+      properties:
+        id:
+          type: string
+          format: uuid
+        firebase_uid:
+          type: string
+        email:
+          type: string
+          format: email
+        nombre:
+          type: string
+        almacen_id:
+          type:
+            - integer
+            - "null"
+        permisos:
+          type: array
+          items:
+            type: string
+
+    Pagination:
+      type: object
+      additionalProperties: false
+      description: |
+        Cursor-pagination envelope shared by every list endpoint.
+        `next_cursor` is omitted (or empty) on the last page.
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {}
+        next_cursor:
+          type: string
+
+    UsuarioListResponse:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Usuario"
+        next_cursor:
+          type: string
+
+    RolListResponse:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Rol"
+        next_cursor:
+          type: string
+
+    PermisoListResponse:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Permiso"
+        next_cursor:
+          type: string
+
+    FieldError:
+      type: object
+      additionalProperties: false
+      required: [field, code, message]
+      properties:
+        field:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
+
+    Problem:
+      type: object
+      additionalProperties: true
+      description: RFC 9457 Problem Details document.
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          description: URI identifying the problem class.
+        title:
+          type: string
+          description: Short, human-readable summary.
+        status:
+          type: integer
+          minimum: 100
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+        code:
+          type: string
+          description: Machine-readable, snake_case stable error code.
+        request_id:
+          type: string
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/FieldError"
+        fields:
+          type: object
+          additionalProperties: true
