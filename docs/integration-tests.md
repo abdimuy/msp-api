@@ -218,9 +218,28 @@ Two patterns; pick one per test, not both:
 
 `WithTestTransaction`. Round-trip Save → Get; expired keys; UPSERT on duplicate. The middleware itself is unit-tested with the in-memory store; integration tests cover only the SQL layer.
 
-## Firebird mirror tests (future)
+## Firebird tests
 
-Separate env var `FIREBIRD=1`. Independent `TestMain` reads `MICROSIP_TEST_DSN`. Day-to-day CI runs only `INTEGRATION=1`; a nightly job runs `INTEGRATION=1 FIREBIRD=1`. Most mirror logic is exercised against Postgres-only fakes — Firebird-bound tests verify the connector and SQL parsing only.
+Firebird tests run against the **real Microsip dev database** (`mueblera-firebird` container) — there is no blank/test Firebird because the Microsip schema is proprietary and can't be recreated from scratch.
+
+### Hard contract
+
+1. **Rollback-only writes.** Tests touch tables only inside `fbtestutil.WithTestTransaction(t, pool, fn)` (or `firebird.TxManager.RunInTx` that returns an error). The defer-rollback guarantees nothing escapes to dev state.
+2. **No DDL.** No `CREATE TABLE`, `DROP TABLE`, `ALTER TABLE`. The dev DB mirrors production schema; tests consume what's there.
+3. **Self-contained writes.** Tests insert sentinel rows with fresh UUIDs (no FIREBASE_UID / EMAIL collisions) and verify behavior; rollback at end. See `internal/platform/firebird/transaction_test.go` for the pattern (`insertSentinelUser`).
+4. **No commit helper.** `fbtestutil.WithTestCommit` was intentionally removed — there's no safe path to commit against a shared production-like DB.
+
+### Gating
+
+`fbtestutil.NewTestFirebirdPool(t)` skips the test when `FB_DATABASE` is unset. The standard `FB_HOST / FB_PORT / FB_USER / FB_PASSWORD / FB_CHARSET` env vars are read straight from the process environment (loaded from `.env` by the Makefile).
+
+The full quality gate becomes:
+
+- `make test-unit` → pure unit tests, no DB, fast.
+- `make test-integration` → Postgres integration via testcontainers.
+- `make test-firebird` → Firebird integration against the running `mueblera-firebird` container. Fails fast if `FB_DATABASE` is unset.
+
+Pure unit tests inside the firebird package (`errors_test.go`, `retry_test.go`) live in `package firebird` (white-box) and run under `go test -short` without any env vars.
 
 ## Performance targets
 

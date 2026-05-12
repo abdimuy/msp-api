@@ -70,9 +70,11 @@ This API targets **Windows Server 2016 legacy** for production. That means:
 
 The "modern stack" version of this app is **bonanza-api** — a separate project. Don't pollute msp-api with bonanza's stack assumptions.
 
-### 6. No object storage at the platform layer (yet)
+### 6. Blob storage is local filesystem only
 
-If/when we need to store files (photos of cobranza receipts, INE photos, etc.) the chosen backend will be **Cloudflare R2** (S3-compatible, cheap, zero infra) accessed via `minio-go/v7`. We do **not** add this until a module needs it — no preemptive `internal/platform/storage/`.
+Image uploads (cobranza receipts, INE photos, evidencia de venta) live on the API server's local disk under `STORAGE_DIR`. The `outbound.StorageProvider` port in each module has a single concrete implementation (`FilesystemProvider`) — no cloud backends, no selector, no stub for "future" cloud storage. See ADR-0003.
+
+If a future module ever needs cloud storage, add a new concrete implementation alongside `FilesystemProvider` and wire it at the composition root. Do not reintroduce a configurable selector "just in case".
 
 ### 7. Everything runs locally — no remote CI/CD
 
@@ -121,6 +123,19 @@ Tables that mirror Microsip 1:1 (`mirror_*`) and pre-computed read models (`proj
 ```
 
 `type` ∈ `feat | fix | chore | docs | refactor | test | perf | build | ci | style`. Enforced by lefthook commit-msg hook.
+
+## When building a new module
+
+Read `docs/module-standards/MODULE_TEMPLATE.md` FIRST. Then for the specifics:
+
+- `docs/module-standards/AGGREGATE_PATTERNS.md` — entity design (private fields, two constructors, child entities, iter.Seq, domain events).
+- `docs/module-standards/CQRS_PATTERN.md` — when to split commands and queries across files.
+- `docs/module-standards/HUMA_WIRING.md` — Huma + chi composition, DTO conventions, multipart.
+- `docs/module-standards/TESTING_REQUIREMENTS.md` — coverage gates, security sweep, mutation testing.
+
+The `auth` module is the reference for simple modules (single aggregate, no children, chi + manual openapi.yaml).
+
+The `ventas` module is the reference for complex modules (aggregate with child collections, CQRS, Huma auto-OpenAPI, blob storage).
 
 ## When in doubt
 
