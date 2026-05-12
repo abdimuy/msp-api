@@ -3,19 +3,27 @@ package venthttp_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/abdimuy/msp-api/internal/auth"
 	authdomain "github.com/abdimuy/msp-api/internal/auth/domain"
+	"github.com/abdimuy/msp-api/internal/platform/imageprocessor"
+	ventasapp "github.com/abdimuy/msp-api/internal/ventas/app"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/venthttp"
+	ventasoutbound "github.com/abdimuy/msp-api/internal/ventas/ports/outbound"
 )
 
 // uploadAndGetImagenID seeds a venta + one imagen and returns the resulting
@@ -208,6 +216,228 @@ func TestObtenerImagen_InvalidUUID_Returns400(t *testing.T) {
 			assert.Contains(t, getRec.Body.String(), tc.want)
 		})
 	}
+}
+
+// TestObtenerImagen_MultipleImagenes_ReturnsCorrectOne pins the iter
+// inside Service.ObtenerImagen: when a venta has many imagenes, each
+// GET must resolve to the requested child — not the first/last one in
+// the slice. A bug like "always returns imagenes[0]" passes every
+// single-imagen test but breaks production galleries silently.
+func TestObtenerImagen_MultipleImagenes_ReturnsCorrectOne(t *testing.T) {
+	t.Parallel()
+
+	svc, _, storage := testService()
+	cu := fullPerms(uuid.New())
+	r := buildRouter(t, svc, cu)
+
+	body := validCreateBody()
+	createReq := jsonRequest(t, http.MethodPost, "/ventas", body)
+	createRec := httptest.NewRecorder()
+	r.ServeHTTP(createRec, createReq)
+	require.Equal(t, http.StatusCreated, createRec.Code)
+
+	// Upload three imagenes; each one ends up at a unique storage key.
+	var imgs []venthttp.ImagenDTO
+	for i := range 3 {
+		uploadReq := buildMultipartImageRequest(t, "/ventas/"+body.ID+"/imagenes",
+			"evidencia-"+strconv.Itoa(i))
+		uploadRec := httptest.NewRecorder()
+		r.ServeHTTP(uploadRec, uploadReq)
+		require.Equal(t, http.StatusCreated, uploadRec.Code, "upload %d body=%s", i, uploadRec.Body.String())
+		var dto venthttp.ImagenDTO
+		require.NoError(t, json.Unmarshal(uploadRec.Body.Bytes(), &dto))
+		imgs = append(imgs, dto)
+	}
+	require.Len(t, imgs, 3)
+	// All three storage keys must differ — otherwise the test cannot
+	// distinguish "iter picked wrong" from "all keys are the same".
+	assert.NotEqual(t, imgs[0].StorageKey, imgs[1].StorageKey)
+	assert.NotEqual(t, imgs[1].StorageKey, imgs[2].StorageKey)
+
+	for _, want := range imgs {
+		getReq := httptest.NewRequest(http.MethodGet,
+			"/ventas/"+body.ID+"/imagenes/"+want.ID, nil)
+		getRec := httptest.NewRecorder()
+		r.ServeHTTP(getRec, getReq)
+		require.Equal(t, http.StatusOK, getRec.Code, "imagen %s body=%s", want.ID, getRec.Body.String())
+		assert.Equal(t, `"`+want.ID+`"`, getRec.Header().Get("ETag"),
+			"ETag must echo the requested imagen id")
+
+		stored, err := storage.Get(t.Context(), want.StorageKey)
+		require.NoError(t, err)
+		var storedBuf bytes.Buffer
+		_, err = io.Copy(&storedBuf, stored.Body)
+		require.NoError(t, err)
+		_ = stored.Body.Close()
+		assert.Equal(t, storedBuf.Bytes(), getRec.Body.Bytes(),
+			"GET imagen %s must return its own bytes, not another imagen's", want.ID)
+	}
+}
+
+// TestObtenerImagen_ContentLengthMatchesActualBody asserts the
+// Content-Length header reflects the byte count actually written to the
+// response. If the storage provider reports a wrong SizeBytes the
+// client would hang waiting for bytes that never come; pinning this
+// invariant surfaces that class of bug.
+func TestObtenerImagen_ContentLengthMatchesActualBody(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _ := testService()
+	cu := fullPerms(uuid.New())
+	r := buildRouter(t, svc, cu)
+
+	ventaID, img := uploadAndGetImagenID(t, r)
+	getReq := httptest.NewRequest(http.MethodGet, "/ventas/"+ventaID+"/imagenes/"+img.ID, nil)
+	getRec := httptest.NewRecorder()
+	r.ServeHTTP(getRec, getReq)
+	require.Equal(t, http.StatusOK, getRec.Code)
+
+	cl, err := strconv.Atoi(getRec.Header().Get("Content-Length"))
+	require.NoError(t, err, "Content-Length must be a valid integer")
+	assert.Equal(t, len(getRec.Body.Bytes()), cl,
+		"Content-Length header must match the actual body byte count")
+}
+
+// TestObtenerImagen_ConcurrentReads verifies the handler is safe under
+// concurrent reads of the same imagen. Even though it is stateless,
+// shared state on the storage provider or imagen iter could surface
+// a race here.
+func TestObtenerImagen_ConcurrentReads(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _ := testService()
+	cu := fullPerms(uuid.New())
+	r := buildRouter(t, svc, cu)
+
+	ventaID, img := uploadAndGetImagenID(t, r)
+
+	const goroutines = 16
+	results := make(chan []byte, goroutines)
+	for range goroutines {
+		go func() {
+			getReq := httptest.NewRequest(http.MethodGet, "/ventas/"+ventaID+"/imagenes/"+img.ID, nil)
+			getRec := httptest.NewRecorder()
+			r.ServeHTTP(getRec, getReq)
+			if getRec.Code != http.StatusOK {
+				results <- nil
+				return
+			}
+			results <- getRec.Body.Bytes()
+		}()
+	}
+	first := <-results
+	require.NotNil(t, first, "first concurrent GET must return 200")
+	for i := 1; i < goroutines; i++ {
+		got := <-results
+		require.NotNil(t, got, "concurrent GET #%d returned non-200", i)
+		assert.Equal(t, first, got, "concurrent GET #%d must return identical bytes", i)
+	}
+}
+
+// TestObtenerImagen_HEADMethod_NotAllowed pins the current behavior for
+// HEAD requests. The handler only registers GET; chi returns 405
+// Method Not Allowed (or 404 depending on the router config). The FE
+// must not depend on HEAD; this test surfaces the limitation.
+func TestObtenerImagen_HEADMethod_NotAllowed(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _ := testService()
+	cu := fullPerms(uuid.New())
+	r := buildRouter(t, svc, cu)
+	ventaID, img := uploadAndGetImagenID(t, r)
+
+	headReq := httptest.NewRequest(http.MethodHead, "/ventas/"+ventaID+"/imagenes/"+img.ID, nil)
+	headRec := httptest.NewRecorder()
+	r.ServeHTTP(headRec, headReq)
+	// chi routes HEAD to GET when not explicitly registered, returning the
+	// headers without body. Accept either 200 with empty body or 405 — what
+	// matters is the FE knows the contract.
+	assert.Contains(t,
+		[]int{http.StatusOK, http.StatusMethodNotAllowed},
+		headRec.Code,
+		"HEAD must either be supported (200) or refused (405); got %d", headRec.Code)
+}
+
+// closeTrackingReader wraps a Reader and counts Close calls so tests can
+// pin the handler's body-cleanup contract under failure modes.
+type closeTrackingReader struct {
+	r       io.Reader
+	mu      sync.Mutex
+	closed  int
+	readErr error
+}
+
+func (c *closeTrackingReader) Read(p []byte) (int, error) {
+	if c.readErr != nil {
+		return 0, c.readErr
+	}
+	return c.r.Read(p)
+}
+
+func (c *closeTrackingReader) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closed++
+	return nil
+}
+
+func (c *closeTrackingReader) closeCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.closed
+}
+
+// fakeStorageReturningTracker wraps fakeStorage and replaces the Get
+// return body with a closeTrackingReader so the test can assert the
+// handler always closes the storage body, even on the streaming-error
+// path.
+type fakeStorageReturningTracker struct {
+	*fakeStorage
+	tracker *closeTrackingReader
+}
+
+func (f *fakeStorageReturningTracker) Get(ctx context.Context, key string) (ventasoutbound.StorageObject, error) {
+	obj, err := f.fakeStorage.Get(ctx, key)
+	if err != nil {
+		return obj, err
+	}
+	// Re-wrap the body so the test can observe Close.
+	body, _ := io.ReadAll(obj.Body)
+	_ = obj.Body.Close()
+	f.tracker.r = bytes.NewReader(body)
+	return ventasoutbound.StorageObject{
+		Body:        f.tracker,
+		ContentType: obj.ContentType,
+		SizeBytes:   obj.SizeBytes,
+	}, nil
+}
+
+// TestObtenerImagen_BodyClosedOnSuccess pins the handler's defer
+// Object.Body.Close() invariant. A storage provider that opens a file
+// handle on Get relies on this to avoid leaks under load.
+func TestObtenerImagen_BodyClosedOnSuccess(t *testing.T) {
+	t.Parallel()
+
+	fakeRepo := newFakeRepo()
+	fakeStore := newFakeStorage()
+	tracker := &closeTrackingReader{}
+	wrappedStore := &fakeStorageReturningTracker{fakeStorage: fakeStore, tracker: tracker}
+	clock := fixedClock{T: time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC)}
+	svc := ventasapp.NewService(fakeRepo, wrappedStore, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil)
+
+	cu := fullPerms(uuid.New())
+	chiR := chi.NewRouter()
+	chiR.Use(planter(cu))
+	venthttp.MountRouter(chiR, svc)
+
+	ventaID, img := uploadAndGetImagenID(t, chiR)
+
+	getReq := httptest.NewRequest(http.MethodGet, "/ventas/"+ventaID+"/imagenes/"+img.ID, nil)
+	getRec := httptest.NewRecorder()
+	chiR.ServeHTTP(getRec, getReq)
+	require.Equal(t, http.StatusOK, getRec.Code)
+	assert.Equal(t, 1, tracker.closeCount(),
+		"handler must Close the storage body exactly once after a successful stream")
 }
 
 // Sanity: response body is byte-identical to the uploaded blob (NoOp

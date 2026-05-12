@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +26,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 	"github.com/abdimuy/msp-api/internal/platform/imageprocessor"
 	ventasapp "github.com/abdimuy/msp-api/internal/ventas/app"
+	"github.com/abdimuy/msp-api/internal/ventas/infra/storage"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/ventfb"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/venthttp"
 )
@@ -508,6 +510,128 @@ func TestE2E_Firebird_MultiplesImagenes(t *testing.T) {
 		assert.True(t, gotIDs[imagenIDs[0]], "first imagen id must still be present")
 		assert.False(t, gotIDs[middle], "deleted imagen id must be gone")
 		assert.True(t, gotIDs[imagenIDs[2]], "third imagen id must still be present")
+	})
+}
+
+// TestE2E_Firebird_ObtenerImagen exercises the full read-back stack with
+// a REAL FilesystemProvider on disk + REAL ventfb repo: upload one
+// imagen, GET it, verify the bytes on the wire are byte-identical to the
+// uploaded payload AND that the FilesystemProvider's recorded MIME +
+// size came back through the handler. Catches regressions in the
+// ventfb FindByID hydration path that fakeRepo cannot see.
+//
+//nolint:paralleltest // serialize Firebird E2E tests.
+func TestE2E_Firebird_ObtenerImagen(t *testing.T) {
+	pool := e2eTestPool(t)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		usuarioID := seedE2EUsuario(ctx, t, pool)
+
+		repo := ventfb.NewVentaRepo(pool)
+		fsStore, err := storage.NewFilesystemProvider(t.TempDir())
+		require.NoError(t, err, "filesystem provider must build under t.TempDir")
+		clock := fixedClock{T: e2eFixedTime()}
+		svc := ventasapp.NewService(repo, fsStore, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil)
+
+		cu := e2eFullPermsUser(usuarioID)
+		r := chi.NewRouter()
+		r.Use(txInjector(ctx))
+		r.Use(planter(cu))
+		venthttp.MountRouter(r, svc)
+
+		body := validCreateBody()
+		body.Vendedores[0].UsuarioID = usuarioID.String()
+		req := jsonRequest(t, http.MethodPost, "/ventas", body)
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
+
+		uploadedBytes := makePNGBody(t, 32, 32)
+		uploadReq := buildMultipartRequestWithBody(t, "/ventas/"+body.ID+"/imagenes",
+			"e2e-evidencia.png", "image/png", uploadedBytes)
+		uploadRec := httptest.NewRecorder()
+		r.ServeHTTP(uploadRec, uploadReq)
+		require.Equal(t, http.StatusCreated, uploadRec.Code, "upload body=%s", uploadRec.Body.String())
+
+		var img venthttp.ImagenDTO
+		require.NoError(t, json.Unmarshal(uploadRec.Body.Bytes(), &img))
+
+		getReq := httptest.NewRequest(http.MethodGet,
+			"/ventas/"+body.ID+"/imagenes/"+img.ID, nil)
+		getRec := httptest.NewRecorder()
+		r.ServeHTTP(getRec, getReq)
+
+		require.Equal(t, http.StatusOK, getRec.Code, "get body=%s", getRec.Body.String())
+		assert.Equal(t, "image/png", getRec.Header().Get("Content-Type"),
+			"real filesystem storage reads MIME from the sidecar")
+		assert.Equal(t, `"`+img.ID+`"`, getRec.Header().Get("ETag"))
+		assert.Equal(t, "private, max-age=31536000, immutable", getRec.Header().Get("Cache-Control"))
+		assert.Equal(t, uploadedBytes, getRec.Body.Bytes(),
+			"E2E: GET body must equal the uploaded blob byte-for-byte")
+	})
+}
+
+// TestE2E_Firebird_ObtenerImagen_MultiplesImagenes verifies that when a
+// venta has many imagenes, each GET resolves to the correct child — the
+// iter inside ObtenerImagen must not silently return the first/last
+// item regardless of the requested id. This is the test that catches
+// "iter selects wrong imagen" regressions which the unit tests with a
+// single-imagen fixture cannot.
+//
+//nolint:paralleltest // serialize Firebird E2E tests.
+func TestE2E_Firebird_ObtenerImagen_MultiplesImagenes(t *testing.T) {
+	pool := e2eTestPool(t)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		usuarioID := seedE2EUsuario(ctx, t, pool)
+
+		repo := ventfb.NewVentaRepo(pool)
+		fsStore, err := storage.NewFilesystemProvider(t.TempDir())
+		require.NoError(t, err)
+		clock := fixedClock{T: e2eFixedTime()}
+		svc := ventasapp.NewService(repo, fsStore, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil)
+
+		cu := e2eFullPermsUser(usuarioID)
+		r := chi.NewRouter()
+		r.Use(txInjector(ctx))
+		r.Use(planter(cu))
+		venthttp.MountRouter(r, svc)
+
+		body := validCreateBody()
+		body.Vendedores[0].UsuarioID = usuarioID.String()
+		req := jsonRequest(t, http.MethodPost, "/ventas", body)
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusCreated, rec.Code)
+
+		// Upload three distinct imagenes; record each one's expected bytes.
+		expected := map[string][]byte{}
+		for i := range 3 {
+			payload := makePNGBody(t, 16+i*4, 16+i*4)
+			uploadReq := buildMultipartRequestWithBody(t, "/ventas/"+body.ID+"/imagenes",
+				fmt.Sprintf("img-%d.png", i), "image/png", payload)
+			uploadRec := httptest.NewRecorder()
+			r.ServeHTTP(uploadRec, uploadReq)
+			require.Equal(t, http.StatusCreated, uploadRec.Code, "upload %d body=%s", i, uploadRec.Body.String())
+			var dto venthttp.ImagenDTO
+			require.NoError(t, json.Unmarshal(uploadRec.Body.Bytes(), &dto))
+			expected[dto.ID] = payload
+		}
+		require.Len(t, expected, 3, "three distinct imagen ids must come back")
+
+		// GET each one and verify the body matches that imagen's payload —
+		// not another imagen's.
+		for id, want := range expected {
+			getReq := httptest.NewRequest(http.MethodGet,
+				"/ventas/"+body.ID+"/imagenes/"+id, nil)
+			getRec := httptest.NewRecorder()
+			r.ServeHTTP(getRec, getReq)
+			require.Equal(t, http.StatusOK, getRec.Code, "get %s body=%s", id, getRec.Body.String())
+			assert.Equal(t, want, getRec.Body.Bytes(),
+				"GET imagen %s must return ITS payload, not any other imagen's", id)
+			assert.Equal(t, `"`+id+`"`, getRec.Header().Get("ETag"),
+				"ETag must reflect the actual imagen id requested")
+		}
 	})
 }
 
