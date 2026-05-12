@@ -1,0 +1,61 @@
+# Mutation testing config (go-gremlins/gremlins).
+# Run with `make test-mutation`. Slow — only run on demand (nightly / before
+# merging a high-stakes refactor). Field names track the gremlins binary
+# installed locally; adapt if upgrading.
+
+silent: false
+dry-run: false
+output: ""
+
+# At least 75% of viable mutants must be killed for the run to pass.
+# Module-coverage gating is disabled (we already track go test coverage
+# separately via `make coverage`).
+threshold:
+  efficacy: 75
+  m-coverage: 0
+
+# Worker tuning. `count: -1` lets gremlins use GOMAXPROCS-1 so the dev
+# machine stays responsive while a run is in progress.
+workers:
+  count: -1
+
+test-cpu: 2
+timeout-coefficient: 3
+
+# Mutators. Enable the full default set — disable selectively only after
+# we observe a mutator producing too many equivalent/uninteresting mutants
+# on this codebase.
+mutants:
+  arithmetic-base:
+    enabled: true
+  conditionals-boundary:
+    enabled: true
+  conditionals-negation:
+    enabled: true
+  increment-decrement:
+    enabled: true
+  invert-assignments:
+    enabled: true
+  invert-bitwise:
+    enabled: true
+  invert-bitwise-assignments:
+    enabled: true
+  invert-logical:
+    enabled: true
+  invert-loop-ctrl:
+    enabled: true
+  invert-negatives:
+    enabled: true
+  remove-self-assignments:
+    enabled: true
+  invert-shift-assignments:
+    enabled: true
+
+# Skip test files, generated code, and test helpers — mutating them adds
+# noise without measuring production-code test quality.
+exclude:
+  - "**/testutil/**"
+  - "**/fbtestutil/**"
+  - "**/testdata/**"
+  - "**/*_test.go"
+  - "**/generated/**"

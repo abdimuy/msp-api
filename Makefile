@@ -1,4 +1,4 @@
-.PHONY: help setup build run dev test test-unit test-integration test-all lint lint-fix fmt generate migrate-up migrate-down migrate-create migrate-version clean db-test-up db-test-down db-test-reset db-test-prune db-test-url
+.PHONY: help setup build run dev test test-unit test-integration test-all test-mutation test-mutation-domain test-mutation-app lint lint-fix fmt generate migrate-up migrate-down migrate-create migrate-version clean db-test-up db-test-down db-test-reset db-test-prune db-test-url test-firebird test-firebird-all coverage-auth coverage-auth-full
 
 # ── Config ───────────────────────────────────────────────────────────
 APP_NAME      := msp-api
@@ -166,6 +166,57 @@ fb-seed-admin: ## Apply admin seed file (must be created from the .example templ
 		(echo "❌ Missing $(FB_SEEDS_DIR)/000001_admin_user.sql — copy from .example and fill in values" && exit 1)
 	docker exec -i $(FB_CONTAINER) /usr/local/firebird/bin/isql \
 		-u $(FB_USER) -p $(FB_PASSWORD) -ch UTF8 $(FB_DATABASE) < $(FB_SEEDS_DIR)/000001_admin_user.sql
+
+# ── Firebird integration tests (against the real Microsip dev DB) ───
+# Tests connect to the same Firebird container the API uses in dev
+# (`mueblera-firebird`) via the FB_* env vars from `.env`. There is no
+# separate test database — the Microsip schema can't be recreated from
+# scratch, so test writes MUST live inside a RunInTx that rolls back
+# (see fbtestutil.WithTestTransaction). No DDL allowed.
+
+test-firebird: ## Run platform Firebird integration tests against the dev Microsip DB (requires FB_DATABASE)
+	@[ -n "$(FB_DATABASE)" ] || (echo "❌ FB_DATABASE not set — start mueblera-firebird and source .env first" && exit 1)
+	$(GO) test ./internal/platform/firebird/... ./internal/platform/fbtestutil/... -race -count=1 -timeout 120s
+
+test-firebird-all: ## Run ALL Firebird-backed tests including module repos (auth + future modules)
+	@[ -n "$(FB_DATABASE)" ] || (echo "❌ FB_DATABASE not set — start mueblera-firebird and source .env first" && exit 1)
+	$(GO) test ./internal/platform/firebird/... ./internal/platform/fbtestutil/... \
+	          ./internal/auth/infra/firebird/... \
+	          -race -count=1 -timeout 180s
+
+coverage-auth: ## Generate per-package coverage report for the auth module (short mode)
+	$(GO) test ./internal/auth/... -count=1 -short -coverprofile=coverage-auth.out -covermode=atomic
+	$(GO) tool cover -func=coverage-auth.out | tail -20
+	$(GO) tool cover -html=coverage-auth.out -o coverage-auth.html
+	@echo "✔ Coverage report: coverage-auth.html"
+
+coverage-auth-full: ## Generate auth coverage INCLUDING Firebird integration tests (requires FB_DATABASE)
+	@[ -n "$(FB_DATABASE)" ] || (echo "❌ FB_DATABASE not set — start mueblera-firebird and source .env first" && exit 1)
+	$(GO) test ./internal/auth/... -count=1 -coverprofile=coverage-auth.out -covermode=atomic -timeout 180s
+	$(GO) tool cover -func=coverage-auth.out | tail -20
+	$(GO) tool cover -html=coverage-auth.out -o coverage-auth.html
+	@echo "✔ Full coverage report: coverage-auth.html"
+
+# ── Mutation testing (gremlins) ──────────────────────────────────────
+# Slow. Run on demand, not on every PR. Targets focus on packages with
+# high business value (domain, app) where false negatives in tests are
+# most costly. Config in .gremlins.yaml. Install with:
+#   go install github.com/go-gremlins/gremlins/cmd/gremlins@latest
+test-mutation: test-mutation-domain test-mutation-app test-mutation-ventas-domain test-mutation-ventas-app ## Run mutation testing on critical packages
+
+test-mutation-domain: ## Run mutation testing on auth/domain only
+	gremlins unleash ./internal/auth/domain/...
+
+test-mutation-app: ## Run mutation testing on auth/app only
+	gremlins unleash ./internal/auth/app/...
+
+test-mutation-ventas: test-mutation-ventas-domain test-mutation-ventas-app ## Run mutation testing on the ventas module (domain + app)
+
+test-mutation-ventas-domain: ## Run mutation testing on ventas/domain only
+	gremlins unleash ./internal/ventas/domain/...
+
+test-mutation-ventas-app: ## Run mutation testing on ventas/app only
+	gremlins unleash ./internal/ventas/app/...
 
 # ── Clean ────────────────────────────────────────────────────────────
 clean: ## Remove build artifacts
