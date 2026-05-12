@@ -3,6 +3,8 @@ tmp/
 dist/
 coverage.out
 coverage.html
+coverage-*.out
+coverage-*.html
 
 .env
 .env.local
