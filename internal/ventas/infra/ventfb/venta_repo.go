@@ -1,0 +1,670 @@
+//nolint:misspell // Spanish vocabulary (productos, etc.) by convention.
+package ventfb
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/abdimuy/msp-api/internal/platform/apperror"
+	"github.com/abdimuy/msp-api/internal/platform/firebird"
+	"github.com/abdimuy/msp-api/internal/ventas/domain"
+	"github.com/abdimuy/msp-api/internal/ventas/ports/outbound"
+)
+
+// errVendedorDuplicado is the apperror surfaced when an INSERT into
+// MSP_VENTAS_VENDEDORES hits the UQ_MSP_VENTAS_VENDEDORES_VENTA_USR unique
+// constraint, i.e. the same (venta_id, vendedor_usuario_id) pair is inserted
+// twice.
+var errVendedorDuplicado = apperror.NewConflict(
+	"venta_vendedor_duplicado",
+	"el vendedor ya está asignado a esta venta",
+)
+
+// VentaRepo is the Firebird-backed implementation of outbound.VentaRepo.
+//
+// Every method routes its queries through firebird.GetQuerier so it
+// transparently joins an ambient transaction installed in the context (used
+// by application services and the test harness) and otherwise falls back to
+// the shared pool.
+type VentaRepo struct {
+	pool *firebird.Pool
+}
+
+// NewVentaRepo builds a VentaRepo wired to the given pool.
+func NewVentaRepo(pool *firebird.Pool) *VentaRepo {
+	return &VentaRepo{pool: pool}
+}
+
+// Compile-time check: VentaRepo satisfies the outbound port.
+var _ outbound.VentaRepo = (*VentaRepo)(nil)
+
+// Save inserts a new venta and every child row (combos → productos →
+// vendedores → imágenes) honoring the FK order. All statements run on the
+// same querier, so callers that already opened a transaction get atomicity
+// for free; callers that did not pay the cost of best-effort cleanup if a
+// later row fails (Firebird treats statement-level errors as recoverable
+// inside a tx, so production paths should always wrap Save in a TxManager).
+//
+// Unique violations on UQ_MSP_VENTAS_VENDEDORES_VENTA_USR are mapped to the
+// domain-meaningful errVendedorDuplicado apperror.
+func (r *VentaRepo) Save(ctx context.Context, v *domain.Venta) error {
+	return r.pool.ExecRetry(ctx, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		if err := r.insertHeader(ctx, q, v); err != nil {
+			return err
+		}
+		if err := r.insertCombos(ctx, q, v); err != nil {
+			return err
+		}
+		if err := r.insertProductos(ctx, q, v); err != nil {
+			return err
+		}
+		if err := r.insertVendedores(ctx, q, v); err != nil {
+			return err
+		}
+		return r.insertImagenes(ctx, q, v)
+	})
+}
+
+func (r *VentaRepo) insertHeader(ctx context.Context, q firebird.Querier, v *domain.Venta) error {
+	args := headerInsertArgs(v)
+	if _, err := q.ExecContext(ctx, insertVenta, args...); err != nil {
+		return firebird.MapError(err)
+	}
+	return nil
+}
+
+func (r *VentaRepo) insertCombos(ctx context.Context, q firebird.Querier, v *domain.Venta) error {
+	for _, c := range v.CombosForRepo() {
+		a := c.Audit()
+		if _, err := q.ExecContext(ctx, insertCombo,
+			c.ID().String(), v.ID().String(), c.Nombre(),
+			c.Precios().Anual(), c.Precios().CortoPlazo(), c.Precios().Contado(),
+			a.CreatedAt(), a.UpdatedAt(),
+			a.CreatedBy().String(), a.UpdatedBy().String(),
+		); err != nil {
+			return firebird.MapError(err)
+		}
+	}
+	return nil
+}
+
+func (r *VentaRepo) insertProductos(ctx context.Context, q firebird.Querier, v *domain.Venta) error {
+	for _, p := range v.ProductosForRepo() {
+		var comboID any
+		if p.ComboID() != nil {
+			comboID = p.ComboID().String()
+		}
+		a := p.Audit()
+		if _, err := q.ExecContext(ctx, insertProducto,
+			p.ID().String(), v.ID().String(),
+			p.ArticuloID(), p.Articulo(), p.Cantidad(),
+			p.Precios().Anual(), p.Precios().CortoPlazo(), p.Precios().Contado(),
+			comboID,
+			a.CreatedAt(), a.UpdatedAt(),
+			a.CreatedBy().String(), a.UpdatedBy().String(),
+		); err != nil {
+			return firebird.MapError(err)
+		}
+	}
+	return nil
+}
+
+func (r *VentaRepo) insertVendedores(ctx context.Context, q firebird.Querier, v *domain.Venta) error {
+	for _, vd := range v.VendedoresForRepo() {
+		a := vd.Audit()
+		_, err := q.ExecContext(ctx, insertVendedor,
+			vd.ID().String(), v.ID().String(),
+			vd.Snapshot().UsuarioID().String(),
+			vd.Snapshot().Email(), vd.Snapshot().Nombre(),
+			a.CreatedAt(), a.UpdatedAt(),
+			a.CreatedBy().String(), a.UpdatedBy().String(),
+		)
+		if err != nil {
+			mapped := firebird.MapError(err)
+			if isUniqueViolation(mapped) {
+				return errVendedorDuplicado.WithError(err)
+			}
+			return mapped
+		}
+	}
+	return nil
+}
+
+func (r *VentaRepo) insertImagenes(ctx context.Context, q firebird.Querier, v *domain.Venta) error {
+	for _, img := range v.ImagenesForRepo() {
+		if err := execInsertImagen(ctx, q, v.ID(), img); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// headerInsertArgs builds the positional argument slice for insertVenta. The
+// slice mirrors the column order in queries.go's insertVenta statement.
+func headerInsertArgs(v *domain.Venta) []any {
+	plazo, enganche, parcialidad, frec := planFields(v.PlanCredito())
+	semana, mes := diaCobranzaFields(v.DiaCobranza())
+	canceledAt, canceledBy, cancelReason := cancelacionFields(v.Cancelacion())
+	a := v.Audit()
+	return []any{
+		v.ID().String(), v.Cliente().Nombre().Value(),
+		nullableTelefonoArg(v), nullableAvalArg(v),
+		v.Direccion().Calle(),
+		nullableStringArg(v.Direccion().NumeroExterior()),
+		v.Direccion().Colonia(), v.Direccion().Poblacion(), v.Direccion().Ciudad(),
+		nullableIntArg(v.Direccion().ZonaClienteID()),
+		v.GPS().Latitud(), v.GPS().Longitud(),
+		v.AlmacenOrigen(), v.AlmacenDestino(),
+		v.FechaVenta(), v.TipoVenta().String(),
+		v.Montos().Anual(), v.Montos().CortoPlazo(), v.Montos().Contado(),
+		plazo, enganche, parcialidad, frec,
+		semana, mes,
+		nullableStringArg(v.Nota()),
+		a.CreatedAt(), a.UpdatedAt(),
+		a.CreatedBy().String(), a.UpdatedBy().String(),
+		canceledAt, canceledBy, cancelReason,
+	}
+}
+
+func nullableTelefonoArg(v *domain.Venta) any {
+	if v.Cliente().Telefono() == nil {
+		return nil
+	}
+	return v.Cliente().Telefono().Value()
+}
+
+func nullableAvalArg(v *domain.Venta) any {
+	if v.Cliente().Aval() == nil {
+		return nil
+	}
+	return v.Cliente().Aval().Value()
+}
+
+func nullableStringArg(p *string) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+func nullableIntArg(p *int) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+// planFields decomposes a *domain.PlanCredito into the four NULL-or-value
+// columns it spans on MSP_VENTAS (PLAZO_MESES, ENGANCHE, PARCIALIDAD,
+// FREC_PAGO).
+//
+//nolint:nonamedreturns // multi-arity tuples are clearer when named.
+func planFields(p *domain.PlanCredito) (plazo, enganche, parcialidad, frec any) {
+	if p == nil {
+		return nil, nil, nil, nil
+	}
+	return p.PlazoMeses(), p.Enganche(), p.Parcialidad(), p.FrecPago().String()
+}
+
+// diaCobranzaFields decomposes a *domain.DiaCobranza into the two NULL-or-
+// value columns it spans on MSP_VENTAS (DIA_COBRANZA_SEMANA,
+// DIA_COBRANZA_MES).
+//
+//nolint:nonamedreturns // multi-arity tuples are clearer when named.
+func diaCobranzaFields(d *domain.DiaCobranza) (semana, mes any) {
+	if d == nil {
+		return nil, nil
+	}
+	if d.IsSemana() {
+		semana = d.Semana().String()
+	}
+	if d.IsMes() {
+		mes = *d.Mes()
+	}
+	return semana, mes
+}
+
+// cancelacionFields decomposes the optional Cancelacion into the three
+// nullable columns on MSP_VENTAS.
+//
+//nolint:nonamedreturns // multi-arity tuples are clearer when named.
+func cancelacionFields(c *domain.Cancelacion) (at, by, reason any) {
+	if c == nil {
+		return nil, nil, nil
+	}
+	return c.At(), c.By().String(), c.Reason()
+}
+
+// Update writes back the mutable header columns. Used for the cancellation
+// path and any other header-only mutation; child collections are NOT
+// re-synced here.
+func (r *VentaRepo) Update(ctx context.Context, v *domain.Venta) error {
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	canceledAt, canceledBy, cancelReason := cancelacionFields(v.Cancelacion())
+	a := v.Audit()
+	res, err := q.ExecContext(ctx, updateVentaHeader,
+		canceledAt, canceledBy, cancelReason,
+		a.UpdatedAt(), a.UpdatedBy().String(),
+		v.ID().String(),
+	)
+	if err != nil {
+		return firebird.MapError(err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return firebird.MapError(err)
+	}
+	if n == 0 {
+		return domain.ErrVentaNotFound
+	}
+	return nil
+}
+
+// FindByID loads a venta with its full children collection populated. It
+// performs five queries on the same querier — header + four batched
+// WHERE VENTA_ID = ? reads — so the result is consistent within the active
+// transaction.
+func (r *VentaRepo) FindByID(ctx context.Context, id uuid.UUID) (*domain.Venta, error) {
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	raw, err := loadHeaderRaw(ctx, q, id)
+	if err != nil {
+		return nil, err
+	}
+	combos, err := loadCombos(ctx, q, id)
+	if err != nil {
+		return nil, err
+	}
+	productos, err := loadProductos(ctx, q, id)
+	if err != nil {
+		return nil, err
+	}
+	vendedores, err := loadVendedores(ctx, q, id)
+	if err != nil {
+		return nil, err
+	}
+	imagenes, err := loadImagenes(ctx, q, id)
+	if err != nil {
+		return nil, err
+	}
+	return assembleVenta(raw, combos, productos, vendedores, imagenes)
+}
+
+func loadHeaderRaw(ctx context.Context, q firebird.Querier, id uuid.UUID) (*ventaRowRaw, error) {
+	row := q.QueryRowContext(ctx, selectVentaByID, id.String())
+	raw, err := scanVentaRowRaw(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, domain.ErrVentaNotFound
+	}
+	if err != nil {
+		return nil, firebird.MapError(err)
+	}
+	return raw, nil
+}
+
+func loadCombos(ctx context.Context, q firebird.Querier, ventaID uuid.UUID) ([]*domain.Combo, error) {
+	rows, err := q.QueryContext(ctx, selectCombosByVenta, ventaID.String())
+	if err != nil {
+		return nil, firebird.MapError(err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]*domain.Combo, 0)
+	for rows.Next() {
+		c, scanErr := scanCombo(rows)
+		if scanErr != nil {
+			return nil, firebird.MapError(scanErr)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, firebird.MapError(err)
+	}
+	return out, nil
+}
+
+func loadProductos(ctx context.Context, q firebird.Querier, ventaID uuid.UUID) ([]*domain.Producto, error) {
+	rows, err := q.QueryContext(ctx, selectProductosByVenta, ventaID.String())
+	if err != nil {
+		return nil, firebird.MapError(err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]*domain.Producto, 0)
+	for rows.Next() {
+		p, scanErr := scanProducto(rows)
+		if scanErr != nil {
+			return nil, firebird.MapError(scanErr)
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, firebird.MapError(err)
+	}
+	return out, nil
+}
+
+func loadVendedores(ctx context.Context, q firebird.Querier, ventaID uuid.UUID) ([]*domain.Vendedor, error) {
+	rows, err := q.QueryContext(ctx, selectVendedoresByVenta, ventaID.String())
+	if err != nil {
+		return nil, firebird.MapError(err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]*domain.Vendedor, 0)
+	for rows.Next() {
+		v, scanErr := scanVendedor(rows)
+		if scanErr != nil {
+			return nil, firebird.MapError(scanErr)
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, firebird.MapError(err)
+	}
+	return out, nil
+}
+
+func loadImagenes(ctx context.Context, q firebird.Querier, ventaID uuid.UUID) ([]*domain.Imagen, error) {
+	rows, err := q.QueryContext(ctx, selectImagenesByVenta, ventaID.String())
+	if err != nil {
+		return nil, firebird.MapError(err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]*domain.Imagen, 0)
+	for rows.Next() {
+		img, scanErr := scanImagen(rows)
+		if scanErr != nil {
+			return nil, firebird.MapError(scanErr)
+		}
+		out = append(out, img)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, firebird.MapError(err)
+	}
+	return out, nil
+}
+
+// List returns a cursor-paginated page of ventas matching f. Children are
+// loaded for every venta on the page (4 batched queries shared across the
+// page) so the response carries a fully hydrated aggregate; pageSize is
+// bounded by clampPageSize so this stays cheap.
+func (r *VentaRepo) List(
+	ctx context.Context,
+	p outbound.ListParams,
+	f outbound.ListVentasFilters,
+) (outbound.Page[*domain.Venta], error) {
+	size := clampPageSize(p.PageSize)
+	curT, curID, err := decodeCursor(p.Cursor)
+	if err != nil {
+		return outbound.Page[*domain.Venta]{}, err
+	}
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	// The driver formats time parameters using their wall-clock fields
+	// without converting to UTC, while ScanUTCTime normalizes timestamps to
+	// UTC. Convert back to time.Local so the equality branch of the cursor
+	// predicate matches the wall-clock value Firebird stored.
+	curTLocal := curT.In(time.Local)
+	query, args := buildListQuery(size+1, p.Cursor != "", curTLocal, curID, f)
+	rows, qErr := q.QueryContext(ctx, query, args...)
+	if qErr != nil {
+		return outbound.Page[*domain.Venta]{}, firebird.MapError(qErr)
+	}
+	headers, scanErr := scanListRows(rows)
+	if scanErr != nil {
+		return outbound.Page[*domain.Venta]{}, scanErr
+	}
+	return r.hydrateListPage(ctx, q, headers, size)
+}
+
+// scanListRows iterates rows and produces the slice of raw venta rows.
+func scanListRows(rows *sql.Rows) ([]*ventaRowRaw, error) {
+	defer func() { _ = rows.Close() }()
+	out := make([]*ventaRowRaw, 0)
+	for rows.Next() {
+		raw, err := scanVentaRowRaw(rows)
+		if err != nil {
+			return nil, firebird.MapError(err)
+		}
+		out = append(out, raw)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, firebird.MapError(err)
+	}
+	return out, nil
+}
+
+// hydrateListPage takes the scanned header rows, trims the size+1 sentinel
+// row, batches the child loads, and builds the outbound.Page.
+func (r *VentaRepo) hydrateListPage(
+	ctx context.Context,
+	q firebird.Querier,
+	headers []*ventaRowRaw,
+	size int,
+) (outbound.Page[*domain.Venta], error) {
+	var nextCursor string
+	if len(headers) > size {
+		cursor, err := nextCursorFromLast(headers[size-1])
+		if err != nil {
+			return outbound.Page[*domain.Venta]{}, err
+		}
+		nextCursor = cursor
+		headers = headers[:size]
+	}
+	if len(headers) == 0 {
+		return outbound.Page[*domain.Venta]{Items: []*domain.Venta{}, NextCursor: nextCursor}, nil
+	}
+	items, err := r.assembleListItems(ctx, q, headers)
+	if err != nil {
+		return outbound.Page[*domain.Venta]{}, err
+	}
+	return outbound.Page[*domain.Venta]{Items: items, NextCursor: nextCursor}, nil
+}
+
+// nextCursorFromLast builds the opaque cursor pointing at the last item on
+// the current page. The cursor's payload is the (FECHA_VENTA, ID) tuple of
+// that row so subsequent List calls can resume the DESC scan after it.
+func nextCursorFromLast(last *ventaRowRaw) (string, error) {
+	id, err := uuid.Parse(last.idRaw)
+	if err != nil {
+		return "", apperror.NewInternal(
+			"firebird_uuid_invalid",
+			"uuid inválido en columna de base de datos",
+		).WithSource("firebird").WithError(err).WithField("column", "ID")
+	}
+	fv, err := firebird.ScanUTCTime(last.fechaVentaRaw)
+	if err != nil {
+		return "", err
+	}
+	return encodeCursor(fv, id), nil
+}
+
+// assembleListItems loads the four child collections for every venta on the
+// page and combines them with the scanned headers into hydrated aggregates.
+func (r *VentaRepo) assembleListItems(
+	ctx context.Context,
+	q firebird.Querier,
+	headers []*ventaRowRaw,
+) ([]*domain.Venta, error) {
+	items := make([]*domain.Venta, 0, len(headers))
+	for _, raw := range headers {
+		id, err := uuid.Parse(raw.idRaw)
+		if err != nil {
+			return nil, apperror.NewInternal(
+				"firebird_uuid_invalid",
+				"uuid inválido en columna de base de datos",
+			).WithSource("firebird").WithError(err).WithField("column", "ID")
+		}
+		combos, err := loadCombos(ctx, q, id)
+		if err != nil {
+			return nil, err
+		}
+		productos, err := loadProductos(ctx, q, id)
+		if err != nil {
+			return nil, err
+		}
+		vendedores, err := loadVendedores(ctx, q, id)
+		if err != nil {
+			return nil, err
+		}
+		imagenes, err := loadImagenes(ctx, q, id)
+		if err != nil {
+			return nil, err
+		}
+		v, err := assembleVenta(raw, combos, productos, vendedores, imagenes)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, v)
+	}
+	return items, nil
+}
+
+// buildListQuery composes the dynamic SELECT for List from the configured
+// filter set. Conditions are appended in a fixed order (filters before the
+// cursor predicate) and bound to the returned args slice in the same order.
+//
+//nolint:nonamedreturns // multi-result tuple is clearer when named.
+func buildListQuery(
+	limit int,
+	hasCursor bool,
+	curT any,
+	curID uuid.UUID,
+	f outbound.ListVentasFilters,
+) (sqlText string, args []any) {
+	args = []any{limit}
+	conds := []string{}
+	args, conds = appendVendedorFilter(args, conds, f)
+	args, conds = appendTipoVentaFilter(args, conds, f)
+	args, conds = appendDesdeFilter(args, conds, f)
+	args, conds = appendHastaFilter(args, conds, f)
+	conds = appendCanceladasFilter(conds, f)
+	if hasCursor {
+		conds = append(conds, cursorPredicateDesc)
+		args = append(args, curT, curT, curID.String())
+	}
+	sqlText = selectVentasBase
+	if len(conds) > 0 {
+		sqlText += "WHERE " + strings.Join(conds, " AND ") + " "
+	}
+	sqlText += orderClause
+	return sqlText, args
+}
+
+//nolint:nonamedreturns // multi-result tuple is clearer when named.
+func appendVendedorFilter(
+	args []any, conds []string, f outbound.ListVentasFilters,
+) (nextArgs []any, nextConds []string) {
+	if f.VendedorUsuarioID == nil {
+		return args, conds
+	}
+	conds = append(conds,
+		"EXISTS (SELECT 1 FROM MSP_VENTAS_VENDEDORES vd "+
+			"WHERE vd.VENTA_ID = v.ID AND vd.VENDEDOR_USUARIO_ID = ?)")
+	args = append(args, f.VendedorUsuarioID.String())
+	return args, conds
+}
+
+//nolint:nonamedreturns // multi-result tuple is clearer when named.
+func appendTipoVentaFilter(
+	args []any, conds []string, f outbound.ListVentasFilters,
+) (nextArgs []any, nextConds []string) {
+	if f.TipoVenta == "" {
+		return args, conds
+	}
+	conds = append(conds, "v.TIPO_VENTA = ?")
+	args = append(args, f.TipoVenta)
+	return args, conds
+}
+
+//nolint:nonamedreturns // multi-result tuple is clearer when named.
+func appendDesdeFilter(
+	args []any, conds []string, f outbound.ListVentasFilters,
+) (nextArgs []any, nextConds []string) {
+	if f.Desde == nil {
+		return args, conds
+	}
+	conds = append(conds, "v.FECHA_VENTA >= ?")
+	args = append(args, *f.Desde)
+	return args, conds
+}
+
+//nolint:nonamedreturns // multi-result tuple is clearer when named.
+func appendHastaFilter(
+	args []any, conds []string, f outbound.ListVentasFilters,
+) (nextArgs []any, nextConds []string) {
+	if f.Hasta == nil {
+		return args, conds
+	}
+	conds = append(conds, "v.FECHA_VENTA < ?")
+	args = append(args, *f.Hasta)
+	return args, conds
+}
+
+func appendCanceladasFilter(
+	conds []string, f outbound.ListVentasFilters,
+) []string {
+	if f.IncluirCanceladas {
+		return conds
+	}
+	return append(conds, "v.CANCELED_AT IS NULL")
+}
+
+// InsertImagen persists a single new imagen child for the given venta. Used
+// by AdjuntarImagen which adds images one at a time.
+func (r *VentaRepo) InsertImagen(ctx context.Context, ventaID uuid.UUID, img *domain.Imagen) error {
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	return execInsertImagen(ctx, q, ventaID, img)
+}
+
+// execInsertImagen runs the imagen INSERT against the supplied querier.
+func execInsertImagen(
+	ctx context.Context,
+	q firebird.Querier,
+	ventaID uuid.UUID,
+	img *domain.Imagen,
+) error {
+	a := img.Audit()
+	_, err := q.ExecContext(ctx, insertImagen,
+		img.ID().String(), ventaID.String(),
+		img.Storage().Kind().String(), img.Storage().Key(),
+		img.Mime(), img.SizeBytes(),
+		nullableStringArg(img.Descripcion()),
+		a.CreatedAt(), a.UpdatedAt(),
+		a.CreatedBy().String(), a.UpdatedBy().String(),
+	)
+	if err != nil {
+		return firebird.MapError(err)
+	}
+	return nil
+}
+
+// DeleteImagen removes a single imagen child by primary key. Returns
+// ErrImagenNotFound when no row matches.
+func (r *VentaRepo) DeleteImagen(ctx context.Context, ventaID, imagenID uuid.UUID) error {
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	res, err := q.ExecContext(ctx, deleteImagen, imagenID.String(), ventaID.String())
+	if err != nil {
+		return firebird.MapError(err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return firebird.MapError(err)
+	}
+	if n == 0 {
+		return domain.ErrImagenNotFound
+	}
+	return nil
+}
+
+// isUniqueViolation reports whether err — already passed through MapError —
+// is the Firebird unique-violation apperror.
+func isUniqueViolation(err error) bool {
+	appErr, ok := apperror.As(err)
+	if !ok {
+		return false
+	}
+	return appErr.Code == "firebird_unique_violation"
+}
