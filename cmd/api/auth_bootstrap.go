@@ -173,16 +173,20 @@ func bootstrapWriteAll(
 		return err
 	}
 
+	// Save usuario BEFORE creating the rol: MSP_ROLES.CREATED_BY is a
+	// strict FK to MSP_USUARIOS.ID in Firebird (see migration
+	// 000001_create_auth_tables.up.sql), so the usuario row must already
+	// exist when the rol is inserted with CREATED_BY=id.
+	if err := deps.Usuarios.Save(ctx, u); err != nil {
+		return err
+	}
+
 	superAdminDescription := "rol con todos los permisos del sistema"
 	rol, err := domain.NewRol(deps.NewID(), "super_admin", &superAdminDescription, true, id, now)
 	if err != nil {
 		return err
 	}
 	if err := deps.Roles.UpsertInmutableByName(ctx, rol); err != nil {
-		return err
-	}
-
-	if err := deps.Usuarios.Save(ctx, u); err != nil {
 		return err
 	}
 
