@@ -14,9 +14,10 @@ import (
 
 func firebaseCfg(projectID string, devMode, allowUnconfigured bool) config.Firebase {
 	return config.Firebase{
-		ProjectID:         projectID,
-		DevMode:           devMode,
-		AllowUnconfigured: allowUnconfigured,
+		ProjectID:          projectID,
+		ServiceAccountPath: "/nonexistent/test/path",
+		DevMode:            devMode,
+		AllowUnconfigured:  allowUnconfigured,
 	}
 }
 
@@ -29,6 +30,7 @@ func TestNewFirebaseClient_Matrix(t *testing.T) {
 		cfg            config.Firebase
 		wantClientType string // type name as printf %T
 		wantErr        bool
+		wantErrCode    string // asserted when non-empty
 	}{
 		{
 			name:           "dev_devmode",
@@ -45,11 +47,11 @@ func TestNewFirebaseClient_Matrix(t *testing.T) {
 			wantErr:        true,
 		},
 		{
-			name:           "projectid_set_real_not_impl",
-			env:            config.EnvProduction,
-			cfg:            firebaseCfg("proj-id", false, false),
-			wantClientType: "*firebase.NotConfiguredClient",
-			wantErr:        false,
+			name:        "projectid_set_real",
+			env:         config.EnvProduction,
+			cfg:         firebaseCfg("proj-id", false, false),
+			wantErr:     true,
+			wantErrCode: "firebase_service_account_missing",
 		},
 		{
 			name:           "allow_unconfigured",
@@ -74,8 +76,12 @@ func TestNewFirebaseClient_Matrix(t *testing.T) {
 			if tc.wantErr {
 				require.Error(t, err)
 				assert.Nil(t, client)
-				_, ok := apperror.As(err)
+				appErr, ok := apperror.As(err)
 				assert.True(t, ok, "factory errors must be apperror.Error, got %T", err)
+				if tc.wantErrCode != "" {
+					require.True(t, ok, "expected apperror for code assertion")
+					assert.Equal(t, tc.wantErrCode, appErr.Code)
+				}
 				return
 			}
 			require.NoError(t, err)

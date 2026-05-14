@@ -7,8 +7,9 @@
 //   - DevModeClient: development-only; accepts tokens shaped
 //     "dev:<uid>[:<email>]". Refuses to be constructed outside
 //     APP_ENV=development.
-//   - RealClient: deferred until the Firebase Admin SDK credential is
-//     available. See docs/adr/0002-firebase-deferred.md.
+//   - RealClient: production verifier wrapping the Firebase Admin SDK
+//     (firebase.google.com/go/v4). Initialized at boot when
+//     FIREBASE_PROJECT_ID is set. See docs/adr/0004-firebase-real-client.md.
 //
 // Selection happens in the factory at boot. The config layer (see
 // internal/platform/config) gates which selection is legal.

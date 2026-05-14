@@ -1,0 +1,9 @@
+services:
+  firebase-auth-emulator:
+    build:
+      context: .
+      dockerfile: firebase-emulator.Dockerfile
+    container_name: msp-firebase-emulator
+    ports:
+      - "9099:9099"
+    restart: unless-stopped

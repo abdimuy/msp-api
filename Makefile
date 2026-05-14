@@ -1,4 +1,4 @@
-.PHONY: help setup build run dev test test-unit test-integration test-all test-mutation test-mutation-domain test-mutation-app lint lint-fix fmt generate migrate-up migrate-down migrate-create migrate-version clean db-test-up db-test-down db-test-reset db-test-prune db-test-url test-firebird test-firebird-all coverage-auth coverage-auth-full fb-migrate-up fb-migrate-down fb-migrate-status fb-seed-admin fb-snapshot fb-snapshot-list fb-restore fb-snapshot-delete
+.PHONY: help setup build run dev test test-unit test-integration test-all test-mutation test-mutation-domain test-mutation-app lint lint-fix fmt generate migrate-up migrate-down migrate-create migrate-version clean db-test-up db-test-down db-test-reset db-test-prune db-test-url test-firebird test-firebird-all coverage-auth coverage-auth-full fb-migrate-up fb-migrate-down fb-migrate-status fb-seed-admin fb-snapshot fb-snapshot-list fb-restore fb-snapshot-delete fb-emu-up fb-emu-down fb-emu-logs
 
 # ── Config ───────────────────────────────────────────────────────────
 APP_NAME      := msp-api
@@ -385,3 +385,17 @@ db-test-prune: ## Drop leftover test_* DBs inside msp-postgres-test (defensive s
 
 db-test-url: ## Print TEST_DATABASE_URL for the integration-test container
 	@echo "$(TEST_DATABASE_URL)"
+
+# ── Firebase Auth emulator (dev-only; for integration tests) ─────
+fb-emu-up: ## Levanta el Firebase Auth emulator en localhost:9099 (Docker).
+	@docker compose -f docker/firebase-emulator.yml up -d --build
+	@echo ""
+	@echo "Firebase Auth emulator listening on http://localhost:9099"
+	@echo "Run integration tests with:"
+	@echo "  FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 go test -count=1 -v -run Integration ./internal/auth/infra/firebase/..."
+
+fb-emu-down: ## Tumba el Firebase Auth emulator.
+	@docker compose -f docker/firebase-emulator.yml down -v
+
+fb-emu-logs: ## Sigue los logs del Firebase Auth emulator.
+	@docker compose -f docker/firebase-emulator.yml logs -f

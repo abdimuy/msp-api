@@ -1,7 +1,7 @@
 package firebase
 
 import (
-	"log/slog"
+	"context"
 
 	"github.com/abdimuy/msp-api/internal/auth/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/apperror"
@@ -12,9 +12,7 @@ import (
 // based on the loaded config. The selection matrix:
 //
 //	APP_ENV=development + DevMode=true     → DevModeClient
-//	any env + ProjectID set                → RealClient (not yet
-//	                                           implemented — falls back to
-//	                                           NotConfigured with a WARN)
+//	any env + ProjectID set                → RealClient (Firebase Admin SDK)
 //	any env + AllowUnconfigured=true       → NotConfiguredClient (intentional
 //	                                           opt-in to permanent 401)
 //	anything else                          → error
@@ -26,12 +24,7 @@ func NewFirebaseClient(cfg config.Firebase, env config.Environment) (outbound.Fi
 		return NewDevModeClient(env)
 	}
 	if cfg.ProjectID != "" {
-		// Real client deferred — see ADR-0002. Fall back to NotConfigured
-		// with a startup WARN so the operator notices.
-		slog.Warn("auth.firebase_real_client_not_implemented",
-			"fallback", "NotConfiguredClient",
-			"project_id", cfg.ProjectID)
-		return NewNotConfiguredClient(), nil
+		return NewRealClient(context.Background(), cfg)
 	}
 	if cfg.AllowUnconfigured {
 		return NewNotConfiguredClient(), nil

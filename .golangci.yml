@@ -208,6 +208,8 @@ linters:
           alias: ventasoutbound
         - pkg: github.com/go-playground/validator/v10
           alias: pv
+        - pkg: firebase.google.com/go/v4
+          alias: firebasesdk
 
     # ── tagliatelle ──────────────────────────────────────────────────
     tagliatelle:

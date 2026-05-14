@@ -46,7 +46,7 @@ func MountRouter(r chi.Router, svc *ventasapp.Service) huma.API {
 	// cmd/api/server.go). The OpenAPI servers entry advertises that prefix so
 	// the generated docs HTML loads /v2/openapi.yaml instead of /openapi.yaml.
 	if config.OpenAPI != nil {
-		config.OpenAPI.Servers = append(config.OpenAPI.Servers, &huma.Server{URL: "/v2"})
+		config.Servers = append(config.Servers, &huma.Server{URL: "/v2"})
 	}
 
 	api := humachi.New(r, config)

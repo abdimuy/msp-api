@@ -1,8 +1,10 @@
 # ADR 0002 — Defer Firebase Admin SDK, ship with stubs
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0004](0004-firebase-real-client.md)
 - **Date:** 2026-05-10
 - **Decision drivers:** the auth module needs to ship; the Firebase service-account JSON is not yet available; we want to validate the rest of the auth surface without blocking on credentials.
+
+> **Update (2026-05-14):** `RealClient` is now implemented; see [ADR-0004](0004-firebase-real-client.md) for details.
 
 ## Context
 

@@ -11,6 +11,7 @@ coverage-*.html
 .env.*.local
 
 serviceAccountKey.json
+serviceAccountKey*.json
 *.pem
 *.key
 
