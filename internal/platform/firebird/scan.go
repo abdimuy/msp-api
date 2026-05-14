@@ -101,11 +101,13 @@ func ScanNullDecimal(src any, scale int) (decimal.NullDecimal, error) {
 
 // ScanUTCTime normalizes a Firebird TIMESTAMP value to a UTC time.Time.
 //
-// Firebird stores timestamps as wall-clock values with no timezone metadata.
-// The nakagami/firebirdsql driver returns them as time.Time tagged with the
-// DSN-configured timezone (time.Local by default), which means the returned
-// instant reflects the server's clock, not UTC. We collapse that ambiguity
-// at the repository boundary by always returning UTC.
+// Firebird stores timestamps as naked wall-clock values; Microsip writes
+// them in the business timezone (see BusinessTZ — America/Mexico_City). The
+// nakagami/firebirdsql driver hands the wall-clock back tagged with
+// time.Local by default, which corrupts the instant on any process whose
+// local TZ is not BusinessTZ. We collapse that ambiguity at the repository
+// boundary by reinterpreting the wall-clock in BusinessTZ and returning the
+// equivalent UTC instant.
 //
 // Accepted inputs: time.Time, []byte (RFC3339 or "2006-01-02 15:04:05"),
 // string (same formats). Returns an apperror.Error if src is nil or of an
@@ -119,19 +121,14 @@ func ScanUTCTime(src any) (time.Time, error) {
 			WithSource("firebird").
 			WithField("reason", "nil value scanned into non-nullable timestamp")
 	case time.Time:
-		return v.UTC(), nil
+		// The driver hands a wall-clock value stamped with time.Local — the
+		// instant it claims is wrong. Reinterpret the wall-clock as
+		// BusinessTZ and return the corresponding UTC moment.
+		return FromWallClock(v), nil
 	case []byte:
-		t, err := parseTimestamp(string(v))
-		if err != nil {
-			return time.Time{}, wrapScanParseError(err, "timestamp", string(v))
-		}
-		return t.UTC(), nil
+		return scanTimestampString(string(v))
 	case string:
-		t, err := parseTimestamp(v)
-		if err != nil {
-			return time.Time{}, wrapScanParseError(err, "timestamp", v)
-		}
-		return t.UTC(), nil
+		return scanTimestampString(v)
 	default:
 		return time.Time{}, apperror.NewInternal(
 			"firebird_scan_error",
@@ -140,6 +137,24 @@ func ScanUTCTime(src any) (time.Time, error) {
 			WithField("got_type", fmt.Sprintf("%T", src)).
 			WithField("target_type", "time.Time")
 	}
+}
+
+// scanTimestampString parses a Firebird timestamp string. RFC3339 strings
+// carry explicit TZ info and are honored as-is (.UTC() to normalize). Naked
+// "YYYY-MM-DD HH:MM:SS[.fffffff]" strings have no zone, are interpreted as
+// wall-clock in BusinessTZ, and returned in UTC.
+func scanTimestampString(s string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return t.UTC(), nil
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t.UTC(), nil
+	}
+	t, err := parseTimestamp(s)
+	if err != nil {
+		return time.Time{}, wrapScanParseError(err, "timestamp", s)
+	}
+	return FromWallClock(t), nil
 }
 
 // ScanNullUTCTime is the nullable counterpart of ScanUTCTime. A nil src
@@ -156,24 +171,18 @@ func ScanNullUTCTime(src any) (sql.NullTime, error) {
 	return sql.NullTime{Time: t, Valid: true}, nil
 }
 
-// parseTimestamp accepts the two timestamp string shapes Firebird tooling
-// can emit when bytes leak through the driver: RFC3339 and the SQL standard
-// "YYYY-MM-DD HH:MM:SS[.fffffff]" without timezone. Strings without a zone
-// are interpreted in time.Local to match the driver's default behavior.
+// parseTimestamp parses the SQL-standard zone-less timestamp shapes Firebird
+// can emit through the driver. Returned time.Time is stamped with BusinessTZ
+// since the input had no explicit zone. RFC3339 handling lives in
+// scanTimestampString to keep that path TZ-honoring.
 func parseTimestamp(s string) (time.Time, error) {
-	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
-		return t, nil
-	}
-	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return t, nil
-	}
 	layouts := []string{
 		"2006-01-02 15:04:05.9999999",
 		"2006-01-02 15:04:05.999999",
 		"2006-01-02 15:04:05",
 	}
 	for _, layout := range layouts {
-		if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
+		if t, err := time.ParseInLocation(layout, s, BusinessTZ()); err == nil {
 			return t, nil
 		}
 	}

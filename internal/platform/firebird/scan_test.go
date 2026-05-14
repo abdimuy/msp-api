@@ -224,12 +224,15 @@ func TestScanUTCTime_RejectsUnknownType(t *testing.T) {
 	assert.Equal(t, "firebird_scan_error", appErr.Code)
 }
 
-// Property: any time.Time, in any location, must come back as UTC with the
-// same monotonic instant.
+// Property: ScanUTCTime treats the input as a naked wall-clock written by
+// Firebird/Microsip in BusinessTZ (America/Mexico_City), and returns the
+// equivalent UTC instant. The input's Location is ignored — only its
+// wall-clock fields matter.
 func TestScanUTCTime_AlwaysUTC_Property(t *testing.T) {
 	t.Parallel()
-	locations := []*time.Location{time.UTC, time.Local}
-	for _, name := range []string{"America/Mexico_City", "Europe/Madrid", "Asia/Tokyo"} {
+	businessTZ := firebird.BusinessTZ()
+	locations := []*time.Location{time.UTC, time.Local, businessTZ}
+	for _, name := range []string{"Europe/Madrid", "Asia/Tokyo"} {
 		if loc, err := time.LoadLocation(name); err == nil {
 			locations = append(locations, loc)
 		}
@@ -248,7 +251,16 @@ func TestScanUTCTime_AlwaysUTC_Property(t *testing.T) {
 		got, err := firebird.ScanUTCTime(src)
 		require.NoError(rt, err)
 		assert.Equal(rt, time.UTC, got.Location())
-		assert.True(rt, src.Equal(got), "instant must be preserved")
+
+		// Expected: re-stamp the wall-clock fields with BusinessTZ, then
+		// convert to UTC.
+		expected := time.Date(
+			src.Year(), src.Month(), src.Day(),
+			src.Hour(), src.Minute(), src.Second(), src.Nanosecond(),
+			businessTZ,
+		).UTC()
+		assert.True(rt, expected.Equal(got),
+			"expected wall-clock in BusinessTZ as UTC: in=%s expected=%s got=%s", src, expected, got)
 	})
 }
 
@@ -263,6 +275,8 @@ func TestScanNullUTCTime_Nil(t *testing.T) {
 
 func TestScanNullUTCTime_NonNil_UTC(t *testing.T) {
 	t.Parallel()
+	// Wall-clock 10:30 stamped with America/Mexico_City IS the BusinessTZ —
+	// the round-trip preserves the instant exactly.
 	mx, err := time.LoadLocation("America/Mexico_City")
 	require.NoError(t, err)
 	src := time.Date(2026, 3, 15, 10, 30, 0, 0, mx)
