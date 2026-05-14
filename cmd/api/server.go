@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -24,6 +25,35 @@ import (
 	ventasapp "github.com/abdimuy/msp-api/internal/ventas/app"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/venthttp"
 )
+
+// publicV2PathPrefixes lists request-path prefixes under /v2 that bypass the
+// authentication middleware. Huma auto-serves the OpenAPI spec and the docs
+// UI at these paths, and industry convention (Stripe, GitHub, Twilio) is to
+// keep API documentation publicly reachable — the spec describes the API
+// surface, it does not contain user data, and devs need to read it before
+// they can integrate.
+var publicV2PathPrefixes = []string{
+	"/v2/docs",
+	"/v2/openapi",
+	"/v2/schemas/",
+}
+
+// skipAuthForPublicDocs wraps the authn handler so requests whose path falls
+// under publicV2PathPrefixes bypass authentication entirely.
+func skipAuthForPublicDocs(authn func(http.Handler) http.Handler) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		protected := authn(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			for _, p := range publicV2PathPrefixes {
+				if strings.HasPrefix(r.URL.Path, p) {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			protected.ServeHTTP(w, r)
+		})
+	}
+}
 
 // otelMiddleware wraps the chi-served handler chain in otelhttp, so every
 // incoming request gets a server span. Sits BEFORE RequestID so the span is
@@ -116,7 +146,7 @@ func provideHTTPServer(
 		// middlewares; per-route authorization (RequirePermission) is enforced
 		// inside each Huma handler against the planted CurrentUser.
 		r.Group(func(r chi.Router) {
-			r.Use(authn.Handler, idem)
+			r.Use(skipAuthForPublicDocs(authn.Handler), idem)
 			venthttp.MountRouter(r, ventasSvc)
 		})
 	})
