@@ -84,4 +84,23 @@ func TestSyncRolesCatalog(t *testing.T) {
 		h.roles.SyncErr = errors.New("boom")
 		require.Error(t, h.svc.SyncRolesCatalog(t.Context(), uuid.New()))
 	})
+
+	// Boot-time caller (cmd/api/auth_wiring.go) passes uuid.Nil because
+	// it has no concrete usuario id in hand at startup. The routine must
+	// auto-derive a valid id from the first usuario in the system rather
+	// than persisting CREATED_BY=00000000-... and tripping the FK on
+	// MSP_ROLES_PERMISOS.CREATED_BY → MSP_USUARIOS.ID. Regression guard.
+	t.Run("derives_bootuserid_from_first_usuario_when_nil", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, true)
+		h.seedUsuario(t)
+
+		require.NoError(t, h.svc.SyncRolesCatalog(t.Context(), uuid.Nil))
+		assert.Equal(t, 1, h.roles.UpsertCalls)
+		assert.Equal(t, 1, h.roles.SyncCalls)
+
+		rol, err := h.roles.FindByNombre(t.Context(), superAdminNombre)
+		require.NoError(t, err)
+		assert.True(t, rol.Inmutable())
+	})
 }

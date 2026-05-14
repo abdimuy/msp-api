@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -155,7 +156,7 @@ func (r *RolRepo) AsignarPermiso(ctx context.Context, rolID uuid.UUID, codigo do
 	if isUniqueViolation(mapped) {
 		return nil
 	}
-	if isFKViolation(mapped) {
+	if fkViolationOn(mapped, fkConstraintRolesPermisosPermiso) {
 		return domain.ErrPermisoNotFound.WithField("codigo", codigo.Code())
 	}
 	return mapped
@@ -186,7 +187,7 @@ func (r *RolRepo) SyncPermisos(ctx context.Context, rolID uuid.UUID, codigos []d
 			rolID.String(), codigo.Code(), wall, by.String(),
 		); err != nil {
 			mapped := firebird.MapError(err)
-			if isFKViolation(mapped) {
+			if fkViolationOn(mapped, fkConstraintRolesPermisosPermiso) {
 				return domain.ErrPermisoNotFound.WithField("codigo", codigo.Code())
 			}
 			return mapped
@@ -228,3 +229,23 @@ func isFKViolation(err error) bool {
 	}
 	return appErr.Code == "firebird_fk_violation"
 }
+
+// fkViolationOn reports whether err is an FK violation triggered by the
+// named constraint. Firebird's mapped apperror flattens every FK error
+// to the same code, so to distinguish "permiso missing" from "usuario
+// missing" we match the underlying message — which preserves the
+// constraint name verbatim ("violation of FOREIGN KEY constraint
+// \"FK_FOO\" on table ..."). Avoids mis-reporting an unrelated FK
+// breach as a missing-permiso error.
+func fkViolationOn(err error, constraint string) bool {
+	if !isFKViolation(err) {
+		return false
+	}
+	return strings.Contains(err.Error(), constraint)
+}
+
+// fkConstraintRolesPermisosPermiso is the name (declared in migration
+// 000001_create_auth_tables.up.sql) of the FK on
+// MSP_ROLES_PERMISOS.PERMISO_CODIGO → MSP_PERMISOS.CODIGO. Used by
+// fkViolationOn to single out the "unknown permission code" path.
+const fkConstraintRolesPermisosPermiso = "FK_MSP_ROLES_PERMISOS_PERMISO"
