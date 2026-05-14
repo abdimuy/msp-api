@@ -1,4 +1,4 @@
-.PHONY: help setup build run dev test test-unit test-integration test-all test-mutation test-mutation-domain test-mutation-app lint lint-fix fmt generate migrate-up migrate-down migrate-create migrate-version clean db-test-up db-test-down db-test-reset db-test-prune db-test-url test-firebird test-firebird-all coverage-auth coverage-auth-full
+.PHONY: help setup build run dev test test-unit test-integration test-all test-mutation test-mutation-domain test-mutation-app lint lint-fix fmt generate migrate-up migrate-down migrate-create migrate-version clean db-test-up db-test-down db-test-reset db-test-prune db-test-url test-firebird test-firebird-all coverage-auth coverage-auth-full fb-migrate-up fb-migrate-down fb-migrate-status fb-seed-admin fb-snapshot fb-snapshot-list fb-restore fb-snapshot-delete
 
 # ── Config ───────────────────────────────────────────────────────────
 APP_NAME      := msp-api
@@ -136,10 +136,23 @@ FB_USER              ?= SYSDBA
 FB_PASSWORD          ?= masterkey
 FB_DATABASE          ?= /firebird/data/MUEBLERA.FDB
 
-# Apply all *.up.sql migrations in order. Skips ones already in MSP_MIGRATIONS.
-fb-migrate-up: ## Apply all Firebird migrations (dev only)
-	@for f in $$(ls $(FB_MIGRATIONS_DIR)/*.up.sql | sort); do \
-		echo "▶ $$f"; \
+# Apply only pending *.up.sql migrations. Idempotent — reads MSP_MIGRATIONS
+# first and skips any ID already in there. Bootstraps when the table doesn't
+# exist yet (initial install) by treating "table not found" as "nothing
+# applied".
+fb-migrate-up: ## Apply pending Firebird migrations (idempotent; dev only)
+	@applied=$$(docker exec -i $(FB_CONTAINER) /usr/local/firebird/bin/isql \
+			-u $(FB_USER) -p $(FB_PASSWORD) -ch UTF8 -q $(FB_DATABASE) \
+			<<<'SELECT ID FROM MSP_MIGRATIONS;' 2>/dev/null \
+		| awk 'NR>2 && $$1 ~ /^[0-9]+$$/ {print $$1}' | tr '\n' ' '); \
+	echo "Applied so far: [$$applied]"; \
+	for f in $$(ls $(FB_MIGRATIONS_DIR)/*.up.sql | sort); do \
+		id=$$(basename $$f | sed -E 's/^0*([0-9]+)_.*/\1/'); \
+		if echo " $$applied " | grep -q " $$id "; then \
+			echo "↷ skip $$f (id=$$id already applied)"; \
+			continue; \
+		fi; \
+		echo "▶ $$f (id=$$id)"; \
 		docker exec -i $(FB_CONTAINER) /usr/local/firebird/bin/isql \
 			-u $(FB_USER) -p $(FB_PASSWORD) -ch UTF8 $(FB_DATABASE) < $$f \
 			|| (echo "❌ Failed at $$f" && exit 1); \
@@ -159,6 +172,80 @@ fb-migrate-down: ## Rollback one Firebird migration. Usage: make fb-migrate-down
 fb-migrate-status: ## Show applied Firebird migrations
 	@docker exec -i $(FB_CONTAINER) /usr/local/firebird/bin/isql \
 		-u $(FB_USER) -p $(FB_PASSWORD) -ch UTF8 $(FB_DATABASE) <<<"SELECT ID, NAME, APPLIED_AT FROM MSP_MIGRATIONS ORDER BY ID;"
+
+# ── Firebird snapshot / restore ─────────────────────────────────────
+# Hot backup via gbak — the canonical Firebird tool. No downtime needed:
+# gbak takes a consistent snapshot of the running DB. Output is a .fbk
+# logical backup file, portable across Firebird hosts. Restores REPLACE
+# the active DB file (destructive — you lose anything written since the
+# snapshot).
+#
+# Snapshots live under data/firebird-snapshots/ (gitignored). The dir is
+# created on first snapshot.
+
+FB_SNAPSHOTS_DIR := data/firebird-snapshots
+
+fb-snapshot: ## Take a hot snapshot of the dev DB. NAME=foo optional (defaults to timestamp).
+	@mkdir -p $(FB_SNAPSHOTS_DIR)
+	@name="$${NAME:-snapshot_$$(date +%Y%m%d_%H%M%S)}"; \
+	echo "▶ creating snapshot $$name.fbk (this takes ~30s for 3.6GB)"; \
+	docker exec $(FB_CONTAINER) /usr/local/firebird/bin/gbak \
+		-b -v -t -user $(FB_USER) -password $(FB_PASSWORD) \
+		$(FB_DATABASE) /tmp/$$name.fbk \
+		|| (echo "❌ gbak backup failed" && exit 1); \
+	docker cp $(FB_CONTAINER):/tmp/$$name.fbk $(FB_SNAPSHOTS_DIR)/$$name.fbk \
+		|| (echo "❌ docker cp failed" && exit 1); \
+	docker exec $(FB_CONTAINER) rm -f /tmp/$$name.fbk; \
+	echo "✔ snapshot saved to $(FB_SNAPSHOTS_DIR)/$$name.fbk"; \
+	ls -lh $(FB_SNAPSHOTS_DIR)/$$name.fbk
+
+fb-snapshot-list: ## List available Firebird snapshots
+	@if [ ! -d $(FB_SNAPSHOTS_DIR) ] || [ -z "$$(ls -A $(FB_SNAPSHOTS_DIR) 2>/dev/null)" ]; then \
+		echo "(no snapshots in $(FB_SNAPSHOTS_DIR))"; \
+	else \
+		ls -lht $(FB_SNAPSHOTS_DIR)/ | grep -v '^total'; \
+	fi
+
+fb-restore: ## Restore from a snapshot. NAME=foo (default: latest). DESTRUCTIVE — replaces current DB.
+	@name="$${NAME:-}"; \
+	if [ -z "$$name" ]; then \
+		name=$$(ls -t $(FB_SNAPSHOTS_DIR)/*.fbk 2>/dev/null | head -1 | xargs -n1 basename | sed 's/\.fbk$$//'); \
+		[ -n "$$name" ] || (echo "❌ no snapshots found in $(FB_SNAPSHOTS_DIR)" && exit 1); \
+		echo "ℹ no NAME given; using latest: $$name"; \
+	fi; \
+	src=$(FB_SNAPSHOTS_DIR)/$$name.fbk; \
+	[ -f "$$src" ] || (echo "❌ snapshot file not found: $$src" && echo "Available:" && ls $(FB_SNAPSHOTS_DIR)/ 2>/dev/null && exit 1); \
+	echo "⚠  RESTORE WILL REPLACE $(FB_DATABASE) WITH $$src"; \
+	echo "   Current DB will be wiped. Anything written since the snapshot is gone."; \
+	echo ""; \
+	read -p "Type 'restore' to confirm: " confirm; \
+	[ "$$confirm" = "restore" ] || (echo "aborted" && exit 1); \
+	echo "▶ copying $$src into container"; \
+	docker cp "$$src" $(FB_CONTAINER):/tmp/restore.fbk \
+		|| (echo "❌ docker cp failed" && exit 1); \
+	echo "▶ shutting down DB connections (gfix shutdown full -force 30)"; \
+	docker exec $(FB_CONTAINER) /usr/local/firebird/bin/gfix \
+		-user $(FB_USER) -password $(FB_PASSWORD) \
+		-shut full -force 30 $(FB_DATABASE) \
+		|| (echo "⚠  gfix shutdown failed — proceeding anyway"; true); \
+	echo "▶ restoring (this takes ~1-2 min for 3.6GB)"; \
+	docker exec $(FB_CONTAINER) /usr/local/firebird/bin/gbak \
+		-c -v -user $(FB_USER) -password $(FB_PASSWORD) \
+		-replace_database \
+		/tmp/restore.fbk $(FB_DATABASE) \
+		|| (echo "❌ gbak restore failed — DB may be in inconsistent state" && exit 1); \
+	docker exec $(FB_CONTAINER) /usr/local/firebird/bin/gfix \
+		-user $(FB_USER) -password $(FB_PASSWORD) \
+		-online normal $(FB_DATABASE) || true; \
+	docker exec $(FB_CONTAINER) rm -f /tmp/restore.fbk; \
+	echo "✔ restored from $$src"
+
+fb-snapshot-delete: ## Delete a snapshot. NAME=foo (required).
+	@[ -n "$(NAME)" ] || (echo "❌ NAME required: make fb-snapshot-delete NAME=snapshot_20260513_120000" && exit 1)
+	@f=$(FB_SNAPSHOTS_DIR)/$(NAME).fbk; \
+	[ -f "$$f" ] || (echo "❌ not found: $$f" && exit 1); \
+	rm -f "$$f"; \
+	echo "✔ deleted $$f"
 
 # Apply seed admin (requires seeds-firebird/000001_admin_user.sql to exist — see .example)
 fb-seed-admin: ## Apply admin seed file (must be created from the .example template)

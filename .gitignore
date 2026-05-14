@@ -18,6 +18,10 @@ serviceAccountKey.json
 seeds-firebird/*.sql
 !seeds-firebird/*.sql.example
 
+# Firebird DB snapshots (created by `make fb-snapshot`; large binary, local-only)
+data/firebird-snapshots/
+*.fbk
+
 uploads/
 private_files/
 

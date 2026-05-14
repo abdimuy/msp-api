@@ -41,8 +41,8 @@ The `internal/{module}` root package is the **only** import-allowed surface for 
 5. **App**: `Service` struct + commands + queries split across files in the SAME package (`app/`). Subpackages do not work because methods can't span Go packages. Use file naming for organization. See `CQRS_PATTERN.md`.
 
 6. **Infra**:
-   - `{module}fb/` — `VentaRepo` + queries + rowmappers + pagination. Multi-table writes happen in one tx by using `firebird.GetQuerier(ctx, pool.DB)` which honors the ambient tx installed by `firebird.TxManager`.
-   - `{module}http/` — Huma over chi. See `HUMA_WIRING.md`.
+   - `{module}fb/` — `VentaRepo` + queries + rowmappers + pagination. Multi-table writes happen in one tx by using `firebird.GetQuerier(ctx, pool.DB)` which honors the ambient tx installed by `firebird.TxManager`. **Every `time.Time` passed to `q.ExecContext` must be wrapped in `firebird.ToWallClock(t)`; every `TIMESTAMP` column read must use `firebird.ScanUTCTime`. See `DATETIME_HANDLING.md`.**
+   - `{module}http/` — Huma over chi. See `HUMA_WIRING.md`. **Date fields are RFC3339 UTC strings on both request and response — see `DATETIME_HANDLING.md` for the frontend contract.**
    - `{module}outbox/` — wraps `transaction.Manager` for best-effort Postgres outbox writes. Copy `internal/auth/infra/authoutbox/enqueuer.go` verbatim and change the log key + import path.
    - `storage/` (if applicable) — see `internal/ventas/infra/storage/` for the filesystem + R2-stub split.
 
@@ -53,9 +53,11 @@ The `internal/{module}` root package is the **only** import-allowed surface for 
 
 8. **Lint rules**: add the module's package import aliases to `.golangci.yml` under `importas.alias` so `no-extra-aliases: true` keeps the aliasing consistent.
 
-9. **Tests**: see `TESTING_REQUIREMENTS.md`. Domain ≥99%, app ≥90%, infra ≥80%, mutation kill-rate ≥80%.
+9. **Tests**: see `TESTING_REQUIREMENTS.md`. Domain ≥99%, app ≥90%, infra ≥80%, mutation kill-rate ≥80%. **Time-related tests must use `time.Date(..., time.UTC)` for fixtures and `fixedClock`, never `time.Now()` directly. See `DATETIME_HANDLING.md` test patterns.**
 
 10. **OpenAPI**: Huma generates `/v2/openapi.json` automatically. No manual YAML.
+
+11. **Dates and times**: read `DATETIME_HANDLING.md` before writing any code that touches `time.Time`. The three non-negotiable rules: (a) domain/app always operate in UTC; (b) `firebird.ToWallClock` wraps every write; (c) `firebird.ScanUTCTime` decodes every read. The frontend contract (RFC3339 with explicit TZ, response always UTC `Z`) is documented in the same file.
 
 ## File-suffix convention
 
