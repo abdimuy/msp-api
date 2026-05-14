@@ -68,9 +68,19 @@ pre-commit:
           esac
         done
         # Content scan — skip empty file list to avoid grep -r over the cwd.
-        files="{staged_files}"
+        # lefthook.yml is excluded because the regex below contains literal
+        # tokens (aws_secret_access_key, the PEM header) that would match
+        # the file that defines them — a self-referential false positive
+        # any time this hook itself is edited.
+        files=""
+        for f in {staged_files}; do
+          case "$f" in
+            lefthook.yml) continue ;;
+          esac
+          files="$files $f"
+        done
         if [ -n "$files" ]; then
-          if grep -nE '(AKIA[0-9A-Z]{16}|aws_secret_access_key|-----BEGIN [A-Z ]*PRIVATE KEY-----)' $files 2>/dev/null; then
+          if grep -nHE '(AKIA[0-9A-Z]{16}|aws_secret_access_key|-----BEGIN [A-Z ]*PRIVATE KEY-----)' $files 2>/dev/null; then
             echo "❌ Possible secret in staged content."
             exit 1
           fi
@@ -81,7 +91,10 @@ pre-commit:
       # Block fmt.Print* in application code; allow it in cmd/* (CLI output)
       # and in test files.
       run: |
-        offenders=$(grep -nE 'fmt\.Print(ln|f)?\(' {staged_files} 2>/dev/null \
+        # -H forces grep to always print the filename even when a single
+        # file is matched; without it the cmd/ and _test.go filters below
+        # silently fail to match.
+        offenders=$(grep -nHE 'fmt\.Print(ln|f)?\(' {staged_files} 2>/dev/null \
           | grep -v '_test\.go' \
           | grep -v '^cmd/' \
           || true)
