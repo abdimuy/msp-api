@@ -56,6 +56,8 @@ const (
 	PermVentasCrear Permission = "ventas:crear"
 	// PermVentasCancelar grants soft-cancelling a venta.
 	PermVentasCancelar Permission = "ventas:cancelar"
+	// PermVentasEditar grants editing a venta while it is in 'borrador' status.
+	PermVentasEditar Permission = "ventas:editar"
 	// PermVentasSubirImagenes grants uploading evidence images to a venta.
 	PermVentasSubirImagenes Permission = "ventas:subir_imagenes"
 	// PermVentasEliminarImagenes grants deleting evidence images of a venta.
@@ -103,6 +105,7 @@ func AllPermissions() []PermissionMeta {
 		{PermVentasVer, "ver una venta", categoriaVentas},
 		{PermVentasCrear, "crear una venta", categoriaVentas},
 		{PermVentasCancelar, "cancelar una venta", categoriaVentas},
+		{PermVentasEditar, "editar una venta en borrador", categoriaVentas},
 		{PermVentasSubirImagenes, "subir imágenes de evidencia a una venta", categoriaVentas},
 		{PermVentasEliminarImagenes, "eliminar imágenes de evidencia de una venta", categoriaVentas},
 	}

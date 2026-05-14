@@ -78,6 +78,8 @@ const (
 	PermVentasCrear = domain.PermVentasCrear
 	// PermVentasCancelar — see domain.PermVentasCancelar.
 	PermVentasCancelar = domain.PermVentasCancelar
+	// PermVentasEditar — see domain.PermVentasEditar.
+	PermVentasEditar = domain.PermVentasEditar
 	// PermVentasSubirImagenes — see domain.PermVentasSubirImagenes.
 	PermVentasSubirImagenes = domain.PermVentasSubirImagenes
 	// PermVentasEliminarImagenes — see domain.PermVentasEliminarImagenes.

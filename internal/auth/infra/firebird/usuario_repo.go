@@ -54,8 +54,8 @@ func (r *UsuarioRepo) Save(ctx context.Context, u *domain.Usuario) error {
 		telefono,
 		almacenID,
 		u.Activo(),
-		u.CreatedAt(),
-		u.UpdatedAt(),
+		firebird.ToWallClock(u.CreatedAt()),
+		firebird.ToWallClock(u.UpdatedAt()),
 		u.CreatedBy().String(),
 		u.UpdatedBy().String(),
 	)
@@ -86,7 +86,7 @@ func (r *UsuarioRepo) Update(ctx context.Context, u *domain.Usuario) error {
 		telefono,
 		almacenID,
 		u.Activo(),
-		u.UpdatedAt(),
+		firebird.ToWallClock(u.UpdatedAt()),
 		u.UpdatedBy().String(),
 		u.ID().String(),
 	)
@@ -146,7 +146,7 @@ func (r *UsuarioRepo) AsignarRol(ctx context.Context, usuarioID, rolID, by uuid.
 	q := firebird.GetQuerier(ctx, r.pool.DB)
 	_, err := q.ExecContext(
 		ctx, insertUsuarioRol,
-		usuarioID.String(), rolID.String(), now, by.String(),
+		usuarioID.String(), rolID.String(), firebird.ToWallClock(now), by.String(),
 	)
 	if err == nil {
 		return nil

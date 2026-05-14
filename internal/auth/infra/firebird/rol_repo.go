@@ -50,8 +50,8 @@ func rolInsertArgs(rol *domain.Rol) []any {
 		desc,
 		rol.Inmutable(),
 		rol.Activo(),
-		rol.CreatedAt(),
-		rol.UpdatedAt(),
+		firebird.ToWallClock(rol.CreatedAt()),
+		firebird.ToWallClock(rol.UpdatedAt()),
 		rol.CreatedBy().String(),
 		rol.UpdatedBy().String(),
 	}
@@ -72,7 +72,7 @@ func (r *RolRepo) Update(ctx context.Context, rol *domain.Rol) error {
 		desc,
 		rol.Inmutable(),
 		rol.Activo(),
-		rol.UpdatedAt(),
+		firebird.ToWallClock(rol.UpdatedAt()),
 		rol.UpdatedBy().String(),
 		rol.ID().String(),
 	)
@@ -146,7 +146,7 @@ func (r *RolRepo) AsignarPermiso(ctx context.Context, rolID uuid.UUID, codigo do
 	q := firebird.GetQuerier(ctx, r.pool.DB)
 	_, err := q.ExecContext(
 		ctx, insertRolPermiso,
-		rolID.String(), codigo.Code(), now, by.String(),
+		rolID.String(), codigo.Code(), firebird.ToWallClock(now), by.String(),
 	)
 	if err == nil {
 		return nil
@@ -179,10 +179,11 @@ func (r *RolRepo) SyncPermisos(ctx context.Context, rolID uuid.UUID, codigos []d
 	if _, err := q.ExecContext(ctx, deleteAllRolPermisos, rolID.String()); err != nil {
 		return firebird.MapError(err)
 	}
+	wall := firebird.ToWallClock(now)
 	for _, codigo := range codigos {
 		if _, err := q.ExecContext(
 			ctx, insertRolPermiso,
-			rolID.String(), codigo.Code(), now, by.String(),
+			rolID.String(), codigo.Code(), wall, by.String(),
 		); err != nil {
 			mapped := firebird.MapError(err)
 			if isFKViolation(mapped) {

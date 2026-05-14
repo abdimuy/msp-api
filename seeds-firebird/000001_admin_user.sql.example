@@ -58,9 +58,16 @@ VALUES (
 );
 
 -- 4) Catálogo inicial de permisos
+-- NOTA: el catálogo canónico vive en internal/auth/domain/permission_codes.go
+-- y se sincroniza con MSP_PERMISOS al arrancar la API (permisos_catalog_sync).
+-- Las filas insertadas aquí son un fallback para entornos donde la API aún
+-- no haya corrido por primera vez. Códigos como 'ventas:editar' (plural) se
+-- añaden automáticamente en el primer arranque.
 INSERT INTO MSP_PERMISOS (CODIGO, DESCRIPCION, CATEGORIA) VALUES ('venta:crear',        'Crear ventas',         'ventas');
 INSERT INTO MSP_PERMISOS (CODIGO, DESCRIPCION, CATEGORIA) VALUES ('venta:editar',       'Editar ventas',        'ventas');
 INSERT INTO MSP_PERMISOS (CODIGO, DESCRIPCION, CATEGORIA) VALUES ('venta:cancelar',     'Cancelar ventas',      'ventas');
+-- Permiso canónico introducido en migración 000003: editar venta en borrador.
+INSERT INTO MSP_PERMISOS (CODIGO, DESCRIPCION, CATEGORIA) VALUES ('ventas:editar',      'Editar venta en borrador', 'ventas');
 INSERT INTO MSP_PERMISOS (CODIGO, DESCRIPCION, CATEGORIA) VALUES ('venta:ver:propias',  'Ver ventas propias',   'ventas');
 INSERT INTO MSP_PERMISOS (CODIGO, DESCRIPCION, CATEGORIA) VALUES ('venta:ver:todas',    'Ver todas las ventas', 'ventas');
 INSERT INTO MSP_PERMISOS (CODIGO, DESCRIPCION, CATEGORIA) VALUES ('cobranza:registrar', 'Registrar pagos',      'cobranza');
