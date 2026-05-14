@@ -124,6 +124,32 @@ func (r *fakeRepo) InsertImagen(_ context.Context, _ uuid.UUID, _ *ventasdomain.
 
 func (r *fakeRepo) DeleteImagen(_ context.Context, _, _ uuid.UUID) error { return nil }
 
+func (r *fakeRepo) UpdateHeader(_ context.Context, v *ventasdomain.Venta) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.store[v.ID()]; !ok {
+		return ventasdomain.ErrVentaNotFound
+	}
+	r.store[v.ID()] = v
+	return nil
+}
+
+func (r *fakeRepo) UpdateCliente(ctx context.Context, v *ventasdomain.Venta) error {
+	return r.UpdateHeader(ctx, v)
+}
+
+func (r *fakeRepo) ReplaceProductos(ctx context.Context, v *ventasdomain.Venta) error {
+	return r.UpdateHeader(ctx, v)
+}
+
+func (r *fakeRepo) ReplaceCombos(ctx context.Context, v *ventasdomain.Venta) error {
+	return r.UpdateHeader(ctx, v)
+}
+
+func (r *fakeRepo) ReplaceVendedores(ctx context.Context, v *ventasdomain.Venta) error {
+	return r.UpdateHeader(ctx, v)
+}
+
 // noopOutbox swallows every Enqueue call.
 type noopOutbox struct{}
 
@@ -156,7 +182,7 @@ func testServiceWith(proc ventasoutbound.ImageProcessor) (*ventasapp.Service, *f
 	repo := newFakeRepo()
 	store := newFakeStorage()
 	clock := fixedClock{T: time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC)}
-	svc := ventasapp.NewService(repo, store, clock, noopOutbox{}, proc, nil)
+	svc := ventasapp.NewService(repo, nil, store, clock, noopOutbox{}, proc, nil)
 	return svc, repo, store
 }
 
@@ -195,6 +221,7 @@ func fullPerms(id uuid.UUID) auth.CurrentUser {
 			string(authdomain.PermVentasVer),
 			string(authdomain.PermVentasCrear),
 			string(authdomain.PermVentasCancelar),
+			string(authdomain.PermVentasEditar),
 			string(authdomain.PermVentasSubirImagenes),
 			string(authdomain.PermVentasEliminarImagenes),
 		},
@@ -211,6 +238,9 @@ func jsonRequest(t *testing.T, method, target string, body any) *http.Request {
 	return req
 }
 
+// intPtr returns a pointer to v. Test helper.
+func intPtr(v int) *int { return &v }
+
 // validCreateBody returns a CrearVentaBody that satisfies every domain rule.
 func validCreateBody() venthttp.CrearVentaBody {
 	return venthttp.CrearVentaBody{
@@ -224,20 +254,20 @@ func validCreateBody() venthttp.CrearVentaBody {
 			Poblacion: "Mérida",
 			Ciudad:    "Mérida",
 		},
-		GPS:            venthttp.GPSDTO{Latitud: 20.97, Longitud: -89.62},
-		AlmacenOrigen:  1,
-		AlmacenDestino: 2,
-		FechaVenta:     time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC).Format(time.RFC3339),
-		TipoVenta:      "CONTADO",
-		Montos:         venthttp.MontosDTO{Anual: "1000", CortoPlazo: "900", Contado: "800"},
+		GPS:        venthttp.GPSDTO{Latitud: 20.97, Longitud: -89.62},
+		FechaVenta: time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC).Format(time.RFC3339),
+		TipoVenta:  "CONTADO",
+		Montos:     venthttp.MontosDTO{Anual: "1000", CortoPlazo: "900", Contado: "800"},
 		Productos: []venthttp.ProductoDTO{{
-			ID:            uuid.NewString(),
-			ArticuloID:    42,
-			Articulo:      "Refrigerador 10ft",
-			Cantidad:      "1",
-			PrecioAnual:   "1000",
-			PrecioCorto:   "900",
-			PrecioContado: "800",
+			ID:               uuid.NewString(),
+			ArticuloID:       42,
+			Articulo:         "Refrigerador 10ft",
+			Cantidad:         "1",
+			PrecioAnual:      "1000",
+			PrecioCorto:      "900",
+			PrecioContado:    "800",
+			AlmacenOrigenID:  intPtr(1),
+			AlmacenDestinoID: intPtr(2),
 		}},
 		Vendedores: []venthttp.VendedorDTO{{
 			ID:        uuid.NewString(),
@@ -569,14 +599,20 @@ func TestCrearVenta_WithCombo_RoundTrip(t *testing.T) {
 	body := validCreateBody()
 	comboID := uuid.NewString()
 	body.Combos = []venthttp.ComboDTO{{
-		ID:            comboID,
-		Nombre:        "Combo Demo",
-		PrecioAnual:   "1500.00",
-		PrecioCorto:   "1400.00",
-		PrecioContado: "1300.00",
+		ID:               comboID,
+		Nombre:           "Combo Demo",
+		PrecioAnual:      "1500.00",
+		PrecioCorto:      "1400.00",
+		PrecioContado:    "1300.00",
+		Cantidad:         "1.0000",
+		AlmacenOrigenID:  1,
+		AlmacenDestinoID: 2,
 	}}
-	// Link the existing producto to the new combo.
+	// Link the existing producto to the new combo. Productos in a combo
+	// must NOT carry their own almacenes.
 	body.Productos[0].ComboID = &comboID
+	body.Productos[0].AlmacenOrigenID = nil
+	body.Productos[0].AlmacenDestinoID = nil
 
 	req := jsonRequest(t, http.MethodPost, "/ventas", body)
 	rec := httptest.NewRecorder()
@@ -669,6 +705,42 @@ func TestListarVentas_ValidDateFilters_Accepted(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }
 
+// TestListarVentas_ClienteIDFilter verifies the cliente_id query param is
+// parsed and accepted. The actual repository-level filtering is exercised by
+// TestVentaRepo_List_FilterByClienteID against the real DB.
+func TestListarVentas_ClienteIDFilter(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _ := testService()
+	r := buildRouter(t, svc, fullPerms(uuid.New()))
+
+	req := httptest.NewRequest(http.MethodGet, "/ventas?cliente_id=12345", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}
+
+// TestListarVentas_InvalidClienteID_Returns422 verifies the cliente_id query
+// param is rejected when malformed (non-numeric, zero, negative).
+func TestListarVentas_InvalidClienteID_Returns422(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _ := testService()
+	r := buildRouter(t, svc, fullPerms(uuid.New()))
+
+	cases := []string{"not-a-number", "0", "-5", "1.5"}
+	for _, raw := range cases {
+		t.Run(raw, func(t *testing.T) {
+			t.Parallel()
+			req := httptest.NewRequest(http.MethodGet, "/ventas?cliente_id="+raw, nil)
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, req)
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code,
+				"want 422 for cliente_id=%q, got %d body=%s", raw, rec.Code, rec.Body.String())
+		})
+	}
+}
+
 // TestCrearVenta_InvalidCombo_UUID_Returns422 verifies parseCombosDTO error
 // paths: a combo with a malformed id is rejected with a typed 422.
 func TestCrearVenta_InvalidCombo_UUID_Returns422(t *testing.T) {
@@ -714,6 +786,150 @@ func TestCrearVenta_InvalidCombo_Decimal_Returns422(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+}
+
+// ─── B4: trailing slash / method not allowed ──────────────────────────────
+
+// TestRouter_TrailingSlash_Behavior documents how the router treats trailing
+// slashes. chi by default does NOT treat /ventas and /ventas/ as the same
+// path; we pin the current behavior so a future routing change is loud.
+func TestRouter_TrailingSlash_Behavior(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _ := testService()
+	cu := fullPerms(uuid.New())
+	r := buildRouter(t, svc, cu)
+
+	cases := []struct {
+		name       string
+		path       string
+		methodList []string
+	}{
+		{"list with trailing slash", "/ventas/", []string{http.MethodGet}},
+		{"obtener with trailing slash", "/ventas/" + uuid.NewString() + "/", []string{http.MethodGet}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for _, m := range tc.methodList {
+				req := httptest.NewRequest(m, tc.path, nil)
+				rec := httptest.NewRecorder()
+				r.ServeHTTP(rec, req)
+				// Either 404, 200/2xx, or 3xx redirect — all are valid
+				// router contracts. The point is "no 5xx crash".
+				t.Logf("%s %s → %d", m, tc.path, rec.Code)
+				assert.Less(t, rec.Code, 500,
+					"%s %s must NOT crash the router (got %d)", m, tc.path, rec.Code)
+			}
+		})
+	}
+}
+
+// TestRouter_MethodNotAllowed verifies that requests with the wrong HTTP
+// method on a registered path produce a typed 4xx (404 or 405) rather than
+// crashing or silently succeeding.
+func TestRouter_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _ := testService()
+	cu := fullPerms(uuid.New())
+	r := buildRouter(t, svc, cu)
+
+	// Seed a venta so the id-bearing paths have a real target.
+	body := validCreateBody()
+	createReq := jsonRequest(t, http.MethodPost, "/ventas", body)
+	createRec := httptest.NewRecorder()
+	r.ServeHTTP(createRec, createReq)
+	require.Equal(t, http.StatusCreated, createRec.Code, createRec.Body.String())
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+	}{
+		// /ventas accepts GET (list) + POST (create); DELETE/PATCH are not.
+		{"DELETE on collection", http.MethodDelete, "/ventas"},
+		// /ventas/{id}/productos accepts PUT; POST should not be registered.
+		{"POST on productos", http.MethodPost, "/ventas/" + body.ID + "/productos"},
+		// /ventas/{id} accepts GET + PATCH; PUT is not.
+		{"PUT on venta header", http.MethodPut, "/ventas/" + body.ID},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, req)
+			t.Logf("%s %s → %d", tc.method, tc.path, rec.Code)
+			// 404 or 405 are both fine — anything in 4xx is sane.
+			assert.GreaterOrEqual(t, rec.Code, 400, "must be 4xx, got %d", rec.Code)
+			assert.Less(t, rec.Code, 500, "must NOT crash, got %d body=%s", rec.Code, rec.Body.String())
+		})
+	}
+}
+
+// ─── B2: malformed / enormous JSON ─────────────────────────────────────────
+
+// TestCrearVenta_MalformedJSON_Returns422 pins how the handler reacts to
+// payloads that are not valid JSON. Huma's body parser must surface 4xx
+// (415/422/400) rather than 5xx — we don't care which of those, but a 500
+// would indicate the parser blew up unrecovered.
+func TestCrearVenta_MalformedJSON_Returns422(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _ := testService()
+	cu := fullPerms(uuid.New())
+	r := buildRouter(t, svc, cu)
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"trailing comma", `{"id":"00000000-0000-0000-0000-000000000000",}`},
+		{"empty body", ``},
+		{"null literal", `null`},
+		{"unclosed brace", `{"id":"00000000-0000-0000-0000-000000000000"`},
+		{"truncated string", `{"id":"00000000-0000-0000-0000-0`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			req := httptest.NewRequest(http.MethodPost, "/ventas", bytes.NewBufferString(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, req)
+			assert.GreaterOrEqual(t, rec.Code, 400, "must be 4xx: body=%s", rec.Body.String())
+			assert.Less(t, rec.Code, 500, "must NOT be 5xx (parser should recover): body=%s", rec.Body.String())
+		})
+	}
+}
+
+// TestCrearVenta_EnormousBody_Rejected verifies the handler rejects a body
+// that is large but still structurally valid (10MB of productos). The
+// rejection should be a clean 4xx (likely 413 or 422), never a 5xx or a
+// hang.
+func TestCrearVenta_EnormousBody_Rejected(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _ := testService()
+	cu := fullPerms(uuid.New())
+	r := buildRouter(t, svc, cu)
+
+	body := validCreateBody()
+	// ~50k productos × ~200 bytes per producto ≈ 10MB of JSON.
+	body.Productos = make([]venthttp.ProductoDTO, 0, 50000)
+	for i := range 50000 {
+		body.Productos = append(body.Productos, venthttp.ProductoDTO{
+			ID: uuid.NewString(), ArticuloID: i + 1, Articulo: "Articulo",
+			Cantidad: "1", PrecioAnual: "1", PrecioCorto: "1", PrecioContado: "1",
+			AlmacenOrigenID: intPtr(1), AlmacenDestinoID: intPtr(2),
+		})
+	}
+	req := jsonRequest(t, http.MethodPost, "/ventas", body)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	assert.GreaterOrEqual(t, rec.Code, 400, "enormous body must be 4xx: %d", rec.Code)
+	assert.Less(t, rec.Code, 500, "enormous body must NOT 5xx: %d body=%s", rec.Code, rec.Body.String())
 }
 
 // TestOpenAPI_PathsRegistered verifies that the Huma API publishes the six

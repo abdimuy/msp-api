@@ -3,6 +3,7 @@ package venthttp_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"mime/multipart"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/abdimuy/msp-api/internal/auth"
 	authdomain "github.com/abdimuy/msp-api/internal/auth/domain"
+	"github.com/abdimuy/msp-api/internal/platform/fbtestutil"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/venthttp"
 )
 
@@ -36,6 +38,46 @@ type secProtectedRoute struct {
 func jsonCancelBody(t *testing.T) (io.Reader, string) {
 	t.Helper()
 	b, err := json.Marshal(map[string]string{"reason": "test"})
+	require.NoError(t, err)
+	return bytes.NewReader(b), "application/json"
+}
+
+// jsonHeaderEditBody is a valid ActualizarHeader body.
+func jsonHeaderEditBody(t *testing.T) (io.Reader, string) {
+	t.Helper()
+	b, err := json.Marshal(validHeaderBody())
+	require.NoError(t, err)
+	return bytes.NewReader(b), "application/json"
+}
+
+// jsonClienteEditBody is a valid ActualizarCliente body.
+func jsonClienteEditBody(t *testing.T) (io.Reader, string) {
+	t.Helper()
+	b, err := json.Marshal(validClienteBody())
+	require.NoError(t, err)
+	return bytes.NewReader(b), "application/json"
+}
+
+// jsonProductosEditBody is a valid ReemplazarProductos body.
+func jsonProductosEditBody(t *testing.T) (io.Reader, string) {
+	t.Helper()
+	b, err := json.Marshal(validProductosBody())
+	require.NoError(t, err)
+	return bytes.NewReader(b), "application/json"
+}
+
+// jsonCombosEditBody is a valid ReemplazarCombos body.
+func jsonCombosEditBody(t *testing.T) (io.Reader, string) {
+	t.Helper()
+	b, err := json.Marshal(validCombosBody())
+	require.NoError(t, err)
+	return bytes.NewReader(b), "application/json"
+}
+
+// jsonVendedoresEditBody is a valid ReemplazarVendedores body.
+func jsonVendedoresEditBody(t *testing.T) (io.Reader, string) {
+	t.Helper()
+	b, err := json.Marshal(validVendedoresBody())
 	require.NoError(t, err)
 	return bytes.NewReader(b), "application/json"
 }
@@ -71,6 +113,11 @@ var secProtectedRoutes = []secProtectedRoute{
 	{http.MethodGet, "/ventas/00000000-0000-0000-0000-000000000001", authdomain.PermVentasVer, nil},
 	{http.MethodPost, "/ventas", authdomain.PermVentasCrear, jsonCreateBody},
 	{http.MethodPatch, "/ventas/00000000-0000-0000-0000-000000000001/cancel", authdomain.PermVentasCancelar, jsonCancelBody},
+	{http.MethodPatch, "/ventas/00000000-0000-0000-0000-000000000001", authdomain.PermVentasEditar, jsonHeaderEditBody},
+	{http.MethodPatch, "/ventas/00000000-0000-0000-0000-000000000001/cliente", authdomain.PermVentasEditar, jsonClienteEditBody},
+	{http.MethodPut, "/ventas/00000000-0000-0000-0000-000000000001/productos", authdomain.PermVentasEditar, jsonProductosEditBody},
+	{http.MethodPut, "/ventas/00000000-0000-0000-0000-000000000001/combos", authdomain.PermVentasEditar, jsonCombosEditBody},
+	{http.MethodPut, "/ventas/00000000-0000-0000-0000-000000000001/vendedores", authdomain.PermVentasEditar, jsonVendedoresEditBody},
 	{http.MethodPost, "/ventas/00000000-0000-0000-0000-000000000001/imagenes", authdomain.PermVentasSubirImagenes, multipartImageBody},
 	{http.MethodDelete, "/ventas/00000000-0000-0000-0000-000000000001/imagenes/00000000-0000-0000-0000-000000000002", authdomain.PermVentasEliminarImagenes, nil},
 }
@@ -146,6 +193,7 @@ func TestSecurity_Authz_MissingPerm_Returns403(t *testing.T) {
 				authdomain.PermVentasVer,
 				authdomain.PermVentasCrear,
 				authdomain.PermVentasCancelar,
+				authdomain.PermVentasEditar,
 				authdomain.PermVentasSubirImagenes,
 				authdomain.PermVentasEliminarImagenes,
 			}
@@ -180,6 +228,11 @@ func TestSecurity_PathInjection_InvalidUUID_NoInternalError(t *testing.T) {
 	}{
 		{http.MethodGet, "/ventas/not-a-uuid"},
 		{http.MethodPatch, "/ventas/not-a-uuid/cancel"},
+		{http.MethodPatch, "/ventas/not-a-uuid"},
+		{http.MethodPatch, "/ventas/not-a-uuid/cliente"},
+		{http.MethodPut, "/ventas/not-a-uuid/productos"},
+		{http.MethodPut, "/ventas/not-a-uuid/combos"},
+		{http.MethodPut, "/ventas/not-a-uuid/vendedores"},
 		{http.MethodDelete, "/ventas/not-a-uuid/imagenes/also-not"},
 		// URL-encoded single-quote SQL-injection attempt embedded in the path.
 		{http.MethodGet, "/ventas/%27%20OR%20%271%27%3D%271"},
@@ -199,4 +252,88 @@ func TestSecurity_PathInjection_InvalidUUID_NoInternalError(t *testing.T) {
 				"path injection produced 500 for %s %s: %s", tc.method, tc.path, rec.Body.String())
 		})
 	}
+}
+
+// ─── B6: defense-in-depth — body-borne injection attempts ─────────────────
+
+// TestSecurity_JSONInjection_NombreInResponse pins how the API returns a
+// nombre containing HTML/script characters. Two contracts:
+//
+//  1. The value MUST be returned inside a JSON string (between quotes),
+//     so a correct JSON consumer can never accidentally execute it.
+//  2. The Content-Type MUST be application/json — never text/html — so
+//     browsers don't render the body.
+//
+// We deliberately do NOT require HTML-escaping of `<`/`>`/`&` in the JSON
+// payload: Huma's encoder leaves those bytes literal (this is permitted
+// by the JSON spec). The defense is correct content-type + structural
+// containment, not byte-level escaping. A regression that flipped the
+// content type to text/html would be the actual XSS exposure.
+func TestSecurity_JSONInjection_NombreInResponse(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _ := testService()
+	r := buildRouter(t, svc, fullPerms(uuid.New()))
+
+	body := validCreateBody()
+	body.Cliente.Nombre = "<script>alert('xss')</script>"
+	req := jsonRequest(t, http.MethodPost, "/ventas", body)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	// Contract 1: response is application/json.
+	ct := rec.Header().Get("Content-Type")
+	assert.Contains(t, ct, "application/json",
+		"response must be Content-Type: application/json (got %q)", ct)
+
+	// Contract 2: payload is inside a JSON string. Parsing succeeds and
+	// the nombre round-trips verbatim.
+	var got venthttp.VentaDTO
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got),
+		"response must be valid JSON (injected chars must not break parsing)")
+	assert.Equal(t, "<script>alert('xss')</script>", got.Cliente.Nombre,
+		"value must round-trip exactly — preserved as user input, not executable HTML")
+}
+
+// TestSecurity_SQLInjection_InNotaField verifies that string fields are
+// passed as parameters to Firebird, never concatenated into SQL — feeding
+// the canonical SQL-injection payload via the nota field must result in
+// the literal string being stored, with MSP_VENTAS still present.
+//
+//nolint:paralleltest // Firebird E2E tests are serial.
+func TestSecurity_SQLInjection_InNotaField(t *testing.T) {
+	pool := e2eTestPool(t)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		usuarioID := seedE2EUsuario(ctx, t, pool)
+		svc := buildE2EService(pool)
+		r := chi.NewRouter()
+		r.Use(txInjector(ctx))
+		r.Use(planter(e2eFullPermsUser(usuarioID)))
+		venthttp.MountRouter(r, svc)
+
+		body := validCreateBody()
+		body.Vendedores[0].UsuarioID = usuarioID.String()
+		injection := "'; DROP TABLE MSP_VENTAS; --"
+		body.Nota = &injection
+		req := jsonRequest(t, http.MethodPost, "/ventas", body)
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+		// Round-trip: nota stored as a literal string.
+		req = httptest.NewRequest(http.MethodGet, "/ventas/"+body.ID, nil)
+		rec = httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var got venthttp.VentaDTO
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+		require.NotNil(t, got.Nota)
+		assert.Equal(t, injection, *got.Nota,
+			"injection payload must be stored verbatim, not interpreted as SQL")
+
+		// And the table itself is still there (verified by being able to GET
+		// the row at all — if DROP had executed the FindByID above would
+		// have failed with a table-not-found error from the driver).
+	})
 }
