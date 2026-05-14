@@ -38,6 +38,8 @@ type ListVentasFilters struct {
 	// VendedorUsuarioID restricts to ventas whose vendedores include the
 	// given usuario id.
 	VendedorUsuarioID *uuid.UUID
+	// ClienteID restricts to ventas linked to the given Microsip cliente.
+	ClienteID *int
 	// TipoVenta restricts to a specific tipo de venta. Empty string disables.
 	TipoVenta string
 	// IncluirCanceladas controls whether soft-cancelled ventas are returned.
@@ -45,10 +47,22 @@ type ListVentasFilters struct {
 	IncluirCanceladas bool
 }
 
+// ClienteExistenceChecker is a single-method port consulted by the ventas
+// service to validate that an optional cliente_id on a venta points to a
+// real row in Microsip's CLIENTES table.
+type ClienteExistenceChecker interface {
+	// Exists reports whether a row with the given CLIENTE_ID exists in
+	// Microsip's CLIENTES. Returns (false, nil) when not found; (false, err)
+	// for transport / query failures.
+	Exists(ctx context.Context, clienteID int) (bool, error)
+}
+
 // VentaRepo persists and retrieves Venta aggregates as a single unit. The
 // repository implementation is responsible for keeping the multi-table
 // write transactional — child rows (combos, productos, vendedores,
 // imágenes) live and die with their parent.
+//
+//nolint:interfacebloat // one method per aggregate-level mutation; cohesive.
 type VentaRepo interface {
 	// Save inserts a new venta with all children in a single transaction.
 	// FK-ordered: header → combos → productos → vendedores → imágenes.
@@ -58,6 +72,25 @@ type VentaRepo interface {
 	// and other header-only mutations. Child collections are NOT
 	// re-synced here — image add/remove use dedicated methods.
 	Update(ctx context.Context, v *domain.Venta) error
+
+	// UpdateHeader writes back the mutable header columns of v (excluding
+	// cancellation, which goes through Update). Used by ActualizarHeader.
+	UpdateHeader(ctx context.Context, v *domain.Venta) error
+
+	// UpdateCliente writes back the cliente snapshot + cliente_id link.
+	UpdateCliente(ctx context.Context, v *domain.Venta) error
+
+	// ReplaceProductos atomically deletes the existing productos rows for
+	// v and inserts the current productos slice.
+	ReplaceProductos(ctx context.Context, v *domain.Venta) error
+
+	// ReplaceCombos atomically deletes the existing combos rows for v and
+	// inserts the current combos slice.
+	ReplaceCombos(ctx context.Context, v *domain.Venta) error
+
+	// ReplaceVendedores atomically deletes the existing vendedores rows
+	// for v and inserts the current vendedores slice.
+	ReplaceVendedores(ctx context.Context, v *domain.Venta) error
 
 	// FindByID loads a venta with its full children collection populated.
 	// Returns ErrVentaNotFound on miss.

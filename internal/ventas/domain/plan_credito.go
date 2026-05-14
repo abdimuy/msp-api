@@ -27,6 +27,14 @@ func NewPlanCredito(
 	if parcialidad.Sign() < 0 {
 		return PlanCredito{}, ErrMontoNegativo
 	}
+	for _, v := range [...]decimal.Decimal{enganche, parcialidad} {
+		if err := validateMontoScale(v); err != nil {
+			return PlanCredito{}, err
+		}
+		if err := validateMontoCap(v); err != nil {
+			return PlanCredito{}, err
+		}
+	}
 	if !frecPago.IsValid() {
 		return PlanCredito{}, ErrFrecPagoInvalida
 	}

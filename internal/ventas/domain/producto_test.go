@@ -48,6 +48,7 @@ func TestHydrateProducto(t *testing.T) {
 
 func TestProducto_ViaCrearVenta_Validation(t *testing.T) {
 	t.Parallel()
+	one, two := 1, 2
 	mk := func(p domain.CrearVentaProductoInput) error {
 		params := validCrearVentaParams(t)
 		params.Productos = []domain.CrearVentaProductoInput{p}
@@ -59,22 +60,78 @@ func TestProducto_ViaCrearVenta_Validation(t *testing.T) {
 	// Valid producto.
 	require.NoError(t, mk(domain.CrearVentaProductoInput{
 		ID: uuid.New(), ArticuloID: 1, Articulo: "X", Cantidad: decimal.NewFromInt(1), Precios: montos,
+		AlmacenOrigen: &one, AlmacenDestino: &two,
 	}))
 	// Empty articulo.
 	require.Error(t, mk(domain.CrearVentaProductoInput{
 		ID: uuid.New(), ArticuloID: 1, Articulo: "   ", Cantidad: decimal.NewFromInt(1), Precios: montos,
+		AlmacenOrigen: &one, AlmacenDestino: &two,
 	}))
 	// Articulo too long.
 	require.Error(t, mk(domain.CrearVentaProductoInput{
 		ID: uuid.New(), ArticuloID: 1, Articulo: strings.Repeat("a", 201),
 		Cantidad: decimal.NewFromInt(1), Precios: montos,
+		AlmacenOrigen: &one, AlmacenDestino: &two,
 	}))
 	// Cantidad zero.
 	require.Error(t, mk(domain.CrearVentaProductoInput{
 		ID: uuid.New(), ArticuloID: 1, Articulo: "X", Cantidad: decimal.Zero, Precios: montos,
+		AlmacenOrigen: &one, AlmacenDestino: &two,
 	}))
 	// Cantidad negative.
 	require.Error(t, mk(domain.CrearVentaProductoInput{
 		ID: uuid.New(), ArticuloID: 1, Articulo: "X", Cantidad: decimal.NewFromInt(-1), Precios: montos,
+		AlmacenOrigen: &one, AlmacenDestino: &two,
 	}))
+	// Standalone producto missing almacen.
+	require.Error(t, mk(domain.CrearVentaProductoInput{
+		ID: uuid.New(), ArticuloID: 1, Articulo: "X", Cantidad: decimal.NewFromInt(1), Precios: montos,
+	}))
+}
+
+func TestProducto_EnCombo_HeredaAlmacenes(t *testing.T) {
+	t.Parallel()
+	one, two := 1, 2
+	montos, _ := domain.NewMontoSnapshot(decimal.NewFromInt(10), decimal.NewFromInt(8), decimal.NewFromInt(5))
+	comboID := uuid.New()
+
+	params := validCrearVentaParams(t)
+	params.Combos = []domain.CrearVentaComboInput{{
+		ID: comboID, Nombre: "Bundle", Precios: montos,
+		Cantidad: decimal.NewFromInt(2), AlmacenOrigen: 1, AlmacenDestino: 2,
+	}}
+	params.Productos = []domain.CrearVentaProductoInput{{
+		ID: uuid.New(), ArticuloID: 1, Articulo: "Item", Cantidad: decimal.NewFromInt(1), Precios: montos,
+		ComboID: &comboID,
+	}}
+	v, err := domain.CrearVenta(params)
+	require.NoError(t, err)
+	assert.Equal(t, 1, v.ProductosCount())
+
+	// Producto inside a combo with its own almacenes → rejected.
+	bad := validCrearVentaParams(t)
+	bad.Combos = []domain.CrearVentaComboInput{{
+		ID: comboID, Nombre: "Bundle", Precios: montos,
+		Cantidad: decimal.NewFromInt(1), AlmacenOrigen: 1, AlmacenDestino: 2,
+	}}
+	bad.Productos = []domain.CrearVentaProductoInput{{
+		ID: uuid.New(), ArticuloID: 1, Articulo: "Item", Cantidad: decimal.NewFromInt(1), Precios: montos,
+		ComboID: &comboID, AlmacenOrigen: &one, AlmacenDestino: &two,
+	}}
+	_, err = domain.CrearVenta(bad)
+	require.Error(t, err)
+}
+
+func TestProducto_ReferenciaComboInvalida(t *testing.T) {
+	t.Parallel()
+	montos, _ := domain.NewMontoSnapshot(decimal.NewFromInt(10), decimal.NewFromInt(8), decimal.NewFromInt(5))
+	ghost := uuid.New()
+
+	params := validCrearVentaParams(t)
+	params.Productos = []domain.CrearVentaProductoInput{{
+		ID: uuid.New(), ArticuloID: 1, Articulo: "Item", Cantidad: decimal.NewFromInt(1), Precios: montos,
+		ComboID: &ghost,
+	}}
+	_, err := domain.CrearVenta(params)
+	require.Error(t, err)
 }

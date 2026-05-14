@@ -15,23 +15,28 @@ import (
 // CrearVentaProductoInput is one producto line in the create-venta request.
 // Fields are primitive types; VOs are constructed by IntoDomain.
 type CrearVentaProductoInput struct {
-	ID            uuid.UUID
-	ArticuloID    int
-	Articulo      string
-	Cantidad      decimal.Decimal
-	PrecioAnual   decimal.Decimal
-	PrecioCorto   decimal.Decimal
-	PrecioContado decimal.Decimal
-	ComboID       *uuid.UUID
+	ID             uuid.UUID
+	ArticuloID     int
+	Articulo       string
+	Cantidad       decimal.Decimal
+	PrecioAnual    decimal.Decimal
+	PrecioCorto    decimal.Decimal
+	PrecioContado  decimal.Decimal
+	ComboID        *uuid.UUID
+	AlmacenOrigen  *int
+	AlmacenDestino *int
 }
 
 // CrearVentaComboInput is one combo in the create-venta request.
 type CrearVentaComboInput struct {
-	ID            uuid.UUID
-	Nombre        string
-	PrecioAnual   decimal.Decimal
-	PrecioCorto   decimal.Decimal
-	PrecioContado decimal.Decimal
+	ID             uuid.UUID
+	Nombre         string
+	PrecioAnual    decimal.Decimal
+	PrecioCorto    decimal.Decimal
+	PrecioContado  decimal.Decimal
+	Cantidad       decimal.Decimal
+	AlmacenOrigen  int
+	AlmacenDestino int
 }
 
 // CrearVentaVendedorInput is one vendedor in the create-venta request.
@@ -63,6 +68,7 @@ type CrearVentaDiaCobranzaInput struct {
 // domain VO constructors.
 type CrearVentaInput struct {
 	ID             uuid.UUID
+	ClienteID      *int
 	ClienteNombre  string
 	ClienteTel     *string
 	ClienteAval    *string
@@ -74,8 +80,6 @@ type CrearVentaInput struct {
 	ZonaClienteID  *int
 	Latitud        float64
 	Longitud       float64
-	AlmacenOrigen  int
-	AlmacenDestino int
 	FechaVenta     time.Time
 	TipoVenta      string
 	PrecioAnual    decimal.Decimal
@@ -94,6 +98,9 @@ type CrearVentaInput struct {
 // outbox. Returns the persisted aggregate on success.
 func (s *Service) CrearVenta(ctx context.Context, in CrearVentaInput, by uuid.UUID) (*domain.Venta, error) {
 	now := s.clock.Now()
+	if err := s.validateClienteID(ctx, in.ClienteID); err != nil {
+		return nil, err
+	}
 	params, err := in.intoDomain(by, now)
 	if err != nil {
 		return nil, err
@@ -156,23 +163,22 @@ func (in CrearVentaInput) intoDomain(by uuid.UUID, now time.Time) (domain.CrearV
 	}
 	vendedores := buildVendedorInputs(in.Vendedores)
 	return domain.CrearVentaParams{
-		ID:             in.ID,
-		Cliente:        cliente,
-		Direccion:      dir,
-		GPS:            gps,
-		AlmacenOrigen:  in.AlmacenOrigen,
-		AlmacenDestino: in.AlmacenDestino,
-		FechaVenta:     in.FechaVenta,
-		TipoVenta:      tipo,
-		Montos:         montos,
-		PlanCredito:    plan,
-		DiaCobranza:    dia,
-		Nota:           in.Nota,
-		Combos:         combos,
-		Productos:      productos,
-		Vendedores:     vendedores,
-		CreatedBy:      by,
-		Now:            now,
+		ID:          in.ID,
+		ClienteID:   in.ClienteID,
+		Cliente:     cliente,
+		Direccion:   dir,
+		GPS:         gps,
+		FechaVenta:  in.FechaVenta,
+		TipoVenta:   tipo,
+		Montos:      montos,
+		PlanCredito: plan,
+		DiaCobranza: dia,
+		Nota:        in.Nota,
+		Combos:      combos,
+		Productos:   productos,
+		Vendedores:  vendedores,
+		CreatedBy:   by,
+		Now:         now,
 	}, nil
 }
 
@@ -283,9 +289,12 @@ func buildComboInputs(in []CrearVentaComboInput) []domain.CrearVentaComboInput {
 	out := make([]domain.CrearVentaComboInput, 0, len(in))
 	for _, c := range in {
 		out = append(out, domain.CrearVentaComboInput{
-			ID:      c.ID,
-			Nombre:  c.Nombre,
-			Precios: domain.HydrateMontoSnapshot(c.PrecioAnual, c.PrecioCorto, c.PrecioContado),
+			ID:             c.ID,
+			Nombre:         c.Nombre,
+			Precios:        domain.HydrateMontoSnapshot(c.PrecioAnual, c.PrecioCorto, c.PrecioContado),
+			Cantidad:       c.Cantidad,
+			AlmacenOrigen:  c.AlmacenOrigen,
+			AlmacenDestino: c.AlmacenDestino,
 		})
 	}
 	return out
@@ -302,12 +311,14 @@ func buildProductoInputs(in []CrearVentaProductoInput) ([]domain.CrearVentaProdu
 			return nil, err
 		}
 		out = append(out, domain.CrearVentaProductoInput{
-			ID:         p.ID,
-			ArticuloID: p.ArticuloID,
-			Articulo:   p.Articulo,
-			Cantidad:   p.Cantidad,
-			Precios:    precios,
-			ComboID:    p.ComboID,
+			ID:             p.ID,
+			ArticuloID:     p.ArticuloID,
+			Articulo:       p.Articulo,
+			Cantidad:       p.Cantidad,
+			Precios:        precios,
+			ComboID:        p.ComboID,
+			AlmacenOrigen:  p.AlmacenOrigen,
+			AlmacenDestino: p.AlmacenDestino,
 		})
 	}
 	return out, nil

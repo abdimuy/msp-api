@@ -36,22 +36,23 @@ func validCrearVentaParams(t *testing.T) domain.CrearVentaParams {
 	montos, err := domain.NewMontoSnapshot(decimal.NewFromInt(100), decimal.NewFromInt(80), decimal.NewFromInt(50))
 	require.NoError(t, err)
 
+	one, two := 1, 2
 	return domain.CrearVentaParams{
-		ID:             uuid.New(),
-		Cliente:        cliente,
-		Direccion:      dir,
-		GPS:            gps,
-		AlmacenOrigen:  1,
-		AlmacenDestino: 2,
-		FechaVenta:     time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC),
-		TipoVenta:      domain.TipoVentaContado,
-		Montos:         montos,
+		ID:         uuid.New(),
+		Cliente:    cliente,
+		Direccion:  dir,
+		GPS:        gps,
+		FechaVenta: time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC),
+		TipoVenta:  domain.TipoVentaContado,
+		Montos:     montos,
 		Productos: []domain.CrearVentaProductoInput{{
-			ID:         uuid.New(),
-			ArticuloID: 1,
-			Articulo:   "Bici",
-			Cantidad:   decimal.NewFromInt(1),
-			Precios:    montos,
+			ID:             uuid.New(),
+			ArticuloID:     1,
+			Articulo:       "Bici",
+			Cantidad:       decimal.NewFromInt(1),
+			Precios:        montos,
+			AlmacenOrigen:  &one,
+			AlmacenDestino: &two,
 		}},
 		Vendedores: []domain.CrearVentaVendedorInput{{
 			ID:        uuid.New(),
@@ -129,7 +130,14 @@ func TestCrearVenta_RejectsBadHeader(t *testing.T) {
 	}{
 		{"tipo invalido", func(p *domain.CrearVentaParams) { p.TipoVenta = "OTRO" }, "tipo_venta_invalido"},
 		{"fecha zero", func(p *domain.CrearVentaParams) { p.FechaVenta = time.Time{} }, "fecha_venta_zero"},
-		{"almacenes iguales", func(p *domain.CrearVentaParams) { p.AlmacenDestino = p.AlmacenOrigen }, "venta_almacenes_iguales"},
+		{"almacenes iguales en producto", func(p *domain.CrearVentaParams) {
+			eq := 7
+			p.Productos[0].AlmacenOrigen = &eq
+			p.Productos[0].AlmacenDestino = &eq
+		}, "venta_almacenes_iguales"},
+		{"producto sin almacen origen", func(p *domain.CrearVentaParams) {
+			p.Productos[0].AlmacenOrigen = nil
+		}, "producto_almacen_origen_required"},
 		{"sin cliente", func(p *domain.CrearVentaParams) { p.Cliente = domain.ClienteSnapshot{} }, "nombre_cliente_required"},
 		{"sin productos", func(p *domain.CrearVentaParams) { p.Productos = nil }, "venta_productos_vacios"},
 		{"sin vendedores", func(p *domain.CrearVentaParams) { p.Vendedores = nil }, "venta_vendedores_vacios"},
@@ -420,13 +428,17 @@ func TestVenta_ProductosIteratorEarlyStop(t *testing.T) {
 	// Build a venta with two productos and stop after the first.
 	p := validCrearVentaParams(t)
 	montos, _ := domain.NewMontoSnapshot(decimal.NewFromInt(10), decimal.NewFromInt(8), decimal.NewFromInt(5))
+	one2, two2 := 1, 2
 	p.Productos = append(p.Productos, domain.CrearVentaProductoInput{
 		ID: uuid.New(), ArticuloID: 2, Articulo: "Otro", Cantidad: decimal.NewFromInt(1), Precios: montos,
+		AlmacenOrigen: &one2, AlmacenDestino: &two2,
 	})
 	p.Combos = []domain.CrearVentaComboInput{{
 		ID: uuid.New(), Nombre: "C1", Precios: montos,
+		Cantidad: decimal.NewFromInt(1), AlmacenOrigen: 1, AlmacenDestino: 2,
 	}, {
 		ID: uuid.New(), Nombre: "C2", Precios: montos,
+		Cantidad: decimal.NewFromInt(1), AlmacenOrigen: 1, AlmacenDestino: 2,
 	}}
 	v, err := domain.CrearVenta(p)
 	require.NoError(t, err)
@@ -532,8 +544,6 @@ func TestVenta_AccessorsRoundtrip(t *testing.T) {
 	assert.Equal(t, p.Cliente.Nombre().Value(), v.Cliente().Nombre().Value())
 	assert.Equal(t, p.Direccion.Calle(), v.Direccion().Calle())
 	assert.InDelta(t, p.GPS.Latitud(), v.GPS().Latitud(), 0)
-	assert.Equal(t, p.AlmacenOrigen, v.AlmacenOrigen())
-	assert.Equal(t, p.AlmacenDestino, v.AlmacenDestino())
 	assert.Equal(t, p.FechaVenta, v.FechaVenta())
 	assert.True(t, p.Montos.Equals(v.Montos()))
 	require.NotNil(t, v.Nota())

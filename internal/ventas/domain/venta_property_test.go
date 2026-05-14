@@ -129,6 +129,7 @@ func TestCrearVenta_RandomValidContado_Property(t *testing.T) {
 			productos = append(productos, domain.CrearVentaProductoInput{
 				ID: uuid.New(), ArticuloID: 1, Articulo: "art",
 				Cantidad: decimal.NewFromInt(1), Precios: montos,
+				AlmacenOrigen: &almOrig, AlmacenDestino: &almDest,
 			})
 		}
 		vendedores := make([]domain.CrearVentaVendedorInput, 0, numVendedores)
@@ -139,19 +140,17 @@ func TestCrearVenta_RandomValidContado_Property(t *testing.T) {
 		}
 
 		v, err := domain.CrearVenta(domain.CrearVentaParams{
-			ID:             uuid.New(),
-			Cliente:        cliente,
-			Direccion:      dir,
-			GPS:            gps,
-			AlmacenOrigen:  almOrig,
-			AlmacenDestino: almDest,
-			FechaVenta:     time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
-			TipoVenta:      domain.TipoVentaContado,
-			Montos:         montos,
-			Productos:      productos,
-			Vendedores:     vendedores,
-			CreatedBy:      uuid.New(),
-			Now:            time.Now(),
+			ID:         uuid.New(),
+			Cliente:    cliente,
+			Direccion:  dir,
+			GPS:        gps,
+			FechaVenta: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+			TipoVenta:  domain.TipoVentaContado,
+			Montos:     montos,
+			Productos:  productos,
+			Vendedores: vendedores,
+			CreatedBy:  uuid.New(),
+			Now:        time.Now(),
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)

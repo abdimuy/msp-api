@@ -1,3 +1,4 @@
+//nolint:misspell // ventas vocabulary is Spanish (clientes) per project convention.
 package main
 
 import (
@@ -15,6 +16,13 @@ import (
 // provideVentasRepo builds the Firebird-backed VentaRepo.
 func provideVentasRepo(p *firebird.Pool) ventasoutbound.VentaRepo {
 	return ventfb.NewVentaRepo(p)
+}
+
+// provideVentasClienteChecker builds the Firebird-backed implementation of
+// ClienteExistenceChecker that validates cliente_id references against
+// Microsip's CLIENTES table.
+func provideVentasClienteChecker(p *firebird.Pool) ventasoutbound.ClienteExistenceChecker {
+	return ventfb.NewClienteRepo(p)
 }
 
 // provideVentasStorage selects the StorageProvider implementation from
@@ -44,11 +52,12 @@ func provideVentasImageProcessor(cfg *config.Config) (ventasoutbound.ImageProces
 // writes are coordinated through the supplied Firebird transaction manager.
 func provideVentasService(
 	repo ventasoutbound.VentaRepo,
+	clientes ventasoutbound.ClienteExistenceChecker,
 	store ventasoutbound.StorageProvider,
 	clock ventasoutbound.Clock,
 	outbox ventasoutbound.OutboxEnqueuer,
 	imageProc ventasoutbound.ImageProcessor,
 	fbTxMgr *firebird.TxManager,
 ) *ventasapp.Service {
-	return ventasapp.NewService(repo, store, clock, outbox, imageProc, fbTxMgr)
+	return ventasapp.NewService(repo, clientes, store, clock, outbox, imageProc, fbTxMgr)
 }

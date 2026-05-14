@@ -28,6 +28,9 @@ func NewNombreCliente(s string) (NombreCliente, error) {
 	if len(s) > maxNombreClienteLength {
 		return NombreCliente{}, ErrNombreClienteDemasiadoLargo
 	}
+	if err := validateSafeChars(s); err != nil {
+		return NombreCliente{}, err
+	}
 	return NombreCliente{value: s}, nil
 }
 

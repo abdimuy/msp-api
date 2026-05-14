@@ -24,33 +24,34 @@ const cantidadScale int32 = 4
 func toVentaDTO(v *domain.Venta) VentaDTO {
 	a := v.Audit()
 	dto := VentaDTO{
-		ID:             v.ID().String(),
-		Cliente:        toClienteSnapshotDTO(v.Cliente()),
-		Direccion:      toDireccionDTO(v.Direccion()),
-		GPS:            toGPSDTO(v.GPS()),
-		AlmacenOrigen:  v.AlmacenOrigen(),
-		AlmacenDestino: v.AlmacenDestino(),
-		FechaVenta:     formatTime(v.FechaVenta()),
-		TipoVenta:      v.TipoVenta().String(),
-		Montos:         toMontosDTO(v.Montos()),
-		PlanCredito:    toPlanCreditoDTO(v.PlanCredito()),
-		DiaCobranza:    toDiaCobranzaDTO(v.DiaCobranza()),
-		Nota:           v.Nota(),
-		Combos:         toCombosDTO(v),
-		Productos:      toProductosDTO(v),
-		Vendedores:     toVendedoresDTO(v),
-		Imagenes:       toImagenesDTO(v),
-		Cancelacion:    toCancelacionDTO(v.Cancelacion()),
-		CreatedAt:      formatTime(a.CreatedAt()),
-		UpdatedAt:      formatTime(a.UpdatedAt()),
-		CreatedBy:      a.CreatedBy().String(),
-		UpdatedBy:      a.UpdatedBy().String(),
+		ID:          v.ID().String(),
+		Cliente:     toClienteSnapshotDTO(v.ClienteID(), v.Cliente()),
+		Direccion:   toDireccionDTO(v.Direccion()),
+		GPS:         toGPSDTO(v.GPS()),
+		FechaVenta:  formatTime(v.FechaVenta()),
+		TipoVenta:   v.TipoVenta().String(),
+		Status:      v.Status().String(),
+		Montos:      toMontosDTO(v.Montos()),
+		PlanCredito: toPlanCreditoDTO(v.PlanCredito()),
+		DiaCobranza: toDiaCobranzaDTO(v.DiaCobranza()),
+		Nota:        v.Nota(),
+		Combos:      toCombosDTO(v),
+		Productos:   toProductosDTO(v),
+		Vendedores:  toVendedoresDTO(v),
+		Imagenes:    toImagenesDTO(v),
+		Cancelacion: toCancelacionDTO(v.Cancelacion()),
+		Aprobacion:  toAprobacionDTO(v.Aprobacion()),
+		CreatedAt:   formatTime(a.CreatedAt()),
+		UpdatedAt:   formatTime(a.UpdatedAt()),
+		CreatedBy:   a.CreatedBy().String(),
+		UpdatedBy:   a.UpdatedBy().String(),
 	}
 	return dto
 }
 
-// toClienteSnapshotDTO projects the embedded cliente snapshot.
-func toClienteSnapshotDTO(c domain.ClienteSnapshot) ClienteSnapshotDTO {
+// toClienteSnapshotDTO projects the embedded cliente snapshot together with
+// the optional Microsip cliente_id link.
+func toClienteSnapshotDTO(clienteID *int, c domain.ClienteSnapshot) ClienteSnapshotDTO {
 	var tel *string
 	if t := c.Telefono(); t != nil {
 		v := t.Value()
@@ -62,9 +63,10 @@ func toClienteSnapshotDTO(c domain.ClienteSnapshot) ClienteSnapshotDTO {
 		aval = &v
 	}
 	return ClienteSnapshotDTO{
-		Nombre:   c.Nombre().Value(),
-		Telefono: tel,
-		Aval:     aval,
+		ClienteID: clienteID,
+		Nombre:    c.Nombre().Value(),
+		Telefono:  tel,
+		Aval:      aval,
 	}
 }
 
@@ -134,11 +136,14 @@ func toCombosDTO(v *domain.Venta) []ComboDTO {
 func toComboDTO(c *domain.Combo) ComboDTO {
 	pr := c.Precios()
 	return ComboDTO{
-		ID:            c.ID().String(),
-		Nombre:        c.Nombre(),
-		PrecioAnual:   pr.Anual().StringFixed(moneyScale),
-		PrecioCorto:   pr.CortoPlazo().StringFixed(moneyScale),
-		PrecioContado: pr.Contado().StringFixed(moneyScale),
+		ID:               c.ID().String(),
+		Nombre:           c.Nombre(),
+		PrecioAnual:      pr.Anual().StringFixed(moneyScale),
+		PrecioCorto:      pr.CortoPlazo().StringFixed(moneyScale),
+		PrecioContado:    pr.Contado().StringFixed(moneyScale),
+		Cantidad:         c.Cantidad().StringFixed(cantidadScale),
+		AlmacenOrigenID:  c.AlmacenOrigen(),
+		AlmacenDestinoID: c.AlmacenDestino(),
 	}
 }
 
@@ -160,14 +165,16 @@ func toProductoDTO(p *domain.Producto) ProductoDTO {
 		comboID = &v
 	}
 	return ProductoDTO{
-		ID:            p.ID().String(),
-		ArticuloID:    p.ArticuloID(),
-		Articulo:      p.Articulo(),
-		Cantidad:      p.Cantidad().StringFixed(cantidadScale),
-		PrecioAnual:   pr.Anual().StringFixed(moneyScale),
-		PrecioCorto:   pr.CortoPlazo().StringFixed(moneyScale),
-		PrecioContado: pr.Contado().StringFixed(moneyScale),
-		ComboID:       comboID,
+		ID:               p.ID().String(),
+		ArticuloID:       p.ArticuloID(),
+		Articulo:         p.Articulo(),
+		Cantidad:         p.Cantidad().StringFixed(cantidadScale),
+		PrecioAnual:      pr.Anual().StringFixed(moneyScale),
+		PrecioCorto:      pr.CortoPlazo().StringFixed(moneyScale),
+		PrecioContado:    pr.Contado().StringFixed(moneyScale),
+		ComboID:          comboID,
+		AlmacenOrigenID:  p.AlmacenOrigen(),
+		AlmacenDestinoID: p.AlmacenDestino(),
 	}
 }
 
@@ -226,6 +233,17 @@ func toCancelacionDTO(c *domain.Cancelacion) *CancelacionDTO {
 		At:     formatTime(c.At()),
 		By:     c.By().String(),
 		Reason: c.Reason(),
+	}
+}
+
+// toAprobacionDTO projects the optional approval record.
+func toAprobacionDTO(a *domain.Aprobacion) *AprobacionDTO {
+	if a == nil {
+		return nil
+	}
+	return &AprobacionDTO{
+		At: formatTime(a.At()),
+		By: a.By().String(),
 	}
 }
 

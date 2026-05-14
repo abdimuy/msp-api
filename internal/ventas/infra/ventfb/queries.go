@@ -6,42 +6,80 @@ package ventfb
 const ventaColumns = `ID, NOMBRE_CLIENTE, TELEFONO, AVAL_O_RESPONSABLE,
     CALLE, NUMERO_EXTERIOR, COLONIA, POBLACION, CIUDAD, ZONA_CLIENTE_ID,
     LATITUD, LONGITUD,
-    ALMACEN_ORIGEN_ID, ALMACEN_DESTINO_ID,
     FECHA_VENTA, TIPO_VENTA,
     MONTO_ANUAL, MONTO_CORTO_PLAZO, MONTO_CONTADO,
     PLAZO_MESES, ENGANCHE, PARCIALIDAD,
     FREC_PAGO, DIA_COBRANZA_SEMANA, DIA_COBRANZA_MES,
     NOTA,
     CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY,
-    CANCELED_AT, CANCELED_BY, CANCEL_REASON`
+    CANCELED_AT, CANCELED_BY, CANCEL_REASON,
+    CLIENTE_ID, STATUS, APPROVED_AT, APPROVED_BY`
 
 const insertVenta = `
 INSERT INTO MSP_VENTAS
     (ID, NOMBRE_CLIENTE, TELEFONO, AVAL_O_RESPONSABLE,
      CALLE, NUMERO_EXTERIOR, COLONIA, POBLACION, CIUDAD, ZONA_CLIENTE_ID,
      LATITUD, LONGITUD,
-     ALMACEN_ORIGEN_ID, ALMACEN_DESTINO_ID,
      FECHA_VENTA, TIPO_VENTA,
      MONTO_ANUAL, MONTO_CORTO_PLAZO, MONTO_CONTADO,
      PLAZO_MESES, ENGANCHE, PARCIALIDAD,
      FREC_PAGO, DIA_COBRANZA_SEMANA, DIA_COBRANZA_MES,
      NOTA,
      CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY,
-     CANCELED_AT, CANCELED_BY, CANCEL_REASON)
+     CANCELED_AT, CANCELED_BY, CANCEL_REASON,
+     CLIENTE_ID, STATUS, APPROVED_AT, APPROVED_BY)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-// updateVentaHeader is intentionally header-only: child rows are managed by
-// dedicated repo methods (InsertImagen, DeleteImagen). The column set covers
-// every mutable field the domain can change post-creation: cancellation
-// triplet plus updated_at / updated_by.
+// updateVentaHeader updates cancellation-related fields plus the venta's
+// STATUS — used by the Cancelar path. Other edits go through dedicated
+// update statements below.
 const updateVentaHeader = `
 UPDATE MSP_VENTAS
 SET CANCELED_AT   = ?,
     CANCELED_BY   = ?,
     CANCEL_REASON = ?,
+    STATUS        = ?,
     UPDATED_AT    = ?,
     UPDATED_BY    = ?
+WHERE ID = ?`
+
+// updateVentaHeaderFull rewrites the editable header fields used by
+// ActualizarHeader. TIPO_VENTA, CLIENTE_ID and STATUS are NOT touched here.
+const updateVentaHeaderFull = `
+UPDATE MSP_VENTAS
+SET CALLE                = ?,
+    NUMERO_EXTERIOR      = ?,
+    COLONIA              = ?,
+    POBLACION            = ?,
+    CIUDAD               = ?,
+    ZONA_CLIENTE_ID      = ?,
+    LATITUD              = ?,
+    LONGITUD             = ?,
+    FECHA_VENTA          = ?,
+    MONTO_ANUAL          = ?,
+    MONTO_CORTO_PLAZO    = ?,
+    MONTO_CONTADO        = ?,
+    PLAZO_MESES          = ?,
+    ENGANCHE             = ?,
+    PARCIALIDAD          = ?,
+    FREC_PAGO            = ?,
+    DIA_COBRANZA_SEMANA  = ?,
+    DIA_COBRANZA_MES     = ?,
+    NOTA                 = ?,
+    UPDATED_AT           = ?,
+    UPDATED_BY           = ?
+WHERE ID = ?`
+
+// updateVentaCliente updates the cliente snapshot + cliente_id link.
+const updateVentaCliente = `
+UPDATE MSP_VENTAS
+SET CLIENTE_ID         = ?,
+    NOMBRE_CLIENTE     = ?,
+    TELEFONO           = ?,
+    AVAL_O_RESPONSABLE = ?,
+    UPDATED_AT         = ?,
+    UPDATED_BY         = ?
 WHERE ID = ?`
 
 const selectVentaByID = `
@@ -52,14 +90,16 @@ FROM MSP_VENTAS WHERE ID = ?`
 
 const comboColumns = `ID, NOMBRE_COMBO,
     PRECIO_ANUAL, PRECIO_CORTO_PLAZO, PRECIO_CONTADO,
+    CANTIDAD, ALMACEN_ORIGEN_ID, ALMACEN_DESTINO_ID,
     CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY`
 
 const insertCombo = `
 INSERT INTO MSP_VENTAS_COMBOS
     (ID, VENTA_ID, NOMBRE_COMBO,
      PRECIO_ANUAL, PRECIO_CORTO_PLAZO, PRECIO_CONTADO,
+     CANTIDAD, ALMACEN_ORIGEN_ID, ALMACEN_DESTINO_ID,
      CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 const selectCombosByVenta = `
 SELECT ` + comboColumns + `
@@ -67,26 +107,30 @@ FROM MSP_VENTAS_COMBOS
 WHERE VENTA_ID = ?
 ORDER BY CREATED_AT, ID`
 
+const deleteCombosByVenta = `DELETE FROM MSP_VENTAS_COMBOS WHERE VENTA_ID = ?`
+
 // ─── Producto ───────────────────────────────────────────────────────────────
 
 const productoColumns = `ID, ARTICULO_ID, ARTICULO, CANTIDAD,
     PRECIO_ANUAL, PRECIO_CORTO_PLAZO, PRECIO_CONTADO,
-    COMBO_ID,
+    COMBO_ID, ALMACEN_ORIGEN_ID, ALMACEN_DESTINO_ID,
     CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY`
 
 const insertProducto = `
 INSERT INTO MSP_VENTAS_PRODUCTOS
     (ID, VENTA_ID, ARTICULO_ID, ARTICULO, CANTIDAD,
      PRECIO_ANUAL, PRECIO_CORTO_PLAZO, PRECIO_CONTADO,
-     COMBO_ID,
+     COMBO_ID, ALMACEN_ORIGEN_ID, ALMACEN_DESTINO_ID,
      CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 const selectProductosByVenta = `
 SELECT ` + productoColumns + `
 FROM MSP_VENTAS_PRODUCTOS
 WHERE VENTA_ID = ?
 ORDER BY CREATED_AT, ID`
+
+const deleteProductosByVenta = `DELETE FROM MSP_VENTAS_PRODUCTOS WHERE VENTA_ID = ?`
 
 // ─── Vendedor ───────────────────────────────────────────────────────────────
 
@@ -104,6 +148,8 @@ SELECT ` + vendedorColumns + `
 FROM MSP_VENTAS_VENDEDORES
 WHERE VENTA_ID = ?
 ORDER BY CREATED_AT, ID`
+
+const deleteVendedoresByVenta = `DELETE FROM MSP_VENTAS_VENDEDORES WHERE VENTA_ID = ?`
 
 // ─── Imagen ─────────────────────────────────────────────────────────────────
 
@@ -144,3 +190,7 @@ const orderClause = `ORDER BY v.FECHA_VENTA DESC, v.ID`
 // the cursor in the (FECHA_VENTA DESC, ID ASC) ordering, i.e. either an
 // earlier FECHA_VENTA or the same FECHA_VENTA with a strictly larger ID.
 const cursorPredicateDesc = `(v.FECHA_VENTA < ?) OR (v.FECHA_VENTA = ? AND v.ID > ?)`
+
+// ─── Cliente existence ─────────────────────────────────────────────────────
+
+const selectClienteExists = `SELECT FIRST 1 1 FROM CLIENTES WHERE CLIENTE_ID = ?`

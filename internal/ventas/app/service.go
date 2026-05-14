@@ -2,6 +2,8 @@
 // depends only on the ventas domain, the module's outbound ports, and a small
 // set of platform helpers. Wiring (database pool, http handlers) lives in
 // infra; cross-module surfaces live in the ventas root package.
+//
+//nolint:misspell // ventas vocabulary is Spanish (clientes, productos, etc.) per project convention.
 package app
 
 import (
@@ -25,6 +27,7 @@ const outboxAggregateVenta = "venta"
 // *Service; everything Service depends on goes through the outbound ports.
 type Service struct {
 	ventas    outbound.VentaRepo
+	clientes  outbound.ClienteExistenceChecker
 	storage   outbound.StorageProvider
 	clock     outbound.Clock
 	outbox    outbound.OutboxEnqueuer
@@ -37,10 +40,14 @@ type Service struct {
 // run inside a single transaction; pass nil only in tests that exercise
 // in-memory fakes which do not need transactional semantics.
 //
+// clientes is consulted to validate the optional cliente_id on a venta —
+// pass nil only in tests that do not exercise the cliente link.
+//
 // imageProc transforms image uploads (resize + recompress) before they
 // reach the storage provider. Pass the NoOp impl for a passthrough.
 func NewService(
 	ventas outbound.VentaRepo,
+	clientes outbound.ClienteExistenceChecker,
 	storage outbound.StorageProvider,
 	clock outbound.Clock,
 	outbox outbound.OutboxEnqueuer,
@@ -49,12 +56,30 @@ func NewService(
 ) *Service {
 	return &Service{
 		ventas:    ventas,
+		clientes:  clientes,
 		storage:   storage,
 		clock:     clock,
 		outbox:    outbox,
 		imageProc: imageProc,
 		txMgr:     txMgr,
 	}
+}
+
+// validateClienteID consults the configured checker to ensure clienteID
+// (when non-nil) points to a real row in Microsip's CLIENTES. Nil pointer
+// or nil checker short-circuits to (nil) — the cliente link is optional.
+func (s *Service) validateClienteID(ctx context.Context, clienteID *int) error {
+	if clienteID == nil || s.clientes == nil {
+		return nil
+	}
+	ok, err := s.clientes.Exists(ctx, *clienteID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return domain.ErrClienteIDInvalido
+	}
+	return nil
 }
 
 // runInTx delegates to the configured TxManager when one is wired, otherwise

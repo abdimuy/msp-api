@@ -30,7 +30,7 @@ func newHarness(_ *testing.T) *testHarness {
 	storage := newFakeStorage()
 	outbox := &fakeOutbox{}
 	imageProc := &fakeImageProcessor{}
-	svc := app.NewService(ventas, storage, clock, outbox, imageProc, nil)
+	svc := app.NewService(ventas, nil, storage, clock, outbox, imageProc, nil)
 	return &testHarness{
 		svc:       svc,
 		ventas:    ventas,
@@ -46,30 +46,31 @@ func newHarness(_ *testing.T) *testHarness {
 func validContadoInput() app.CrearVentaInput {
 	productoID := uuid.New()
 	vendedorID := uuid.New()
+	one, two := 1, 2
 	return app.CrearVentaInput{
-		ID:             uuid.New(),
-		ClienteNombre:  "Juan Perez",
-		Calle:          "Av. Reforma",
-		Colonia:        "Centro",
-		Poblacion:      "Cuauhtemoc",
-		Ciudad:         "CDMX",
-		Latitud:        19.4326,
-		Longitud:       -99.1332,
-		AlmacenOrigen:  1,
-		AlmacenDestino: 2,
-		FechaVenta:     time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
-		TipoVenta:      "CONTADO",
-		PrecioAnual:    decimal.NewFromInt(1200),
-		PrecioCorto:    decimal.NewFromInt(1100),
-		PrecioContado:  decimal.NewFromInt(1000),
+		ID:            uuid.New(),
+		ClienteNombre: "Juan Perez",
+		Calle:         "Av. Reforma",
+		Colonia:       "Centro",
+		Poblacion:     "Cuauhtemoc",
+		Ciudad:        "CDMX",
+		Latitud:       19.4326,
+		Longitud:      -99.1332,
+		FechaVenta:    time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+		TipoVenta:     "CONTADO",
+		PrecioAnual:   decimal.NewFromInt(1200),
+		PrecioCorto:   decimal.NewFromInt(1100),
+		PrecioContado: decimal.NewFromInt(1000),
 		Productos: []app.CrearVentaProductoInput{{
-			ID:            productoID,
-			ArticuloID:    42,
-			Articulo:      "Refrigerador",
-			Cantidad:      decimal.NewFromInt(1),
-			PrecioAnual:   decimal.NewFromInt(1200),
-			PrecioCorto:   decimal.NewFromInt(1100),
-			PrecioContado: decimal.NewFromInt(1000),
+			ID:             productoID,
+			ArticuloID:     42,
+			Articulo:       "Refrigerador",
+			Cantidad:       decimal.NewFromInt(1),
+			PrecioAnual:    decimal.NewFromInt(1200),
+			PrecioCorto:    decimal.NewFromInt(1100),
+			PrecioContado:  decimal.NewFromInt(1000),
+			AlmacenOrigen:  &one,
+			AlmacenDestino: &two,
 		}},
 		Vendedores: []app.CrearVentaVendedorInput{{
 			ID:        vendedorID,

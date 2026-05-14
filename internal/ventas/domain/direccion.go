@@ -94,8 +94,8 @@ func (d Direccion) Ciudad() string { return d.ciudad }
 // ZonaClienteID returns the cliente zone identifier when set.
 func (d Direccion) ZonaClienteID() *int { return d.zonaClienteID }
 
-// requireBounded trims s, rejects empty, and rejects strings longer than
-// max with the supplied sentinel errors. Returns the trimmed value.
+// requireBounded trims s, rejects empty, rejects strings longer than max,
+// and rejects strings carrying unsafe characters (NUL or non-WIN1252 runes).
 func requireBounded(s string, maxLen int, errRequired, errTooLong error) (string, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -104,11 +104,15 @@ func requireBounded(s string, maxLen int, errRequired, errTooLong error) (string
 	if len(s) > maxLen {
 		return "", errTooLong
 	}
+	if err := validateSafeChars(s); err != nil {
+		return "", err
+	}
 	return s, nil
 }
 
 // trimOptionalBounded trims an optional pointer string. A nil input or a
-// pointer to an all-whitespace string both yield nil output.
+// pointer to an all-whitespace string both yield nil output. Non-blank
+// inputs are also screened for unsafe characters.
 func trimOptionalBounded(p *string, maxLen int, errTooLong error) (*string, error) {
 	if p == nil {
 		return nil, nil //nolint:nilnil // optional pointer pattern: nil ptr + nil err means "not provided".
@@ -119,6 +123,9 @@ func trimOptionalBounded(p *string, maxLen int, errTooLong error) (*string, erro
 	}
 	if len(trimmed) > maxLen {
 		return nil, errTooLong
+	}
+	if err := validateSafeChars(trimmed); err != nil {
+		return nil, err
 	}
 	return &trimmed, nil
 }

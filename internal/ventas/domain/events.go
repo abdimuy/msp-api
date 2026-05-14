@@ -1,3 +1,4 @@
+//nolint:misspell // ventas vocabulary is Spanish (productos, etc.) per project convention.
 package domain
 
 import (
@@ -30,6 +31,21 @@ const (
 	EventTypeImagenAdjuntada = "venta.imagen_adjuntada"
 	// EventTypeImagenEliminada is emitted when an imagen is removed.
 	EventTypeImagenEliminada = "venta.imagen_eliminada"
+	// EventTypeVentaHeaderActualizado is emitted when the venta's header
+	// fields are edited via ActualizarHeader.
+	EventTypeVentaHeaderActualizado = "venta.header_actualizado"
+	// EventTypeVentaClienteActualizado is emitted when the venta's cliente
+	// snapshot (or cliente_id link) changes via ActualizarCliente.
+	EventTypeVentaClienteActualizado = "venta.cliente_actualizado"
+	// EventTypeVentaProductosReemplazados is emitted when the productos
+	// collection is replaced via ReemplazarProductos.
+	EventTypeVentaProductosReemplazados = "venta.productos_reemplazados"
+	// EventTypeVentaCombosReemplazados is emitted when the combos
+	// collection is replaced via ReemplazarCombos.
+	EventTypeVentaCombosReemplazados = "venta.combos_reemplazados"
+	// EventTypeVentaVendedoresReemplazados is emitted when the vendedores
+	// collection is replaced via ReemplazarVendedores.
+	EventTypeVentaVendedoresReemplazados = "venta.vendedores_reemplazados"
 )
 
 // VentaCreadaEvent is emitted when a venta is created.
@@ -173,4 +189,115 @@ func (e ImagenEliminadaEvent) Payload() map[string]any {
 		"venta_id":  e.ventaID.String(),
 		"imagen_id": e.imagenID.String(),
 	}
+}
+
+// ventaEditEvent is the common shape of the five edit events. Each carries
+// the venta id, the editing user, and the timestamp; some variants add
+// an extra item-count field (productos/combos/vendedores).
+type ventaEditEvent struct {
+	ventaID    uuid.UUID
+	by         uuid.UUID
+	occurredAt time.Time
+	itemsCount int
+	eventType  string
+}
+
+// EventType returns the canonical event identifier.
+func (e ventaEditEvent) EventType() string { return e.eventType }
+
+// AggregateID returns the venta ID.
+func (e ventaEditEvent) AggregateID() uuid.UUID { return e.ventaID }
+
+// OccurredAt returns the moment the event was produced.
+func (e ventaEditEvent) OccurredAt() time.Time { return e.occurredAt }
+
+// basePayload is the common shape every edit event serializes.
+func (e ventaEditEvent) basePayload() map[string]any {
+	return map[string]any{
+		"venta_id":   e.ventaID.String(),
+		"updated_by": e.by.String(),
+	}
+}
+
+// VentaHeaderActualizadoEvent is emitted when the venta header is edited.
+type VentaHeaderActualizadoEvent struct{ ventaEditEvent }
+
+// NewVentaHeaderActualizadoEvent constructs the event.
+func NewVentaHeaderActualizadoEvent(ventaID, by uuid.UUID, now time.Time) VentaHeaderActualizadoEvent {
+	return VentaHeaderActualizadoEvent{ventaEditEvent{
+		ventaID: ventaID, by: by, occurredAt: now,
+		eventType: EventTypeVentaHeaderActualizado,
+	}}
+}
+
+// Payload returns the serializable event payload.
+func (e VentaHeaderActualizadoEvent) Payload() map[string]any { return e.basePayload() }
+
+// VentaClienteActualizadoEvent is emitted when cliente snapshot or
+// cliente_id is updated.
+type VentaClienteActualizadoEvent struct{ ventaEditEvent }
+
+// NewVentaClienteActualizadoEvent constructs the event.
+func NewVentaClienteActualizadoEvent(ventaID, by uuid.UUID, now time.Time) VentaClienteActualizadoEvent {
+	return VentaClienteActualizadoEvent{ventaEditEvent{
+		ventaID: ventaID, by: by, occurredAt: now,
+		eventType: EventTypeVentaClienteActualizado,
+	}}
+}
+
+// Payload returns the serializable event payload.
+func (e VentaClienteActualizadoEvent) Payload() map[string]any { return e.basePayload() }
+
+// VentaProductosReemplazadosEvent is emitted when productos are replaced.
+type VentaProductosReemplazadosEvent struct{ ventaEditEvent }
+
+// NewVentaProductosReemplazadosEvent constructs the event.
+func NewVentaProductosReemplazadosEvent(ventaID uuid.UUID, count int, by uuid.UUID, now time.Time) VentaProductosReemplazadosEvent {
+	return VentaProductosReemplazadosEvent{ventaEditEvent{
+		ventaID: ventaID, by: by, occurredAt: now, itemsCount: count,
+		eventType: EventTypeVentaProductosReemplazados,
+	}}
+}
+
+// Payload returns the serializable event payload.
+func (e VentaProductosReemplazadosEvent) Payload() map[string]any {
+	p := e.basePayload()
+	p["productos_count"] = e.itemsCount
+	return p
+}
+
+// VentaCombosReemplazadosEvent is emitted when combos are replaced.
+type VentaCombosReemplazadosEvent struct{ ventaEditEvent }
+
+// NewVentaCombosReemplazadosEvent constructs the event.
+func NewVentaCombosReemplazadosEvent(ventaID uuid.UUID, count int, by uuid.UUID, now time.Time) VentaCombosReemplazadosEvent {
+	return VentaCombosReemplazadosEvent{ventaEditEvent{
+		ventaID: ventaID, by: by, occurredAt: now, itemsCount: count,
+		eventType: EventTypeVentaCombosReemplazados,
+	}}
+}
+
+// Payload returns the serializable event payload.
+func (e VentaCombosReemplazadosEvent) Payload() map[string]any {
+	p := e.basePayload()
+	p["combos_count"] = e.itemsCount
+	return p
+}
+
+// VentaVendedoresReemplazadosEvent is emitted when vendedores are replaced.
+type VentaVendedoresReemplazadosEvent struct{ ventaEditEvent }
+
+// NewVentaVendedoresReemplazadosEvent constructs the event.
+func NewVentaVendedoresReemplazadosEvent(ventaID uuid.UUID, count int, by uuid.UUID, now time.Time) VentaVendedoresReemplazadosEvent {
+	return VentaVendedoresReemplazadosEvent{ventaEditEvent{
+		ventaID: ventaID, by: by, occurredAt: now, itemsCount: count,
+		eventType: EventTypeVentaVendedoresReemplazados,
+	}}
+}
+
+// Payload returns the serializable event payload.
+func (e VentaVendedoresReemplazadosEvent) Payload() map[string]any {
+	p := e.basePayload()
+	p["vendedores_count"] = e.itemsCount
+	return p
 }

@@ -226,13 +226,19 @@ func TestCrearVentaInputValidation(t *testing.T) {
 		in := validContadoInput()
 		comboID := uuid.New()
 		in.Combos = []app.CrearVentaComboInput{{
-			ID:            comboID,
-			Nombre:        "Promo enero",
-			PrecioAnual:   decimal.NewFromInt(900),
-			PrecioCorto:   decimal.NewFromInt(850),
-			PrecioContado: decimal.NewFromInt(800),
+			ID:             comboID,
+			Nombre:         "Promo enero",
+			PrecioAnual:    decimal.NewFromInt(900),
+			PrecioCorto:    decimal.NewFromInt(850),
+			PrecioContado:  decimal.NewFromInt(800),
+			Cantidad:       decimal.NewFromInt(1),
+			AlmacenOrigen:  1,
+			AlmacenDestino: 2,
 		}}
 		in.Productos[0].ComboID = &comboID
+		// Productos belonging to a combo must NOT carry their own almacenes.
+		in.Productos[0].AlmacenOrigen = nil
+		in.Productos[0].AlmacenDestino = nil
 
 		venta, err := h.svc.CrearVenta(t.Context(), in, uuid.New())
 		require.NoError(t, err)

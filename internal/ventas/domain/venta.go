@@ -18,43 +18,54 @@ const maxNotaLength = 500
 // Venta is the aggregate root of the ventas module. It snapshots the cliente,
 // dirección, vendedores and pricing at the moment of sale, and owns the
 // child Combos / Productos / Vendedores / Imagenes collections.
+//
+// Lifecycle: a venta is born in StatusBorrador. While in borrador it is
+// freely editable through the Actualizar* / Reemplazar* methods. The
+// terminal transitions are Cancelar (→ StatusCancelada) and approval
+// (→ StatusAprobada, reserved for the future promotion-to-Microsip flow).
 type Venta struct {
-	id             uuid.UUID
-	cliente        ClienteSnapshot
-	direccion      Direccion
-	gps            GPSCoords
-	almacenOrigen  int
-	almacenDestino int
-	fechaVenta     time.Time
-	tipoVenta      TipoVenta
-	montos         MontoSnapshot
-	planCredito    *PlanCredito
-	diaCobranza    *DiaCobranza
-	nota           *string
-	combos         []*Combo
-	productos      []*Producto
-	vendedores     []*Vendedor
-	imagenes       []*Imagen
-	audit          audit.Auditable
-	cancelacion    *Cancelacion
-	pendingEvents  []Event
+	id            uuid.UUID
+	clienteID     *int
+	cliente       ClienteSnapshot
+	direccion     Direccion
+	gps           GPSCoords
+	fechaVenta    time.Time
+	tipoVenta     TipoVenta
+	montos        MontoSnapshot
+	planCredito   *PlanCredito
+	diaCobranza   *DiaCobranza
+	nota          *string
+	status        VentaStatus
+	combos        []*Combo
+	productos     []*Producto
+	vendedores    []*Vendedor
+	imagenes      []*Imagen
+	audit         audit.Auditable
+	cancelacion   *Cancelacion
+	aprobacion    *Aprobacion
+	pendingEvents []Event
 }
 
 // CrearVentaProductoInput is one producto line submitted to CrearVenta.
 type CrearVentaProductoInput struct {
-	ID         uuid.UUID
-	ArticuloID int
-	Articulo   string
-	Cantidad   decimal.Decimal
-	Precios    MontoSnapshot
-	ComboID    *uuid.UUID
+	ID             uuid.UUID
+	ArticuloID     int
+	Articulo       string
+	Cantidad       decimal.Decimal
+	Precios        MontoSnapshot
+	ComboID        *uuid.UUID
+	AlmacenOrigen  *int
+	AlmacenDestino *int
 }
 
 // CrearVentaComboInput is one combo submitted to CrearVenta.
 type CrearVentaComboInput struct {
-	ID      uuid.UUID
-	Nombre  string
-	Precios MontoSnapshot
+	ID             uuid.UUID
+	Nombre         string
+	Precios        MontoSnapshot
+	Cantidad       decimal.Decimal
+	AlmacenOrigen  int
+	AlmacenDestino int
 }
 
 // CrearVentaVendedorInput is one vendedor submitted to CrearVenta.
@@ -67,27 +78,26 @@ type CrearVentaVendedorInput struct {
 
 // CrearVentaParams aggregates every field needed to build a fresh Venta.
 type CrearVentaParams struct {
-	ID             uuid.UUID
-	Cliente        ClienteSnapshot
-	Direccion      Direccion
-	GPS            GPSCoords
-	AlmacenOrigen  int
-	AlmacenDestino int
-	FechaVenta     time.Time
-	TipoVenta      TipoVenta
-	Montos         MontoSnapshot
-	PlanCredito    *PlanCredito
-	DiaCobranza    *DiaCobranza
-	Nota           *string
-	Combos         []CrearVentaComboInput
-	Productos      []CrearVentaProductoInput
-	Vendedores     []CrearVentaVendedorInput
-	CreatedBy      uuid.UUID
-	Now            time.Time
+	ID          uuid.UUID
+	ClienteID   *int
+	Cliente     ClienteSnapshot
+	Direccion   Direccion
+	GPS         GPSCoords
+	FechaVenta  time.Time
+	TipoVenta   TipoVenta
+	Montos      MontoSnapshot
+	PlanCredito *PlanCredito
+	DiaCobranza *DiaCobranza
+	Nota        *string
+	Combos      []CrearVentaComboInput
+	Productos   []CrearVentaProductoInput
+	Vendedores  []CrearVentaVendedorInput
+	CreatedBy   uuid.UUID
+	Now         time.Time
 }
 
-// CrearVenta validates the inputs, builds the aggregate, and emits a
-// VentaCreadaEvent. Every CHECK constraint in MSP_VENTAS is replicated here.
+// CrearVenta validates the inputs, builds the aggregate in StatusBorrador,
+// and emits a VentaCreadaEvent.
 func CrearVenta(p CrearVentaParams) (*Venta, error) {
 	if err := validateHeader(p); err != nil {
 		return nil, err
@@ -103,24 +113,27 @@ func CrearVenta(p CrearVentaParams) (*Venta, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := validateProductoComboReferences(productos, combos); err != nil {
+		return nil, err
+	}
 	v := &Venta{
-		id:             p.ID,
-		cliente:        p.Cliente,
-		direccion:      p.Direccion,
-		gps:            p.GPS,
-		almacenOrigen:  p.AlmacenOrigen,
-		almacenDestino: p.AlmacenDestino,
-		fechaVenta:     p.FechaVenta,
-		tipoVenta:      p.TipoVenta,
-		montos:         p.Montos,
-		planCredito:    p.PlanCredito,
-		diaCobranza:    p.DiaCobranza,
-		nota:           nota,
-		combos:         combos,
-		productos:      productos,
-		vendedores:     vendedores,
-		imagenes:       nil,
-		audit:          audit.NewAuditable(p.Now, p.CreatedBy),
+		id:          p.ID,
+		clienteID:   p.ClienteID,
+		cliente:     p.Cliente,
+		direccion:   p.Direccion,
+		gps:         p.GPS,
+		fechaVenta:  p.FechaVenta,
+		tipoVenta:   p.TipoVenta,
+		montos:      p.Montos,
+		planCredito: p.PlanCredito,
+		diaCobranza: p.DiaCobranza,
+		nota:        nota,
+		status:      StatusBorrador,
+		combos:      combos,
+		productos:   productos,
+		vendedores:  vendedores,
+		imagenes:    nil,
+		audit:       audit.NewAuditable(p.Now, p.CreatedBy),
 	}
 	v.pendingEvents = []Event{NewVentaCreadaEvent(v.id, v.tipoVenta, p.CreatedBy, p.Now)}
 	return v, nil
@@ -134,9 +147,6 @@ func validateHeader(p CrearVentaParams) error {
 	}
 	if p.FechaVenta.IsZero() {
 		return ErrFechaVentaZero
-	}
-	if p.AlmacenOrigen == p.AlmacenDestino {
-		return ErrVentaAlmacenesIguales
 	}
 	if p.Cliente.Nombre().IsZero() {
 		return ErrNombreClienteRequerido
@@ -181,7 +191,6 @@ func validateDiaCobranzaForFrec(frec FrecPago, dc *DiaCobranza) error {
 		}
 		return nil
 	case FrecPagoQuincenal, FrecPagoMensual:
-		// Exactly one of semana/mes must be set.
 		if dc.IsSemana() == dc.IsMes() {
 			return ErrDiaCobranzaIncoherenteQuincenalMensual
 		}
@@ -194,6 +203,28 @@ func validateDiaCobranzaForFrec(frec FrecPago, dc *DiaCobranza) error {
 // pointer (nil when blank).
 func validateNota(p *string) (*string, error) {
 	return trimOptionalBounded(p, maxNotaLength, ErrNotaDemasiadoLarga)
+}
+
+// validateProductoComboReferences ensures every Producto.ComboID points to
+// a Combo present in the venta's combos slice.
+func validateProductoComboReferences(productos []*Producto, combos []*Combo) error {
+	if len(productos) == 0 {
+		return nil
+	}
+	known := make(map[uuid.UUID]struct{}, len(combos))
+	for _, c := range combos {
+		known[c.ID()] = struct{}{}
+	}
+	for _, p := range productos {
+		cid := p.ComboID()
+		if cid == nil {
+			continue
+		}
+		if _, ok := known[*cid]; !ok {
+			return ErrProductoComboReferenciaInvalida
+		}
+	}
+	return nil
 }
 
 // buildChildren constructs the child collections in one shot.
@@ -219,7 +250,10 @@ func buildCombos(in []CrearVentaComboInput, createdBy uuid.UUID, now time.Time) 
 	for _, c := range in {
 		combo, err := newCombo(NewComboParams{
 			ID: c.ID, Nombre: c.Nombre, Precios: c.Precios,
-			CreatedBy: createdBy, Now: now,
+			Cantidad:       c.Cantidad,
+			AlmacenOrigen:  c.AlmacenOrigen,
+			AlmacenDestino: c.AlmacenDestino,
+			CreatedBy:      createdBy, Now: now,
 		})
 		if err != nil {
 			return nil, err
@@ -234,14 +268,16 @@ func buildProductos(in []CrearVentaProductoInput, createdBy uuid.UUID, now time.
 	out := make([]*Producto, 0, len(in))
 	for _, pr := range in {
 		producto, err := newProducto(NewProductoParams{
-			ID:         pr.ID,
-			ArticuloID: pr.ArticuloID,
-			Articulo:   pr.Articulo,
-			Cantidad:   pr.Cantidad,
-			Precios:    pr.Precios,
-			ComboID:    pr.ComboID,
-			CreatedBy:  createdBy,
-			Now:        now,
+			ID:             pr.ID,
+			ArticuloID:     pr.ArticuloID,
+			Articulo:       pr.Articulo,
+			Cantidad:       pr.Cantidad,
+			Precios:        pr.Precios,
+			ComboID:        pr.ComboID,
+			AlmacenOrigen:  pr.AlmacenOrigen,
+			AlmacenDestino: pr.AlmacenDestino,
+			CreatedBy:      createdBy,
+			Now:            now,
 		})
 		if err != nil {
 			return nil, err
@@ -273,50 +309,52 @@ func buildVendedores(in []CrearVentaVendedorInput, createdBy uuid.UUID, now time
 // HydrateVentaParams carries the persisted shape of a Venta for repository
 // reconstruction.
 type HydrateVentaParams struct {
-	ID             uuid.UUID
-	Cliente        ClienteSnapshot
-	Direccion      Direccion
-	GPS            GPSCoords
-	AlmacenOrigen  int
-	AlmacenDestino int
-	FechaVenta     time.Time
-	TipoVenta      TipoVenta
-	Montos         MontoSnapshot
-	PlanCredito    *PlanCredito
-	DiaCobranza    *DiaCobranza
-	Nota           *string
-	Combos         []*Combo
-	Productos      []*Producto
-	Vendedores     []*Vendedor
-	Imagenes       []*Imagen
-	Cancelacion    *Cancelacion
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	CreatedBy      uuid.UUID
-	UpdatedBy      uuid.UUID
+	ID          uuid.UUID
+	ClienteID   *int
+	Cliente     ClienteSnapshot
+	Direccion   Direccion
+	GPS         GPSCoords
+	FechaVenta  time.Time
+	TipoVenta   TipoVenta
+	Montos      MontoSnapshot
+	PlanCredito *PlanCredito
+	DiaCobranza *DiaCobranza
+	Nota        *string
+	Status      VentaStatus
+	Combos      []*Combo
+	Productos   []*Producto
+	Vendedores  []*Vendedor
+	Imagenes    []*Imagen
+	Cancelacion *Cancelacion
+	Aprobacion  *Aprobacion
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	CreatedBy   uuid.UUID
+	UpdatedBy   uuid.UUID
 }
 
 // HydrateVenta rebuilds a Venta from persistence without validation.
 func HydrateVenta(p HydrateVentaParams) *Venta {
 	return &Venta{
-		id:             p.ID,
-		cliente:        p.Cliente,
-		direccion:      p.Direccion,
-		gps:            p.GPS,
-		almacenOrigen:  p.AlmacenOrigen,
-		almacenDestino: p.AlmacenDestino,
-		fechaVenta:     p.FechaVenta,
-		tipoVenta:      p.TipoVenta,
-		montos:         p.Montos,
-		planCredito:    p.PlanCredito,
-		diaCobranza:    p.DiaCobranza,
-		nota:           p.Nota,
-		combos:         p.Combos,
-		productos:      p.Productos,
-		vendedores:     p.Vendedores,
-		imagenes:       p.Imagenes,
-		audit:          audit.HydrateAuditable(p.CreatedAt, p.UpdatedAt, p.CreatedBy, p.UpdatedBy),
-		cancelacion:    p.Cancelacion,
+		id:          p.ID,
+		clienteID:   p.ClienteID,
+		cliente:     p.Cliente,
+		direccion:   p.Direccion,
+		gps:         p.GPS,
+		fechaVenta:  p.FechaVenta,
+		tipoVenta:   p.TipoVenta,
+		montos:      p.Montos,
+		planCredito: p.PlanCredito,
+		diaCobranza: p.DiaCobranza,
+		nota:        p.Nota,
+		status:      p.Status,
+		combos:      p.Combos,
+		productos:   p.Productos,
+		vendedores:  p.Vendedores,
+		imagenes:    p.Imagenes,
+		audit:       audit.HydrateAuditable(p.CreatedAt, p.UpdatedAt, p.CreatedBy, p.UpdatedBy),
+		cancelacion: p.Cancelacion,
+		aprobacion:  p.Aprobacion,
 	}
 }
 
@@ -324,6 +362,9 @@ func HydrateVenta(p HydrateVentaParams) *Venta {
 
 // ID returns the venta's primary key.
 func (v *Venta) ID() uuid.UUID { return v.id }
+
+// ClienteID returns the optional Microsip cliente identifier.
+func (v *Venta) ClienteID() *int { return v.clienteID }
 
 // Cliente returns the cliente snapshot.
 func (v *Venta) Cliente() ClienteSnapshot { return v.cliente }
@@ -333,12 +374,6 @@ func (v *Venta) Direccion() Direccion { return v.direccion }
 
 // GPS returns the gps coordinates.
 func (v *Venta) GPS() GPSCoords { return v.gps }
-
-// AlmacenOrigen returns the origin warehouse ID.
-func (v *Venta) AlmacenOrigen() int { return v.almacenOrigen }
-
-// AlmacenDestino returns the destination warehouse ID.
-func (v *Venta) AlmacenDestino() int { return v.almacenDestino }
 
 // FechaVenta returns the sale timestamp.
 func (v *Venta) FechaVenta() time.Time { return v.fechaVenta }
@@ -358,14 +393,25 @@ func (v *Venta) DiaCobranza() *DiaCobranza { return v.diaCobranza }
 // Nota returns the optional free-form note.
 func (v *Venta) Nota() *string { return v.nota }
 
+// Status returns the current lifecycle stage.
+func (v *Venta) Status() VentaStatus { return v.status }
+
 // Audit returns a copy of the audit subrecord.
 func (v *Venta) Audit() audit.Auditable { return v.audit }
 
 // Cancelacion returns the cancellation record or nil when not canceled.
 func (v *Venta) Cancelacion() *Cancelacion { return v.cancelacion }
 
+// Aprobacion returns the approval record or nil when not approved.
+func (v *Venta) Aprobacion() *Aprobacion { return v.aprobacion }
+
 // IsCanceled reports whether the venta has been canceled.
 func (v *Venta) IsCanceled() bool { return v.cancelacion != nil }
+
+// puedeEditarse reports whether the venta is in a state that accepts edits.
+// Only StatusBorrador allows edits — aprobada and cancelada are terminal
+// states for the purposes of mutation.
+func (v *Venta) puedeEditarse() bool { return v.status == StatusBorrador }
 
 // ─── Read-only child iterators ─────────────────────────────────────────────
 
@@ -506,9 +552,8 @@ func (v *Venta) EliminarImagen(id, by uuid.UUID, now time.Time) error {
 	return nil
 }
 
-// Cancelar soft-cancels the venta. Refuses to cancel an already-canceled
-// venta (returns ErrVentaYaCancelada). Bumps audit and emits a
-// VentaCanceladaEvent.
+// Cancelar soft-cancels the venta and transitions status to StatusCancelada.
+// Refuses to cancel an already-canceled venta (returns ErrVentaYaCancelada).
 func (v *Venta) Cancelar(reason string, by uuid.UUID, now time.Time) error {
 	if v.IsCanceled() {
 		return ErrVentaYaCancelada
@@ -518,8 +563,184 @@ func (v *Venta) Cancelar(reason string, by uuid.UUID, now time.Time) error {
 		return err
 	}
 	v.cancelacion = &c
+	v.status = StatusCancelada
 	v.audit.MarkUpdated(by)
 	v.pendingEvents = append(v.pendingEvents, NewVentaCanceladaEvent(v.id, by, strings.TrimSpace(reason), now))
+	return nil
+}
+
+// ─── Edit methods (only valid in StatusBorrador) ───────────────────────────
+
+// ActualizarHeaderParams carries the editable header fields. TipoVenta is
+// intentionally absent — changing CONTADO↔CREDITO requires cancel + recreate.
+type ActualizarHeaderParams struct {
+	Direccion   Direccion
+	GPS         GPSCoords
+	FechaVenta  time.Time
+	Montos      MontoSnapshot
+	PlanCredito *PlanCredito
+	DiaCobranza *DiaCobranza
+	Nota        *string
+	By          uuid.UUID
+	Now         time.Time
+}
+
+// ActualizarHeader mutates the venta's header fields. Only valid while the
+// venta is in StatusBorrador; emits VentaHeaderActualizadoEvent.
+func (v *Venta) ActualizarHeader(p ActualizarHeaderParams) error {
+	if !v.puedeEditarse() {
+		return ErrVentaNoEditable
+	}
+	if p.FechaVenta.IsZero() {
+		return ErrFechaVentaZero
+	}
+	if err := validateCreditoCoherenciaForTipo(v.tipoVenta, p.PlanCredito, p.DiaCobranza); err != nil {
+		return err
+	}
+	nota, err := validateNota(p.Nota)
+	if err != nil {
+		return err
+	}
+	v.direccion = p.Direccion
+	v.gps = p.GPS
+	v.fechaVenta = p.FechaVenta
+	v.montos = p.Montos
+	v.planCredito = p.PlanCredito
+	v.diaCobranza = p.DiaCobranza
+	v.nota = nota
+	v.audit.MarkUpdated(p.By)
+	v.pendingEvents = append(v.pendingEvents, NewVentaHeaderActualizadoEvent(v.id, p.By, p.Now))
+	return nil
+}
+
+// validateCreditoCoherenciaForTipo is the post-creation variant of
+// validateCreditoCoherencia: it takes the existing TipoVenta and the new
+// plan/dia values rather than a CrearVentaParams.
+func validateCreditoCoherenciaForTipo(tipo TipoVenta, plan *PlanCredito, dia *DiaCobranza) error {
+	switch tipo {
+	case TipoVentaContado:
+		if plan != nil || dia != nil {
+			return ErrPlanCreditoNoPermitidoEnContado
+		}
+		return nil
+	case TipoVentaCredito:
+		if plan == nil {
+			return ErrPlanCreditoRequiredEnCredito
+		}
+		if dia == nil {
+			return ErrDiaCobranzaRequeridoEnCredito
+		}
+		return validateDiaCobranzaForFrec(plan.FrecPago(), dia)
+	}
+	return ErrTipoVentaInvalido
+}
+
+// ActualizarClienteParams carries the editable cliente fields.
+type ActualizarClienteParams struct {
+	ClienteID *int
+	Cliente   ClienteSnapshot
+	By        uuid.UUID
+	Now       time.Time
+}
+
+// ActualizarCliente mutates the venta's cliente snapshot and optional
+// cliente_id link. Only valid in StatusBorrador.
+func (v *Venta) ActualizarCliente(p ActualizarClienteParams) error {
+	if !v.puedeEditarse() {
+		return ErrVentaNoEditable
+	}
+	if p.Cliente.Nombre().IsZero() {
+		return ErrNombreClienteRequerido
+	}
+	v.clienteID = p.ClienteID
+	v.cliente = p.Cliente
+	v.audit.MarkUpdated(p.By)
+	v.pendingEvents = append(v.pendingEvents, NewVentaClienteActualizadoEvent(v.id, p.By, p.Now))
+	return nil
+}
+
+// ReemplazarProductosParams carries the new productos and combos. Because
+// productos may reference combos via combo_id, both collections must be
+// replaced atomically.
+type ReemplazarProductosParams struct {
+	Productos []CrearVentaProductoInput
+	By        uuid.UUID
+	Now       time.Time
+}
+
+// ReemplazarProductos replaces the productos collection wholesale. The
+// existing combos collection is preserved; producto.combo_id references
+// must still resolve to a known combo.
+func (v *Venta) ReemplazarProductos(p ReemplazarProductosParams) error {
+	if !v.puedeEditarse() {
+		return ErrVentaNoEditable
+	}
+	if len(p.Productos) == 0 {
+		return ErrVentaProductosVacios
+	}
+	productos, err := buildProductos(p.Productos, p.By, p.Now)
+	if err != nil {
+		return err
+	}
+	if err := validateProductoComboReferences(productos, v.combos); err != nil {
+		return err
+	}
+	v.productos = productos
+	v.audit.MarkUpdated(p.By)
+	v.pendingEvents = append(v.pendingEvents, NewVentaProductosReemplazadosEvent(v.id, len(productos), p.By, p.Now))
+	return nil
+}
+
+// ReemplazarCombosParams carries the new combos collection.
+type ReemplazarCombosParams struct {
+	Combos []CrearVentaComboInput
+	By     uuid.UUID
+	Now    time.Time
+}
+
+// ReemplazarCombos replaces the combos collection wholesale. Productos that
+// reference dropped combos become invalid — callers must reemplazar
+// productos in the same transaction or this method will return
+// ErrProductoComboReferenciaInvalida.
+func (v *Venta) ReemplazarCombos(p ReemplazarCombosParams) error {
+	if !v.puedeEditarse() {
+		return ErrVentaNoEditable
+	}
+	combos, err := buildCombos(p.Combos, p.By, p.Now)
+	if err != nil {
+		return err
+	}
+	if err := validateProductoComboReferences(v.productos, combos); err != nil {
+		return err
+	}
+	v.combos = combos
+	v.audit.MarkUpdated(p.By)
+	v.pendingEvents = append(v.pendingEvents, NewVentaCombosReemplazadosEvent(v.id, len(combos), p.By, p.Now))
+	return nil
+}
+
+// ReemplazarVendedoresParams carries the new vendedores collection.
+type ReemplazarVendedoresParams struct {
+	Vendedores []CrearVentaVendedorInput
+	By         uuid.UUID
+	Now        time.Time
+}
+
+// ReemplazarVendedores replaces the vendedores collection wholesale.
+func (v *Venta) ReemplazarVendedores(p ReemplazarVendedoresParams) error {
+	if !v.puedeEditarse() {
+		return ErrVentaNoEditable
+	}
+	if len(p.Vendedores) == 0 {
+		return ErrVentaVendedoresVacios
+	}
+	vendedores, err := buildVendedores(p.Vendedores, p.By, p.Now)
+	if err != nil {
+		return err
+	}
+	v.vendedores = vendedores
+	v.audit.MarkUpdated(p.By)
+	v.pendingEvents = append(v.pendingEvents, NewVentaVendedoresReemplazadosEvent(v.id, len(vendedores), p.By, p.Now))
 	return nil
 }
 

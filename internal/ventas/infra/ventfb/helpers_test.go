@@ -90,24 +90,25 @@ func buildVenta(t *testing.T, in newVentaInput) *domain.Venta {
 		decimal.RequireFromString("100.00"),
 	)
 	require.NoError(t, err)
+	one, two := 1, 2
 	params := domain.CrearVentaParams{
 		ID: in.id,
 		Cliente: domain.HydrateClienteSnapshot(domain.NewClienteSnapshotParams{
 			Nombre: nombre,
 		}),
-		Direccion:      dir,
-		GPS:            gps,
-		AlmacenOrigen:  1,
-		AlmacenDestino: 2,
-		FechaVenta:     in.fecha,
-		TipoVenta:      in.tipoVenta,
-		Montos:         montos,
+		Direccion:  dir,
+		GPS:        gps,
+		FechaVenta: in.fecha,
+		TipoVenta:  in.tipoVenta,
+		Montos:     montos,
 		Productos: []domain.CrearVentaProductoInput{{
-			ID:         uuid.New(),
-			ArticuloID: 100,
-			Articulo:   "Producto Demo",
-			Cantidad:   decimal.RequireFromString("2.0000"),
-			Precios:    productoPrecios,
+			ID:             uuid.New(),
+			ArticuloID:     100,
+			Articulo:       "Producto Demo",
+			Cantidad:       decimal.RequireFromString("2.0000"),
+			Precios:        productoPrecios,
+			AlmacenOrigen:  &one,
+			AlmacenDestino: &two,
 		}},
 		Vendedores: []domain.CrearVentaVendedorInput{{
 			ID:        uuid.New(),
@@ -206,18 +207,27 @@ func buildRichVenta(t *testing.T, createdBy, vendedor uuid.UUID, opts richVentaO
 		comboID := uuid.New()
 		combos = append(combos, domain.CrearVentaComboInput{
 			ID: comboID, Nombre: "Combo Demo", Precios: montos,
+			Cantidad: decimal.RequireFromString("1.0000"), AlmacenOrigen: 1, AlmacenDestino: 2,
 		})
 		productoComboID = &comboID
 	}
+	one, two := 1, 2
+	var productoAlmOrigen, productoAlmDestino *int
+	if productoComboID == nil {
+		productoAlmOrigen = &one
+		productoAlmDestino = &two
+	}
 	params := domain.CrearVentaParams{
 		ID: uuid.New(), Cliente: cliente, Direccion: dir, GPS: gps,
-		AlmacenOrigen: 1, AlmacenDestino: 2, FechaVenta: testNow(),
-		TipoVenta: domain.TipoVentaContado, Montos: montos, Nota: nota,
+		FechaVenta: testNow(),
+		TipoVenta:  domain.TipoVentaContado, Montos: montos, Nota: nota,
 		Combos: combos,
 		Productos: []domain.CrearVentaProductoInput{{
 			ID: uuid.New(), ArticuloID: 200, Articulo: "Mesa",
 			Cantidad: decimal.RequireFromString("1.0000"), Precios: productoPrecios,
-			ComboID: productoComboID,
+			ComboID:        productoComboID,
+			AlmacenOrigen:  productoAlmOrigen,
+			AlmacenDestino: productoAlmDestino,
 		}},
 		Vendedores: []domain.CrearVentaVendedorInput{{
 			ID: uuid.New(), UsuarioID: vendedor,
@@ -251,14 +261,15 @@ func buildRichVenta(t *testing.T, createdBy, vendedor uuid.UUID, opts richVentaO
 		})
 		a := v.Audit()
 		v = domain.HydrateVenta(domain.HydrateVentaParams{
-			ID: v.ID(), Cliente: newCliente, Direccion: v.Direccion(), GPS: v.GPS(),
-			AlmacenOrigen: v.AlmacenOrigen(), AlmacenDestino: v.AlmacenDestino(),
+			ID: v.ID(), ClienteID: v.ClienteID(),
+			Cliente: newCliente, Direccion: v.Direccion(), GPS: v.GPS(),
 			FechaVenta: v.FechaVenta(), TipoVenta: v.TipoVenta(), Montos: v.Montos(),
 			PlanCredito: v.PlanCredito(), DiaCobranza: v.DiaCobranza(), Nota: v.Nota(),
+			Status: v.Status(),
 			Combos: v.CombosForRepo(), Productos: v.ProductosForRepo(),
 			Vendedores: v.VendedoresForRepo(), Imagenes: v.ImagenesForRepo(),
-			Cancelacion: v.Cancelacion(),
-			CreatedAt:   a.CreatedAt(), UpdatedAt: a.UpdatedAt(),
+			Cancelacion: v.Cancelacion(), Aprobacion: v.Aprobacion(),
+			CreatedAt: a.CreatedAt(), UpdatedAt: a.UpdatedAt(),
 			CreatedBy: a.CreatedBy(), UpdatedBy: a.UpdatedBy(),
 		})
 	}

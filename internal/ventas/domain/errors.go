@@ -32,6 +32,35 @@ var (
 		"venta_cancelada_inmutable",
 		"no se puede modificar una venta cancelada",
 	)
+	// ErrVentaNoEditable is returned when attempting to edit a venta whose
+	// status is not 'borrador'.
+	ErrVentaNoEditable = apperror.NewConflict(
+		"venta_no_editable",
+		"la venta no se puede editar en su estado actual",
+	)
+	// ErrClienteIDInvalido is returned when the supplied cliente_id does not
+	// resolve to a row in Microsip's CLIENTES table.
+	ErrClienteIDInvalido = apperror.NewValidation(
+		"cliente_id_invalido",
+		"el cliente_id no es válido",
+	)
+	// ErrStatusInvalido is returned for unrecognized VentaStatus values.
+	ErrStatusInvalido = apperror.NewValidation(
+		"venta_status_invalido",
+		"el status de la venta no es válido",
+	)
+	// ErrAprobacionFechaZero is returned when constructing an Aprobacion
+	// with a zero timestamp.
+	ErrAprobacionFechaZero = apperror.NewValidation(
+		"aprobacion_fecha_zero",
+		"la fecha de aprobación es obligatoria",
+	)
+	// ErrAprobacionByRequired is returned when constructing an Aprobacion
+	// without an approver.
+	ErrAprobacionByRequired = apperror.NewValidation(
+		"aprobacion_by_required",
+		"el usuario que aprueba es obligatorio",
+	)
 
 	// ErrTipoVentaInvalido is returned for unrecognized TipoVenta values.
 	ErrTipoVentaInvalido = apperror.NewValidation(
@@ -217,6 +246,48 @@ var (
 		"producto_articulo_too_long",
 		"el nombre del artículo excede 200 caracteres",
 	)
+	// ErrProductoAlmacenOrigenRequerido is returned when a producto outside
+	// any combo is missing its origin warehouse.
+	ErrProductoAlmacenOrigenRequerido = apperror.NewValidation(
+		"producto_almacen_origen_required",
+		"el almacén de origen del producto es obligatorio",
+	)
+	// ErrProductoAlmacenDestinoRequerido is returned when a producto outside
+	// any combo is missing its destination warehouse.
+	ErrProductoAlmacenDestinoRequerido = apperror.NewValidation(
+		"producto_almacen_destino_required",
+		"el almacén de destino del producto es obligatorio",
+	)
+	// ErrProductoEnComboNoLlevaAlmacen is returned when a producto that
+	// belongs to a combo carries its own almacenes (they should be inherited
+	// from the parent combo).
+	ErrProductoEnComboNoLlevaAlmacen = apperror.NewValidation(
+		"producto_en_combo_no_lleva_almacen",
+		"un producto dentro de un combo no lleva almacenes propios",
+	)
+	// ErrComboCantidadNoPositiva is returned when combo cantidad is not > 0.
+	ErrComboCantidadNoPositiva = apperror.NewValidation(
+		"combo_cantidad_no_positiva",
+		"la cantidad del combo debe ser mayor a cero",
+	)
+	// ErrComboAlmacenOrigenRequerido is returned when combo almacen_origen
+	// is missing or non-positive.
+	ErrComboAlmacenOrigenRequerido = apperror.NewValidation(
+		"combo_almacen_origen_required",
+		"el almacén de origen del combo es obligatorio",
+	)
+	// ErrComboAlmacenDestinoRequerido is returned when combo almacen_destino
+	// is missing or non-positive.
+	ErrComboAlmacenDestinoRequerido = apperror.NewValidation(
+		"combo_almacen_destino_required",
+		"el almacén de destino del combo es obligatorio",
+	)
+	// ErrProductoComboReferenciaInvalida is returned when a producto.combo_id
+	// does not match any combo in the venta.
+	ErrProductoComboReferenciaInvalida = apperror.NewValidation(
+		"producto_combo_referencia_invalida",
+		"el combo referenciado por el producto no existe en la venta",
+	)
 
 	// ErrVendedorEmailRequerido is returned when vendedor email is empty.
 	ErrVendedorEmailRequerido = apperror.NewValidation(
@@ -307,5 +378,33 @@ var (
 	ErrNotaDemasiadoLarga = apperror.NewValidation(
 		"nota_too_long",
 		"la nota excede 500 caracteres",
+	)
+	// ErrStringUnsafeChars is returned when a string field contains a NUL
+	// byte or characters not representable in the Firebird WIN1252 charset
+	// (emoji, CJK, etc.). Rejecting at the boundary prevents silent
+	// corruption during persistence.
+	ErrStringUnsafeChars = apperror.NewValidation(
+		"string_unsafe_chars",
+		"el texto contiene caracteres no permitidos",
+	)
+	// ErrMontoDemasiadosDecimales is returned when a monetary value carries
+	// more than 2 decimal places — the storage column is NUMERIC(p, 2) and
+	// extra precision would be silently rounded by the driver.
+	ErrMontoDemasiadosDecimales = apperror.NewValidation(
+		"monto_demasiados_decimales",
+		"el monto admite máximo 2 decimales",
+	)
+	// ErrMontoDemasiadoGrande is returned when a monetary value exceeds the
+	// declared NUMERIC(14,2) capacity. Firebird's NUMERIC is INT64-backed so
+	// the declared precision is a soft hint — we enforce it explicitly.
+	ErrMontoDemasiadoGrande = apperror.NewValidation(
+		"monto_demasiado_grande",
+		"el monto excede el máximo permitido",
+	)
+	// ErrCantidadDemasiadosDecimales is returned when a cantidad carries
+	// more than 4 decimal places — the storage column is NUMERIC(10,4).
+	ErrCantidadDemasiadosDecimales = apperror.NewValidation(
+		"cantidad_demasiados_decimales",
+		"la cantidad admite máximo 4 decimales",
 	)
 )

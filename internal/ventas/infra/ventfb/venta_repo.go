@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -85,7 +84,8 @@ func (r *VentaRepo) insertCombos(ctx context.Context, q firebird.Querier, v *dom
 		if _, err := q.ExecContext(ctx, insertCombo,
 			c.ID().String(), v.ID().String(), c.Nombre(),
 			c.Precios().Anual(), c.Precios().CortoPlazo(), c.Precios().Contado(),
-			a.CreatedAt(), a.UpdatedAt(),
+			c.Cantidad(), c.AlmacenOrigen(), c.AlmacenDestino(),
+			firebird.ToWallClock(a.CreatedAt()), firebird.ToWallClock(a.UpdatedAt()),
 			a.CreatedBy().String(), a.UpdatedBy().String(),
 		); err != nil {
 			return firebird.MapError(err)
@@ -105,8 +105,8 @@ func (r *VentaRepo) insertProductos(ctx context.Context, q firebird.Querier, v *
 			p.ID().String(), v.ID().String(),
 			p.ArticuloID(), p.Articulo(), p.Cantidad(),
 			p.Precios().Anual(), p.Precios().CortoPlazo(), p.Precios().Contado(),
-			comboID,
-			a.CreatedAt(), a.UpdatedAt(),
+			comboID, nullableIntArg(p.AlmacenOrigen()), nullableIntArg(p.AlmacenDestino()),
+			firebird.ToWallClock(a.CreatedAt()), firebird.ToWallClock(a.UpdatedAt()),
 			a.CreatedBy().String(), a.UpdatedBy().String(),
 		); err != nil {
 			return firebird.MapError(err)
@@ -122,7 +122,7 @@ func (r *VentaRepo) insertVendedores(ctx context.Context, q firebird.Querier, v 
 			vd.ID().String(), v.ID().String(),
 			vd.Snapshot().UsuarioID().String(),
 			vd.Snapshot().Email(), vd.Snapshot().Nombre(),
-			a.CreatedAt(), a.UpdatedAt(),
+			firebird.ToWallClock(a.CreatedAt()), firebird.ToWallClock(a.UpdatedAt()),
 			a.CreatedBy().String(), a.UpdatedBy().String(),
 		)
 		if err != nil {
@@ -151,6 +151,7 @@ func headerInsertArgs(v *domain.Venta) []any {
 	plazo, enganche, parcialidad, frec := planFields(v.PlanCredito())
 	semana, mes := diaCobranzaFields(v.DiaCobranza())
 	canceledAt, canceledBy, cancelReason := cancelacionFields(v.Cancelacion())
+	approvedAt, approvedBy := aprobacionFields(v.Aprobacion())
 	a := v.Audit()
 	return []any{
 		v.ID().String(), v.Cliente().Nombre().Value(),
@@ -160,16 +161,29 @@ func headerInsertArgs(v *domain.Venta) []any {
 		v.Direccion().Colonia(), v.Direccion().Poblacion(), v.Direccion().Ciudad(),
 		nullableIntArg(v.Direccion().ZonaClienteID()),
 		v.GPS().Latitud(), v.GPS().Longitud(),
-		v.AlmacenOrigen(), v.AlmacenDestino(),
-		v.FechaVenta(), v.TipoVenta().String(),
+		firebird.ToWallClock(v.FechaVenta()), v.TipoVenta().String(),
 		v.Montos().Anual(), v.Montos().CortoPlazo(), v.Montos().Contado(),
 		plazo, enganche, parcialidad, frec,
 		semana, mes,
 		nullableStringArg(v.Nota()),
-		a.CreatedAt(), a.UpdatedAt(),
+		firebird.ToWallClock(a.CreatedAt()), firebird.ToWallClock(a.UpdatedAt()),
 		a.CreatedBy().String(), a.UpdatedBy().String(),
 		canceledAt, canceledBy, cancelReason,
+		nullableIntArg(v.ClienteID()), v.Status().String(),
+		approvedAt, approvedBy,
 	}
+}
+
+// aprobacionFields decomposes an optional Aprobacion into the two nullable
+// columns on MSP_VENTAS. The timestamp is wall-clock-shifted to BusinessTZ
+// so Firebird stores it consistently with Microsip's convention.
+//
+//nolint:nonamedreturns // multi-arity tuples are clearer when named.
+func aprobacionFields(a *domain.Aprobacion) (at, by any) {
+	if a == nil {
+		return nil, nil
+	}
+	return firebird.ToWallClock(a.At()), a.By().String()
 }
 
 func nullableTelefonoArg(v *domain.Venta) any {
@@ -231,39 +245,143 @@ func diaCobranzaFields(d *domain.DiaCobranza) (semana, mes any) {
 }
 
 // cancelacionFields decomposes the optional Cancelacion into the three
-// nullable columns on MSP_VENTAS.
+// nullable columns on MSP_VENTAS. The timestamp is wall-clock-shifted to
+// BusinessTZ so Firebird stores it consistently with Microsip's convention.
 //
 //nolint:nonamedreturns // multi-arity tuples are clearer when named.
 func cancelacionFields(c *domain.Cancelacion) (at, by, reason any) {
 	if c == nil {
 		return nil, nil, nil
 	}
-	return c.At(), c.By().String(), c.Reason()
+	return firebird.ToWallClock(c.At()), c.By().String(), c.Reason()
 }
 
-// Update writes back the mutable header columns. Used for the cancellation
-// path and any other header-only mutation; child collections are NOT
-// re-synced here.
+// Update writes back the cancellation triplet plus STATUS and the audit
+// fields. Used for the Cancelar path.
 func (r *VentaRepo) Update(ctx context.Context, v *domain.Venta) error {
 	q := firebird.GetQuerier(ctx, r.pool.DB)
 	canceledAt, canceledBy, cancelReason := cancelacionFields(v.Cancelacion())
 	a := v.Audit()
 	res, err := q.ExecContext(ctx, updateVentaHeader,
 		canceledAt, canceledBy, cancelReason,
-		a.UpdatedAt(), a.UpdatedBy().String(),
+		v.Status().String(),
+		firebird.ToWallClock(a.UpdatedAt()), a.UpdatedBy().String(),
 		v.ID().String(),
 	)
 	if err != nil {
 		return firebird.MapError(err)
 	}
+	return ensureRowAffected(res, domain.ErrVentaNotFound)
+}
+
+// ensureRowAffected maps RowsAffected==0 to notFound and propagates driver
+// errors via MapError.
+func ensureRowAffected(res sql.Result, notFound error) error {
 	n, err := res.RowsAffected()
 	if err != nil {
 		return firebird.MapError(err)
 	}
 	if n == 0 {
-		return domain.ErrVentaNotFound
+		return notFound
 	}
 	return nil
+}
+
+// UpdateHeader rewrites the editable header fields of v. Used by
+// ActualizarHeader.
+func (r *VentaRepo) UpdateHeader(ctx context.Context, v *domain.Venta) error {
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	plazo, enganche, parcialidad, frec := planFields(v.PlanCredito())
+	semana, mes := diaCobranzaFields(v.DiaCobranza())
+	a := v.Audit()
+	res, err := q.ExecContext(ctx, updateVentaHeaderFull,
+		v.Direccion().Calle(),
+		nullableStringArg(v.Direccion().NumeroExterior()),
+		v.Direccion().Colonia(), v.Direccion().Poblacion(), v.Direccion().Ciudad(),
+		nullableIntArg(v.Direccion().ZonaClienteID()),
+		v.GPS().Latitud(), v.GPS().Longitud(),
+		firebird.ToWallClock(v.FechaVenta()),
+		v.Montos().Anual(), v.Montos().CortoPlazo(), v.Montos().Contado(),
+		plazo, enganche, parcialidad, frec,
+		semana, mes,
+		nullableStringArg(v.Nota()),
+		firebird.ToWallClock(a.UpdatedAt()), a.UpdatedBy().String(),
+		v.ID().String(),
+	)
+	if err != nil {
+		return firebird.MapError(err)
+	}
+	return ensureRowAffected(res, domain.ErrVentaNotFound)
+}
+
+// UpdateCliente rewrites the cliente snapshot + cliente_id link.
+func (r *VentaRepo) UpdateCliente(ctx context.Context, v *domain.Venta) error {
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	a := v.Audit()
+	res, err := q.ExecContext(ctx, updateVentaCliente,
+		nullableIntArg(v.ClienteID()),
+		v.Cliente().Nombre().Value(),
+		nullableTelefonoArg(v), nullableAvalArg(v),
+		firebird.ToWallClock(a.UpdatedAt()), a.UpdatedBy().String(),
+		v.ID().String(),
+	)
+	if err != nil {
+		return firebird.MapError(err)
+	}
+	return ensureRowAffected(res, domain.ErrVentaNotFound)
+}
+
+// ReplaceProductos deletes existing producto rows for v and re-inserts the
+// current slice. Intended to run inside a TxManager-managed transaction.
+func (r *VentaRepo) ReplaceProductos(ctx context.Context, v *domain.Venta) error {
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	if _, err := q.ExecContext(ctx, deleteProductosByVenta, v.ID().String()); err != nil {
+		return firebird.MapError(err)
+	}
+	if err := r.insertProductos(ctx, q, v); err != nil {
+		return err
+	}
+	return r.touchHeader(ctx, q, v)
+}
+
+// ReplaceCombos deletes existing combo rows for v and re-inserts the
+// current slice.
+func (r *VentaRepo) ReplaceCombos(ctx context.Context, v *domain.Venta) error {
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	if _, err := q.ExecContext(ctx, deleteCombosByVenta, v.ID().String()); err != nil {
+		return firebird.MapError(err)
+	}
+	if err := r.insertCombos(ctx, q, v); err != nil {
+		return err
+	}
+	return r.touchHeader(ctx, q, v)
+}
+
+// ReplaceVendedores deletes existing vendedor rows for v and re-inserts the
+// current slice.
+func (r *VentaRepo) ReplaceVendedores(ctx context.Context, v *domain.Venta) error {
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	if _, err := q.ExecContext(ctx, deleteVendedoresByVenta, v.ID().String()); err != nil {
+		return firebird.MapError(err)
+	}
+	if err := r.insertVendedores(ctx, q, v); err != nil {
+		return err
+	}
+	return r.touchHeader(ctx, q, v)
+}
+
+// touchHeader writes the venta's updated_at/by so the audit trail reflects
+// the child-collection replacement.
+func (r *VentaRepo) touchHeader(ctx context.Context, q firebird.Querier, v *domain.Venta) error {
+	a := v.Audit()
+	res, err := q.ExecContext(ctx,
+		`UPDATE MSP_VENTAS SET UPDATED_AT = ?, UPDATED_BY = ? WHERE ID = ?`,
+		firebird.ToWallClock(a.UpdatedAt()), a.UpdatedBy().String(), v.ID().String(),
+	)
+	if err != nil {
+		return firebird.MapError(err)
+	}
+	return ensureRowAffected(res, domain.ErrVentaNotFound)
 }
 
 // FindByID loads a venta with its full children collection populated. It
@@ -402,12 +520,12 @@ func (r *VentaRepo) List(
 		return outbound.Page[*domain.Venta]{}, err
 	}
 	q := firebird.GetQuerier(ctx, r.pool.DB)
-	// The driver formats time parameters using their wall-clock fields
-	// without converting to UTC, while ScanUTCTime normalizes timestamps to
-	// UTC. Convert back to time.Local so the equality branch of the cursor
-	// predicate matches the wall-clock value Firebird stored.
-	curTLocal := curT.In(time.Local)
-	query, args := buildListQuery(size+1, p.Cursor != "", curTLocal, curID, f)
+	// The driver writes time parameters as wall-clock fields without TZ
+	// conversion. Re-stamp our UTC cursor and filter values in BusinessTZ
+	// so the predicate compares like-with-like against the rows Firebird
+	// stored (also wall-clock in BusinessTZ).
+	curTWall := firebird.ToWallClock(curT)
+	query, args := buildListQuery(size+1, p.Cursor != "", curTWall, curID, f)
 	rows, qErr := q.QueryContext(ctx, query, args...)
 	if qErr != nil {
 		return outbound.Page[*domain.Venta]{}, firebird.MapError(qErr)
@@ -538,6 +656,7 @@ func buildListQuery(
 	conds := []string{}
 	args, conds = appendVendedorFilter(args, conds, f)
 	args, conds = appendTipoVentaFilter(args, conds, f)
+	args, conds = appendClienteIDFilter(args, conds, f)
 	args, conds = appendDesdeFilter(args, conds, f)
 	args, conds = appendHastaFilter(args, conds, f)
 	conds = appendCanceladasFilter(conds, f)
@@ -580,6 +699,18 @@ func appendTipoVentaFilter(
 }
 
 //nolint:nonamedreturns // multi-result tuple is clearer when named.
+func appendClienteIDFilter(
+	args []any, conds []string, f outbound.ListVentasFilters,
+) (nextArgs []any, nextConds []string) {
+	if f.ClienteID == nil {
+		return args, conds
+	}
+	conds = append(conds, "v.CLIENTE_ID = ?")
+	args = append(args, *f.ClienteID)
+	return args, conds
+}
+
+//nolint:nonamedreturns // multi-result tuple is clearer when named.
 func appendDesdeFilter(
 	args []any, conds []string, f outbound.ListVentasFilters,
 ) (nextArgs []any, nextConds []string) {
@@ -587,7 +718,7 @@ func appendDesdeFilter(
 		return args, conds
 	}
 	conds = append(conds, "v.FECHA_VENTA >= ?")
-	args = append(args, *f.Desde)
+	args = append(args, firebird.ToWallClock(*f.Desde))
 	return args, conds
 }
 
@@ -599,7 +730,7 @@ func appendHastaFilter(
 		return args, conds
 	}
 	conds = append(conds, "v.FECHA_VENTA < ?")
-	args = append(args, *f.Hasta)
+	args = append(args, firebird.ToWallClock(*f.Hasta))
 	return args, conds
 }
 
@@ -632,7 +763,7 @@ func execInsertImagen(
 		img.Storage().Kind().String(), img.Storage().Key(),
 		img.Mime(), img.SizeBytes(),
 		nullableStringArg(img.Descripcion()),
-		a.CreatedAt(), a.UpdatedAt(),
+		firebird.ToWallClock(a.CreatedAt()), firebird.ToWallClock(a.UpdatedAt()),
 		a.CreatedBy().String(), a.UpdatedBy().String(),
 	)
 	if err != nil {

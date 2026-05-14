@@ -27,6 +27,9 @@ func NewCancelacion(at time.Time, by uuid.UUID, reason string) (Cancelacion, err
 	if len(reason) > maxCancelReasonLength {
 		return Cancelacion{}, ErrReasonCancelacionDemasiadoLarga
 	}
+	if err := validateSafeChars(reason); err != nil {
+		return Cancelacion{}, err
+	}
 	return Cancelacion{at: at, by: by, reason: reason}, nil
 }
 

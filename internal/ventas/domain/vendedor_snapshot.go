@@ -38,12 +38,18 @@ func NewVendedorSnapshot(p NewVendedorSnapshotParams) (VendedorSnapshot, error) 
 	if len(email) > maxVendedorEmailLength {
 		return VendedorSnapshot{}, ErrVendedorEmailDemasiadoLargo
 	}
+	if err := validateSafeChars(email); err != nil {
+		return VendedorSnapshot{}, err
+	}
 	nombre := strings.TrimSpace(p.Nombre)
 	if nombre == "" {
 		return VendedorSnapshot{}, ErrVendedorNombreRequerido
 	}
 	if len(nombre) > maxVendedorNombreLength {
 		return VendedorSnapshot{}, ErrVendedorNombreDemasiadoLargo
+	}
+	if err := validateSafeChars(nombre); err != nil {
+		return VendedorSnapshot{}, err
 	}
 	return VendedorSnapshot{usuarioID: p.UsuarioID, email: email, nombre: nombre}, nil
 }

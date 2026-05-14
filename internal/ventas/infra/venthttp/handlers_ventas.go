@@ -147,6 +147,15 @@ func buildListarFilters(in *ListarVentasInput) (outbound.ListVentasFilters, erro
 		}
 		filters.VendedorUsuarioID = &id
 	}
+	if in.ClienteID != "" {
+		n, err := strconv.Atoi(in.ClienteID)
+		if err != nil || n <= 0 {
+			return outbound.ListVentasFilters{}, apperror.NewValidation(
+				"invalid_cliente_id", "el parámetro cliente_id debe ser un entero positivo",
+			).WithError(err)
+		}
+		filters.ClienteID = &n
+	}
 	return filters, nil
 }
 
@@ -217,6 +226,7 @@ func crearVentaBodyToAppInput(b CrearVentaBody) (ventasapp.CrearVentaInput, erro
 	}
 	out := ventasapp.CrearVentaInput{
 		ID:             id,
+		ClienteID:      b.Cliente.ClienteID,
 		ClienteNombre:  b.Cliente.Nombre,
 		ClienteTel:     b.Cliente.Telefono,
 		ClienteAval:    b.Cliente.Aval,
@@ -228,8 +238,6 @@ func crearVentaBodyToAppInput(b CrearVentaBody) (ventasapp.CrearVentaInput, erro
 		ZonaClienteID:  b.Direccion.ZonaClienteID,
 		Latitud:        b.GPS.Latitud,
 		Longitud:       b.GPS.Longitud,
-		AlmacenOrigen:  b.AlmacenOrigen,
-		AlmacenDestino: b.AlmacenDestino,
 		FechaVenta:     fecha,
 		TipoVenta:      b.TipoVenta,
 		PrecioAnual:    montos.anual,
@@ -320,9 +328,16 @@ func parseCombosDTO(in []ComboDTO) ([]ventasapp.CrearVentaComboInput, error) {
 		if err != nil {
 			return nil, err
 		}
+		cantidad, err := parseDecimalField(c.Cantidad, fieldRef("combos", i, "cantidad"))
+		if err != nil {
+			return nil, err
+		}
 		out = append(out, ventasapp.CrearVentaComboInput{
 			ID: comboID, Nombre: c.Nombre,
 			PrecioAnual: anual, PrecioCorto: corto, PrecioContado: contado,
+			Cantidad:       cantidad,
+			AlmacenOrigen:  c.AlmacenOrigenID,
+			AlmacenDestino: c.AlmacenDestinoID,
 		})
 	}
 	return out, nil
@@ -374,7 +389,9 @@ func parseProductoDTO(p ProductoDTO, idx int) (ventasapp.CrearVentaProductoInput
 	return ventasapp.CrearVentaProductoInput{
 		ID: id, ArticuloID: p.ArticuloID, Articulo: p.Articulo,
 		Cantidad: cantidad, PrecioAnual: anual, PrecioCorto: corto, PrecioContado: contado,
-		ComboID: comboID,
+		ComboID:        comboID,
+		AlmacenOrigen:  p.AlmacenOrigenID,
+		AlmacenDestino: p.AlmacenDestinoID,
 	}, nil
 }
 

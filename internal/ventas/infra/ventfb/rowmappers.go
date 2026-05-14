@@ -69,7 +69,6 @@ type ventaRowRaw struct {
 	colonia, poblacion, ciudad                         string
 	zonaClienteID                                      sql.NullInt32
 	latitud, longitud                                  float64
-	almacenOrigen, almacenDestino                      int
 	fechaVentaRaw                                      any
 	tipoVenta                                          string
 	montoAnualRaw, montoCortoPlazoRaw, montoContadoRaw any
@@ -83,6 +82,10 @@ type ventaRowRaw struct {
 	canceledAtRaw                                      any
 	canceledByRaw                                      sql.NullString
 	cancelReason                                       sql.NullString
+	clienteID                                          sql.NullInt32
+	status                                             string
+	approvedAtRaw                                      any
+	approvedByRaw                                      sql.NullString
 }
 
 // scanVentaRowRaw runs the wide Scan over an MSP_VENTAS row.
@@ -92,7 +95,6 @@ func scanVentaRowRaw(s rowScanner) (*ventaRowRaw, error) {
 		&r.idRaw, &r.nombreCliente, &r.telefono, &r.avalOResponsable,
 		&r.calle, &r.numeroExterior, &r.colonia, &r.poblacion, &r.ciudad, &r.zonaClienteID,
 		&r.latitud, &r.longitud,
-		&r.almacenOrigen, &r.almacenDestino,
 		&r.fechaVentaRaw, &r.tipoVenta,
 		&r.montoAnualRaw, &r.montoCortoPlazoRaw, &r.montoContadoRaw,
 		&r.plazoMeses, &r.engancheRaw, &r.parcialidadRaw,
@@ -100,6 +102,7 @@ func scanVentaRowRaw(s rowScanner) (*ventaRowRaw, error) {
 		&r.nota,
 		&r.createdAtRaw, &r.updatedAtRaw, &r.createdByRaw, &r.updatedByRaw,
 		&r.canceledAtRaw, &r.canceledByRaw, &r.cancelReason,
+		&r.clienteID, &r.status, &r.approvedAtRaw, &r.approvedByRaw,
 	); err != nil {
 		return nil, err
 	}
@@ -136,34 +139,62 @@ func assembleVenta(
 	}
 	diaCobranza := buildDiaCobranza(r)
 	cancelacion := buildCancelacion(r, times.canceledAt, ids.canceledBy)
+	aprobacion, err := buildAprobacion(r)
+	if err != nil {
+		return nil, err
+	}
 	var nota *string
 	if r.nota.Valid {
 		v := r.nota.String
 		nota = &v
 	}
+	var clienteID *int
+	if r.clienteID.Valid {
+		v := int(r.clienteID.Int32)
+		clienteID = &v
+	}
 	return domain.HydrateVenta(domain.HydrateVentaParams{
-		ID:             ids.id,
-		Cliente:        cliente,
-		Direccion:      direccion,
-		GPS:            gps,
-		AlmacenOrigen:  r.almacenOrigen,
-		AlmacenDestino: r.almacenDestino,
-		FechaVenta:     times.fechaVenta,
-		TipoVenta:      domain.TipoVenta(r.tipoVenta),
-		Montos:         montos,
-		PlanCredito:    plan,
-		DiaCobranza:    diaCobranza,
-		Nota:           nota,
-		Combos:         combos,
-		Productos:      productos,
-		Vendedores:     vendedores,
-		Imagenes:       imagenes,
-		Cancelacion:    cancelacion,
-		CreatedAt:      times.createdAt,
-		UpdatedAt:      times.updatedAt,
-		CreatedBy:      ids.createdBy,
-		UpdatedBy:      ids.updatedBy,
+		ID:          ids.id,
+		ClienteID:   clienteID,
+		Cliente:     cliente,
+		Direccion:   direccion,
+		GPS:         gps,
+		FechaVenta:  times.fechaVenta,
+		TipoVenta:   domain.TipoVenta(r.tipoVenta),
+		Montos:      montos,
+		PlanCredito: plan,
+		DiaCobranza: diaCobranza,
+		Nota:        nota,
+		Status:      domain.VentaStatus(r.status),
+		Combos:      combos,
+		Productos:   productos,
+		Vendedores:  vendedores,
+		Imagenes:    imagenes,
+		Cancelacion: cancelacion,
+		Aprobacion:  aprobacion,
+		CreatedAt:   times.createdAt,
+		UpdatedAt:   times.updatedAt,
+		CreatedBy:   ids.createdBy,
+		UpdatedBy:   ids.updatedBy,
 	}), nil
+}
+
+// buildAprobacion turns the optional APPROVED_AT/APPROVED_BY pair into a
+// domain.Aprobacion or nil.
+func buildAprobacion(r *ventaRowRaw) (*domain.Aprobacion, error) {
+	approvedAt, err := firebird.ScanNullUTCTime(r.approvedAtRaw)
+	if err != nil {
+		return nil, err
+	}
+	if !approvedAt.Valid || !r.approvedByRaw.Valid {
+		return nil, nil //nolint:nilnil // optional pointer pattern.
+	}
+	approvedBy, err := parseUUIDColumn("APPROVED_BY", r.approvedByRaw.String)
+	if err != nil {
+		return nil, err
+	}
+	a := domain.HydrateAprobacion(approvedAt.Time, approvedBy)
+	return &a, nil
 }
 
 // ventaIDs bundles the parsed UUID columns of a venta header.
@@ -335,14 +366,17 @@ func buildCancelacion(
 // scanCombo rebuilds a domain.Combo from one MSP_VENTAS_COMBOS row.
 func scanCombo(s rowScanner) (*domain.Combo, error) {
 	var (
-		idRaw, nombre              string
-		anualRaw, cortoRaw, conRaw any
-		createdAtRaw, updatedAtRaw any
-		createdByRaw, updatedByRaw string
+		idRaw, nombre                 string
+		anualRaw, cortoRaw, conRaw    any
+		cantidadRaw                   any
+		almacenOrigen, almacenDestino int
+		createdAtRaw, updatedAtRaw    any
+		createdByRaw, updatedByRaw    string
 	)
 	if err := s.Scan(
 		&idRaw, &nombre,
 		&anualRaw, &cortoRaw, &conRaw,
+		&cantidadRaw, &almacenOrigen, &almacenDestino,
 		&createdAtRaw, &updatedAtRaw, &createdByRaw, &updatedByRaw,
 	); err != nil {
 		return nil, err
@@ -379,33 +413,43 @@ func scanCombo(s rowScanner) (*domain.Combo, error) {
 	if err != nil {
 		return nil, err
 	}
+	cantidad, err := firebird.ScanDecimal(cantidadRaw, numericCantidad)
+	if err != nil {
+		return nil, err
+	}
 	return domain.HydrateCombo(domain.HydrateComboParams{
-		ID:        id,
-		Nombre:    nombre,
-		Precios:   domain.HydrateMontoSnapshot(anual, corto, contado),
-		CreatedAt: createdAt,
-		UpdatedAt: updatedAt,
-		CreatedBy: createdBy,
-		UpdatedBy: updatedBy,
+		ID:             id,
+		Nombre:         nombre,
+		Precios:        domain.HydrateMontoSnapshot(anual, corto, contado),
+		Cantidad:       cantidad,
+		AlmacenOrigen:  almacenOrigen,
+		AlmacenDestino: almacenDestino,
+		CreatedAt:      createdAt,
+		UpdatedAt:      updatedAt,
+		CreatedBy:      createdBy,
+		UpdatedBy:      updatedBy,
 	}), nil
 }
 
 // scanProducto rebuilds a domain.Producto from one MSP_VENTAS_PRODUCTOS row.
+//
+//nolint:funlen // wide column set; splitting the scanner buys nothing.
 func scanProducto(s rowScanner) (*domain.Producto, error) {
 	var (
-		idRaw                      string
-		articuloID                 int
-		articulo                   string
-		cantidadRaw                any
-		anualRaw, cortoRaw, conRaw any
-		comboIDRaw                 sql.NullString
-		createdAtRaw, updatedAtRaw any
-		createdByRaw, updatedByRaw string
+		idRaw                         string
+		articuloID                    int
+		articulo                      string
+		cantidadRaw                   any
+		anualRaw, cortoRaw, conRaw    any
+		comboIDRaw                    sql.NullString
+		almacenOrigen, almacenDestino sql.NullInt32
+		createdAtRaw, updatedAtRaw    any
+		createdByRaw, updatedByRaw    string
 	)
 	if err := s.Scan(
 		&idRaw, &articuloID, &articulo, &cantidadRaw,
 		&anualRaw, &cortoRaw, &conRaw,
-		&comboIDRaw,
+		&comboIDRaw, &almacenOrigen, &almacenDestino,
 		&createdAtRaw, &updatedAtRaw, &createdByRaw, &updatedByRaw,
 	); err != nil {
 		return nil, err
@@ -450,17 +494,28 @@ func scanProducto(s rowScanner) (*domain.Producto, error) {
 	if err != nil {
 		return nil, err
 	}
+	var almOrgPtr, almDstPtr *int
+	if almacenOrigen.Valid {
+		v := int(almacenOrigen.Int32)
+		almOrgPtr = &v
+	}
+	if almacenDestino.Valid {
+		v := int(almacenDestino.Int32)
+		almDstPtr = &v
+	}
 	return domain.HydrateProducto(domain.HydrateProductoParams{
-		ID:         id,
-		ArticuloID: articuloID,
-		Articulo:   articulo,
-		Cantidad:   cantidad,
-		Precios:    domain.HydrateMontoSnapshot(anual, corto, contado),
-		ComboID:    comboID,
-		CreatedAt:  createdAt,
-		UpdatedAt:  updatedAt,
-		CreatedBy:  createdBy,
-		UpdatedBy:  updatedBy,
+		ID:             id,
+		ArticuloID:     articuloID,
+		Articulo:       articulo,
+		Cantidad:       cantidad,
+		Precios:        domain.HydrateMontoSnapshot(anual, corto, contado),
+		ComboID:        comboID,
+		AlmacenOrigen:  almOrgPtr,
+		AlmacenDestino: almDstPtr,
+		CreatedAt:      createdAt,
+		UpdatedAt:      updatedAt,
+		CreatedBy:      createdBy,
+		UpdatedBy:      updatedBy,
 	}), nil
 }
 

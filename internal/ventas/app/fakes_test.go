@@ -121,6 +121,18 @@ func (f *fakeOutbox) snapshot() []outboxCall {
 	return out
 }
 
+// sawEventType reports whether any captured call has the supplied event type.
+func (f *fakeOutbox) sawEventType(eventType string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, c := range f.calls {
+		if c.EventType == eventType {
+			return true
+		}
+	}
+	return false
+}
+
 // fakeStorage is an in-memory outbound.StorageProvider. Records call counts
 // and error overrides per method.
 type fakeStorage struct {
@@ -321,4 +333,71 @@ func (f *fakeVentaRepo) DeleteImagen(_ context.Context, _, _ uuid.UUID) error {
 	defer f.mu.Unlock()
 	f.DeleteImagenCalls++
 	return f.DeleteImagenErr
+}
+
+// UpdateHeader rewrites the entry using the same map; reuses UpdateErr.
+func (f *fakeVentaRepo) UpdateHeader(_ context.Context, v *domain.Venta) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.UpdateErr != nil {
+		return f.UpdateErr
+	}
+	if _, ok := f.byID[v.ID()]; !ok {
+		return domain.ErrVentaNotFound
+	}
+	f.byID[v.ID()] = v
+	return nil
+}
+
+// UpdateCliente rewrites the entry; reuses UpdateErr.
+func (f *fakeVentaRepo) UpdateCliente(_ context.Context, v *domain.Venta) error {
+	return f.UpdateHeader(context.Background(), v)
+}
+
+// ReplaceProductos rewrites the entry; reuses UpdateErr.
+func (f *fakeVentaRepo) ReplaceProductos(_ context.Context, v *domain.Venta) error {
+	return f.UpdateHeader(context.Background(), v)
+}
+
+// ReplaceCombos rewrites the entry; reuses UpdateErr.
+func (f *fakeVentaRepo) ReplaceCombos(_ context.Context, v *domain.Venta) error {
+	return f.UpdateHeader(context.Background(), v)
+}
+
+// ReplaceVendedores rewrites the entry; reuses UpdateErr.
+func (f *fakeVentaRepo) ReplaceVendedores(_ context.Context, v *domain.Venta) error {
+	return f.UpdateHeader(context.Background(), v)
+}
+
+// fakeClienteChecker is an in-memory outbound.ClienteExistenceChecker.
+// Behavior is controlled by the Exists field — true accepts any id, the
+// IDs slice restricts which ids are valid.
+type fakeClienteChecker struct {
+	mu     sync.Mutex
+	calls  int
+	exists bool
+	ids    map[int]struct{}
+	err    error
+}
+
+func newFakeClienteChecker(exists bool, ids ...int) *fakeClienteChecker {
+	out := &fakeClienteChecker{exists: exists, ids: map[int]struct{}{}}
+	for _, id := range ids {
+		out.ids[id] = struct{}{}
+	}
+	return out
+}
+
+func (f *fakeClienteChecker) Exists(_ context.Context, id int) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.err != nil {
+		return false, f.err
+	}
+	if len(f.ids) > 0 {
+		_, ok := f.ids[id]
+		return ok, nil
+	}
+	return f.exists, nil
 }

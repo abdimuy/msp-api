@@ -11,10 +11,20 @@ type MontoSnapshot struct {
 	contado    decimal.Decimal
 }
 
-// NewMontoSnapshot validates and constructs a MontoSnapshot.
+// NewMontoSnapshot validates and constructs a MontoSnapshot. Every value
+// must be non-negative, ≤ MaxMontoVenta, and have ≤ 2 decimal places (the
+// declared scale of the NUMERIC(14,2) storage column).
 func NewMontoSnapshot(anual, cortoPlazo, contado decimal.Decimal) (MontoSnapshot, error) {
 	if anual.Sign() < 0 || cortoPlazo.Sign() < 0 || contado.Sign() < 0 {
 		return MontoSnapshot{}, ErrMontoNegativo
+	}
+	for _, v := range [...]decimal.Decimal{anual, cortoPlazo, contado} {
+		if err := validateMontoScale(v); err != nil {
+			return MontoSnapshot{}, err
+		}
+		if err := validateMontoCap(v); err != nil {
+			return MontoSnapshot{}, err
+		}
 	}
 	return MontoSnapshot{anual: anual, cortoPlazo: cortoPlazo, contado: contado}, nil
 }

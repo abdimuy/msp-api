@@ -29,6 +29,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/ventas/infra/storage"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/ventfb"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/venthttp"
+	ventasoutbound "github.com/abdimuy/msp-api/internal/ventas/ports/outbound"
 )
 
 // valuesForwardingCtx wraps the live request context with the ambient test
@@ -146,7 +147,7 @@ func TestE2E_Firebird_CrearVenta(t *testing.T) { //nolint:paralleltest // see co
 		// TxMgr is nil — the ambient test tx is supplied via context, and
 		// firebird.GetQuerier picks it up. The service-level runInTx becomes a
 		// no-op which is exactly what we want here.
-		svc := ventasapp.NewService(repo, store, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil)
+		svc := ventasapp.NewService(repo, nil, store, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil)
 
 		cu := auth.CurrentUser{
 			ID:          usuarioID,
@@ -279,7 +280,7 @@ func TestE2E_Firebird_StandardProcessor_ResizesAndShrinks(t *testing.T) {
 		opts.JPEGQuality = 75
 		opts.PreserveSmallImages = false
 		proc := imageprocessor.NewStandardProcessor(opts)
-		svc := ventasapp.NewService(repo, store, clock, noopOutbox{}, proc, nil)
+		svc := ventasapp.NewService(repo, nil, store, clock, noopOutbox{}, proc, nil)
 
 		cu := e2eFullPermsUser(usuarioID)
 		r := chi.NewRouter()
@@ -531,7 +532,7 @@ func TestE2E_Firebird_ObtenerImagen(t *testing.T) {
 		fsStore, err := storage.NewFilesystemProvider(t.TempDir())
 		require.NoError(t, err, "filesystem provider must build under t.TempDir")
 		clock := fixedClock{T: e2eFixedTime()}
-		svc := ventasapp.NewService(repo, fsStore, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil)
+		svc := ventasapp.NewService(repo, nil, fsStore, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil)
 
 		cu := e2eFullPermsUser(usuarioID)
 		r := chi.NewRouter()
@@ -589,7 +590,7 @@ func TestE2E_Firebird_ObtenerImagen_MultiplesImagenes(t *testing.T) {
 		fsStore, err := storage.NewFilesystemProvider(t.TempDir())
 		require.NoError(t, err)
 		clock := fixedClock{T: e2eFixedTime()}
-		svc := ventasapp.NewService(repo, fsStore, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil)
+		svc := ventasapp.NewService(repo, nil, fsStore, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil)
 
 		cu := e2eFullPermsUser(usuarioID)
 		r := chi.NewRouter()
@@ -707,7 +708,26 @@ func buildE2EService(pool *firebird.Pool) *ventasapp.Service {
 	repo := ventfb.NewVentaRepo(pool)
 	store := newFakeStorage()
 	clock := fixedClock{T: e2eFixedTime()}
-	return ventasapp.NewService(repo, store, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil)
+	return ventasapp.NewService(repo, nil, store, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil)
+}
+
+// buildE2EServiceWithCliente is buildE2EService plus the real Firebird-backed
+// ClienteExistenceChecker, used by tests that exercise the cliente_id FK.
+func buildE2EServiceWithCliente(pool *firebird.Pool) *ventasapp.Service {
+	repo := ventfb.NewVentaRepo(pool)
+	clientes := ventfb.NewClienteRepo(pool)
+	store := newFakeStorage()
+	clock := fixedClock{T: e2eFixedTime()}
+	return ventasapp.NewService(repo, clientes, store, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil)
+}
+
+// buildE2EServiceWithOutbox is buildE2EService with a caller-supplied outbox
+// implementation, used by tests that capture/inspect Enqueue calls.
+func buildE2EServiceWithOutbox(pool *firebird.Pool, outbox ventasoutbound.OutboxEnqueuer) *ventasapp.Service {
+	repo := ventfb.NewVentaRepo(pool)
+	store := newFakeStorage()
+	clock := fixedClock{T: e2eFixedTime()}
+	return ventasapp.NewService(repo, nil, store, clock, outbox, imageprocessor.NoOpProcessor{}, nil)
 }
 
 // e2eFullPermsUser returns a CurrentUser holding every ventas permission.
@@ -722,6 +742,7 @@ func e2eFullPermsUser(usuarioID uuid.UUID) auth.CurrentUser {
 			string(authdomain.PermVentasVer),
 			string(authdomain.PermVentasCrear),
 			string(authdomain.PermVentasCancelar),
+			string(authdomain.PermVentasEditar),
 			string(authdomain.PermVentasSubirImagenes),
 			string(authdomain.PermVentasEliminarImagenes),
 		},

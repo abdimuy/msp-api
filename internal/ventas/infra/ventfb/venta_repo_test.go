@@ -398,8 +398,9 @@ func TestVentaRepo_FindByID_MalformedComboUUID(t *testing.T) {
 			`INSERT INTO MSP_VENTAS_COMBOS
 			 (ID, VENTA_ID, NOMBRE_COMBO,
 			  PRECIO_ANUAL, PRECIO_CORTO_PLAZO, PRECIO_CONTADO,
+			  CANTIDAD, ALMACEN_ORIGEN_ID, ALMACEN_DESTINO_ID,
 			  CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY)
-			 VALUES (?, ?, 'malformed', 100, 100, 100, ?, ?, ?, ?)`,
+			 VALUES (?, ?, 'malformed', 100, 100, 100, 1, 1, 2, ?, ?, ?, ?)`,
 			badID, v.ID().String(), now, now, root.String(), root.String(),
 		)
 		require.NoError(t, err)
@@ -709,6 +710,109 @@ func TestVentaRepo_DeleteImagen_OtherVenta_NotFound(t *testing.T) {
 		got, err := repo.FindByID(ctx, a.ID())
 		require.NoError(t, err)
 		assert.Equal(t, 1, got.ImagenesCount(), "imagen must not have been deleted")
+	})
+}
+
+// TestVentaRepo_List_AllFiltersCombined seeds a matrix of ventas differing
+// across every supported filter axis (tipo, vendedor, cliente_id, status,
+// fecha) and verifies that activating every filter at once narrows the
+// result set to exactly the row that matches all predicates. This exercises
+// the SQL builder's WHERE-clause concatenation and argument positioning end
+// to end.
+func TestVentaRepo_List_AllFiltersCombined(t *testing.T) {
+	requireFBEnv(t)
+	t.Parallel()
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := ventfb.NewVentaRepo(pool)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		root := seedUsuarioRow(ctx, t, pool)
+		targetVendedor := seedUsuarioRow(ctx, t, pool)
+		otherVendedor := seedUsuarioRow(ctx, t, pool)
+		realCliente := pickExistingClienteID(ctx, t, pool)
+
+		anchor := time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC)
+		desde := anchor
+		hasta := anchor.AddDate(0, 1, 0)
+		inside := anchor.AddDate(0, 0, 10)
+		outside := anchor.AddDate(0, -2, 0)
+
+		// match: CREDITO + targetVendedor + cliente_id + alive + inside date.
+		match := buildVenta(t, newVentaInput{
+			createdBy: root, vendedor: targetVendedor,
+			tipoVenta: domain.TipoVentaCredito, fecha: inside,
+		})
+		require.NoError(t, repo.Save(ctx, match))
+		snap, _ := domain.NewClienteSnapshot(domain.NewClienteSnapshotParams{Nombre: match.Cliente().Nombre()})
+		require.NoError(t, match.ActualizarCliente(domain.ActualizarClienteParams{
+			ClienteID: &realCliente, Cliente: snap, By: root, Now: inside.Add(time.Hour),
+		}))
+		require.NoError(t, repo.UpdateCliente(ctx, match))
+
+		// CONTADO instead — fails TipoVenta filter.
+		wrongTipo := buildVenta(t, newVentaInput{
+			createdBy: root, vendedor: targetVendedor,
+			tipoVenta: domain.TipoVentaContado, fecha: inside,
+		})
+		require.NoError(t, repo.Save(ctx, wrongTipo))
+		require.NoError(t, wrongTipo.ActualizarCliente(domain.ActualizarClienteParams{
+			ClienteID: &realCliente, Cliente: snap, By: root, Now: inside.Add(time.Hour),
+		}))
+		require.NoError(t, repo.UpdateCliente(ctx, wrongTipo))
+
+		// Wrong vendedor.
+		wrongVendedor := buildVenta(t, newVentaInput{
+			createdBy: root, vendedor: otherVendedor,
+			tipoVenta: domain.TipoVentaCredito, fecha: inside,
+		})
+		require.NoError(t, repo.Save(ctx, wrongVendedor))
+		require.NoError(t, wrongVendedor.ActualizarCliente(domain.ActualizarClienteParams{
+			ClienteID: &realCliente, Cliente: snap, By: root, Now: inside.Add(time.Hour),
+		}))
+		require.NoError(t, repo.UpdateCliente(ctx, wrongVendedor))
+
+		// Date outside range.
+		wrongDate := buildVenta(t, newVentaInput{
+			createdBy: root, vendedor: targetVendedor,
+			tipoVenta: domain.TipoVentaCredito, fecha: outside,
+		})
+		require.NoError(t, repo.Save(ctx, wrongDate))
+		require.NoError(t, wrongDate.ActualizarCliente(domain.ActualizarClienteParams{
+			ClienteID: &realCliente, Cliente: snap, By: root, Now: outside.Add(time.Hour),
+		}))
+		require.NoError(t, repo.UpdateCliente(ctx, wrongDate))
+
+		// Canceled — fails IncluirCanceladas=false predicate.
+		canceled := buildVenta(t, newVentaInput{
+			createdBy: root, vendedor: targetVendedor,
+			tipoVenta: domain.TipoVentaCredito, fecha: inside,
+		})
+		require.NoError(t, repo.Save(ctx, canceled))
+		require.NoError(t, canceled.ActualizarCliente(domain.ActualizarClienteParams{
+			ClienteID: &realCliente, Cliente: snap, By: root, Now: inside.Add(time.Hour),
+		}))
+		require.NoError(t, repo.UpdateCliente(ctx, canceled))
+		require.NoError(t, canceled.Cancelar("test", root, inside.Add(2*time.Hour)))
+		require.NoError(t, repo.Update(ctx, canceled))
+
+		// Activate every filter at once. Expect: match is in the page, the
+		// other four are not (independent of any pre-existing rows in the DB).
+		page, err := repo.List(ctx,
+			outbound.ListParams{PageSize: 50},
+			outbound.ListVentasFilters{
+				Desde:             &desde,
+				Hasta:             &hasta,
+				VendedorUsuarioID: &targetVendedor,
+				ClienteID:         &realCliente,
+				TipoVenta:         string(domain.TipoVentaCredito),
+				IncluirCanceladas: false,
+			},
+		)
+		require.NoError(t, err)
+		assert.True(t, containsVentaID(page.Items, match.ID()), "match must be in result")
+		assert.False(t, containsVentaID(page.Items, wrongTipo.ID()), "CONTADO must be filtered out")
+		assert.False(t, containsVentaID(page.Items, wrongVendedor.ID()), "wrong vendedor must be filtered out")
+		assert.False(t, containsVentaID(page.Items, wrongDate.ID()), "outside-range date must be filtered out")
+		assert.False(t, containsVentaID(page.Items, canceled.ID()), "canceled must be filtered out")
 	})
 }
 
