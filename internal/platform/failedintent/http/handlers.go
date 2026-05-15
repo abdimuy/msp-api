@@ -16,6 +16,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/auth"
 	apperror "github.com/abdimuy/msp-api/internal/platform/apperror"
 	"github.com/abdimuy/msp-api/internal/platform/failedintent"
+	"github.com/abdimuy/msp-api/internal/platform/httpdispatch"
 	"github.com/abdimuy/msp-api/internal/platform/idempotency"
 	"github.com/abdimuy/msp-api/internal/platform/response"
 )
@@ -436,10 +437,15 @@ func (s *Service) buildReplayRequest(
 	}
 	req.Header.Set(idempotency.HeaderKey, idemKey)
 
+	// httpdispatch.InternalContext strips the chi.RouteContext inherited
+	// from the admin handler's request; without it, chi.Mux.ServeHTTP
+	// short-circuits routing on the synthesized request and returns 404.
+	replayCtx := httpdispatch.InternalContext(req.Context())
+
 	//nolint:contextcheck // intentional: we plant the original requester's
 	// CurrentUser on the replay request so the downstream chain sees the
 	// same auth context the original request had.
-	req = req.WithContext(auth.PlantCurrentUser(req.Context(), cu))
+	req = req.WithContext(auth.PlantCurrentUser(replayCtx, cu))
 	return req, nil
 }
 
