@@ -802,8 +802,12 @@ func TestReplay_Success_TransitionsToRetriedOK(t *testing.T) {
 	// X-Internal-Replay header equals the intent ID.
 	assert.Equal(t, id.String(), dispatched.Header.Get(failedintent.HeaderInternalReplay))
 
-	// Idempotency-Key header equals the intent's IdempotencyKey.
-	assert.Equal(t, intent.IdempotencyKey, dispatched.Header.Get(idempotency.HeaderKey))
+	// Idempotency-Key header is freshly generated for the replay (decoupled
+	// from the intent's captured key so the idempotency middleware does not
+	// short-circuit with the cached failure response).
+	freshKey := dispatched.Header.Get(idempotency.HeaderKey)
+	assert.NotEmpty(t, freshKey)
+	assert.NotEqual(t, intent.IdempotencyKey, freshKey)
 
 	// CurrentUser is planted on the dispatched request.
 	plantedUser := dispatcher.lastUser()
@@ -955,13 +959,20 @@ func TestReplay_TerminalIntent_DoesNotMutateStatus(t *testing.T) {
 		"terminal intent status must not be mutated by re-replay")
 }
 
-func TestReplay_GeneratesIdempotencyKeyWhenMissing(t *testing.T) {
+// TestReplay_AlwaysGeneratesFreshIdempotencyKey enforces that every
+// replay mints a new idempotency key, decoupled from the intent's
+// captured key. Reusing the captured key either short-circuits with the
+// cached failure (defeating the purpose of replay) or — once the body
+// bytes diverge by even one whitespace character — yields a 409
+// idempotency_key_mismatch. The replay is semantically a new operation
+// distinct from the user's own retries.
+func TestReplay_AlwaysGeneratesFreshIdempotencyKey(t *testing.T) {
 	t.Parallel()
 
 	store := newMemoryStore()
 	id := uuid.MustParse("a7a7a7a7-a7a7-a7a7-a7a7-a7a7a7a7a7a7")
 	intent := makeIntent(id, time.Now().UTC())
-	intent.IdempotencyKey = "" // No idempotency key set.
+	intent.IdempotencyKey = "user-original-key-001" // Intent HAS a captured key.
 	seedIntent(t, store, intent)
 
 	expectedCU := auth.CurrentUser{ID: *intent.UsuarioID}
@@ -982,9 +993,12 @@ func TestReplay_GeneratesIdempotencyKeyWhenMissing(t *testing.T) {
 	dispatched := dispatcher.lastRequest()
 	require.NotNil(t, dispatched)
 
-	// Idempotency-Key must be set to a non-empty value.
 	idemKey := dispatched.Header.Get(idempotency.HeaderKey)
-	assert.NotEmpty(t, idemKey, "Idempotency-Key must be generated when intent has none")
+	assert.NotEmpty(t, idemKey, "replay must always set an Idempotency-Key")
+	assert.NotEqual(t, intent.IdempotencyKey, idemKey,
+		"replay key must be FRESH even when the intent already carries one")
+	assert.Equal(t, generatedID.String(), idemKey,
+		"the fresh key must come from the injected uuid generator")
 
 	// X-Internal-Replay must still be set.
 	assert.Equal(t, id.String(), dispatched.Header.Get(failedintent.HeaderInternalReplay))
@@ -1758,17 +1772,19 @@ func TestMeListar_PageSizeClamped(t *testing.T) {
 
 // ─── Group 1 — ReplayWith robustness ─────────────────────────────────────────
 
-// TestReplayWith_GeneratesFreshIdempotencyKey_WhenIntentHasNone verifies that
-// when the intent has no idempotency key, ReplayWith generates a fresh UUID and
-// sets it on the dispatched request.
-func TestReplayWith_GeneratesFreshIdempotencyKey_WhenIntentHasNone(t *testing.T) {
+// TestReplayWith_AlwaysGeneratesFreshIdempotencyKey enforces the same
+// "always fresh" contract as TestReplay_AlwaysGeneratesFreshIdempotencyKey
+// for the corrected-body replay path. Reusing the captured key on a
+// replay-with with a different body would yield a guaranteed 409
+// idempotency_key_mismatch from the idempotency middleware.
+func TestReplayWith_AlwaysGeneratesFreshIdempotencyKey(t *testing.T) {
 	t.Parallel()
 
 	store := newMemoryStore()
 	now := time.Now().UTC()
 	id := uuid.MustParse("bb000001-0000-0000-0000-000000000001")
 	intent := makeIntent(id, now)
-	intent.IdempotencyKey = "" // no idempotency key
+	intent.IdempotencyKey = "user-original-key-002" // Intent HAS a captured key.
 	seedIntent(t, store, intent)
 
 	lookup := &stubUsuarioLookup{user: auth.CurrentUser{ID: *intent.UsuarioID}}
@@ -1790,7 +1806,9 @@ func TestReplayWith_GeneratesFreshIdempotencyKey_WhenIntentHasNone(t *testing.T)
 	require.NotNil(t, dispatched, "dispatcher must have been called")
 
 	idemKey := dispatched.Header.Get(idempotency.HeaderKey)
-	assert.NotEmpty(t, idemKey, "Idempotency-Key must be generated when intent has none")
+	assert.NotEmpty(t, idemKey, "replay-with must always set an Idempotency-Key")
+	assert.NotEqual(t, intent.IdempotencyKey, idemKey,
+		"replay-with key must be FRESH even when the intent already carries one")
 
 	// The generated key must parse as a valid UUID.
 	_, parseErr := uuid.Parse(idemKey)

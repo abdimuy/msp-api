@@ -431,11 +431,12 @@ func (s *Service) buildReplayRequest(
 	req.Header.Set(failedintent.HeaderInternalReplay, intent.ID.String())
 	req.Header.Set("X-Request-ID", s.newID().String())
 
-	idemKey := intent.IdempotencyKey
-	if idemKey == "" {
-		idemKey = s.newID().String()
-	}
-	req.Header.Set(idempotency.HeaderKey, idemKey)
+	// Always mint a fresh Idempotency-Key for the replay. Reusing the
+	// captured key would let the idempotency middleware either short-circuit
+	// with the cached failure response (defeating the purpose of replay) or
+	// reject a corrected body as idempotency_key_mismatch. A replay is
+	// semantically a new operation distinct from the user's original retries.
+	req.Header.Set(idempotency.HeaderKey, s.newID().String())
 
 	// httpdispatch.InternalContext strips the chi.RouteContext inherited
 	// from the admin handler's request; without it, chi.Mux.ServeHTTP
