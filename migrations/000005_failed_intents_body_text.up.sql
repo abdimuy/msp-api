@@ -1,0 +1,21 @@
+-- failed_intents.body : JSONB → TEXT for byte-exact replay fidelity.
+--
+-- Background: the failedintent replay flow re-dispatches the captured body
+-- through the same HTTP chain, including the idempotency middleware. With
+-- the body column typed as JSONB, Postgres normalises whitespace and key
+-- ordering at storage time, so reading the body back yields different
+-- bytes than the original capture. The idempotency middleware's body
+-- hash therefore disagreed with the cached hash, surfacing as a spurious
+-- 409 idempotency_key_mismatch on replay.
+--
+-- The change preserves storage semantics for the dominant case (Go-side
+-- normaliseBody already serialises valid-JSON inputs as their original
+-- bytes and string-wraps invalid bytes) and yields byte fidelity end to
+-- end. The trade-off is losing JSON-aware indexing on the column; the
+-- existing query patterns do not depend on it.
+--
+-- Per CLAUDE.md the database carries no business logic, so we are not
+-- losing a validation layer that mattered: validation lives in the
+-- failedintent Go package.
+ALTER TABLE failed_intents
+    ALTER COLUMN body TYPE TEXT USING body::text;
