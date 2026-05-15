@@ -29,6 +29,15 @@ func NewAuthnMiddleware(fb outbound.FirebaseClient, usuarios outbound.UsuarioRep
 // Handler is the chi-compatible middleware function.
 func (m *AuthnMiddleware) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// In-process dispatches (e.g. the failedintent replay dispatcher)
+		// plant CurrentUser directly on the request context, bypassing the
+		// Firebase verification path. auth.PlantCurrentUser is only callable
+		// from trusted server code, so a pre-planted user is authoritative.
+		if _, ok := auth.CurrentUserFromContext(r.Context()); ok {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		token, err := extractBearer(r)
 		if err != nil {
 			response.Error(w, r, err)
