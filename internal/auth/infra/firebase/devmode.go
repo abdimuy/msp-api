@@ -66,6 +66,19 @@ func (c *DevModeClient) VerifyIDToken(ctx context.Context, idToken string) (*out
 	}, nil
 }
 
+// DisableUser is a no-op in dev mode: there is no real Firebase project
+// to update. The bypass is logged so its use is visible in dev logs.
+func (c *DevModeClient) DisableUser(ctx context.Context, uid string) error {
+	slog.WarnContext(ctx, "auth.dev_mode_disable_noop", "uid", uid)
+	return nil
+}
+
+// EnableUser is a no-op in dev mode. Mirrors DisableUser.
+func (c *DevModeClient) EnableUser(ctx context.Context, uid string) error {
+	slog.WarnContext(ctx, "auth.dev_mode_enable_noop", "uid", uid)
+	return nil
+}
+
 // parseDevModeToken validates the "dev:<uid>[:<email>]" shape. Returns
 // uid, email, error. apperror.Unauthorized on every failure path so a
 // malformed dev token surfaces as a normal 401 from the middleware.

@@ -83,6 +83,7 @@ func appOptions() []fx.Option {
 			provideAuthPermisoRepo,
 			provideAuthClock,
 			provideAuthFirebase,
+			provideUserDeactivatedHandler,
 			provideAuthOutboxEnqueuer,
 			provideAuthService,
 			provideIdempotencyStore,
@@ -98,6 +99,7 @@ func appOptions() []fx.Option {
 		fx.Invoke(
 			registerPostgresLifecycle,
 			registerFirebirdLifecycle,
+			registerAuthOutboxHandlers,
 			registerOutboxLifecycle,
 			invokeAuthCatalogSync,
 			registerHTTPLifecycle,

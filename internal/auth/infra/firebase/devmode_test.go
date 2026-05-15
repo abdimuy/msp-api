@@ -139,3 +139,24 @@ func TestNewDevModeClient_AcceptsDevelopment(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, c)
 }
+
+func TestDevModeClient_DisableUser_IsNoop(t *testing.T) {
+	t.Parallel()
+	c, err := NewDevModeClient(config.EnvDevelopment)
+	require.NoError(t, err)
+	assert.NoError(t, c.DisableUser(context.Background(), "any-uid"))
+}
+
+func TestDevModeClient_EnableUser_IsNoop(t *testing.T) {
+	t.Parallel()
+	c, err := NewDevModeClient(config.EnvDevelopment)
+	require.NoError(t, err)
+	assert.NoError(t, c.EnableUser(context.Background(), "any-uid"))
+}
+
+func TestDevModeClient_DisableUser_EmptyUIDStillSucceeds(t *testing.T) {
+	t.Parallel()
+	c, err := NewDevModeClient(config.EnvDevelopment)
+	require.NoError(t, err)
+	assert.NoError(t, c.DisableUser(context.Background(), ""))
+}

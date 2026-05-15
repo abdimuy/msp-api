@@ -32,3 +32,25 @@ func TestNotConfiguredClient_EmptyTokenAlsoUnauthorized(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, apperror.KindUnauthorized, appErr.Kind)
 }
+
+func TestNotConfiguredClient_DisableUser_ReturnsInternalAppError(t *testing.T) {
+	t.Parallel()
+	c := firebase.NewNotConfiguredClient()
+	err := c.DisableUser(context.Background(), "any-uid")
+	require.Error(t, err)
+	appErr, ok := apperror.As(err)
+	require.True(t, ok)
+	assert.Equal(t, apperror.KindInternal, appErr.Kind)
+	assert.Equal(t, "firebase_not_configured", appErr.Code)
+}
+
+func TestNotConfiguredClient_EnableUser_ReturnsInternalAppError(t *testing.T) {
+	t.Parallel()
+	c := firebase.NewNotConfiguredClient()
+	err := c.EnableUser(context.Background(), "any-uid")
+	require.Error(t, err)
+	appErr, ok := apperror.As(err)
+	require.True(t, ok)
+	assert.Equal(t, apperror.KindInternal, appErr.Kind)
+	assert.Equal(t, "firebase_not_configured", appErr.Code)
+}

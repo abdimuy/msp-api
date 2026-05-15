@@ -16,6 +16,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 	"github.com/abdimuy/msp-api/internal/platform/idempotency"
 	idempotencypg "github.com/abdimuy/msp-api/internal/platform/idempotency/postgres"
+	"github.com/abdimuy/msp-api/internal/platform/outbox"
 	"github.com/abdimuy/msp-api/internal/platform/postgres"
 	"github.com/abdimuy/msp-api/internal/platform/transaction"
 )
@@ -63,11 +64,24 @@ func provideAuthService(
 	roles outbound.RolRepo,
 	permisos outbound.PermisoRepo,
 	clock outbound.Clock,
-	outbox outbound.OutboxEnqueuer,
+	outboxEnq outbound.OutboxEnqueuer,
 	fb outbound.FirebaseClient,
 	fbTxMgr *firebird.TxManager,
 ) *app.Service {
-	return app.NewService(usuarios, roles, permisos, clock, outbox, fb, fbTxMgr)
+	return app.NewService(usuarios, roles, permisos, clock, outboxEnq, fb, fbTxMgr)
+}
+
+// provideUserDeactivatedHandler constructs the outbox handler that
+// propagates user.deactivated events to Firebase Auth.
+func provideUserDeactivatedHandler(fb outbound.FirebaseClient) *authoutbox.UserDeactivatedHandler {
+	return authoutbox.NewUserDeactivatedHandler(fb)
+}
+
+// registerAuthOutboxHandlers registers every auth-module outbox handler
+// on the shared registry. Must run before registerOutboxLifecycle so
+// the dispatcher sees the handlers when it starts.
+func registerAuthOutboxHandlers(reg *outbox.HandlerRegistry, h *authoutbox.UserDeactivatedHandler) {
+	reg.Register(h)
 }
 
 // invokeAuthCatalogSync runs at startup AFTER firebird is up.

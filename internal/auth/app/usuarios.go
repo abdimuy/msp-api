@@ -91,12 +91,17 @@ func (s *Service) Actualizar(ctx context.Context, p ActualizarParams, by uuid.UU
 // Desactivar soft-deletes a usuario. The email and firebase_uid columns are
 // mangled so the unique slots are freed for re-creation; the usuario row
 // itself is kept around for audit purposes. The "user.deactivated" event is
-// enqueued on success.
+// enqueued on success with the ORIGINAL firebase_uid attached so downstream
+// consumers (e.g. the Firebase Auth disable handler) can locate the
+// external account — by the time the event is processed, the row already
+// carries the renamed "deleted-<id>" placeholder.
 func (s *Service) Desactivar(ctx context.Context, id, by uuid.UUID) error {
 	u, err := s.usuarios.FindByID(ctx, id)
 	if err != nil {
 		return err
 	}
+
+	originalFirebaseUID := u.FirebaseUID().Value()
 
 	now := s.clock.Now()
 	newEmail := "deleted-" + id.String() + "-" + u.Email().Value()
@@ -111,6 +116,7 @@ func (s *Service) Desactivar(ctx context.Context, id, by uuid.UUID) error {
 	s.enqueueEvent(ctx, outboxAggregateUsuario, id, eventUserDeactivated, map[string]any{
 		"usuario_id":     id,
 		"deactivated_by": by,
+		"firebase_uid":   originalFirebaseUID,
 	})
 	return nil
 }

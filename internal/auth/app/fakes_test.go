@@ -60,10 +60,14 @@ func (f *FakeOutbox) EventTypes() []string {
 
 // FakeFirebaseClient returns a pre-configured token and counts invocations.
 type FakeFirebaseClient struct {
-	mu       sync.Mutex
-	Token    *outbound.FirebaseToken
-	Err      error
-	Verified int
+	mu           sync.Mutex
+	Token        *outbound.FirebaseToken
+	Err          error
+	Verified     int
+	DisabledUIDs []string
+	EnabledUIDs  []string
+	DisableErr   error
+	EnableErr    error
 }
 
 // VerifyIDToken records a call and returns the configured token/error.
@@ -75,6 +79,22 @@ func (f *FakeFirebaseClient) VerifyIDToken(_ context.Context, _ string) (*outbou
 		return nil, f.Err
 	}
 	return f.Token, nil
+}
+
+// DisableUser records the uid and returns the configured error.
+func (f *FakeFirebaseClient) DisableUser(_ context.Context, uid string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.DisabledUIDs = append(f.DisabledUIDs, uid)
+	return f.DisableErr
+}
+
+// EnableUser records the uid and returns the configured error.
+func (f *FakeFirebaseClient) EnableUser(_ context.Context, uid string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.EnabledUIDs = append(f.EnabledUIDs, uid)
+	return f.EnableErr
 }
 
 // ─── FakeUsuarioRepo ───────────────────────────────────────────────────────

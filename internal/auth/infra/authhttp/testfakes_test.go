@@ -66,6 +66,9 @@ func (f *fakeFirebase) VerifyIDToken(_ context.Context, _ string) (*outbound.Fir
 	return f.Token, nil
 }
 
+func (f *fakeFirebase) DisableUser(_ context.Context, _ string) error { return nil }
+func (f *fakeFirebase) EnableUser(_ context.Context, _ string) error  { return nil }
+
 // ─── fakeUsuarioRepo ────────────────────────────────────────────────────────
 
 type fakeUsuarioRepo struct {

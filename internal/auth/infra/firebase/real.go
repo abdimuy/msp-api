@@ -2,13 +2,17 @@ package firebase
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 
 	firebasesdk "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/auth"
+	"firebase.google.com/go/v4/errorutils"
 	"google.golang.org/api/option"
 
 	"github.com/abdimuy/msp-api/internal/auth/ports/outbound"
@@ -17,10 +21,17 @@ import (
 )
 
 // tokenVerifier is the minimal surface RealClient consumes from the
-// Firebase Admin SDK. Defined here so unit tests can substitute a fake
-// without touching the network or the SDK internals.
+// Firebase Admin SDK for token verification. Defined here so unit tests
+// can substitute a fake without touching the network or the SDK internals.
 type tokenVerifier interface {
 	VerifyIDToken(ctx context.Context, idToken string) (*auth.Token, error)
+}
+
+// userManager is the minimal surface RealClient consumes from the Firebase
+// Admin SDK for user management (disable/enable). Defined here so unit
+// tests can inject a fake without exercising the network.
+type userManager interface {
+	UpdateUser(ctx context.Context, uid string, user *auth.UserToUpdate) (*auth.UserRecord, error)
 }
 
 // RealClient is the production implementation of outbound.FirebaseClient.
@@ -35,6 +46,7 @@ type tokenVerifier interface {
 // request — see ADR-0004.
 type RealClient struct {
 	verifier  tokenVerifier
+	users     userManager
 	projectID string
 }
 
@@ -70,7 +82,7 @@ func NewRealClient(ctx context.Context, cfg config.Firebase) (*RealClient, error
 		).WithError(err)
 	}
 	slog.Info("auth.firebase_real_client_ready", "project_id", cfg.ProjectID)
-	return &RealClient{verifier: authClient, projectID: cfg.ProjectID}, nil
+	return &RealClient{verifier: authClient, users: authClient, projectID: cfg.ProjectID}, nil
 }
 
 // VerifyIDToken delegates to the Firebase Admin SDK and translates any
@@ -83,6 +95,112 @@ func (c *RealClient) VerifyIDToken(ctx context.Context, idToken string) (*outbou
 		return nil, classifyVerifyError(err)
 	}
 	return tokenToOutbound(tok), nil
+}
+
+// DisableUser flips disabled=true on the Firebase account uid. Idempotent
+// in Firebase: calling on an already-disabled user succeeds.
+func (c *RealClient) DisableUser(ctx context.Context, uid string) error {
+	return c.updateDisabledFlag(ctx, uid, true)
+}
+
+// EnableUser flips disabled=false on the Firebase account uid.
+func (c *RealClient) EnableUser(ctx context.Context, uid string) error {
+	return c.updateDisabledFlag(ctx, uid, false)
+}
+
+// updateDisabledFlag is the shared implementation of DisableUser /
+// EnableUser. It calls the SDK's UpdateUser with only the Disabled field
+// set and routes any failure through classifyAdminError.
+func (c *RealClient) updateDisabledFlag(ctx context.Context, uid string, disabled bool) error {
+	update := (&auth.UserToUpdate{}).Disabled(disabled)
+	_, err := c.users.UpdateUser(ctx, uid, update)
+	if err == nil {
+		return nil
+	}
+	return classifyAdminError(err, uid, disabled)
+}
+
+// firebaseIsUserNotFound is the predicate used by classifyAdminError to
+// detect a user-not-found error from the SDK. It is a package var (rather
+// than a direct call to auth.IsUserNotFound) so internal unit tests can
+// substitute a stub; the SDK's internal.FirebaseError type is not
+// importable, making real-shape errors impossible to fabricate otherwise.
+var firebaseIsUserNotFound = auth.IsUserNotFound
+
+// classifyAdminError maps Admin SDK / transport errors into the contract
+// documented on outbound.FirebaseClient.
+//
+//   - user-not-found    → apperror.NewNotFound("firebase_user_not_found", ...)
+//   - transient classes → wrapped error matching outbound.ErrFirebaseTransient
+//   - everything else   → apperror.NewInternal("firebase_admin_failed", ...)
+func classifyAdminError(err error, uid string, disabled bool) error {
+	if firebaseIsUserNotFound(err) {
+		return apperror.NewNotFound(
+			"firebase_user_not_found",
+			"el usuario no existe en firebase",
+		).WithError(err).WithField("uid", uid)
+	}
+	if isTransientAdminError(err) {
+		// Wrap so callers can match via errors.Is(err, outbound.ErrFirebaseTransient).
+		return wrapTransient(err, uid, disabled)
+	}
+	return apperror.NewInternal(
+		"firebase_admin_failed",
+		"firebase admin sdk falló",
+	).WithError(err).
+		WithField("uid", uid).
+		WithField("disabled", disabled)
+}
+
+// isTransientAdminError reports whether err is a class the dispatcher
+// should retry rather than mark as permanently failed.
+func isTransientAdminError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	// SDK-classified transient categories.
+	if errorutils.IsDeadlineExceeded(err) ||
+		errorutils.IsUnavailable(err) ||
+		errorutils.IsInternal(err) ||
+		errorutils.IsAborted(err) ||
+		errorutils.IsResourceExhausted(err) ||
+		errorutils.IsUnknown(err) {
+		return true
+	}
+	// Transport-level failures the SDK wraps in net.OpError / url.Error.
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	var urlErr *url.Error
+	return errors.As(err, &urlErr)
+}
+
+// transientError wraps the underlying SDK error so the contract sentinel
+// outbound.ErrFirebaseTransient is reachable through errors.Is.
+type transientError struct {
+	uid      string
+	disabled bool
+	cause    error
+}
+
+func (e *transientError) Error() string {
+	return "firebase: transient failure updating user " + e.uid + ": " + e.cause.Error()
+}
+
+func (e *transientError) Unwrap() error { return e.cause }
+
+// Is reports true for outbound.ErrFirebaseTransient. Other targets fall
+// through to errors.Is on the wrapped cause via Unwrap.
+func (e *transientError) Is(target error) bool {
+	return target == outbound.ErrFirebaseTransient
+}
+
+func wrapTransient(err error, uid string, disabled bool) error {
+	return &transientError{uid: uid, disabled: disabled, cause: err}
 }
 
 // classifyVerifyError maps the SDK's typed errors onto specific
@@ -173,7 +291,14 @@ func claimString(claims map[string]any, key string) string {
 
 // newRealClientWithVerifier is an internal helper to inject a custom
 // tokenVerifier. Used by unit tests; production code should always use
-// NewRealClient.
+// NewRealClient. The userManager is left nil; tests that exercise the
+// admin code path must use newRealClientWithDeps instead.
 func newRealClientWithVerifier(v tokenVerifier, projectID string) *RealClient {
 	return &RealClient{verifier: v, projectID: projectID}
+}
+
+// newRealClientWithDeps is an internal helper to inject both the verifier
+// and the user manager. Used by admin-path unit tests.
+func newRealClientWithDeps(v tokenVerifier, u userManager, projectID string) *RealClient {
+	return &RealClient{verifier: v, users: u, projectID: projectID}
 }

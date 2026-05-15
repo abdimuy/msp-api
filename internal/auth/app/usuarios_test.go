@@ -143,6 +143,7 @@ func TestDesactivar(t *testing.T) {
 		h := newHarness(t, false)
 		u := h.seedUsuario(t)
 		oldEmail := u.Email().Value()
+		originalFUID := u.FirebaseUID().Value()
 		by := uuid.New()
 
 		require.NoError(t, h.svc.Desactivar(t.Context(), u.ID(), by))
@@ -151,6 +152,18 @@ func TestDesactivar(t *testing.T) {
 		assert.Contains(t, u.Email().Value(), oldEmail)
 		assert.Contains(t, u.FirebaseUID().Value(), "deleted-")
 		assert.Equal(t, []string{eventUserDeactivated}, h.outbox.EventTypes())
+
+		// The event payload must carry the ORIGINAL firebase_uid (captured
+		// before the rename) so the downstream handler can find the
+		// account on Firebase.
+		require.Len(t, h.outbox.Calls, 1)
+		payload, ok := h.outbox.Calls[0].Payload.(map[string]any)
+		require.True(t, ok, "payload must be a map")
+		assert.Equal(t, originalFUID, payload["firebase_uid"])
+		assert.NotContains(t, payload["firebase_uid"], "deleted-",
+			"event must carry the pre-rename uid, not the placeholder")
+		assert.Equal(t, u.ID(), payload["usuario_id"])
+		assert.Equal(t, by, payload["deactivated_by"])
 	})
 
 	t.Run("usuario_not_found", func(t *testing.T) {
