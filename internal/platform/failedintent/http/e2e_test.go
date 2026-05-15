@@ -1,0 +1,469 @@
+// E2E test for the failed-intent replay cycle wiring the *real* chi
+// router, AuthnMiddleware, idempotency.Middleware and CaptureMiddleware
+// together — the exact configuration provideRootHandler uses in
+// production. Unit tests in this package stub the dispatcher with
+// fakeDispatcher and therefore miss any bug that lives in the
+// middleware chain (404 from inherited chi.RouteContext, 401 from
+// authn rejecting the planted CurrentUser, 409 from idempotency-key
+// reuse). This test exists to make those regressions impossible to
+// land silently.
+//
+//nolint:revive // long test names are intentional for narrative.
+package failedintenthttp_test
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/abdimuy/msp-api/internal/auth"
+	authdomain "github.com/abdimuy/msp-api/internal/auth/domain"
+	"github.com/abdimuy/msp-api/internal/auth/infra/authhttp"
+	"github.com/abdimuy/msp-api/internal/auth/ports/outbound"
+	"github.com/abdimuy/msp-api/internal/platform/failedintent"
+	failedintenthttp "github.com/abdimuy/msp-api/internal/platform/failedintent/http"
+	"github.com/abdimuy/msp-api/internal/platform/idempotency"
+)
+
+// TestE2E_ReplayCycle_FullMiddlewareChain drives the canonical replay
+// flow through the real chi+authn+idem+capture chain:
+//
+//  1. POST /v2/ventas with a body the stub handler rejects (422).
+//     The capture middleware persists a failed_intent.
+//  2. GET /v2/_admin/failed-intents → lists the captured row.
+//  3. POST /v2/_admin/failed-intents/{id}/replay → plain replay; the
+//     stub still 422s but the cycle dispatches cleanly (no 404 from
+//     chi route-leak, no 401 from authn rejecting planted user, no
+//     409 from idempotency-key reuse).
+//  4. POST /v2/_admin/failed-intents/{id}/replay-with corrected body
+//     → stub returns 201; the intent transitions to retried_ok.
+//
+// Each step's status is asserted explicitly. Any of the three bugs the
+// 5-fix sweep addressed would cause a different status:
+//   - chi RouteContext leak → step 3 returns 404
+//   - authn unconditional bearer requirement → step 3 returns 401
+//   - idempotency-key reuse → step 4 returns 409 idempotency_key_mismatch
+func TestE2E_ReplayCycle_FullMiddlewareChain(t *testing.T) {
+	t.Parallel()
+
+	stub := newStubVentasHandler()
+	usuarioID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	fbUID := "e2e-firebase-uid"
+	fakeFB := &e2eFakeFirebase{token: &outbound.FirebaseToken{UID: fbUID}}
+	fakeUsuarios := newE2EFakeUsuarioRepo(usuarioID, fbUID)
+	intentStore := newE2EIntentStore()
+	idemStore := newE2EIdempotencyStore()
+
+	router := buildE2ERouter(t, e2eRouterDeps{
+		firebase:    fakeFB,
+		usuarios:    fakeUsuarios,
+		intentStore: intentStore,
+		idemStore:   idemStore,
+		ventasStub:  stub,
+		usuarioID:   usuarioID,
+	})
+
+	// ── 1. POST /v2/ventas with a body the stub rejects ──────────────────
+	originalBody := `{"venta_id":"v1","cliente":"x"}`
+	originalIdemKey := "user-original-key"
+
+	req1 := newE2ERequest(http.MethodPost, "/v2/ventas", originalBody, originalIdemKey)
+	rec1 := httptest.NewRecorder()
+	router.ServeHTTP(rec1, req1)
+	require.Equal(t, http.StatusUnprocessableEntity, rec1.Code,
+		"stub must reject the first call; got body=%s", rec1.Body.String())
+
+	// ── 2. List captured intents and locate the one we just produced ─────
+	req2 := newE2ERequest(http.MethodGet,
+		"/v2/_admin/failed-intents?status=new&page_size=10", "", "")
+	rec2 := httptest.NewRecorder()
+	router.ServeHTTP(rec2, req2)
+	require.Equal(t, http.StatusOK, rec2.Code,
+		"list admin endpoint must respond 200; got body=%s", rec2.Body.String())
+
+	var listResp listResponseDTO
+	require.NoError(t, json.Unmarshal(rec2.Body.Bytes(), &listResp))
+	require.NotEmpty(t, listResp.Items, "the just-captured intent must be in the list")
+	intentID := listResp.Items[0].ID
+
+	// ── 3. Plain replay — must dispatch cleanly through chi+authn+idem ──
+	// The stub still 422s (no body change), so outcome=retried_fail and
+	// replay_http_status=422. The key assertion is that we got 200 from
+	// the admin endpoint and the dispatched response was the stub's 422
+	// — not 404 (chi leak) or 401 (authn rejected planted user) or 409
+	// (idem-key reuse).
+	req3 := newE2ERequest(http.MethodPost,
+		"/v2/_admin/failed-intents/"+intentID+"/replay", "", "")
+	rec3 := httptest.NewRecorder()
+	router.ServeHTTP(rec3, req3)
+	require.Equal(t, http.StatusOK, rec3.Code, "replay admin endpoint must respond 200")
+
+	var replayResp replayResponseDTO
+	require.NoError(t, json.Unmarshal(rec3.Body.Bytes(), &replayResp))
+	assert.Equal(t, "retried_fail", replayResp.Outcome)
+	assert.Equal(t, http.StatusUnprocessableEntity, replayResp.ReplayHTTPStatus,
+		"the stub's 422 must propagate; 404 here means chi RouteContext leak, "+
+			"401 means authn ignored the planted user, "+
+			"409 means idempotency-key was reused")
+
+	// ── 4. Replay-with a corrected body → stub returns 201 ──────────────
+	stub.respondCreated.Store(true)
+	correctedBody, err := json.Marshal(map[string]any{
+		"body": json.RawMessage(`{"venta_id":"v1","cliente":"FIXED"}`),
+	})
+	require.NoError(t, err)
+
+	req4 := newE2ERequest(http.MethodPost,
+		"/v2/_admin/failed-intents/"+intentID+"/replay-with",
+		string(correctedBody), "")
+	rec4 := httptest.NewRecorder()
+	router.ServeHTTP(rec4, req4)
+	require.Equal(t, http.StatusOK, rec4.Code, "replay-with admin endpoint must respond 200")
+
+	require.NoError(t, json.Unmarshal(rec4.Body.Bytes(), &replayResp))
+	assert.Equal(t, "retried_ok", replayResp.Outcome,
+		"corrected body must succeed end-to-end")
+	assert.Equal(t, http.StatusCreated, replayResp.ReplayHTTPStatus,
+		"replay_http_status must be the stub's 201; "+
+			"409 here means idempotency-key reuse")
+
+	// ── Sanity: the stub saw three calls (original + plain replay + corrected).
+	assert.Equal(t, int32(3), stub.calls.Load(),
+		"stub must have observed 3 dispatches: original POST + plain replay + replay-with")
+}
+
+// ─── helpers below ─────────────────────────────────────────────────────────────
+
+type e2eRouterDeps struct {
+	firebase    outbound.FirebaseClient
+	usuarios    outbound.UsuarioRepo
+	intentStore failedintent.Store
+	idemStore   idempotency.Store
+	ventasStub  *stubVentasHandler
+	usuarioID   uuid.UUID
+}
+
+// buildE2ERouter assembles a chi router that mirrors the production
+// composition for the routes this test exercises: /v2/ventas under
+// (authn, idem, capture); /v2/_admin/failed-intents under (authn) and
+// dispatching back through the same root router.
+func buildE2ERouter(t *testing.T, d e2eRouterDeps) *chi.Mux {
+	t.Helper()
+
+	dispatcher := &settableDispatcher{}
+	usuarioLookup := &e2eUsuarioLookup{repo: d.usuarios}
+	fiSvc := failedintenthttp.NewService(d.intentStore, dispatcher, usuarioLookup, nil, nil)
+
+	authn := authhttp.NewAuthnMiddleware(d.firebase, d.usuarios)
+	idemMW := idempotency.Middleware(idempotency.Config{
+		Store:      d.idemStore,
+		Methods:    []string{http.MethodPost, http.MethodPatch},
+		RequireKey: false,
+	})
+	captureMW := failedintent.CaptureMiddleware(failedintent.Config{
+		Store:        d.intentStore,
+		PathPrefixes: []string{"/v2/ventas"},
+	})
+
+	r := chi.NewRouter()
+	r.Route("/v2", func(r chi.Router) {
+		r.Group(func(r chi.Router) {
+			r.Use(authn.Handler, idemMW, captureMW)
+			r.Post("/ventas", d.ventasStub.ServeHTTP)
+		})
+
+		r.Route("/_admin/failed-intents", func(r chi.Router) {
+			r.Use(authn.Handler)
+			failedintenthttp.MountRouter(r, fiSvc)
+		})
+	})
+
+	dispatcher.Set(r)
+	return r
+}
+
+// newE2ERequest builds an httptest request carrying a fake bearer token
+// — the e2eFakeFirebase below accepts any non-empty token.
+func newE2ERequest(method, path, body, idemKey string) *http.Request {
+	var rdr io.Reader
+	if body != "" {
+		rdr = strings.NewReader(body)
+	}
+	req := httptest.NewRequest(method, path, rdr)
+	req.Header.Set("Authorization", "Bearer e2e-token")
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if idemKey != "" {
+		req.Header.Set("Idempotency-Key", idemKey)
+	}
+	return req
+}
+
+// ─── stub /v2/ventas handler ──────────────────────────────────────────────────
+
+// stubVentasHandler responds 422 with a Problem-Details body until
+// respondCreated is flipped, after which it responds 201. Tracks call
+// count to verify the full cycle (original POST + 2 replays) happened.
+type stubVentasHandler struct {
+	respondCreated atomic.Bool
+	calls          atomic.Int32
+}
+
+func newStubVentasHandler() *stubVentasHandler { return &stubVentasHandler{} }
+
+func (s *stubVentasHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
+	s.calls.Add(1)
+	w.Header().Set("Content-Type", "application/problem+json")
+	if s.respondCreated.Load() {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"status":"created"}`))
+		return
+	}
+	w.WriteHeader(http.StatusUnprocessableEntity)
+	_, _ = w.Write([]byte(`{"code":"e2e_stub_rejected","detail":"stubbed failure"}`))
+}
+
+// ─── settableDispatcher mirroring cmd/api ─────────────────────────────────────
+
+type settableDispatcher struct{ h http.Handler }
+
+func (d *settableDispatcher) Set(h http.Handler) { d.h = h }
+func (d *settableDispatcher) Dispatch(w http.ResponseWriter, r *http.Request) {
+	d.h.ServeHTTP(w, r)
+}
+
+// ─── e2eFakeFirebase ──────────────────────────────────────────────────────────
+
+type e2eFakeFirebase struct {
+	mu    sync.Mutex
+	token *outbound.FirebaseToken
+}
+
+func (f *e2eFakeFirebase) VerifyIDToken(_ context.Context, _ string) (*outbound.FirebaseToken, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.token, nil
+}
+func (f *e2eFakeFirebase) DisableUser(_ context.Context, _ string) error { return nil }
+func (f *e2eFakeFirebase) EnableUser(_ context.Context, _ string) error  { return nil }
+
+// ─── e2eFakeUsuarioRepo ───────────────────────────────────────────────────────
+
+type e2eFakeUsuarioRepo struct {
+	usuario *authdomain.Usuario
+}
+
+func newE2EFakeUsuarioRepo(id uuid.UUID, fbUID string) *e2eFakeUsuarioRepo {
+	now := time.Now().UTC()
+	u := authdomain.HydrateUsuario(authdomain.HydrateUsuarioParams{
+		ID:          id,
+		FirebaseUID: authdomain.HydrateFirebaseUID(fbUID),
+		Email:       authdomain.HydrateEmail("e2e@example.invalid"),
+		Nombre:      authdomain.HydrateNombre("E2E Tester"),
+		Activo:      true,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		CreatedBy:   id,
+		UpdatedBy:   id,
+	})
+	return &e2eFakeUsuarioRepo{usuario: u}
+}
+
+func (f *e2eFakeUsuarioRepo) Save(context.Context, *authdomain.Usuario) error   { return nil }
+func (f *e2eFakeUsuarioRepo) Update(context.Context, *authdomain.Usuario) error { return nil }
+
+func (f *e2eFakeUsuarioRepo) FindByID(_ context.Context, id uuid.UUID) (*authdomain.Usuario, error) {
+	if f.usuario.ID() != id {
+		return nil, authdomain.ErrUsuarioNotFound
+	}
+	return f.usuario, nil
+}
+
+func (f *e2eFakeUsuarioRepo) FindByFirebaseUID(_ context.Context, fuid string) (*authdomain.Usuario, error) {
+	if f.usuario.FirebaseUID().Value() != fuid {
+		return nil, authdomain.ErrUsuarioNotFound
+	}
+	return f.usuario, nil
+}
+
+func (f *e2eFakeUsuarioRepo) FindByEmail(context.Context, string) (*authdomain.Usuario, error) {
+	return nil, authdomain.ErrUsuarioNotFound
+}
+
+func (f *e2eFakeUsuarioRepo) List(context.Context, outbound.ListParams) (outbound.Page[*authdomain.Usuario], error) {
+	return outbound.Page[*authdomain.Usuario]{}, nil
+}
+
+func (f *e2eFakeUsuarioRepo) AsignarRol(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, time.Time) error {
+	return nil
+}
+func (f *e2eFakeUsuarioRepo) RevocarRol(context.Context, uuid.UUID, uuid.UUID) error { return nil }
+
+func (f *e2eFakeUsuarioRepo) PermisosFor(_ context.Context, _ uuid.UUID) ([]authdomain.Permission, error) {
+	// Grant the two permissions the admin endpoints check.
+	return []authdomain.Permission{
+		authdomain.PermFailedIntentsVer,
+		authdomain.PermFailedIntentsResolver,
+	}, nil
+}
+
+func (f *e2eFakeUsuarioRepo) RolesFor(context.Context, uuid.UUID) ([]*authdomain.Rol, error) {
+	return nil, nil
+}
+
+// ─── e2eIntentStore — in-memory failedintent.Store ────────────────────────────
+
+type e2eIntentStore struct {
+	mu      sync.Mutex
+	intents map[uuid.UUID]failedintent.Intent
+	order   []uuid.UUID // insertion order for stable listing
+}
+
+func newE2EIntentStore() *e2eIntentStore {
+	return &e2eIntentStore{intents: map[uuid.UUID]failedintent.Intent{}}
+}
+
+func (s *e2eIntentStore) Save(_ context.Context, i failedintent.Intent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.intents[i.ID]; !exists {
+		s.order = append(s.order, i.ID)
+	}
+	s.intents[i.ID] = i
+	return nil
+}
+
+func (s *e2eIntentStore) Get(_ context.Context, id uuid.UUID) (*failedintent.Intent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	i, ok := s.intents[id]
+	if !ok {
+		return nil, nil //nolint:nilnil // contract
+	}
+	return &i, nil
+}
+
+func (s *e2eIntentStore) List(_ context.Context, p failedintent.ListParams) (failedintent.Page[failedintent.Intent], error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items := make([]failedintent.Intent, 0, len(s.order))
+	// Newest first.
+	for i := len(s.order) - 1; i >= 0; i-- {
+		intent := s.intents[s.order[i]]
+		if p.Status != "" && intent.Status != p.Status {
+			continue
+		}
+		items = append(items, intent)
+	}
+	return failedintent.Page[failedintent.Intent]{Items: items}, nil
+}
+
+func (s *e2eIntentStore) UpdateStatus(
+	_ context.Context, id uuid.UUID, expected, next failedintent.Status,
+	resolvedBy uuid.UUID, notes string, now time.Time,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	intent, ok := s.intents[id]
+	if !ok || intent.Status != expected {
+		return errors.New("status conflict")
+	}
+	intent.Status = next
+	resolvedCopy := now
+	intent.ResolvedAt = &resolvedCopy
+	intent.ResolvedBy = &resolvedBy
+	intent.Notes = notes
+	s.intents[id] = intent
+	return nil
+}
+
+func (s *e2eIntentStore) IncrementRetry(_ context.Context, id uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if intent, ok := s.intents[id]; ok {
+		intent.RetryCount++
+		s.intents[id] = intent
+	}
+	return nil
+}
+
+func (s *e2eIntentStore) PurgeOlderThan(context.Context, time.Time) (int64, error) {
+	return 0, nil
+}
+
+// ─── e2eIdempotencyStore — in-memory idempotency.Store ────────────────────────
+
+type e2eIdempotencyStore struct {
+	mu      sync.Mutex
+	records map[string]*idempotency.Record
+}
+
+func newE2EIdempotencyStore() *e2eIdempotencyStore {
+	return &e2eIdempotencyStore{records: map[string]*idempotency.Record{}}
+}
+
+func (s *e2eIdempotencyStore) Get(_ context.Context, key string) (*idempotency.Record, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.records[key]
+	if !ok {
+		return nil, nil //nolint:nilnil // contract: (nil, nil) means not found
+	}
+	return rec, nil
+}
+
+func (s *e2eIdempotencyStore) Save(_ context.Context, rec idempotency.Record) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.records[rec.Key] = &rec
+	return nil
+}
+
+// ─── e2eUsuarioLookup — UsuarioLookup adapter for the failedintent svc ────────
+
+type e2eUsuarioLookup struct{ repo outbound.UsuarioRepo }
+
+func (l *e2eUsuarioLookup) BuildCurrentUserByID(ctx context.Context, id uuid.UUID) (auth.CurrentUser, error) {
+	u, err := l.repo.FindByID(ctx, id)
+	if err != nil {
+		return auth.CurrentUser{}, err
+	}
+	perms, err := l.repo.PermisosFor(ctx, id)
+	if err != nil {
+		return auth.CurrentUser{}, err
+	}
+	return auth.ToContract(u, perms), nil
+}
+
+// ─── DTO mirrors for decoding admin responses ─────────────────────────────────
+
+type listResponseDTO struct {
+	Items []struct {
+		ID string `json:"id"`
+	} `json:"items"`
+}
+
+type replayResponseDTO struct {
+	Outcome           string `json:"outcome"`
+	ReplayHTTPStatus  int    `json:"replay_http_status"`
+	ReplayBodyPreview string `json:"replay_body_preview"`
+}
+
+// Suppress unused-import warnings in case bytes/strings end up
+// only referenced inside one branch in the future.
+var _ = bytes.NewReader
