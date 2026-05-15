@@ -1,3 +1,4 @@
+//nolint:misspell // Spanish column names (DESCRIPCION) match the Firebird schema exactly.
 package firebird
 
 import (
@@ -31,9 +32,18 @@ var _ outbound.PermisoRepo = (*PermisoRepo)(nil)
 func (r *PermisoRepo) UpsertCatalog(ctx context.Context, perms []domain.PermissionMeta) error {
 	q := firebird.GetQuerier(ctx, r.pool.DB)
 	for _, p := range perms {
+		// DESCRIPCION and CATEGORIA are CHARACTER SET ISO8859_1 — encode UTF-8 → Win1252.
+		descEnc, err := firebird.EncodeWin1252(p.Description)
+		if err != nil {
+			return firebird.MapError(err)
+		}
+		catEnc, err := firebird.EncodeWin1252(p.Categoria)
+		if err != nil {
+			return firebird.MapError(err)
+		}
 		if _, err := q.ExecContext(
 			ctx, upsertPermiso,
-			p.Code.Code(), p.Description, p.Categoria,
+			p.Code.Code(), descEnc, catEnc,
 		); err != nil {
 			return firebird.MapError(err)
 		}

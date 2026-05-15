@@ -44,13 +44,18 @@ func (r *UsuarioRepo) Save(ctx context.Context, u *domain.Usuario) error {
 	if u.AlmacenID() != nil {
 		almacenID = *u.AlmacenID()
 	}
+	// NOMBRE is CHARACTER SET ISO8859_1 — encode UTF-8 → Win1252 at the boundary.
+	nombreEnc, err := firebird.EncodeWin1252(u.Nombre().Value())
+	if err != nil {
+		return firebird.MapError(err)
+	}
 
-	_, err := q.ExecContext(
+	_, err = q.ExecContext(
 		ctx, insertUsuario,
 		u.ID().String(),
 		u.FirebaseUID().Value(),
 		u.Email().Value(),
-		u.Nombre().Value(),
+		nombreEnc,
 		telefono,
 		almacenID,
 		u.Activo(),
@@ -77,12 +82,17 @@ func (r *UsuarioRepo) Update(ctx context.Context, u *domain.Usuario) error {
 	if u.AlmacenID() != nil {
 		almacenID = *u.AlmacenID()
 	}
+	// NOMBRE is CHARACTER SET ISO8859_1 — encode UTF-8 → Win1252 at the boundary.
+	nombreEnc, err := firebird.EncodeWin1252(u.Nombre().Value())
+	if err != nil {
+		return firebird.MapError(err)
+	}
 
 	res, err := q.ExecContext(
 		ctx, updateUsuario,
 		u.FirebaseUID().Value(),
 		u.Email().Value(),
-		u.Nombre().Value(),
+		nombreEnc,
 		telefono,
 		almacenID,
 		u.Activo(),

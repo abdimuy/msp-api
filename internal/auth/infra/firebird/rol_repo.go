@@ -1,3 +1,4 @@
+//nolint:misspell // Spanish column names (DESCRIPCION) match the Firebird schema exactly.
 package firebird
 
 import (
@@ -32,7 +33,11 @@ var _ outbound.RolRepo = (*RolRepo)(nil)
 // domain.ErrRolYaExiste.
 func (r *RolRepo) Save(ctx context.Context, rol *domain.Rol) error {
 	q := firebird.GetQuerier(ctx, r.pool.DB)
-	if _, err := q.ExecContext(ctx, insertRol, rolInsertArgs(rol)...); err != nil {
+	args, err := rolInsertArgs(rol)
+	if err != nil {
+		return err
+	}
+	if _, err := q.ExecContext(ctx, insertRol, args...); err != nil {
 		return mapUniqueViolation(firebird.MapError(err), domain.ErrRolYaExiste)
 	}
 	return nil
@@ -40,37 +45,47 @@ func (r *RolRepo) Save(ctx context.Context, rol *domain.Rol) error {
 
 // rolInsertArgs flattens a rol entity into the parameter list for insertRol,
 // keeping Save short enough for funlen.
-func rolInsertArgs(rol *domain.Rol) []any {
-	var desc any
-	if rol.Description() != nil {
-		desc = *rol.Description()
+func rolInsertArgs(rol *domain.Rol) ([]any, error) {
+	// NOMBRE and DESCRIPCION are CHARACTER SET ISO8859_1 — encode UTF-8 → Win1252.
+	nombreEnc, err := firebird.EncodeWin1252(rol.Nombre())
+	if err != nil {
+		return nil, firebird.MapError(err)
+	}
+	descEnc, err := firebird.EncodeWin1252Ptr(rol.Description())
+	if err != nil {
+		return nil, firebird.MapError(err)
 	}
 	return []any{
 		rol.ID().String(),
-		rol.Nombre(),
-		desc,
+		nombreEnc,
+		descEnc,
 		rol.Inmutable(),
 		rol.Activo(),
 		firebird.ToWallClock(rol.CreatedAt()),
 		firebird.ToWallClock(rol.UpdatedAt()),
 		rol.CreatedBy().String(),
 		rol.UpdatedBy().String(),
-	}
+	}, nil
 }
 
 // Update writes back the mutable columns of r.
 func (r *RolRepo) Update(ctx context.Context, rol *domain.Rol) error {
 	q := firebird.GetQuerier(ctx, r.pool.DB)
 
-	var desc any
-	if rol.Description() != nil {
-		desc = *rol.Description()
+	// NOMBRE and DESCRIPCION are CHARACTER SET ISO8859_1 — encode UTF-8 → Win1252.
+	nombreEnc, err := firebird.EncodeWin1252(rol.Nombre())
+	if err != nil {
+		return firebird.MapError(err)
+	}
+	descEnc, err := firebird.EncodeWin1252Ptr(rol.Description())
+	if err != nil {
+		return firebird.MapError(err)
 	}
 
 	res, err := q.ExecContext(
 		ctx, updateRol,
-		rol.Nombre(),
-		desc,
+		nombreEnc,
+		descEnc,
 		rol.Inmutable(),
 		rol.Activo(),
 		firebird.ToWallClock(rol.UpdatedAt()),

@@ -4,6 +4,7 @@ package ventfb
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"strings"
 
@@ -71,7 +72,10 @@ func (r *VentaRepo) Save(ctx context.Context, v *domain.Venta) error {
 }
 
 func (r *VentaRepo) insertHeader(ctx context.Context, q firebird.Querier, v *domain.Venta) error {
-	args := headerInsertArgs(v)
+	args, err := headerInsertArgs(v)
+	if err != nil {
+		return err
+	}
 	if _, err := q.ExecContext(ctx, insertVenta, args...); err != nil {
 		return firebird.MapError(err)
 	}
@@ -81,8 +85,13 @@ func (r *VentaRepo) insertHeader(ctx context.Context, q firebird.Querier, v *dom
 func (r *VentaRepo) insertCombos(ctx context.Context, q firebird.Querier, v *domain.Venta) error {
 	for _, c := range v.CombosForRepo() {
 		a := c.Audit()
+		// NOMBRE_COMBO is CHARACTER SET ISO8859_1 — encode UTF-8 → Win1252.
+		nombreEnc, err := firebird.EncodeWin1252(c.Nombre())
+		if err != nil {
+			return err
+		}
 		if _, err := q.ExecContext(ctx, insertCombo,
-			c.ID().String(), v.ID().String(), c.Nombre(),
+			c.ID().String(), v.ID().String(), nombreEnc,
 			c.Precios().Anual(), c.Precios().CortoPlazo(), c.Precios().Contado(),
 			c.Cantidad(), c.AlmacenOrigen(), c.AlmacenDestino(),
 			firebird.ToWallClock(a.CreatedAt()), firebird.ToWallClock(a.UpdatedAt()),
@@ -101,9 +110,14 @@ func (r *VentaRepo) insertProductos(ctx context.Context, q firebird.Querier, v *
 			comboID = p.ComboID().String()
 		}
 		a := p.Audit()
+		// ARTICULO is CHARACTER SET ISO8859_1 — encode UTF-8 → Win1252.
+		articuloEnc, err := firebird.EncodeWin1252(p.Articulo())
+		if err != nil {
+			return err
+		}
 		if _, err := q.ExecContext(ctx, insertProducto,
 			p.ID().String(), v.ID().String(),
-			p.ArticuloID(), p.Articulo(), p.Cantidad(),
+			p.ArticuloID(), articuloEnc, p.Cantidad(),
 			p.Precios().Anual(), p.Precios().CortoPlazo(), p.Precios().Contado(),
 			comboID, nullableIntArg(p.AlmacenOrigen()), nullableIntArg(p.AlmacenDestino()),
 			firebird.ToWallClock(a.CreatedAt()), firebird.ToWallClock(a.UpdatedAt()),
@@ -118,10 +132,15 @@ func (r *VentaRepo) insertProductos(ctx context.Context, q firebird.Querier, v *
 func (r *VentaRepo) insertVendedores(ctx context.Context, q firebird.Querier, v *domain.Venta) error {
 	for _, vd := range v.VendedoresForRepo() {
 		a := vd.Audit()
+		// VENDEDOR_NOMBRE is CHARACTER SET ISO8859_1 — encode UTF-8 → Win1252.
+		nombreEnc, encErr := firebird.EncodeWin1252(vd.Snapshot().Nombre())
+		if encErr != nil {
+			return encErr
+		}
 		_, err := q.ExecContext(ctx, insertVendedor,
 			vd.ID().String(), v.ID().String(),
 			vd.Snapshot().UsuarioID().String(),
-			vd.Snapshot().Email(), vd.Snapshot().Nombre(),
+			vd.Snapshot().Email(), nombreEnc,
 			firebird.ToWallClock(a.CreatedAt()), firebird.ToWallClock(a.UpdatedAt()),
 			a.CreatedBy().String(), a.UpdatedBy().String(),
 		)
@@ -147,31 +166,73 @@ func (r *VentaRepo) insertImagenes(ctx context.Context, q firebird.Querier, v *d
 
 // headerInsertArgs builds the positional argument slice for insertVenta. The
 // slice mirrors the column order in queries.go's insertVenta statement.
-func headerInsertArgs(v *domain.Venta) []any {
+//
+// ISO8859_1 text columns are encoded through Win1252 at this boundary.
+//
+//nolint:funlen // wide column set; keep all args in one place for readability.
+func headerInsertArgs(v *domain.Venta) ([]any, error) {
 	plazo, enganche, parcialidad, frec := planFields(v.PlanCredito())
 	semana, mes := diaCobranzaFields(v.DiaCobranza())
-	canceledAt, canceledBy, cancelReason := cancelacionFields(v.Cancelacion())
+	canceledAt, canceledBy, cancelReason, err := cancelacionFieldsEnc(v.Cancelacion())
+	if err != nil {
+		return nil, err
+	}
 	approvedAt, approvedBy := aprobacionFields(v.Aprobacion())
 	a := v.Audit()
+
+	// ISO8859_1 columns — encode UTF-8 → Win1252.
+	nombreEnc, err := firebird.EncodeWin1252(v.Cliente().Nombre().Value())
+	if err != nil {
+		return nil, err
+	}
+	avalEnc, err := encodeNullableAval(v)
+	if err != nil {
+		return nil, err
+	}
+	calleEnc, err := firebird.EncodeWin1252(v.Direccion().Calle())
+	if err != nil {
+		return nil, err
+	}
+	numExtEnc, err := firebird.EncodeWin1252Ptr(v.Direccion().NumeroExterior())
+	if err != nil {
+		return nil, err
+	}
+	coloniaEnc, err := firebird.EncodeWin1252(v.Direccion().Colonia())
+	if err != nil {
+		return nil, err
+	}
+	poblacionEnc, err := firebird.EncodeWin1252(v.Direccion().Poblacion())
+	if err != nil {
+		return nil, err
+	}
+	ciudadEnc, err := firebird.EncodeWin1252(v.Direccion().Ciudad())
+	if err != nil {
+		return nil, err
+	}
+	notaEnc, err := firebird.EncodeWin1252Ptr(v.Nota())
+	if err != nil {
+		return nil, err
+	}
+
 	return []any{
-		v.ID().String(), v.Cliente().Nombre().Value(),
-		nullableTelefonoArg(v), nullableAvalArg(v),
-		v.Direccion().Calle(),
-		nullableStringArg(v.Direccion().NumeroExterior()),
-		v.Direccion().Colonia(), v.Direccion().Poblacion(), v.Direccion().Ciudad(),
+		v.ID().String(), nombreEnc,
+		nullableTelefonoArg(v), avalEnc,
+		calleEnc,
+		numExtEnc,
+		coloniaEnc, poblacionEnc, ciudadEnc,
 		nullableIntArg(v.Direccion().ZonaClienteID()),
 		v.GPS().Latitud(), v.GPS().Longitud(),
 		firebird.ToWallClock(v.FechaVenta()), v.TipoVenta().String(),
 		v.Montos().Anual(), v.Montos().CortoPlazo(), v.Montos().Contado(),
 		plazo, enganche, parcialidad, frec,
 		semana, mes,
-		nullableStringArg(v.Nota()),
+		notaEnc,
 		firebird.ToWallClock(a.CreatedAt()), firebird.ToWallClock(a.UpdatedAt()),
 		a.CreatedBy().String(), a.UpdatedBy().String(),
 		canceledAt, canceledBy, cancelReason,
 		nullableIntArg(v.ClienteID()), v.Status().String(),
 		approvedAt, approvedBy,
-	}
+	}, nil
 }
 
 // aprobacionFields decomposes an optional Aprobacion into the two nullable
@@ -193,18 +254,14 @@ func nullableTelefonoArg(v *domain.Venta) any {
 	return v.Cliente().Telefono().Value()
 }
 
-func nullableAvalArg(v *domain.Venta) any {
+// encodeNullableAval encodes AVAL_O_RESPONSABLE (CHARACTER SET ISO8859_1) for
+// SQL writes. Returns (nil, nil) when the venta has no aval — the SQL NULL
+// representation for a nullable column.
+func encodeNullableAval(v *domain.Venta) (driver.Value, error) {
 	if v.Cliente().Aval() == nil {
-		return nil
+		return nil, nil //nolint:nilnil // SQL NULL for nullable column; (nil, nil) is the standard pattern.
 	}
-	return v.Cliente().Aval().Value()
-}
-
-func nullableStringArg(p *string) any {
-	if p == nil {
-		return nil
-	}
-	return *p
+	return firebird.EncodeWin1252(v.Cliente().Aval().Value())
 }
 
 func nullableIntArg(p *int) any {
@@ -248,19 +305,29 @@ func diaCobranzaFields(d *domain.DiaCobranza) (semana, mes any) {
 // nullable columns on MSP_VENTAS. The timestamp is wall-clock-shifted to
 // BusinessTZ so Firebird stores it consistently with Microsip's convention.
 //
+// cancelacionFieldsEnc is the Win1252-encoding variant used when building SQL
+// args for CANCEL_REASON (CHARACTER SET ISO8859_1).
+//
 //nolint:nonamedreturns // multi-arity tuples are clearer when named.
-func cancelacionFields(c *domain.Cancelacion) (at, by, reason any) {
+func cancelacionFieldsEnc(c *domain.Cancelacion) (at, by, reason any, err error) {
 	if c == nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
-	return firebird.ToWallClock(c.At()), c.By().String(), c.Reason()
+	reasonEnc, encErr := firebird.EncodeWin1252(c.Reason())
+	if encErr != nil {
+		return nil, nil, nil, encErr
+	}
+	return firebird.ToWallClock(c.At()), c.By().String(), reasonEnc, nil
 }
 
 // Update writes back the cancellation triplet plus STATUS and the audit
 // fields. Used for the Cancelar path.
 func (r *VentaRepo) Update(ctx context.Context, v *domain.Venta) error {
 	q := firebird.GetQuerier(ctx, r.pool.DB)
-	canceledAt, canceledBy, cancelReason := cancelacionFields(v.Cancelacion())
+	canceledAt, canceledBy, cancelReason, err := cancelacionFieldsEnc(v.Cancelacion())
+	if err != nil {
+		return err
+	}
 	a := v.Audit()
 	res, err := q.ExecContext(ctx, updateVentaHeader,
 		canceledAt, canceledBy, cancelReason,
@@ -289,22 +356,51 @@ func ensureRowAffected(res sql.Result, notFound error) error {
 
 // UpdateHeader rewrites the editable header fields of v. Used by
 // ActualizarHeader.
+//
+//nolint:funlen // wide column set; splitting buys nothing.
 func (r *VentaRepo) UpdateHeader(ctx context.Context, v *domain.Venta) error {
 	q := firebird.GetQuerier(ctx, r.pool.DB)
 	plazo, enganche, parcialidad, frec := planFields(v.PlanCredito())
 	semana, mes := diaCobranzaFields(v.DiaCobranza())
 	a := v.Audit()
+
+	// ISO8859_1 columns — encode UTF-8 → Win1252.
+	calleEnc, err := firebird.EncodeWin1252(v.Direccion().Calle())
+	if err != nil {
+		return err
+	}
+	numExtEnc, err := firebird.EncodeWin1252Ptr(v.Direccion().NumeroExterior())
+	if err != nil {
+		return err
+	}
+	coloniaEnc, err := firebird.EncodeWin1252(v.Direccion().Colonia())
+	if err != nil {
+		return err
+	}
+	poblacionEnc, err := firebird.EncodeWin1252(v.Direccion().Poblacion())
+	if err != nil {
+		return err
+	}
+	ciudadEnc, err := firebird.EncodeWin1252(v.Direccion().Ciudad())
+	if err != nil {
+		return err
+	}
+	notaEnc, err := firebird.EncodeWin1252Ptr(v.Nota())
+	if err != nil {
+		return err
+	}
+
 	res, err := q.ExecContext(ctx, updateVentaHeaderFull,
-		v.Direccion().Calle(),
-		nullableStringArg(v.Direccion().NumeroExterior()),
-		v.Direccion().Colonia(), v.Direccion().Poblacion(), v.Direccion().Ciudad(),
+		calleEnc,
+		numExtEnc,
+		coloniaEnc, poblacionEnc, ciudadEnc,
 		nullableIntArg(v.Direccion().ZonaClienteID()),
 		v.GPS().Latitud(), v.GPS().Longitud(),
 		firebird.ToWallClock(v.FechaVenta()),
 		v.Montos().Anual(), v.Montos().CortoPlazo(), v.Montos().Contado(),
 		plazo, enganche, parcialidad, frec,
 		semana, mes,
-		nullableStringArg(v.Nota()),
+		notaEnc,
 		firebird.ToWallClock(a.UpdatedAt()), a.UpdatedBy().String(),
 		v.ID().String(),
 	)
@@ -318,10 +414,21 @@ func (r *VentaRepo) UpdateHeader(ctx context.Context, v *domain.Venta) error {
 func (r *VentaRepo) UpdateCliente(ctx context.Context, v *domain.Venta) error {
 	q := firebird.GetQuerier(ctx, r.pool.DB)
 	a := v.Audit()
+
+	// NOMBRE_CLIENTE and AVAL_O_RESPONSABLE are CHARACTER SET ISO8859_1.
+	nombreEnc, err := firebird.EncodeWin1252(v.Cliente().Nombre().Value())
+	if err != nil {
+		return err
+	}
+	avalEnc, err := encodeNullableAval(v)
+	if err != nil {
+		return err
+	}
+
 	res, err := q.ExecContext(ctx, updateVentaCliente,
 		nullableIntArg(v.ClienteID()),
-		v.Cliente().Nombre().Value(),
-		nullableTelefonoArg(v), nullableAvalArg(v),
+		nombreEnc,
+		nullableTelefonoArg(v), avalEnc,
 		firebird.ToWallClock(a.UpdatedAt()), a.UpdatedBy().String(),
 		v.ID().String(),
 	)
@@ -758,11 +865,16 @@ func execInsertImagen(
 	img *domain.Imagen,
 ) error {
 	a := img.Audit()
-	_, err := q.ExecContext(ctx, insertImagen,
+	// DESCRIPCION is nullable and CHARACTER SET ISO8859_1 — encode UTF-8 → Win1252.
+	descEnc, err := firebird.EncodeWin1252Ptr(img.Descripcion())
+	if err != nil {
+		return err
+	}
+	_, err = q.ExecContext(ctx, insertImagen,
 		img.ID().String(), ventaID.String(),
 		img.Storage().Kind().String(), img.Storage().Key(),
 		img.Mime(), img.SizeBytes(),
-		nullableStringArg(img.Descripcion()),
+		descEnc,
 		firebird.ToWallClock(a.CreatedAt()), firebird.ToWallClock(a.UpdatedAt()),
 		a.CreatedBy().String(), a.UpdatedBy().String(),
 	)
