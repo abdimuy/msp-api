@@ -275,15 +275,17 @@ func TestStatus_Cancelada_RejectsCancelAgain(t *testing.T) {
 	require.ErrorIs(t, err, domain.ErrVentaYaCancelada)
 }
 
-// TestStatus_Aprobada_AllowsCancel verifies that CancelarVenta succeeds when
-// the venta is in StatusAprobada. The domain's Cancelar method only guards
-// against already-canceled ventas (ErrVentaYaCancelada), not against aprobada,
-// so the transition aprobada → cancelada is permitted by the current domain.
-func TestStatus_Aprobada_AllowsCancel(t *testing.T) {
+// TestStatus_Aprobada_RejectsCancel verifies that CancelarVenta is rejected
+// once a venta reaches StatusAprobada. Aprobada is a terminal state for
+// direct mutation: cancellation must be preceded by a revert-to-borrador
+// step (future operation) so the two sources of truth (MSP + Microsip)
+// cannot diverge silently.
+func TestStatus_Aprobada_RejectsCancel(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	ventaID := h.seedAprobada(t)
 
 	_, err := h.svc.CancelarVenta(context.Background(), ventaID, "gerencia revocó la aprobación", uuid.New())
-	require.NoError(t, err, "aprobada venta should be cancelable")
+	require.ErrorIs(t, err, domain.ErrVentaNoEditable,
+		"aprobada venta must NOT be directly cancelable; revert to borrador first")
 }

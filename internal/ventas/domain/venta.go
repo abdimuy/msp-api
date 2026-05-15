@@ -553,10 +553,19 @@ func (v *Venta) EliminarImagen(id, by uuid.UUID, now time.Time) error {
 }
 
 // Cancelar soft-cancels the venta and transitions status to StatusCancelada.
-// Refuses to cancel an already-canceled venta (returns ErrVentaYaCancelada).
+//
+// Only StatusBorrador may be canceled. An already-canceled venta returns
+// ErrVentaYaCancelada; an aprobada venta returns ErrVentaNoEditable —
+// once approved the venta is terminal (either pushed to Microsip or
+// awaiting the push), and direct cancellation would diverge the two
+// sources of truth. The correct flow for an approved venta is to first
+// revert the approval (future operation), then cancel from borrador.
 func (v *Venta) Cancelar(reason string, by uuid.UUID, now time.Time) error {
 	if v.IsCanceled() {
 		return ErrVentaYaCancelada
+	}
+	if v.status != StatusBorrador {
+		return ErrVentaNoEditable
 	}
 	c, err := NewCancelacion(now, by, reason)
 	if err != nil {
