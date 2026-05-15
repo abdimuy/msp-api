@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/abdimuy/msp-api/internal/platform/idempotency"
+	"github.com/abdimuy/msp-api/internal/platform/transaction"
 )
 
 // Store persists idempotency.Record values in Postgres.
@@ -37,7 +38,7 @@ func (s *Store) Get(ctx context.Context, key string) (*idempotency.Record, error
 		FROM idempotency_keys
 		WHERE key = $1 AND expires_at > $2`
 	var rec idempotency.Record
-	err := s.pool.QueryRow(ctx, q, key, time.Now()).Scan(
+	err := transaction.GetQuerier(ctx, s.pool).QueryRow(ctx, q, key, time.Now()).Scan(
 		&rec.Key,
 		&rec.Method,
 		&rec.Path,
@@ -77,7 +78,7 @@ func (s *Store) Save(ctx context.Context, rec idempotency.Record) error {
 			    created_at      = EXCLUDED.created_at
 			WHERE idempotency_keys.expires_at <= $9`
 	now := time.Now()
-	if _, err := s.pool.Exec(ctx, q,
+	if _, err := transaction.GetQuerier(ctx, s.pool).Exec(ctx, q,
 		rec.Key,
 		rec.Method,
 		rec.Path,

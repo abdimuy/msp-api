@@ -169,6 +169,7 @@ linters:
         - ifElseChain
         - hugeParam        # our HydrateParams structs are intentionally large
         - rangeValCopy     # noisy for read-only iteration
+        - unnamedResult    # conflicts with nonamedreturns; we prefer unnamed
 
     # ── gosec ────────────────────────────────────────────────────────
     gosec:
@@ -194,6 +195,12 @@ linters:
           alias: platform
         - pkg: github.com/abdimuy/msp-api/internal/platform/idempotency/postgres
           alias: idempotencypg
+        - pkg: github.com/abdimuy/msp-api/internal/platform/failedintent/http
+          alias: failedintenthttp
+        - pkg: github.com/abdimuy/msp-api/internal/platform/failedintent/postgres
+          alias: failedintentpg
+        - pkg: github.com/abdimuy/msp-api/internal/auth/ports/outbound
+          alias: authoutbound
         - pkg: github.com/abdimuy/msp-api/internal/auth/infra/firebird
           alias: authfb
         - pkg: github.com/abdimuy/msp-api/internal/auth/app

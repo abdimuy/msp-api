@@ -19,12 +19,20 @@ import (
 	"github.com/abdimuy/msp-api/internal/auth/infra/authhttp"
 	"github.com/abdimuy/msp-api/internal/auth/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/config"
+	"github.com/abdimuy/msp-api/internal/platform/failedintent"
+	failedintenthttp "github.com/abdimuy/msp-api/internal/platform/failedintent/http"
 	"github.com/abdimuy/msp-api/internal/platform/healthcheck"
 	"github.com/abdimuy/msp-api/internal/platform/idempotency"
 	"github.com/abdimuy/msp-api/internal/platform/middleware"
 	ventasapp "github.com/abdimuy/msp-api/internal/ventas/app"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/venthttp"
 )
+
+// RootHandler is the assembled chi router exposed as an fx-typed dependency.
+// Splitting the construction in two (root handler vs httpServer wrapper) lets
+// the failedintent replay dispatcher receive the router via a post-construction
+// fx.Invoke, breaking the dispatcher↔router↔handler cycle.
+type RootHandler http.Handler
 
 // publicV2PathPrefixes lists request-path prefixes under /v2 that bypass the
 // authentication middleware. Huma auto-serves the OpenAPI spec and the docs
@@ -95,10 +103,12 @@ func (s *httpServer) Stop(ctx context.Context) error {
 	return s.srv.Shutdown(shutdownCtx)
 }
 
-// provideHTTPServer wires the chi router with the standard middleware stack,
-// the platform endpoints (healthz/readyz/version), and mounts the per-module
-// routers under /v2.
-func provideHTTPServer(
+// provideRootHandler assembles the chi router with the standard middleware
+// stack, platform endpoints, the protected /v2 module routes, and the admin
+// /v2/_admin/failed-intents endpoints. The returned http.Handler is then
+// wrapped by provideHTTPServer; splitting the two lets the failedintent
+// replay dispatcher receive the router via fx.Invoke.
+func provideRootHandler(
 	cfg *config.Config,
 	health *healthcheck.Service,
 	authSvc *authapp.Service,
@@ -106,7 +116,9 @@ func provideHTTPServer(
 	authUsuarios outbound.UsuarioRepo,
 	idemStore idempotency.Store,
 	ventasSvc *ventasapp.Service,
-) *httpServer {
+	fiCaptureCfg failedintent.Config,
+	fiSvc *failedintenthttp.Service,
+) RootHandler {
 	r := chi.NewRouter()
 
 	// Middleware applied to every request. otelMiddleware sits outermost so
@@ -137,24 +149,48 @@ func provideHTTPServer(
 		Methods:    []string{http.MethodPost, http.MethodPatch},
 		RequireKey: false,
 	})
+	capture := failedintent.CaptureMiddleware(fiCaptureCfg)
 
 	// API surface. Module routers mount under /v2.
 	r.Route("/v2", func(r chi.Router) {
 		authhttp.MountRouter(r, authSvc, authFirebase, authUsuarios, idemStore)
 
-		// Ventas routes share the authentication and idempotency chi
-		// middlewares; per-route authorization (RequirePermission) is enforced
-		// inside each Huma handler against the planted CurrentUser.
+		// Ventas routes share the authentication, idempotency, and
+		// failed-intent capture chi middlewares; per-route authorization
+		// (RequirePermission) is enforced inside each Huma handler against
+		// the planted CurrentUser.
 		r.Group(func(r chi.Router) {
-			r.Use(skipAuthForPublicDocs(authn.Handler), idem)
+			r.Use(skipAuthForPublicDocs(authn.Handler), idem, capture)
 			venthttp.MountRouter(r, ventasSvc)
+		})
+
+		// Admin endpoints for failed-intent inspection / replay / resolution.
+		// Authn is applied at the group level; per-route permission gates
+		// live inside failedintenthttp.MountRouter.
+		r.Route("/_admin/failed-intents", func(r chi.Router) {
+			r.Use(authn.Handler)
+			failedintenthttp.MountRouter(r, fiSvc)
+		})
+
+		// Self-service endpoint: lets the authenticated user query their own
+		// failed intents. Authn is the only gate — no failed_intents:* perm
+		// because the handler scopes results to the calling user's id.
+		r.Route("/me/failed-intents", func(r chi.Router) {
+			r.Use(authn.Handler)
+			failedintenthttp.MountMeRouter(r, fiSvc)
 		})
 	})
 
+	return RootHandler(r)
+}
+
+// provideHTTPServer wraps the assembled root handler in an *http.Server with
+// the configured timeouts.
+func provideHTTPServer(cfg *config.Config, root RootHandler) *httpServer {
 	return &httpServer{
 		srv: &http.Server{
 			Addr:         net.JoinHostPort("0.0.0.0", strconv.Itoa(cfg.HTTP.Port)),
-			Handler:      r,
+			Handler:      root,
 			ReadTimeout:  cfg.HTTP.ReadTimeout,
 			WriteTimeout: cfg.HTTP.WriteTimeout,
 			IdleTimeout:  cfg.HTTP.IdleTimeout,

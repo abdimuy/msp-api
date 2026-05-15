@@ -62,6 +62,13 @@ const (
 	PermVentasSubirImagenes Permission = "ventas:subir_imagenes"
 	// PermVentasEliminarImagenes grants deleting evidence images of a venta.
 	PermVentasEliminarImagenes Permission = "ventas:eliminar_imagenes"
+
+	// PermFailedIntentsVer grants reading captured failed intents (full
+	// request payload included — see ADR-0005 for the PII trade-off).
+	PermFailedIntentsVer Permission = "failed_intents:ver"
+	// PermFailedIntentsResolver grants replaying, ignoring and resolving
+	// captured failed intents.
+	PermFailedIntentsResolver Permission = "failed_intents:resolver"
 )
 
 // PermissionMeta is a catalog entry pairing a permission code with the
@@ -77,10 +84,11 @@ type PermissionMeta struct {
 // Categoria constants — short enough to fit MSP_PERMISOS.CATEGORIA (30
 // chars). Used internally by AllPermissions to keep the catalog DRY.
 const (
-	categoriaUsuarios = "usuarios"
-	categoriaRoles    = "roles"
-	categoriaPermisos = "permisos"
-	categoriaVentas   = "ventas"
+	categoriaUsuarios      = "usuarios"
+	categoriaRoles         = "roles"
+	categoriaPermisos      = "permisos"
+	categoriaVentas        = "ventas"
+	categoriaFailedIntents = "failed_intents"
 )
 
 // AllPermissions returns every permission known to the auth module, sorted
@@ -108,6 +116,9 @@ func AllPermissions() []PermissionMeta {
 		{PermVentasEditar, "editar una venta en borrador", categoriaVentas},
 		{PermVentasSubirImagenes, "subir imágenes de evidencia a una venta", categoriaVentas},
 		{PermVentasEliminarImagenes, "eliminar imágenes de evidencia de una venta", categoriaVentas},
+
+		{PermFailedIntentsVer, "ver intents fallidos y sus payloads", categoriaFailedIntents},
+		{PermFailedIntentsResolver, "reproducir, ignorar y resolver intents fallidos", categoriaFailedIntents},
 	}
 	sort.Slice(perms, func(i, j int) bool { return perms[i].Code < perms[j].Code })
 	return perms
