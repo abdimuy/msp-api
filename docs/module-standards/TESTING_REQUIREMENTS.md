@@ -110,6 +110,26 @@ venthttp.MountRouter(r, svc)
 
 `httptest.NewRecorder` for the response. Build requests with `httptest.NewRequest` + `json.Marshal` (or `multipart.Writer` for uploads).
 
+### Composition tests (handler chain + middleware integration)
+
+HTTP handler tests stub the middleware chain — they plant `CurrentUser` directly and call `MountRouter` against a bare chi router. That keeps each handler test fast and focused, but it misses every bug that lives *between* the middleware and the route: chi `RouteContext` leaking from a parent dispatcher, authn rejecting an already-planted `CurrentUser`, an idempotency-key being reused on a replay path, `RequirePermission` silently bypassed because someone forgot the `.With(...)` chain. Commit `2086632` introduced one of these per fix in a five-commit sweep — none of them showed up in the per-handler unit tests.
+
+**Rule:** every `r.Route(...)` block in `cmd/api/server.go::provideRootHandler` requires a composition test that wires the same middleware stack and exercises at least one request end-to-end through it. A new top-level route is not done until its composition test lands.
+
+**Stubbing policy:**
+
+- Stub only adapters of the outermost boundary: Firebase (`outbound.FirebaseClient`), Microsip (`firebird.*`), persistence (Postgres pools). Anything inside the chi router — authn, idempotency, capture, `RequirePermission` — must be the real production code path. Substituting a `fakeDispatcher` or a no-op `authn` defeats the point of the test.
+- The dispatcher used by the failed-intent replay path must round-trip through the same chi router. Wire it the way `provideRootHandler` does (build the router, then `dispatcher.Set(router)`); don't shortcut with a direct `ServeHTTP` to the inner handler.
+
+**Canonical examples:**
+
+- `internal/platform/failedintent/http/e2e_test.go` — `TestE2E_ReplayCycle_FullMiddlewareChain` (full chi+authn+idem+capture cycle), `TestE2E_AdminFailedIntents_PermissionGrid` (per-route `RequirePermission` matrix), `TestE2E_MeFailedIntents_ScopedToCurrentUser` (`MeListar` user-scoping under real authn).
+- `internal/auth/infra/authhttp/e2e_test.go` — `/v2/auth/login` idempotency through the real middleware, `GET /v2/me` planted-user bypass, `PATCH /v2/usuarios/{id}` under `RequirePermission` + idem.
+
+**Shared helpers:** `internal/platform/httptesting/fakes.go` provides `FakeFirebase`, `FakeUsuarioRepo` (multi-user + configurable permissions), `InMemoryIdempotencyStore`, and `NewE2ERequest`. Use these instead of re-defining per-module variants — when the auth side changes shape (e.g. a new `outbound.FirebaseClient` method), a single fake update covers every composition test in the repo.
+
+**Naming convention:** tests in this category begin with `TestE2E_` so `go test -run TestE2E ./...` runs the full composition suite without picking up unrelated unit tests.
+
 ### Security sweep (`security_test.go`)
 
 Table-driven coverage of every protected route:
