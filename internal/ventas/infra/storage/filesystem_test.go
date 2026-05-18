@@ -23,6 +23,32 @@ type failingReader struct{ err error }
 
 func (f failingReader) Read(_ []byte) (int, error) { return 0, f.err }
 
+// partialFailingReader returns up to prefix bytes from underlying then
+// returns err on the next Read. Mimics ENOSPC, network drops, or any other
+// I/O failure that strikes mid-payload.
+type partialFailingReader struct {
+	underlying io.Reader
+	prefix     int64
+	read       int64
+	err        error
+}
+
+func (r *partialFailingReader) Read(p []byte) (int, error) {
+	if r.read >= r.prefix {
+		return 0, r.err
+	}
+	remaining := r.prefix - r.read
+	if int64(len(p)) > remaining {
+		p = p[:remaining]
+	}
+	n, err := r.underlying.Read(p)
+	r.read += int64(n)
+	if err != nil {
+		return n, err
+	}
+	return n, nil
+}
+
 func newProvider(t *testing.T) (*storage.FilesystemProvider, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -242,6 +268,48 @@ func TestFilesystemProvider_Store_BodyReadFailure_Errors(t *testing.T) {
 		assert.False(t, strings.HasPrefix(e.Name(), ".upload-"),
 			"temp file should be cleaned up after Store failure, found %q", e.Name())
 	}
+}
+
+// TestFilesystemProvider_Store_PartialBodyAfterNBytes_NoOrphan simulates an
+// ENOSPC-style failure: the reader hands out the first 64 bytes of a 256
+// byte payload then errors. Store must (a) surface the error, (b) leave no
+// upload temp file behind, (c) leave no .meta sidecar (the pair is only
+// meaningful together), and (d) leave no partial blob at the target key.
+func TestFilesystemProvider_Store_PartialBodyAfterNBytes_NoOrphan(t *testing.T) {
+	t.Parallel()
+	p, dir := newProvider(t)
+	ctx := context.Background()
+	key := "ventas/2026/05/partial.bin"
+
+	full := bytes.Repeat([]byte{0xAA}, 256)
+	body := &partialFailingReader{
+		underlying: bytes.NewReader(full),
+		prefix:     64,
+		err:        errors.New("simulated ENOSPC"),
+	}
+	err := p.Store(ctx, key, "image/jpeg", int64(len(full)), body)
+	require.Error(t, err, "Store must surface a mid-stream read failure")
+	appErr, ok := apperror.As(err)
+	require.True(t, ok)
+	assert.Equal(t, "storage_write_failed", appErr.Code)
+
+	// (b) no upload temp file lingering in the parent dir.
+	parent := filepath.Join(dir, "ventas/2026/05")
+	entries, err := os.ReadDir(parent)
+	if err == nil {
+		for _, e := range entries {
+			assert.False(t, strings.HasPrefix(e.Name(), ".upload-"),
+				"temp file must be cleaned up after partial-body failure: %q", e.Name())
+		}
+	}
+	// (c) no sidecar written.
+	_, statErr := os.Stat(filepath.Join(dir, key+".meta"))
+	assert.True(t, os.IsNotExist(statErr),
+		"no .meta sidecar may exist when the payload write failed")
+	// (d) no partial blob at the target.
+	_, statErr = os.Stat(filepath.Join(dir, key))
+	assert.True(t, os.IsNotExist(statErr),
+		"no partial blob may exist at the target when Store failed mid-stream")
 }
 
 func TestFilesystemProvider_Store_SidecarWriteFailure_CleansBlob(t *testing.T) {

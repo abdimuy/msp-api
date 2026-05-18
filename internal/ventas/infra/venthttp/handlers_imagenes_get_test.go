@@ -440,6 +440,38 @@ func TestObtenerImagen_BodyClosedOnSuccess(t *testing.T) {
 		"handler must Close the storage body exactly once after a successful stream")
 }
 
+// TestObtenerImagen_BodyClosedOnEncodingFailure pins the Close-on-error
+// invariant: even when the streaming Copy errors mid-flight, the storage
+// body must be closed before the handler returns. A leak here would burn
+// file descriptors on a flaky upstream and eventually starve the process.
+func TestObtenerImagen_BodyClosedOnEncodingFailure(t *testing.T) {
+	t.Parallel()
+
+	fakeRepo := newFakeRepo()
+	fakeStore := newFakeStorage()
+	tracker := &closeTrackingReader{readErr: io.ErrUnexpectedEOF}
+	wrappedStore := &fakeStorageReturningTracker{fakeStorage: fakeStore, tracker: tracker}
+	clock := fixedClock{T: time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC)}
+	svc := ventasapp.NewService(fakeRepo, nil, wrappedStore, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil)
+
+	cu := fullPerms(uuid.New())
+	chiR := chi.NewRouter()
+	chiR.Use(planter(cu))
+	venthttp.MountRouter(chiR, svc)
+
+	ventaID, img := uploadAndGetImagenID(t, chiR)
+
+	getReq := httptest.NewRequest(http.MethodGet, "/ventas/"+ventaID+"/imagenes/"+img.ID, nil)
+	getRec := httptest.NewRecorder()
+	chiR.ServeHTTP(getRec, getReq)
+
+	// The handler will have written the response headers (200 OK) before the
+	// streaming Copy hits the read error — pinning Code semantics is brittle
+	// here, what matters is the body got closed.
+	assert.Equal(t, 1, tracker.closeCount(),
+		"handler must Close the storage body even when the streaming Copy fails")
+}
+
 // Sanity: response body is byte-identical to the uploaded blob (NoOp
 // processor) so the FE displays exactly what was uploaded.
 func TestObtenerImagen_ResponseMatchesUploadedBytes(t *testing.T) {
