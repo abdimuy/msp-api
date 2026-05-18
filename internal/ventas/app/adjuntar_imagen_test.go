@@ -291,3 +291,29 @@ func TestAdjuntarImagen(t *testing.T) {
 			"storage must see a non-zero size after the processor measures the body")
 	})
 }
+
+// TestAdjuntarImagen_BestEffortStorageDeleteLogsPath lives at the top level
+// (not inside TestAdjuntarImagen) because it mutates slog.Default — it must
+// run sequentially with respect to anything else that also reads/writes the
+// global default. The contract pinned here: when both Insert and the
+// rollback Delete fail, the operator gets a log entry with the storage_key
+// so they can clean up the orphan blob by hand.
+//
+//nolint:paralleltest,tparallel // mutates global slog.Default; sequential by necessity.
+func TestAdjuntarImagen_BestEffortStorageDeleteLogsPath(t *testing.T) {
+	logs := captureLogs(t)
+	h := newHarness(t)
+	ventaID := h.seedVenta(t)
+	h.ventas.InsertImagenErr = errors.New("insert exploded")
+	h.storage.DeleteErr = errors.New("delete also exploded")
+	in := adjuntarInput(*ventaID)
+
+	_, err := h.svc.AdjuntarImagen(t.Context(), in, uuid.New())
+	require.Error(t, err)
+
+	out := logs()
+	assert.Contains(t, out, "ventas.storage_rollback_failed",
+		"rollback failure must produce a structured log entry")
+	assert.Contains(t, out, in.StorageKey,
+		"log entry must carry the storage_key so the operator can clean up the orphan blob")
+}

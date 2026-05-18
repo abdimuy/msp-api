@@ -2,6 +2,7 @@
 package app_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -55,4 +56,27 @@ func TestActualizarCliente_ClienteIDValido(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, out.ClienteID())
 	assert.Equal(t, 42, *out.ClienteID())
+}
+
+// TestActualizarCliente_UpdateClienteRepoError_PropagatesAndDrainsNoEvents
+// pins the failure-path event contract: when the repo's UpdateCliente errors
+// after the aggregate has been mutated in memory, the error surfaces AND no
+// outbox event is enqueued — events drain only when the persistence step
+// succeeds, so a downstream consumer never sees a "ClienteActualizado" event
+// for a row that did not actually change.
+func TestActualizarCliente_UpdateClienteRepoError_PropagatesAndDrainsNoEvents(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	id := h.seedVenta(t)
+
+	boom := errors.New("repo update exploded")
+	h.ventas.UpdateErr = boom
+
+	_, err := h.svc.ActualizarCliente(t.Context(), ventasapp.ActualizarClienteInput{
+		VentaID:       *id,
+		ClienteNombre: "Mutado pero no persistido",
+	}, uuid.New())
+	require.ErrorIs(t, err, boom)
+	assert.Empty(t, h.outbox.snapshot(),
+		"no outbox event must escape when persistence failed — events are post-commit only")
 }
