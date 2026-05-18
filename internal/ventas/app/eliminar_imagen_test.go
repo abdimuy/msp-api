@@ -107,3 +107,33 @@ func TestEliminarImagen(t *testing.T) {
 		assert.Zero(t, h.ventas.DeleteImagenCalls)
 	})
 }
+
+// TestEliminarImagen_StorageDeleteFailure_LogsStorageKey lives at the top
+// level (not inside the parallel TestEliminarImagen subtest matrix) because
+// it mutates slog.Default and must run sequentially.
+//
+// Killed mutation: eliminar_imagen.go:35 `if err := s.storage.Delete; err
+// != nil` — the existing storage_delete_failure_is_logged_not_returned only
+// asserts the call returns nil, which lets a CONDITIONALS_NEGATION mutation
+// (== nil instead of != nil) survive: the storage error path becomes a
+// silent no-op AND the test still passes. Pinning the log emission closes
+// that gap.
+//
+//nolint:paralleltest,tparallel // mutates global slog.Default; sequential by necessity.
+func TestEliminarImagen_StorageDeleteFailure_LogsStorageKey(t *testing.T) {
+	logs := captureLogs(t)
+	h := newHarness(t)
+	ventaID, imagenID := seedVentaWithImagen(t, h)
+	h.storage.DeleteErr = errors.New("storage flaky")
+
+	err := h.svc.EliminarImagen(t.Context(), ventaID, imagenID, uuid.New())
+	require.NoError(t, err, "DB is source of truth; storage failure must not bubble up")
+
+	out := logs()
+	assert.Contains(t, out, "ventas.storage_delete_failed",
+		"storage delete failure must produce a structured log entry")
+	assert.Contains(t, out, ventaID.String(),
+		"log entry must carry venta_id for traceability")
+	assert.Contains(t, out, imagenID.String(),
+		"log entry must carry imagen_id for traceability")
+}
