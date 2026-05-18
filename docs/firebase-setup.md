@@ -33,17 +33,61 @@ Validación: al arrancar, el factory selecciona `RealClient` y loguea
 
 ## 3. Crear el primer admin
 
-El bootstrap es manual: primero creas el usuario en Firebase Auth (consola
-o sign-in inicial del FE), luego registras su `firebase_uid` en la base
-local con el binario `auth-bootstrap`:
+El subcomando `auth-bootstrap` provisiona el primer admin con el rol
+inmutable `super_admin` y todos los permisos del catálogo
+(`domain.AllPermissions()`). Tres modos según escenario:
+
+### Modo A — dev desde cero (recomendado)
+
+Crea el usuario en Firebase Auth y la fila en la DB en una sola
+operación. Idempotente para el lookup en Firebase, así que reintentar
+no duplica.
 
 ```bash
-# Después de un sign-in en Firebase, copia el UID del usuario.
-./tmp/api auth-bootstrap \
-    --firebase-uid <uid-real-de-firebase> \
+go run ./cmd/api auth-bootstrap \
+    --email admin@muebleriamsp.mx \
+    --nombre "Administrador MSP" \
+    --create-in-firebase
+```
+
+Password default: `MspDev2026!`. Cámbialo en Firebase Console o pasa
+`--password <otro>` al crear.
+
+### Modo B — Firebase user ya existe
+
+Pasa el UID si el usuario fue creado a mano (Console, FE, import):
+
+```bash
+go run ./cmd/api auth-bootstrap \
+    --firebase-uid <uid-real> \
     --email admin@local.test \
     --nombre "Admin"
 ```
+
+### Modo C — reset destructivo (solo dev)
+
+Borra **todos** los usuarios de Firebase Auth excepto `--email`, vacía
+las tablas auth de la DB (`MSP_USUARIOS`, `MSP_ROLES`,
+`MSP_USUARIOS_ROLES`, `MSP_ROLES_PERMISOS`), y vuelve a hacer bootstrap.
+Usar cuando quieras empezar de cero:
+
+```bash
+go run ./cmd/api auth-bootstrap \
+    --email admin@muebleriamsp.mx \
+    --nombre "Administrador MSP" \
+    --create-in-firebase --reset
+```
+
+Nunca uses `--reset` contra un proyecto Firebase compartido o de
+producción — borra usuarios irreversiblemente.
+
+### Sin flag de Firebase: rechaza si ya hay admin
+
+Sin `--reset`, el bootstrap se niega a correr si ya existe algún
+usuario en `MSP_USUARIOS`. Es deliberado: el subcomando solo está
+pensado para crear el PRIMER admin. Para administración subsecuente
+(crear más usuarios, asignar roles) usa los endpoints
+`/v2/usuarios` y `/v2/roles`.
 
 ## 4. Probar end-to-end
 

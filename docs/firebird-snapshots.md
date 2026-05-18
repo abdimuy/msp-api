@@ -64,6 +64,34 @@ make fb-snapshot NAME=clean_baseline
 make fb-restore NAME=clean_baseline
 ```
 
+### Baseline canónico: `clean-with-admin`
+
+El repo asume que existe un snapshot llamado `clean-with-admin` con la DB
+en estado "schema migrado + admin funcional + cero data de ventas". Es el
+estado al que conviene volver entre experimentos manuales o demos:
+
+```bash
+echo "restore" | make fb-restore NAME=clean-with-admin
+```
+
+Cuando algo lo invalida (nueva migration, nuevo permiso en
+`domain.AllPermissions()`, drift de Microsip que quieras congelar),
+regenéralo así:
+
+```bash
+echo "restore" | make fb-restore NAME=clean-with-admin   # punto de partida
+make fb-migrate-up                                        # nueva migration si aplica
+go run ./cmd/api auth-bootstrap \
+    --email admin@muebleriamsp.mx \
+    --nombre "Administrador MSP" \
+    --create-in-firebase --reset                          # refresca admin + permisos
+make fb-snapshot-delete NAME=clean-with-admin             # tira el viejo
+make fb-snapshot NAME=clean-with-admin                    # toma nuevo
+```
+
+Ver [`docs/firebase-setup.md`](firebase-setup.md) §3 para los modos del
+auth-bootstrap.
+
 ## Lo que NO hace
 
 - **No restaura cambios al schema migrado posteriormente.** Si tomas snapshot, aplicas 000003, y restauras: vuelves al schema previo a 000003. La tabla `MSP_MIGRATIONS` también se restaura, así que `make fb-migrate-up` vuelve a verlo como "no aplicada".

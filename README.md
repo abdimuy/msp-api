@@ -98,6 +98,63 @@ make db-shell         # abre psql dentro del container
 make db-logs          # tail de logs del container
 ```
 
+## Firebird (Microsip) y admin inicial
+
+Además de Postgres, la API se conecta a un Firebird (Microsip) que corre
+en el contenedor `mueblera-firebird` declarado en `compose.yml`. Empieza
+por levantarlo y aplicar las migrations:
+
+```sh
+make fb-migrate-status    # ¿qué migrations están aplicadas?
+make fb-migrate-up        # aplica las pendientes
+```
+
+Para autenticar contra la API necesitas un usuario admin tanto en
+Firebase Auth como en la tabla `MSP_USUARIOS`. El subcomando
+`auth-bootstrap` provisiona ambos lados en una sola operación.
+
+### Primera vez (fresh setup)
+
+Requiere `serviceAccountKey.json` configurado — ver
+[`docs/firebase-setup.md`](docs/firebase-setup.md) §1-2.
+
+```sh
+go run ./cmd/api auth-bootstrap \
+    --email admin@muebleriamsp.mx \
+    --nombre "Administrador MSP" \
+    --create-in-firebase
+```
+
+Esto crea el usuario en Firebase Auth (password default `MspDev2026!`,
+cámbialo con `--password <otro>`), inserta la fila en `MSP_USUARIOS`,
+crea el rol inmutable `super_admin` con los 19 permisos del catálogo, y
+los enlaza. Reintentar es idempotente (no duplica el user en Firebase),
+pero se niega si ya hay otro admin en la DB.
+
+### Restaurar a un baseline conocido
+
+Si tienes el snapshot `clean-with-admin.fbk` (estado: schema migrado +
+admin funcional + cero data), vuelves ahí en ~3 min:
+
+```sh
+echo "restore" | make fb-restore NAME=clean-with-admin
+```
+
+### Reset destructivo (solo dev, irreversible en Firebase)
+
+Borra **todos** los usuarios de Firebase Auth excepto `--email` + vacía
+las tablas auth + vuelve a hacer bootstrap:
+
+```sh
+go run ./cmd/api auth-bootstrap \
+    --email admin@muebleriamsp.mx \
+    --nombre "Administrador MSP" \
+    --create-in-firebase --reset
+```
+
+Detalles completos del flujo Firebase: [`docs/firebase-setup.md`](docs/firebase-setup.md).
+Detalles del snapshot/restore: [`docs/firebird-snapshots.md`](docs/firebird-snapshots.md).
+
 ## Levantar la API
 
 Dos formas, según prefieras:
