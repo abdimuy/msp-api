@@ -191,6 +191,64 @@ func TestVentaRepo_DecimalPrecision_Cantidad_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestVentaRepo_DecimalPrecision_Money_AtMaxValue_Firebird inserts a venta
+// at exactly MaxMontoVenta (999999999999.99) and asserts byte-equal
+// round-trip — pins the upper boundary of the NUMERIC(14,2) money columns
+// against silent driver-side rounding.
+func TestVentaRepo_DecimalPrecision_Money_AtMaxValue_Firebird(t *testing.T) {
+	requireFBEnv(t)
+	t.Parallel()
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := ventfb.NewVentaRepo(pool)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		root := seedUsuarioRow(ctx, t, pool)
+		v := buildVenta(t, newVentaInput{createdBy: root, vendedor: root})
+
+		maxMonto := domain.MaxMontoVenta // 999999999999.99
+		montos, err := domain.NewMontoSnapshot(maxMonto, maxMonto, maxMonto)
+		require.NoError(t, err)
+		a := v.Audit()
+		vv := domain.HydrateVenta(domain.HydrateVentaParams{
+			ID: v.ID(), ClienteID: v.ClienteID(), Cliente: v.Cliente(),
+			Direccion: v.Direccion(), GPS: v.GPS(), FechaVenta: v.FechaVenta(),
+			TipoVenta: v.TipoVenta(), Montos: montos,
+			PlanCredito: v.PlanCredito(), DiaCobranza: v.DiaCobranza(), Nota: v.Nota(),
+			Status:     v.Status(),
+			Combos:     v.CombosForRepo(),
+			Productos:  v.ProductosForRepo(),
+			Vendedores: v.VendedoresForRepo(),
+			Imagenes:   v.ImagenesForRepo(),
+			CreatedAt:  a.CreatedAt(), UpdatedAt: a.UpdatedAt(),
+			CreatedBy: a.CreatedBy(), UpdatedBy: a.UpdatedBy(),
+		})
+		require.NoError(t, repo.Save(ctx, vv))
+		got, err := repo.FindByID(ctx, vv.ID())
+		require.NoError(t, err)
+
+		assert.True(t, got.Montos().Anual().Equal(maxMonto),
+			"expected %s, got %s", maxMonto, got.Montos().Anual())
+		assert.True(t, got.Montos().CortoPlazo().Equal(maxMonto))
+		assert.True(t, got.Montos().Contado().Equal(maxMonto))
+	})
+}
+
+// TestParseVentaMontos_ScaleOverflow_DomainRejects documents the contract:
+// values with scale > 2 are rejected at domain construction time, before the
+// driver gets a chance to silently round (which would corrupt data —
+// 0.005 → 0.01 vs 0.005 → 0.00 depending on rounding mode). The rejection
+// happens in NewMontoSnapshot, so the driver never sees an out-of-scale
+// monto. This pins the boundary explicitly so a future "let the DB decide"
+// refactor cannot regress silently.
+func TestParseVentaMontos_ScaleOverflow_DomainRejects(t *testing.T) {
+	t.Parallel()
+	overflow := decimal.RequireFromString("0.005") // 3 decimal places
+	_, err := domain.NewMontoSnapshot(overflow, decimal.Zero, decimal.Zero)
+	require.Error(t, err, "scale > 2 must be rejected at construction; the driver must never see it")
+	ae, ok := apperror.As(err)
+	require.True(t, ok)
+	assert.Equal(t, "monto_demasiados_decimales", ae.Code)
+}
+
 // TestCantidad_RejectsExtraDecimals pins the domain contract: cantidad
 // values with > 4 decimal places are rejected before reaching the driver.
 func TestCantidad_RejectsExtraDecimals(t *testing.T) {
