@@ -1,4 +1,4 @@
-.PHONY: help setup build run dev test test-unit test-integration test-all test-mutation test-mutation-domain test-mutation-app lint lint-fix fmt generate migrate-up migrate-down migrate-create migrate-version clean db-test-up db-test-down db-test-reset db-test-prune db-test-url test-firebird test-firebird-all coverage-auth coverage-auth-full fb-migrate-up fb-migrate-down fb-migrate-status fb-seed-admin fb-snapshot fb-snapshot-list fb-restore fb-snapshot-delete fb-emu-up fb-emu-down fb-emu-logs
+.PHONY: help setup build run dev test test-unit test-integration test-all test-mutation test-mutation-domain test-mutation-app test-mutation-ventas test-mutation-ventas-domain test-mutation-ventas-app test-mutation-httpdispatch lint lint-fix fmt generate migrate-up migrate-down migrate-create migrate-version clean db-test-up db-test-down db-test-reset db-test-prune db-test-url test-firebird test-firebird-all coverage-auth coverage-auth-full fb-migrate-up fb-migrate-down fb-migrate-status fb-seed-admin fb-snapshot fb-snapshot-list fb-restore fb-snapshot-delete fb-emu-up fb-emu-down fb-emu-logs
 
 # ── Config ───────────────────────────────────────────────────────────
 APP_NAME      := msp-api
@@ -289,21 +289,24 @@ coverage-auth-full: ## Generate auth coverage INCLUDING Firebird integration tes
 # high business value (domain, app) where false negatives in tests are
 # most costly. Config in .gremlins.yaml. Install with:
 #   go install github.com/go-gremlins/gremlins/cmd/gremlins@latest
-test-mutation: test-mutation-domain test-mutation-app test-mutation-ventas-domain test-mutation-ventas-app ## Run mutation testing on critical packages
+test-mutation: test-mutation-domain test-mutation-app test-mutation-ventas-domain test-mutation-ventas-app test-mutation-httpdispatch ## Run mutation testing on critical packages
 
 test-mutation-domain: ## Run mutation testing on auth/domain only
-	gremlins unleash ./internal/auth/domain/...
+	gremlins unleash ./internal/auth/domain
 
 test-mutation-app: ## Run mutation testing on auth/app only
-	gremlins unleash ./internal/auth/app/...
+	gremlins unleash ./internal/auth/app
 
 test-mutation-ventas: test-mutation-ventas-domain test-mutation-ventas-app ## Run mutation testing on the ventas module (domain + app)
 
 test-mutation-ventas-domain: ## Run mutation testing on ventas/domain only
-	gremlins unleash ./internal/ventas/domain/...
+	gremlins unleash ./internal/ventas/domain
 
 test-mutation-ventas-app: ## Run mutation testing on ventas/app only
-	gremlins unleash ./internal/ventas/app/...
+	gremlins unleash ./internal/ventas/app
+
+test-mutation-httpdispatch: ## Run mutation testing on platform/httpdispatch
+	gremlins unleash ./internal/platform/httpdispatch
 
 # ── Clean ────────────────────────────────────────────────────────────
 clean: ## Remove build artifacts
