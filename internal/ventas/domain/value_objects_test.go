@@ -443,7 +443,7 @@ func TestNewClienteSnapshot_Valid(t *testing.T) {
 	t.Parallel()
 	nom, err := domain.NewNombreCliente("Juan")
 	require.NoError(t, err)
-	tel, err := platform.NewTelefono("5551234567")
+	tel, err := platform.NewTelefono("+15551234567")
 	require.NoError(t, err)
 	aval, err := domain.NewNombreCliente("Maria")
 	require.NoError(t, err)

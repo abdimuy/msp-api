@@ -450,7 +450,7 @@ func TestE2E_Firebird_NullableFields_RoundTrip(t *testing.T) {
 		nota := "nota inicial"
 		numExt := "42-A"
 		zona := 7
-		tel := "5551234567"
+		tel := "+15551234567"
 		aval := "Avalista"
 		body.Nota = &nota
 		body.Direccion.NumeroExterior = &numExt

@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/abdimuy/msp-api/internal/platform/apperror"
 	platform "github.com/abdimuy/msp-api/internal/platform/domain"
 	"github.com/abdimuy/msp-api/internal/ventas/domain"
 )
@@ -216,7 +217,10 @@ func optionalTelefono(s *string) (*platform.Telefono, error) {
 	}
 	t, err := platform.NewTelefono(trimmed)
 	if err != nil {
-		return nil, err
+		return nil, apperror.NewValidation(
+			"telefono_invalid",
+			"el teléfono debe estar en formato E.164 (p. ej. +524491234567)",
+		).WithError(err)
 	}
 	return &t, nil
 }
