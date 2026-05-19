@@ -15,7 +15,7 @@ import (
 type ClienteSnapshotDTO struct {
 	ClienteID *int    `json:"cliente_id,omitempty" doc:"ID opcional del cliente en Microsip CLIENTES"`
 	Nombre    string  `json:"nombre"               doc:"Nombre del cliente"`
-	Telefono  *string `json:"telefono,omitempty"   doc:"Teléfono opcional, formato libre"`
+	Telefono  *string `json:"telefono,omitempty"   doc:"Teléfono opcional en formato E.164 (p. ej. +524491234567): '+', código de país 1-9, y 1-14 dígitos. Sin separadores."`
 	Aval      *string `json:"aval,omitempty"       doc:"Aval o responsable opcional"`
 }
 
@@ -133,7 +133,7 @@ type VentaDTO struct {
 	Montos      MontosDTO          `json:"montos"`
 	PlanCredito *PlanCreditoDTO    `json:"plan_credito,omitempty"`
 	DiaCobranza *DiaCobranzaDTO    `json:"dia_cobranza,omitempty"`
-	Nota        *string            `json:"nota,omitempty"`
+	Nota        *string            `json:"nota,omitempty"          maxLength:"500" doc:"Nota libre, máximo 500 caracteres"`
 	Combos      []ComboDTO         `json:"combos"`
 	Productos   []ProductoDTO      `json:"productos"`
 	Vendedores  []VendedorDTO      `json:"vendedores"`
@@ -159,7 +159,7 @@ type CrearVentaBody struct {
 	Montos      MontosDTO          `json:"montos"`
 	PlanCredito *PlanCreditoDTO    `json:"plan_credito,omitempty"`
 	DiaCobranza *DiaCobranzaDTO    `json:"dia_cobranza,omitempty"`
-	Nota        *string            `json:"nota,omitempty"`
+	Nota        *string            `json:"nota,omitempty"        maxLength:"500" doc:"Nota libre, máximo 500 caracteres"`
 	Combos      []ComboDTO         `json:"combos"`
 	Productos   []ProductoDTO      `json:"productos"             minItems:"1"`
 	Vendedores  []VendedorDTO      `json:"vendedores"            minItems:"1"`
@@ -173,7 +173,7 @@ type ActualizarHeaderBody struct {
 	Montos      MontosDTO       `json:"montos"`
 	PlanCredito *PlanCreditoDTO `json:"plan_credito,omitempty"`
 	DiaCobranza *DiaCobranzaDTO `json:"dia_cobranza,omitempty"`
-	Nota        *string         `json:"nota,omitempty"`
+	Nota        *string         `json:"nota,omitempty"         maxLength:"500" doc:"Nota libre, máximo 500 caracteres"`
 }
 
 // ActualizarClienteBody is the JSON body for PATCH /v2/ventas/{id}/cliente.
