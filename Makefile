@@ -1,4 +1,4 @@
-.PHONY: help setup build run dev test test-unit test-integration test-all test-mutation test-mutation-domain test-mutation-app test-mutation-ventas test-mutation-ventas-domain test-mutation-ventas-app test-mutation-httpdispatch lint lint-fix fmt generate migrate-up migrate-down migrate-create migrate-version clean db-test-up db-test-down db-test-reset db-test-prune db-test-url test-firebird test-firebird-all coverage-auth coverage-auth-full fb-migrate-up fb-migrate-down fb-migrate-status fb-seed-admin fb-snapshot fb-snapshot-list fb-restore fb-snapshot-delete fb-emu-up fb-emu-down fb-emu-logs
+.PHONY: help setup build run dev test test-unit test-integration test-all test-mutation test-mutation-domain test-mutation-app test-mutation-ventas test-mutation-ventas-domain test-mutation-ventas-app test-mutation-httpdispatch lint lint-fix fmt generate migrate-up migrate-down migrate-create migrate-version clean db-test-up db-test-down db-test-reset db-test-prune db-test-url test-firebird test-firebird-all test-firebird-ventas coverage-auth coverage-auth-full coverage-ventas coverage-ventas-full precommit-strict fb-migrate-up fb-migrate-down fb-migrate-status fb-seed-admin fb-snapshot fb-snapshot-list fb-restore fb-snapshot-delete fb-emu-up fb-emu-down fb-emu-logs
 
 # ── Config ───────────────────────────────────────────────────────────
 APP_NAME      := msp-api
@@ -290,6 +290,27 @@ coverage-auth-full: ## Generate auth coverage INCLUDING Firebird integration tes
 	$(GO) tool cover -func=coverage-auth.out | tail -20
 	$(GO) tool cover -html=coverage-auth.out -o coverage-auth.html
 	@echo "✔ Full coverage report: coverage-auth.html"
+
+coverage-ventas: ## Generate per-package coverage report for the ventas module (unit only — domain + app)
+	$(GO) test ./internal/ventas/domain/... ./internal/ventas/app/... -count=1 -coverprofile=coverage-ventas.out -covermode=atomic
+	$(GO) tool cover -func=coverage-ventas.out | tail -25
+	$(GO) tool cover -html=coverage-ventas.out -o coverage-ventas.html
+	@echo "✔ Coverage report: coverage-ventas.html"
+
+coverage-ventas-full: ## Generate ventas coverage INCLUDING Firebird integration tests (requires FB_DATABASE)
+	@[ -n "$(FB_DATABASE)" ] || (echo "❌ FB_DATABASE not set — start mueblera-firebird and source .env first" && exit 1)
+	$(GO) test ./internal/ventas/... -count=1 -coverprofile=coverage-ventas.out -covermode=atomic -timeout 240s
+	$(GO) tool cover -func=coverage-ventas.out | tail -25
+	$(GO) tool cover -html=coverage-ventas.out -o coverage-ventas.html
+	@echo "✔ Full coverage report: coverage-ventas.html"
+
+precommit-strict: ## Full local quality gate before opening a PR — equivalent to a CI run
+	@# Strip ambient env so unit tests start from a clean slate (same as a
+	@# fresh CI worker). lefthook's test-firebird-ventas step still gets
+	@# .env via the nested `make` invocation which re-includes it.
+	@env -i HOME="$$HOME" PATH="$$PATH" USER="$$USER" lefthook run pre-push
+	@echo ""
+	@echo "✔ precommit-strict passed — safe to open PR"
 
 # ── Mutation testing (gremlins) ──────────────────────────────────────
 # Slow. Run on demand, not on every PR. Targets focus on packages with
