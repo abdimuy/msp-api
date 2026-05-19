@@ -875,13 +875,13 @@ func TestE2E_Firebird_IdempotencyKey_PATCH_Replays(t *testing.T) {
 // ─── B1: Unicode edge cases ────────────────────────────────────────────────
 
 // TestE2E_Firebird_UnicodeEdgeCases pins the domain contract for cliente
-// nombre against the WIN1252-charset Firebird connection. Domain validation
-// rejects characters that can't be persisted exactly (emoji, NUL byte,
-// supplementary planes) at the boundary, with a typed 422 — they never reach
-// the driver. Extended-Latin (WIN1252-representable) characters round-trip
-// exactly.
+// nombre against the UTF-8 Firebird connection. The MSP_* columns are
+// CHARACTER SET UTF8 so any valid UTF-8 character (including emoji, CJK,
+// extended Latin) round-trips cleanly. Only NUL bytes and ASCII control
+// characters (except tab/CR/LF) are rejected with a typed 422. The
+// WIN1252 framing no longer applies — the columns are on the UTF-8 schema.
 //
-//nolint:paralleltest // serial.
+//nolint:paralleltest // serial — shares one tx with rollback at end.
 func TestE2E_Firebird_UnicodeEdgeCases(t *testing.T) {
 	pool := e2eTestPool(t)
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
@@ -903,12 +903,13 @@ func TestE2E_Firebird_UnicodeEdgeCases(t *testing.T) {
 			return rec
 		}
 
-		t.Run("emoji rejected with 422", func(t *testing.T) {
+		t.Run("emoji accepted round-trip", func(t *testing.T) {
 			rec := post(t, "José 🎉")
-			require.Equal(t, http.StatusUnprocessableEntity, rec.Code,
-				"emoji must be rejected with 422 (not WIN1252-representable): %s", rec.Body.String())
-			assert.Contains(t, rec.Body.String(), "string_unsafe_chars",
-				"error code must identify the unsafe-chars rule")
+			require.Equal(t, http.StatusCreated, rec.Code,
+				"emoji must be accepted by UTF-8 columns: %s", rec.Body.String())
+			var created venthttp.VentaDTO
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+			assert.Equal(t, "José 🎉", created.Cliente.Nombre, "emoji must round-trip exactly")
 		})
 
 		t.Run("NUL byte rejected with 422", func(t *testing.T) {

@@ -95,9 +95,9 @@ func TestVentaRepo_Save_DuplicateVendedor_Errors(t *testing.T) {
 		now := testNow()
 		_, err := q.ExecContext(ctx,
 			`INSERT INTO MSP_VENTAS_VENDEDORES
-			 (ID, VENTA_ID, VENDEDOR_USUARIO_ID, VENDEDOR_EMAIL, VENDEDOR_NOMBRE,
+			 (ID, VENTA_ID, VENDEDOR_USUARIO_ID, VENDEDOR_EMAIL, VENDEDOR_NOMBRE, POSICION,
 			  CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY)
-			 VALUES (?, ?, ?, ?, 'Dupe', ?, ?, ?, ?)`,
+			 VALUES (?, ?, ?, ?, 'Dupe', 99, ?, ?, ?, ?)`,
 			uuid.New().String(), v.ID().String(), root.String(),
 			"dupe-"+uuid.NewString()+"@example.invalid",
 			now, now, root.String(), root.String(),
@@ -398,9 +398,9 @@ func TestVentaRepo_FindByID_MalformedComboUUID(t *testing.T) {
 			`INSERT INTO MSP_VENTAS_COMBOS
 			 (ID, VENTA_ID, NOMBRE_COMBO,
 			  PRECIO_ANUAL, PRECIO_CORTO_PLAZO, PRECIO_CONTADO,
-			  CANTIDAD, ALMACEN_ORIGEN_ID, ALMACEN_DESTINO_ID,
+			  CANTIDAD, ALMACEN_ORIGEN_ID, ALMACEN_DESTINO_ID, POSICION,
 			  CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY)
-			 VALUES (?, ?, 'malformed', 100, 100, 100, 1, 1, 2, ?, ?, ?, ?)`,
+			 VALUES (?, ?, 'malformed', 100, 100, 100, 1, 1, 2, 1, ?, ?, ?, ?)`,
 			badID, v.ID().String(), now, now, root.String(), root.String(),
 		)
 		require.NoError(t, err)
