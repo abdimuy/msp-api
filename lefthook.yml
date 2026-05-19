@@ -126,23 +126,18 @@ pre-push:
       # Run integration tests manually: INTEGRATION=1 go test ./...
       run: go test ./... -race -count=1 -short -timeout 180s
 
-    test-firebird-ventas:
+    test-firebird-all:
       glob: "*.go"
-      # Firebird integration suite for the venta creation flow — covers
-      # platform/firebird, platform/fbtestutil, ventas/infra/ventfb and
+      # Full Firebird integration suite — covers platform/firebird,
+      # platform/fbtestutil, auth/infra/firebird, ventas/infra/ventfb and
       # ventas/infra/venthttp. Make loads .env automatically, so
       # FB_DATABASE / FB_USER / FB_PASSWORD / FB_HOST / FB_CHARSET are
       # available without sourcing in the shell.
       #
-      # Why scoped to ventas + platform (not test-firebird-all): the auth
-      # module has pre-existing Firebird test failures unrelated to this
-      # gate (TestRolRepo_Save_DuplicateNombre etc.). Run those via
-      # `make test-firebird-all` on demand once they're fixed.
-      #
       # Requires the mueblera-firebird container to be running. To skip
       # this hook for a single push (e.g. offline / Docker stopped):
-      #   LEFTHOOK_EXCLUDE=test-firebird-ventas git push
-      run: make test-firebird-ventas
+      #   LEFTHOOK_EXCLUDE=test-firebird-all git push
+      run: make test-firebird-all
 
 # ── Commit-msg: enforce conventional-ish commits ────────────────────
 commit-msg:
