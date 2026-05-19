@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,17 +19,11 @@ type Cancelacion struct {
 
 // NewCancelacion validates and constructs a Cancelacion.
 func NewCancelacion(at time.Time, by uuid.UUID, reason string) (Cancelacion, error) {
-	reason = strings.TrimSpace(reason)
-	if reason == "" {
-		return Cancelacion{}, ErrReasonCancelacionRequerida
-	}
-	if len(reason) > maxCancelReasonLength {
-		return Cancelacion{}, ErrReasonCancelacionDemasiadoLarga
-	}
-	if err := validateSafeChars(reason); err != nil {
+	v, err := requireBounded(reason, maxCancelReasonLength, ErrReasonCancelacionRequerida, ErrReasonCancelacionDemasiadoLarga)
+	if err != nil {
 		return Cancelacion{}, err
 	}
-	return Cancelacion{at: at, by: by, reason: reason}, nil
+	return Cancelacion{at: at, by: by, reason: v}, nil
 }
 
 // HydrateCancelacion rebuilds a Cancelacion from persistence without

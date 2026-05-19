@@ -61,25 +61,24 @@ func parseNullUUIDColumn(column string, raw sql.NullString) (*uuid.UUID, error) 
 // a struct to keep the wide Scan call readable and to share the rebuild logic
 // across single-row and iteration callers.
 //
-// Fields declared as firebird.Win1252 correspond to NOT-NULL columns with
-// CHARACTER SET ISO8859_1 — the Win1252 scanner handles the encoding boundary.
-// Nullable ISO8859_1 columns remain sql.NullString; builder functions decode
-// their .String field through Win1252 when Valid.
+// All text columns in MSP_VENTAS are CHARACTER SET UTF8 (migration 000005);
+// the driver delivers them as Go strings already in UTF-8, so plain string /
+// sql.NullString is the right scan target — no custom decoder.
 type ventaRowRaw struct {
 	// Identity
 	idRaw string
 
-	// Cliente snapshot — ISO8859_1 text columns use Win1252 scanner.
-	nombreCliente    firebird.Win1252 // NOMBRE_CLIENTE CHARACTER SET ISO8859_1
-	telefono         sql.NullString   // ASCII-safe (digits/symbols); no encoding needed.
-	avalOResponsable sql.NullString   // nullable; decoded through Win1252 when Valid
+	// Cliente snapshot
+	nombreCliente    string
+	telefono         sql.NullString
+	avalOResponsable sql.NullString
 
-	// Dirección — ISO8859_1 text columns use Win1252 scanner.
-	calle          firebird.Win1252 // CALLE CHARACTER SET ISO8859_1
-	numeroExterior sql.NullString   // nullable; decoded through Win1252 when Valid
-	colonia        firebird.Win1252 // COLONIA CHARACTER SET ISO8859_1
-	poblacion      firebird.Win1252 // POBLACION CHARACTER SET ISO8859_1
-	ciudad         firebird.Win1252 // CIUDAD CHARACTER SET ISO8859_1
+	// Dirección
+	calle          string
+	numeroExterior sql.NullString
+	colonia        string
+	poblacion      string
+	ciudad         string
 	zonaClienteID  sql.NullInt32
 
 	// GPS
@@ -185,12 +184,7 @@ func assembleVenta(
 	}
 	var nota *string
 	if r.nota.Valid {
-		// NOTA is CHARACTER SET ISO8859_1 — decode Win1252 → UTF-8.
-		var w firebird.Win1252
-		if err := w.Scan(r.nota.String); err != nil {
-			return nil, err
-		}
-		v := string(w)
+		v := r.nota.String
 		nota = &v
 	}
 	var clienteID *int
@@ -323,16 +317,11 @@ func buildClienteSnapshot(r *ventaRowRaw) (domain.ClienteSnapshot, error) {
 	}
 	var avalOpt *domain.NombreCliente
 	if r.avalOResponsable.Valid {
-		// AVAL_O_RESPONSABLE is CHARACTER SET ISO8859_1 — decode Win1252 → UTF-8.
-		var w firebird.Win1252
-		if err := w.Scan(r.avalOResponsable.String); err != nil {
-			return domain.ClienteSnapshot{}, err
-		}
-		a := domain.HydrateNombreCliente(string(w))
+		a := domain.HydrateNombreCliente(r.avalOResponsable.String)
 		avalOpt = &a
 	}
 	return domain.HydrateClienteSnapshot(domain.NewClienteSnapshotParams{
-		Nombre:   domain.HydrateNombreCliente(string(r.nombreCliente)),
+		Nombre:   domain.HydrateNombreCliente(r.nombreCliente),
 		Telefono: telOpt,
 		Aval:     avalOpt,
 	}), nil
@@ -341,12 +330,7 @@ func buildClienteSnapshot(r *ventaRowRaw) (domain.ClienteSnapshot, error) {
 func buildDireccion(r *ventaRowRaw) (domain.Direccion, error) {
 	var numExt *string
 	if r.numeroExterior.Valid {
-		// NUMERO_EXTERIOR is CHARACTER SET ISO8859_1 — decode Win1252 → UTF-8.
-		var w firebird.Win1252
-		if err := w.Scan(r.numeroExterior.String); err != nil {
-			return domain.Direccion{}, err
-		}
-		v := string(w)
+		v := r.numeroExterior.String
 		numExt = &v
 	}
 	var zonaID *int
@@ -355,11 +339,11 @@ func buildDireccion(r *ventaRowRaw) (domain.Direccion, error) {
 		zonaID = &v
 	}
 	return domain.HydrateDireccion(domain.NewDireccionParams{
-		Calle:          string(r.calle),
+		Calle:          r.calle,
 		NumeroExterior: numExt,
-		Colonia:        string(r.colonia),
-		Poblacion:      string(r.poblacion),
-		Ciudad:         string(r.ciudad),
+		Colonia:        r.colonia,
+		Poblacion:      r.poblacion,
+		Ciudad:         r.ciudad,
 		ZonaClienteID:  zonaID,
 	}), nil
 }
@@ -412,12 +396,7 @@ func buildCancelacion(
 	}
 	reason := ""
 	if r.cancelReason.Valid {
-		// CANCEL_REASON is CHARACTER SET ISO8859_1 — decode Win1252 → UTF-8.
-		var w firebird.Win1252
-		if err := w.Scan(r.cancelReason.String); err != nil {
-			return nil, err
-		}
-		reason = string(w)
+		reason = r.cancelReason.String
 	}
 	c := domain.HydrateCancelacion(canceledAt.Time, *canceledBy, reason)
 	return &c, nil
@@ -427,7 +406,7 @@ func buildCancelacion(
 func scanCombo(s rowScanner) (*domain.Combo, error) {
 	var (
 		idRaw                         string
-		nombre                        firebird.Win1252 // NOMBRE_COMBO CHARACTER SET ISO8859_1
+		nombre                        string
 		anualRaw, cortoRaw, conRaw    any
 		cantidadRaw                   any
 		almacenOrigen, almacenDestino int
@@ -480,7 +459,7 @@ func scanCombo(s rowScanner) (*domain.Combo, error) {
 	}
 	return domain.HydrateCombo(domain.HydrateComboParams{
 		ID:             id,
-		Nombre:         string(nombre),
+		Nombre:         nombre,
 		Precios:        domain.HydrateMontoSnapshot(anual, corto, contado),
 		Cantidad:       cantidad,
 		AlmacenOrigen:  almacenOrigen,
@@ -499,7 +478,7 @@ func scanProducto(s rowScanner) (*domain.Producto, error) {
 	var (
 		idRaw                         string
 		articuloID                    int
-		articulo                      firebird.Win1252 // ARTICULO CHARACTER SET ISO8859_1
+		articulo                      string
 		cantidadRaw                   any
 		anualRaw, cortoRaw, conRaw    any
 		comboIDRaw                    sql.NullString
@@ -567,7 +546,7 @@ func scanProducto(s rowScanner) (*domain.Producto, error) {
 	return domain.HydrateProducto(domain.HydrateProductoParams{
 		ID:             id,
 		ArticuloID:     articuloID,
-		Articulo:       string(articulo),
+		Articulo:       articulo,
 		Cantidad:       cantidad,
 		Precios:        domain.HydrateMontoSnapshot(anual, corto, contado),
 		ComboID:        comboID,
@@ -585,7 +564,7 @@ func scanVendedor(s rowScanner) (*domain.Vendedor, error) {
 	var (
 		idRaw, usuarioIDRaw        string
 		email                      string
-		nombre                     firebird.Win1252 // VENDEDOR_NOMBRE CHARACTER SET ISO8859_1
+		nombre                     string
 		createdAtRaw, updatedAtRaw any
 		createdByRaw, updatedByRaw string
 	)
@@ -620,7 +599,7 @@ func scanVendedor(s rowScanner) (*domain.Vendedor, error) {
 		return nil, err
 	}
 	snap := domain.HydrateVendedorSnapshot(domain.NewVendedorSnapshotParams{
-		UsuarioID: usuarioID, Email: email, Nombre: string(nombre),
+		UsuarioID: usuarioID, Email: email, Nombre: nombre,
 	})
 	return domain.HydrateVendedor(domain.HydrateVendedorParams{
 		ID:        id,
@@ -671,12 +650,7 @@ func scanImagen(s rowScanner) (*domain.Imagen, error) {
 	}
 	var descPtr *string
 	if descripcion.Valid {
-		// DESCRIPCION is CHARACTER SET ISO8859_1 — decode Win1252 → UTF-8.
-		var w firebird.Win1252
-		if err := w.Scan(descripcion.String); err != nil {
-			return nil, err
-		}
-		v := string(w)
+		v := descripcion.String
 		descPtr = &v
 	}
 	return domain.HydrateImagen(domain.HydrateImagenParams{

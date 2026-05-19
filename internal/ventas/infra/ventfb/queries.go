@@ -98,14 +98,18 @@ INSERT INTO MSP_VENTAS_COMBOS
     (ID, VENTA_ID, NOMBRE_COMBO,
      PRECIO_ANUAL, PRECIO_CORTO_PLAZO, PRECIO_CONTADO,
      CANTIDAD, ALMACEN_ORIGEN_ID, ALMACEN_DESTINO_ID,
+     POSICION,
      CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
+// selectCombosByVenta orders by POSICION (1,2,3…) — the explicit insertion
+// order stamped by the app at INSERT time. CREATED_AT is identical across
+// children of one venta (same transaction), so it cannot be the sort key.
 const selectCombosByVenta = `
 SELECT ` + comboColumns + `
 FROM MSP_VENTAS_COMBOS
 WHERE VENTA_ID = ?
-ORDER BY CREATED_AT, ID`
+ORDER BY POSICION`
 
 const deleteCombosByVenta = `DELETE FROM MSP_VENTAS_COMBOS WHERE VENTA_ID = ?`
 
@@ -121,14 +125,16 @@ INSERT INTO MSP_VENTAS_PRODUCTOS
     (ID, VENTA_ID, ARTICULO_ID, ARTICULO, CANTIDAD,
      PRECIO_ANUAL, PRECIO_CORTO_PLAZO, PRECIO_CONTADO,
      COMBO_ID, ALMACEN_ORIGEN_ID, ALMACEN_DESTINO_ID,
+     POSICION,
      CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
+// selectProductosByVenta orders by POSICION — see selectCombosByVenta.
 const selectProductosByVenta = `
 SELECT ` + productoColumns + `
 FROM MSP_VENTAS_PRODUCTOS
 WHERE VENTA_ID = ?
-ORDER BY CREATED_AT, ID`
+ORDER BY POSICION`
 
 const deleteProductosByVenta = `DELETE FROM MSP_VENTAS_PRODUCTOS WHERE VENTA_ID = ?`
 
@@ -140,14 +146,16 @@ const vendedorColumns = `ID, VENDEDOR_USUARIO_ID, VENDEDOR_EMAIL, VENDEDOR_NOMBR
 const insertVendedor = `
 INSERT INTO MSP_VENTAS_VENDEDORES
     (ID, VENTA_ID, VENDEDOR_USUARIO_ID, VENDEDOR_EMAIL, VENDEDOR_NOMBRE,
+     POSICION,
      CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
+// selectVendedoresByVenta orders by POSICION — see selectCombosByVenta.
 const selectVendedoresByVenta = `
 SELECT ` + vendedorColumns + `
 FROM MSP_VENTAS_VENDEDORES
 WHERE VENTA_ID = ?
-ORDER BY CREATED_AT, ID`
+ORDER BY POSICION`
 
 const deleteVendedoresByVenta = `DELETE FROM MSP_VENTAS_VENDEDORES WHERE VENTA_ID = ?`
 

@@ -2,8 +2,6 @@
 package domain
 
 import (
-	"strings"
-
 	platform "github.com/abdimuy/msp-api/internal/platform/domain"
 )
 
@@ -19,19 +17,15 @@ const (
 // modules; here we only need a snapshot string.
 type NombreCliente struct{ value string }
 
-// NewNombreCliente validates and constructs a NombreCliente.
+// NewNombreCliente validates and constructs a NombreCliente. The input is
+// trimmed, normalized to Unicode NFC, length-checked (in codepoints, not
+// bytes), and screened for NUL / ASCII control characters.
 func NewNombreCliente(s string) (NombreCliente, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return NombreCliente{}, ErrNombreClienteRequerido
-	}
-	if len(s) > maxNombreClienteLength {
-		return NombreCliente{}, ErrNombreClienteDemasiadoLargo
-	}
-	if err := validateSafeChars(s); err != nil {
+	v, err := requireBounded(s, maxNombreClienteLength, ErrNombreClienteRequerido, ErrNombreClienteDemasiadoLargo)
+	if err != nil {
 		return NombreCliente{}, err
 	}
-	return NombreCliente{value: s}, nil
+	return NombreCliente{value: v}, nil
 }
 
 // HydrateNombreCliente rebuilds a NombreCliente from persistence without

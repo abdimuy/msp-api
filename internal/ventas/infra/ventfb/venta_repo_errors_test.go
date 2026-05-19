@@ -35,10 +35,10 @@ func snapshotVenta(ctx context.Context, t *testing.T, pool *firebird.Pool, id uu
 	t.Helper()
 	q := firebird.GetQuerier(ctx, pool.DB)
 	var (
-		calle    firebird.Win1252
+		calle    string
 		anyVal   any
 		notaFlag int
-		nota     firebird.Win1252
+		nota     string
 		updBy    string
 		lat, lng float64
 	)
@@ -53,11 +53,10 @@ func snapshotVenta(ctx context.Context, t *testing.T, pool *firebird.Pool, id uu
 	require.NoError(t, err)
 	var notaPtr *string
 	if notaFlag == 0 {
-		s := string(nota)
-		notaPtr = &s
+		notaPtr = &nota
 	}
 	return ventaRowSnapshot{
-		calle:  string(calle),
+		calle:  calle,
 		monto:  d.String(),
 		nota:   notaPtr,
 		updBy:  updBy,

@@ -132,6 +132,7 @@ Read `docs/module-standards/MODULE_TEMPLATE.md` FIRST. Then for the specifics:
 - `docs/module-standards/CQRS_PATTERN.md` — when to split commands and queries across files.
 - `docs/module-standards/HUMA_WIRING.md` — Huma + chi composition, DTO conventions, multipart.
 - `docs/module-standards/DATETIME_HANDLING.md` — **OBLIGATORIO**. Cómo manejar fechas en domain/app/infra y el contrato RFC3339 UTC con el frontend. UTC en Go, `firebird.ToWallClock` al escribir, `firebird.ScanUTCTime` al leer.
+- `docs/module-standards/ENCODING_HANDLING.md` — **OBLIGATORIO**. UTF-8 everywhere. Columnas `MSP_*` son `CHARACTER SET UTF8`; el adapter Microsip aísla las tablas legacy. NFC en domain, sin `firebird.Win1252` ni `EncodeWin1252` para tablas nuestras.
 - `docs/module-standards/TESTING_REQUIREMENTS.md` — coverage gates, security sweep, mutation testing.
 
 The `auth` module is the reference for simple modules (single aggregate, no children, chi + manual openapi.yaml).

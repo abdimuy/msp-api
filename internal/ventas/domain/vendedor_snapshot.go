@@ -1,8 +1,6 @@
 package domain
 
 import (
-	"strings"
-
 	"github.com/google/uuid"
 )
 
@@ -31,24 +29,12 @@ type NewVendedorSnapshotParams struct {
 
 // NewVendedorSnapshot validates and constructs a VendedorSnapshot.
 func NewVendedorSnapshot(p NewVendedorSnapshotParams) (VendedorSnapshot, error) {
-	email := strings.TrimSpace(p.Email)
-	if email == "" {
-		return VendedorSnapshot{}, ErrVendedorEmailRequerido
-	}
-	if len(email) > maxVendedorEmailLength {
-		return VendedorSnapshot{}, ErrVendedorEmailDemasiadoLargo
-	}
-	if err := validateSafeChars(email); err != nil {
+	email, err := requireBounded(p.Email, maxVendedorEmailLength, ErrVendedorEmailRequerido, ErrVendedorEmailDemasiadoLargo)
+	if err != nil {
 		return VendedorSnapshot{}, err
 	}
-	nombre := strings.TrimSpace(p.Nombre)
-	if nombre == "" {
-		return VendedorSnapshot{}, ErrVendedorNombreRequerido
-	}
-	if len(nombre) > maxVendedorNombreLength {
-		return VendedorSnapshot{}, ErrVendedorNombreDemasiadoLargo
-	}
-	if err := validateSafeChars(nombre); err != nil {
+	nombre, err := requireBounded(p.Nombre, maxVendedorNombreLength, ErrVendedorNombreRequerido, ErrVendedorNombreDemasiadoLargo)
+	if err != nil {
 		return VendedorSnapshot{}, err
 	}
 	return VendedorSnapshot{usuarioID: p.UsuarioID, email: email, nombre: nombre}, nil

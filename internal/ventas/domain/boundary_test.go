@@ -32,13 +32,15 @@ func TestNombreCliente_BoundaryLengths(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "nombre_cliente_too_long", ae.Code)
 
-	// Multi-byte runes: "é" is 2 bytes in UTF-8. 100 of them = 200 bytes OK;
-	// 101 of them = 202 bytes → reject. This documents byte-not-rune semantics.
-	_, err = domain.NewNombreCliente(strings.Repeat("é", 100))
-	require.NoError(t, err, "100 runes × 2 bytes = 200 bytes must be accepted")
+	// Post migration 000005 (UTF8 columns), the limit is measured in Unicode
+	// codepoints, not bytes — matching CHARACTER SET UTF8(N) column semantics.
+	// "é" is 1 codepoint regardless of UTF-8 byte length, so 200 é's must be
+	// accepted and 201 must be rejected.
+	_, err = domain.NewNombreCliente(strings.Repeat("é", 200))
+	require.NoError(t, err, "200 codepoints must be accepted regardless of byte width")
 
-	_, err = domain.NewNombreCliente(strings.Repeat("é", 101))
-	require.Error(t, err, "101 runes × 2 bytes = 202 bytes must be rejected")
+	_, err = domain.NewNombreCliente(strings.Repeat("é", 201))
+	require.Error(t, err, "201 codepoints must be rejected")
 	ae, ok = apperror.As(err)
 	require.True(t, ok)
 	assert.Equal(t, "nombre_cliente_too_long", ae.Code)

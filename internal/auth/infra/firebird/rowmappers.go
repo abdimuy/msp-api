@@ -39,10 +39,13 @@ func parseUUIDColumn(column, raw string) (uuid.UUID, error) {
 
 // usuarioFromRow rebuilds a Usuario entity from one scanned row in the
 // MSP_USUARIOS layout. Order of columns must match usuarioColumns.
+//
+// All text columns are CHARACTER SET UTF8 (migration 000005); the driver
+// delivers UTF-8 Go strings directly.
 func usuarioFromRow(s rowScanner) (*domain.Usuario, error) {
 	var (
 		idRaw, fuid, email         string
-		nombre                     firebird.Win1252 // CHARACTER SET ISO8859_1 — Win1252 boundary
+		nombre                     string
 		telefono                   sql.NullString
 		almacenID                  sql.NullInt32
 		activo                     bool
@@ -93,7 +96,7 @@ func usuarioFromRow(s rowScanner) (*domain.Usuario, error) {
 		ID:          id,
 		FirebaseUID: domain.HydrateFirebaseUID(fuid),
 		Email:       domain.HydrateEmail(email),
-		Nombre:      domain.HydrateNombre(string(nombre)),
+		Nombre:      domain.HydrateNombre(nombre),
 		Telefono:    telOpt,
 		AlmacenID:   almacenOpt,
 		Activo:      activo,
@@ -109,8 +112,8 @@ func usuarioFromRow(s rowScanner) (*domain.Usuario, error) {
 func rolFromRow(s rowScanner) (*domain.Rol, error) {
 	var (
 		idRaw                      string
-		nombre                     firebird.Win1252 // CHARACTER SET ISO8859_1 — Win1252 boundary
-		descRaw                    sql.NullString   // nullable; decoded below
+		nombre                     string
+		descRaw                    sql.NullString
 		inmutable, activo          bool
 		createdAtRaw, updatedAtRaw any
 		createdByRaw, updatedByRaw string
@@ -144,21 +147,15 @@ func rolFromRow(s rowScanner) (*domain.Rol, error) {
 		return nil, err
 	}
 
-	// DESCRIPCION is nullable (CHARACTER SET ISO8859_1). Decode the string
-	// through Win1252 only when the value is present.
 	var descOpt *string
 	if descRaw.Valid {
-		var w firebird.Win1252
-		if scanErr := w.Scan(descRaw.String); scanErr != nil {
-			return nil, scanErr
-		}
-		d := string(w)
+		d := descRaw.String
 		descOpt = &d
 	}
 
 	return domain.HydrateRol(domain.HydrateRolParams{
 		ID:          id,
-		Nombre:      string(nombre),
+		Nombre:      nombre,
 		Description: descOpt,
 		Inmutable:   inmutable,
 		Activo:      activo,
@@ -175,12 +172,12 @@ func rolFromRow(s rowScanner) (*domain.Rol, error) {
 func permisoFromRow(s rowScanner) (*domain.Permiso, error) {
 	var (
 		codigo      string
-		description firebird.Win1252 // CHARACTER SET ISO8859_1 — Win1252 boundary
-		categoria   firebird.Win1252 // CHARACTER SET ISO8859_1 — Win1252 boundary
+		description string
+		categoria   string
 	)
 	if err := s.Scan(&codigo, &description, &categoria); err != nil {
 		return nil, err
 	}
-	p := domain.HydratePermiso(domain.Permission(codigo), string(description), string(categoria))
+	p := domain.HydratePermiso(domain.Permission(codigo), description, categoria)
 	return &p, nil
 }

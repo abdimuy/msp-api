@@ -3,30 +3,49 @@ package domain
 
 import (
 	"strings"
+	"unicode/utf8"
 
-	"golang.org/x/text/encoding/charmap"
+	"golang.org/x/text/unicode/norm"
 )
 
-// validateSafeChars rejects strings that cannot be persisted safely through
-// the Firebird WIN1252 connection. Two failure modes:
+// validateSafeChars rejects strings that would corrupt persistence:
 //
-//  1. NUL byte (U+0000) — the driver may silently truncate at the first NUL
-//     or pass through corrupt bytes; we reject upfront so user input never
-//     reaches the column in that shape.
-//  2. Any rune outside WIN1252's codable set (e.g., emoji, CJK, supplementary
-//     planes). The driver lossy-encodes such runes to '?' or worse — we
-//     reject upfront so the persisted name matches the submitted one.
+//  1. NUL byte (U+0000) — string terminators in many drivers and external
+//     systems; safer to forbid outright than reason about every interop layer.
+//  2. ASCII control characters U+0001..U+001F except tab (U+0009), line feed
+//     (U+000A), and carriage return (U+000D), plus U+007F (DEL). They have no
+//     legitimate place in user-facing form fields and break diff/grep tooling.
+//  3. Invalid UTF-8 byte sequences — Go strings can technically hold these;
+//     reject defensively.
 //
-// This check sits behind requireBounded / trimOptionalBounded so every
-// string-typed field in the ventas aggregate benefits without per-VO code
-// duplication.
+// Everything else — accents, em-dash, smart quotes, emoji, kanji, hebreo —
+// is allowed. The MSP_* text columns are CHARACTER SET UTF8 (migration 000005)
+// so anything Unicode-valid round-trips byte-equal.
+//
+// The check sits behind requireBounded / trimOptionalBounded so every
+// string-typed field in the ventas aggregate runs through it.
 func validateSafeChars(s string) error {
+	if !utf8.ValidString(s) {
+		return ErrStringUnsafeChars
+	}
 	if strings.ContainsRune(s, 0) {
 		return ErrStringUnsafeChars
 	}
-	enc := charmap.Windows1252.NewEncoder()
-	if _, err := enc.String(s); err != nil {
-		return ErrStringUnsafeChars
+	for _, r := range s {
+		// Tab/LF/CR are the only control chars users legitimately type.
+		if r == '\t' || r == '\n' || r == '\r' {
+			continue
+		}
+		if r < 0x20 || r == 0x7F {
+			return ErrStringUnsafeChars
+		}
 	}
 	return nil
 }
+
+// normalizeNFC returns s in Unicode Normalization Form C — the canonical
+// composed form. Without normalization, the same visual character (e.g. "é")
+// can be encoded two ways (single codepoint U+00E9 vs "e" + combining acute
+// U+0301), producing strings that LOOK identical but compare !=. Calling NFC
+// at the domain boundary kills that class of silent equality bugs.
+func normalizeNFC(s string) string { return norm.NFC.String(s) }

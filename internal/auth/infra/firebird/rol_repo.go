@@ -46,19 +46,10 @@ func (r *RolRepo) Save(ctx context.Context, rol *domain.Rol) error {
 // rolInsertArgs flattens a rol entity into the parameter list for insertRol,
 // keeping Save short enough for funlen.
 func rolInsertArgs(rol *domain.Rol) ([]any, error) {
-	// NOMBRE and DESCRIPCION are CHARACTER SET ISO8859_1 — encode UTF-8 → Win1252.
-	nombreEnc, err := firebird.EncodeWin1252(rol.Nombre())
-	if err != nil {
-		return nil, firebird.MapError(err)
-	}
-	descEnc, err := firebird.EncodeWin1252Ptr(rol.Description())
-	if err != nil {
-		return nil, firebird.MapError(err)
-	}
 	return []any{
 		rol.ID().String(),
-		nombreEnc,
-		descEnc,
+		rol.Nombre(),
+		nullableStringArg(rol.Description()),
 		rol.Inmutable(),
 		rol.Activo(),
 		firebird.ToWallClock(rol.CreatedAt()),
@@ -68,24 +59,22 @@ func rolInsertArgs(rol *domain.Rol) ([]any, error) {
 	}, nil
 }
 
+// nullableStringArg returns *s as driver arg, or nil for SQL NULL.
+func nullableStringArg(s *string) any {
+	if s == nil {
+		return nil
+	}
+	return *s
+}
+
 // Update writes back the mutable columns of r.
 func (r *RolRepo) Update(ctx context.Context, rol *domain.Rol) error {
 	q := firebird.GetQuerier(ctx, r.pool.DB)
 
-	// NOMBRE and DESCRIPCION are CHARACTER SET ISO8859_1 — encode UTF-8 → Win1252.
-	nombreEnc, err := firebird.EncodeWin1252(rol.Nombre())
-	if err != nil {
-		return firebird.MapError(err)
-	}
-	descEnc, err := firebird.EncodeWin1252Ptr(rol.Description())
-	if err != nil {
-		return firebird.MapError(err)
-	}
-
 	res, err := q.ExecContext(
 		ctx, updateRol,
-		nombreEnc,
-		descEnc,
+		rol.Nombre(),
+		nullableStringArg(rol.Description()),
 		rol.Inmutable(),
 		rol.Activo(),
 		firebird.ToWallClock(rol.UpdatedAt()),

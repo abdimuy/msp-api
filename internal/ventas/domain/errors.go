@@ -380,12 +380,11 @@ var (
 		"la nota excede 500 caracteres",
 	)
 	// ErrStringUnsafeChars is returned when a string field contains a NUL
-	// byte or characters not representable in the Firebird WIN1252 charset
-	// (emoji, CJK, etc.). Rejecting at the boundary prevents silent
-	// corruption during persistence.
+	// byte or ASCII control characters (other than tab/CR/LF). The columns
+	// accept any valid UTF-8 character including emoji, CJK, etc.
 	ErrStringUnsafeChars = apperror.NewValidation(
 		"string_unsafe_chars",
-		"el texto contiene caracteres no permitidos",
+		"el texto contiene caracteres de control no permitidos",
 	)
 	// ErrMontoDemasiadosDecimales is returned when a monetary value carries
 	// more than 2 decimal places — the storage column is NUMERIC(p, 2) and

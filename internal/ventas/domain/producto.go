@@ -2,7 +2,6 @@
 package domain
 
 import (
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -50,14 +49,8 @@ type NewProductoParams struct {
 
 // newProducto validates and constructs a Producto. Package-private.
 func newProducto(p NewProductoParams) (*Producto, error) {
-	articulo := strings.TrimSpace(p.Articulo)
-	if articulo == "" {
-		return nil, ErrProductoArticuloRequerido
-	}
-	if len(articulo) > maxArticuloNombreLength {
-		return nil, ErrProductoArticuloDemasiadoLargo
-	}
-	if err := validateSafeChars(articulo); err != nil {
+	articulo, err := requireBounded(p.Articulo, maxArticuloNombreLength, ErrProductoArticuloRequerido, ErrProductoArticuloDemasiadoLargo)
+	if err != nil {
 		return nil, err
 	}
 	if p.Cantidad.Sign() <= 0 {

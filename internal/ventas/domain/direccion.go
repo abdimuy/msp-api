@@ -94,14 +94,15 @@ func (d Direccion) Ciudad() string { return d.ciudad }
 // ZonaClienteID returns the cliente zone identifier when set.
 func (d Direccion) ZonaClienteID() *int { return d.zonaClienteID }
 
-// requireBounded trims s, rejects empty, rejects strings longer than max,
-// and rejects strings carrying unsafe characters (NUL or non-WIN1252 runes).
+// requireBounded trims s, normalizes to Unicode NFC, rejects empty, rejects
+// strings longer than max (in runes, not bytes), and rejects strings carrying
+// unsafe characters (NUL or other ASCII control chars).
 func requireBounded(s string, maxLen int, errRequired, errTooLong error) (string, error) {
-	s = strings.TrimSpace(s)
+	s = normalizeNFC(strings.TrimSpace(s))
 	if s == "" {
 		return "", errRequired
 	}
-	if len(s) > maxLen {
+	if utf8RuneLen(s) > maxLen {
 		return "", errTooLong
 	}
 	if err := validateSafeChars(s); err != nil {
@@ -110,22 +111,33 @@ func requireBounded(s string, maxLen int, errRequired, errTooLong error) (string
 	return s, nil
 }
 
-// trimOptionalBounded trims an optional pointer string. A nil input or a
-// pointer to an all-whitespace string both yield nil output. Non-blank
-// inputs are also screened for unsafe characters.
+// trimOptionalBounded trims an optional pointer string, normalizes to NFC,
+// and applies the same length+safety checks as requireBounded. A nil input or
+// pointer to a blank string both yield nil output.
 func trimOptionalBounded(p *string, maxLen int, errTooLong error) (*string, error) {
 	if p == nil {
 		return nil, nil //nolint:nilnil // optional pointer pattern: nil ptr + nil err means "not provided".
 	}
-	trimmed := strings.TrimSpace(*p)
+	trimmed := normalizeNFC(strings.TrimSpace(*p))
 	if trimmed == "" {
 		return nil, nil //nolint:nilnil // optional pointer pattern: blank input normalizes to "not provided".
 	}
-	if len(trimmed) > maxLen {
+	if utf8RuneLen(trimmed) > maxLen {
 		return nil, errTooLong
 	}
 	if err := validateSafeChars(trimmed); err != nil {
 		return nil, err
 	}
 	return &trimmed, nil
+}
+
+// utf8RuneLen returns the number of Unicode codepoints in s. Used instead of
+// len(s) (which counts bytes) for max-length checks against column widths
+// declared in CHARACTER SET UTF8 — those are in characters, not bytes.
+func utf8RuneLen(s string) int {
+	n := 0
+	for range s {
+		n++
+	}
+	return n
 }

@@ -10,7 +10,6 @@ package ventfb
 
 import (
 	"database/sql"
-	"database/sql/driver"
 	"errors"
 	"fmt"
 	"reflect"
@@ -250,7 +249,7 @@ func comboRow(t *testing.T) []any {
 	now := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
 	return []any{
 		uuid.New().String(),                 // ID
-		mustWin1252(t, "Combo Especial ñá"), // NOMBRE_COMBO (Win1252 bytes)
+		utf8Bytes(t, "Combo Especial ñá"),   // NOMBRE_COMBO (Win1252 bytes)
 		decimal.RequireFromString("100.50"), // PRECIO_ANUAL
 		decimal.RequireFromString("90.25"),  // PRECIO_CORTO_PLAZO
 		decimal.RequireFromString("80.00"),  // PRECIO_CONTADO
@@ -264,19 +263,10 @@ func comboRow(t *testing.T) []any {
 	}
 }
 
-// mustWin1252 returns the Windows-1252 encoded bytes of s. Used to feed
-// realistic raw bytes to columns that the mapper decodes through Win1252.
-func mustWin1252(t *testing.T, s string) []byte {
-	t.Helper()
-	v, err := firebird.Win1252(s).Value()
-	require.NoError(t, err)
-	if v == nil {
-		return nil
-	}
-	b, ok := v.([]byte)
-	require.True(t, ok)
-	return b
-}
+// utf8Bytes returns the raw UTF-8 bytes for s. Kept as a helper for tests that
+// want to assert byte-level identity through the rowmapper — post UTF8 column
+// migration the bytes are just plain UTF-8.
+func utf8Bytes(_ *testing.T, s string) string { return s }
 
 func TestScanCombo_Happy(t *testing.T) {
 	t.Parallel()
@@ -326,7 +316,7 @@ func productoRow(t *testing.T) []any {
 	return []any{
 		uuid.New().String(),                 // ID
 		100,                                 // ARTICULO_ID
-		mustWin1252(t, "Mesa redonda café"), // ARTICULO
+		utf8Bytes(t, "Mesa redonda café"),   // ARTICULO
 		decimal.RequireFromString("3.0000"), // CANTIDAD
 		decimal.RequireFromString("200.00"), // PRECIO_ANUAL
 		decimal.RequireFromString("180.00"), // PRECIO_CORTO_PLAZO
@@ -394,7 +384,7 @@ func TestScanVendedor_Win1252Decoded(t *testing.T) {
 		uuid.New().String(),
 		uuid.New().String(),
 		"vendedor@muebleriamsp.mx",
-		mustWin1252(t, "Vendedor Núñez"),
+		utf8Bytes(t, "Vendedor Núñez"),
 		now, now,
 		uuid.New().String(), uuid.New().String(),
 	}
@@ -438,7 +428,7 @@ func TestScanImagen_NullDescripcion(t *testing.T) {
 func TestScanImagen_DescripcionWin1252Decoded(t *testing.T) {
 	t.Parallel()
 	row := imagenRow(t)
-	row[5] = sql.NullString{String: string(mustWin1252(t, "Recibo de cobranza ñ")), Valid: true}
+	row[5] = sql.NullString{String: string(utf8Bytes(t, "Recibo de cobranza ñ")), Valid: true}
 	img, err := scanImagen(&mockRowScanner{values: row})
 	require.NoError(t, err)
 	require.NotNil(t, img.Descripcion())
@@ -463,14 +453,14 @@ func completeVentaRowRaw(t *testing.T) *ventaRowRaw {
 	now := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
 	return &ventaRowRaw{
 		idRaw:              uuid.New().String(),
-		nombreCliente:      firebird.Win1252("Cliente Núñez"),
+		nombreCliente:      "Cliente Núñez",
 		telefono:           sql.NullString{Valid: false},
 		avalOResponsable:   sql.NullString{Valid: false},
-		calle:              firebird.Win1252("Av. Reforma"),
+		calle:              "Av. Reforma",
 		numeroExterior:     sql.NullString{Valid: false},
-		colonia:            firebird.Win1252("Centro"),
-		poblacion:          firebird.Win1252("CDMX"),
-		ciudad:             firebird.Win1252("CDMX"),
+		colonia:            "Centro",
+		poblacion:          "CDMX",
+		ciudad:             "CDMX",
 		zonaClienteID:      sql.NullInt32{Valid: false},
 		latitud:            19.4326,
 		longitud:           -99.1332,
@@ -532,7 +522,7 @@ func TestAssembleVenta_NotaWin1252DecodedWhenValid(t *testing.T) {
 	// Feed Win1252 bytes (as string) to mimic what the driver hands to
 	// sql.NullString from an ISO8859_1 column — assembleVenta decodes through
 	// firebird.Win1252.Scan.
-	r.nota = sql.NullString{String: string(mustWin1252(t, "Una nota con ñ y é")), Valid: true}
+	r.nota = sql.NullString{String: string(utf8Bytes(t, "Una nota con ñ y é")), Valid: true}
 	v, err := assembleVenta(r, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, v.Nota())
@@ -552,10 +542,10 @@ func TestAssembleVenta_OptionalClienteIDPropagates(t *testing.T) {
 func TestAssembleVenta_DireccionAndOptionalsPreserved(t *testing.T) {
 	t.Parallel()
 	r := completeVentaRowRaw(t)
-	r.numeroExterior = sql.NullString{String: string(mustWin1252(t, "42-B")), Valid: true}
+	r.numeroExterior = sql.NullString{String: string(utf8Bytes(t, "42-B")), Valid: true}
 	r.zonaClienteID = sql.NullInt32{Int32: 7, Valid: true}
 	r.telefono = sql.NullString{String: "5551234567", Valid: true}
-	r.avalOResponsable = sql.NullString{String: string(mustWin1252(t, "Avalista Pérez")), Valid: true}
+	r.avalOResponsable = sql.NullString{String: string(utf8Bytes(t, "Avalista Pérez")), Valid: true}
 	v, err := assembleVenta(r, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, v.Direccion().NumeroExterior())
@@ -565,28 +555,6 @@ func TestAssembleVenta_DireccionAndOptionalsPreserved(t *testing.T) {
 	require.NotNil(t, v.Cliente().Telefono())
 	require.NotNil(t, v.Cliente().Aval())
 	assert.Equal(t, "Avalista Pérez", v.Cliente().Aval().Value())
-}
-
-// ─── Win1252 decode boundary ───────────────────────────────────────────────
-
-// TestWin1252_DecodeAllSpanishChars proves every character in the Spanish
-// orthography subset round-trips lossless through the encoder/decoder pair
-// we rely on inside the rowmappers. This pins the contract the higher-level
-// assembleVenta tests assume implicitly.
-func TestWin1252_DecodeAllSpanishChars(t *testing.T) {
-	t.Parallel()
-	cases := []string{
-		"Año", "Núñez", "García López", "¿Cómo está?", "Üe ñ",
-	}
-	for _, want := range cases {
-		t.Run(want, func(t *testing.T) {
-			t.Parallel()
-			b := mustWin1252(t, want)
-			var w firebird.Win1252
-			require.NoError(t, w.Scan(b))
-			assert.Equal(t, want, string(w))
-		})
-	}
 }
 
 // ─── Property: datetime round-trip ─────────────────────────────────────────
@@ -622,9 +590,3 @@ func TestProperty_DatetimeRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 }
-
-// Compile-time witnesses that mockRowScanner satisfies the scanner interfaces
-// used by sql.Scan on Win1252 / sql.NullString destinations.
-var (
-	_ driver.Valuer = firebird.Win1252("")
-)
