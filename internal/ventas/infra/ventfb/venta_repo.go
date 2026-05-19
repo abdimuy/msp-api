@@ -71,10 +71,7 @@ func (r *VentaRepo) Save(ctx context.Context, v *domain.Venta) error {
 }
 
 func (r *VentaRepo) insertHeader(ctx context.Context, q firebird.Querier, v *domain.Venta) error {
-	args, err := headerInsertArgs(v)
-	if err != nil {
-		return err
-	}
+	args := headerInsertArgs(v)
 	if _, err := q.ExecContext(ctx, insertVenta, args...); err != nil {
 		return firebird.MapError(err)
 	}
@@ -161,7 +158,7 @@ func (r *VentaRepo) insertImagenes(ctx context.Context, q firebird.Querier, v *d
 // slice mirrors the column order in queries.go's insertVenta statement.
 //
 //nolint:funlen // wide column set; keep all args in one place for readability.
-func headerInsertArgs(v *domain.Venta) ([]any, error) {
+func headerInsertArgs(v *domain.Venta) []any {
 	plazo, enganche, parcialidad, frec := planFields(v.PlanCredito())
 	semana, mes := diaCobranzaFields(v.DiaCobranza())
 	canceledAt, canceledBy, cancelReason := cancelacionFields(v.Cancelacion())
@@ -186,7 +183,7 @@ func headerInsertArgs(v *domain.Venta) ([]any, error) {
 		canceledAt, canceledBy, cancelReason,
 		nullableIntArg(v.ClienteID()), v.Status().String(),
 		approvedAt, approvedBy,
-	}, nil
+	}
 }
 
 // aprobacionFields decomposes an optional Aprobacion into the two nullable

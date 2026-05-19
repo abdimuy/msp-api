@@ -428,7 +428,7 @@ func TestScanImagen_NullDescripcion(t *testing.T) {
 func TestScanImagen_DescripcionWin1252Decoded(t *testing.T) {
 	t.Parallel()
 	row := imagenRow(t)
-	row[5] = sql.NullString{String: string(utf8Bytes(t, "Recibo de cobranza ñ")), Valid: true}
+	row[5] = sql.NullString{String: utf8Bytes(t, "Recibo de cobranza ñ"), Valid: true}
 	img, err := scanImagen(&mockRowScanner{values: row})
 	require.NoError(t, err)
 	require.NotNil(t, img.Descripcion())
@@ -522,7 +522,7 @@ func TestAssembleVenta_NotaWin1252DecodedWhenValid(t *testing.T) {
 	// Feed Win1252 bytes (as string) to mimic what the driver hands to
 	// sql.NullString from an ISO8859_1 column — assembleVenta decodes through
 	// firebird.Win1252.Scan.
-	r.nota = sql.NullString{String: string(utf8Bytes(t, "Una nota con ñ y é")), Valid: true}
+	r.nota = sql.NullString{String: utf8Bytes(t, "Una nota con ñ y é"), Valid: true}
 	v, err := assembleVenta(r, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, v.Nota())
@@ -542,10 +542,10 @@ func TestAssembleVenta_OptionalClienteIDPropagates(t *testing.T) {
 func TestAssembleVenta_DireccionAndOptionalsPreserved(t *testing.T) {
 	t.Parallel()
 	r := completeVentaRowRaw(t)
-	r.numeroExterior = sql.NullString{String: string(utf8Bytes(t, "42-B")), Valid: true}
+	r.numeroExterior = sql.NullString{String: utf8Bytes(t, "42-B"), Valid: true}
 	r.zonaClienteID = sql.NullInt32{Int32: 7, Valid: true}
 	r.telefono = sql.NullString{String: "5551234567", Valid: true}
-	r.avalOResponsable = sql.NullString{String: string(utf8Bytes(t, "Avalista Pérez")), Valid: true}
+	r.avalOResponsable = sql.NullString{String: utf8Bytes(t, "Avalista Pérez"), Valid: true}
 	v, err := assembleVenta(r, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, v.Direccion().NumeroExterior())

@@ -33,10 +33,7 @@ var _ outbound.RolRepo = (*RolRepo)(nil)
 // domain.ErrRolYaExiste.
 func (r *RolRepo) Save(ctx context.Context, rol *domain.Rol) error {
 	q := firebird.GetQuerier(ctx, r.pool.DB)
-	args, err := rolInsertArgs(rol)
-	if err != nil {
-		return err
-	}
+	args := rolInsertArgs(rol)
 	if _, err := q.ExecContext(ctx, insertRol, args...); err != nil {
 		return mapUniqueViolation(firebird.MapError(err), domain.ErrRolYaExiste)
 	}
@@ -45,7 +42,7 @@ func (r *RolRepo) Save(ctx context.Context, rol *domain.Rol) error {
 
 // rolInsertArgs flattens a rol entity into the parameter list for insertRol,
 // keeping Save short enough for funlen.
-func rolInsertArgs(rol *domain.Rol) ([]any, error) {
+func rolInsertArgs(rol *domain.Rol) []any {
 	return []any{
 		rol.ID().String(),
 		rol.Nombre(),
@@ -56,7 +53,7 @@ func rolInsertArgs(rol *domain.Rol) ([]any, error) {
 		firebird.ToWallClock(rol.UpdatedAt()),
 		rol.CreatedBy().String(),
 		rol.UpdatedBy().String(),
-	}, nil
+	}
 }
 
 // nullableStringArg returns *s as driver arg, or nil for SQL NULL.

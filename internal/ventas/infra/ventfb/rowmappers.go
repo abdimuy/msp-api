@@ -160,24 +160,15 @@ func assembleVenta(
 	if err != nil {
 		return nil, err
 	}
-	cliente, err := buildClienteSnapshot(r)
-	if err != nil {
-		return nil, err
-	}
-	direccion, err := buildDireccion(r)
-	if err != nil {
-		return nil, err
-	}
+	cliente := buildClienteSnapshot(r)
+	direccion := buildDireccion(r)
 	gps := domain.HydrateGPSCoords(r.latitud, r.longitud)
 	plan, err := buildPlanCredito(r)
 	if err != nil {
 		return nil, err
 	}
 	diaCobranza := buildDiaCobranza(r)
-	cancelacion, err := buildCancelacion(r, times.canceledAt, ids.canceledBy)
-	if err != nil {
-		return nil, err
-	}
+	cancelacion := buildCancelacion(r, times.canceledAt, ids.canceledBy)
 	aprobacion, err := buildAprobacion(r)
 	if err != nil {
 		return nil, err
@@ -309,7 +300,7 @@ func parseVentaMontos(r *ventaRowRaw) (domain.MontoSnapshot, error) {
 	return domain.HydrateMontoSnapshot(anual, cortoPlazo, contado), nil
 }
 
-func buildClienteSnapshot(r *ventaRowRaw) (domain.ClienteSnapshot, error) {
+func buildClienteSnapshot(r *ventaRowRaw) domain.ClienteSnapshot {
 	var telOpt *platform.Telefono
 	if r.telefono.Valid {
 		t := platform.HydrateTelefono(r.telefono.String)
@@ -324,10 +315,10 @@ func buildClienteSnapshot(r *ventaRowRaw) (domain.ClienteSnapshot, error) {
 		Nombre:   domain.HydrateNombreCliente(r.nombreCliente),
 		Telefono: telOpt,
 		Aval:     avalOpt,
-	}), nil
+	})
 }
 
-func buildDireccion(r *ventaRowRaw) (domain.Direccion, error) {
+func buildDireccion(r *ventaRowRaw) domain.Direccion {
 	var numExt *string
 	if r.numeroExterior.Valid {
 		v := r.numeroExterior.String
@@ -345,7 +336,7 @@ func buildDireccion(r *ventaRowRaw) (domain.Direccion, error) {
 		Poblacion:      r.poblacion,
 		Ciudad:         r.ciudad,
 		ZonaClienteID:  zonaID,
-	}), nil
+	})
 }
 
 func buildPlanCredito(r *ventaRowRaw) (*domain.PlanCredito, error) {
@@ -390,16 +381,16 @@ func buildCancelacion(
 	r *ventaRowRaw,
 	canceledAt sql.NullTime,
 	canceledBy *uuid.UUID,
-) (*domain.Cancelacion, error) {
+) *domain.Cancelacion {
 	if !canceledAt.Valid || canceledBy == nil {
-		return nil, nil //nolint:nilnil // optional pointer pattern.
+		return nil
 	}
 	reason := ""
 	if r.cancelReason.Valid {
 		reason = r.cancelReason.String
 	}
 	c := domain.HydrateCancelacion(canceledAt.Time, *canceledBy, reason)
-	return &c, nil
+	return &c
 }
 
 // scanCombo rebuilds a domain.Combo from one MSP_VENTAS_COMBOS row.
