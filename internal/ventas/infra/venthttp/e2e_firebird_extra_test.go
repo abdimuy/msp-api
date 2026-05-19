@@ -872,6 +872,79 @@ func TestE2E_Firebird_IdempotencyKey_PATCH_Replays(t *testing.T) {
 	})
 }
 
+// TestE2E_Firebird_IdempotencyKey_POST_Replays mirrors the PATCH variant for
+// POST /ventas: two identical POSTs carrying the same Idempotency-Key must
+// produce the same response, only enqueue the venta.creada event once, and
+// must NOT create a second row in MSP_VENTAS — the replay returns the
+// cached response without re-running the service.
+//
+//nolint:paralleltest // serial.
+func TestE2E_Firebird_IdempotencyKey_POST_Replays(t *testing.T) {
+	pool := e2eTestPool(t)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		usuarioID := seedE2EUsuario(ctx, t, pool)
+		recorder := &e2eRecordingOutbox{}
+		svc := buildE2EServiceWithOutbox(pool, recorder)
+
+		store := newInMemIdempotencyStore()
+		r := chi.NewRouter()
+		r.Use(txInjector(ctx))
+		r.Use(planter(e2eFullPermsUser(usuarioID)))
+		r.Use(idempotency.Middleware(idempotency.Config{
+			Store:      store,
+			Methods:    []string{http.MethodPost, http.MethodPatch},
+			RequireKey: false,
+		}))
+		venthttp.MountRouter(r, svc)
+
+		body := validCreateBody()
+		body.Vendedores[0].UsuarioID = usuarioID.String()
+		bodyBytes, err := json.Marshal(body)
+		require.NoError(t, err)
+
+		key := "test-idem-post-" + uuid.NewString()
+
+		req1 := httptest.NewRequest(http.MethodPost, "/ventas", bytes.NewReader(bodyBytes))
+		req1.Header.Set("Content-Type", "application/json")
+		req1.Header.Set(idempotency.HeaderKey, key)
+		rec1 := httptest.NewRecorder()
+		r.ServeHTTP(rec1, req1)
+		require.Equal(t, http.StatusCreated, rec1.Code, "first POST: %s", rec1.Body.String())
+		afterFirst := len(recorder.snapshot())
+
+		req2 := httptest.NewRequest(http.MethodPost, "/ventas", bytes.NewReader(bodyBytes))
+		req2.Header.Set("Content-Type", "application/json")
+		req2.Header.Set(idempotency.HeaderKey, key)
+		rec2 := httptest.NewRecorder()
+		r.ServeHTTP(rec2, req2)
+		require.Equal(t, http.StatusCreated, rec2.Code, "second POST: %s", rec2.Body.String())
+
+		assert.Equal(t, rec1.Body.String(), rec2.Body.String(),
+			"replay must return identical body (same id, same children)")
+		assert.Equal(t, "true", rec2.Header().Get("Idempotent-Replay"),
+			"second call must be flagged as replay")
+
+		afterSecond := len(recorder.snapshot())
+		assert.Equal(t, afterFirst, afterSecond,
+			"replay must not duplicate outbox enqueue: after_first=%d after_second=%d",
+			afterFirst, afterSecond)
+
+		listReq := httptest.NewRequest(http.MethodGet, "/ventas?limit=10", nil)
+		listRec := httptest.NewRecorder()
+		r.ServeHTTP(listRec, listReq)
+		require.Equal(t, http.StatusOK, listRec.Code)
+		var list venthttp.ListResponse[venthttp.VentaDTO]
+		require.NoError(t, json.Unmarshal(listRec.Body.Bytes(), &list))
+		count := 0
+		for _, v := range list.Items {
+			if v.ID == body.ID {
+				count++
+			}
+		}
+		assert.Equal(t, 1, count, "exactly one MSP_VENTAS row must exist for the idempotency key")
+	})
+}
+
 // ─── B1: Unicode edge cases ────────────────────────────────────────────────
 
 // TestE2E_Firebird_UnicodeEdgeCases pins the domain contract for cliente
