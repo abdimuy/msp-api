@@ -30,7 +30,7 @@ func TestActualizarCliente_ClienteIDInvalido(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	id := h.seedVenta(t)
-	h.svc = ventasapp.NewService(h.ventas, newFakeClienteChecker(false), h.storage, h.clock, h.outbox, h.imageProc, nil)
+	h.svc = ventasapp.NewService(h.ventas, newFakeClienteChecker(false), nil, h.storage, h.clock, h.outbox, h.imageProc, nil)
 
 	cid := 999
 	_, err := h.svc.ActualizarCliente(t.Context(), ventasapp.ActualizarClienteInput{
@@ -45,7 +45,7 @@ func TestActualizarCliente_ClienteIDValido(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	id := h.seedVenta(t)
-	h.svc = ventasapp.NewService(h.ventas, newFakeClienteChecker(false, 42), h.storage, h.clock, h.outbox, h.imageProc, nil)
+	h.svc = ventasapp.NewService(h.ventas, newFakeClienteChecker(false, 42), nil, h.storage, h.clock, h.outbox, h.imageProc, nil)
 
 	cid := 42
 	out, err := h.svc.ActualizarCliente(t.Context(), ventasapp.ActualizarClienteInput{

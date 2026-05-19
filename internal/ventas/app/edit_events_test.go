@@ -19,7 +19,7 @@ import (
 func TestCrearVenta_ClienteIDInvalidoPropagates(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.svc = ventasapp.NewService(h.ventas, newFakeClienteChecker(false), h.storage, h.clock, h.outbox, h.imageProc, nil)
+	h.svc = ventasapp.NewService(h.ventas, newFakeClienteChecker(false), nil, h.storage, h.clock, h.outbox, h.imageProc, nil)
 	in := validContadoInput()
 	cid := 7777
 	in.ClienteID = &cid
@@ -32,7 +32,7 @@ func TestCrearVenta_ClienteIDInvalidoPropagates(t *testing.T) {
 func TestCrearVenta_ClienteIDValidoPersiste(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.svc = ventasapp.NewService(h.ventas, newFakeClienteChecker(true), h.storage, h.clock, h.outbox, h.imageProc, nil)
+	h.svc = ventasapp.NewService(h.ventas, newFakeClienteChecker(true), nil, h.storage, h.clock, h.outbox, h.imageProc, nil)
 	in := validContadoInput()
 	cid := 42
 	in.ClienteID = &cid
@@ -48,7 +48,7 @@ func TestCrearVenta_NilClienteIDBypassesChecker(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	checker := newFakeClienteChecker(false)
-	h.svc = ventasapp.NewService(h.ventas, checker, h.storage, h.clock, h.outbox, h.imageProc, nil)
+	h.svc = ventasapp.NewService(h.ventas, checker, nil, h.storage, h.clock, h.outbox, h.imageProc, nil)
 	in := validContadoInput()
 	in.ClienteID = nil
 	_, err := h.svc.CrearVenta(t.Context(), in, uuid.New())
@@ -65,7 +65,7 @@ func TestCrearVenta_ClienteCheckerError_Propagates(t *testing.T) {
 	h := newHarness(t)
 	checker := newFakeClienteChecker(false)
 	checker.err = errors.New("boom")
-	h.svc = ventasapp.NewService(h.ventas, checker, h.storage, h.clock, h.outbox, h.imageProc, nil)
+	h.svc = ventasapp.NewService(h.ventas, checker, nil, h.storage, h.clock, h.outbox, h.imageProc, nil)
 	in := validContadoInput()
 	cid := 1
 	in.ClienteID = &cid

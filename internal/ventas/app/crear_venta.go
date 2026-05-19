@@ -102,6 +102,9 @@ func (s *Service) CrearVenta(ctx context.Context, in CrearVentaInput, by uuid.UU
 	if err := s.validateClienteID(ctx, in.ClienteID); err != nil {
 		return nil, err
 	}
+	if err := s.validateVendedorUsuarios(ctx, in.Vendedores); err != nil {
+		return nil, err
+	}
 	params, err := in.intoDomain(by, now)
 	if err != nil {
 		return nil, err

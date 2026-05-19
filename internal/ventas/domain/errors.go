@@ -44,6 +44,14 @@ var (
 		"cliente_id_invalido",
 		"el cliente_id no es válido",
 	)
+	// ErrVendedorUsuarioNoEncontrado is returned when one or more vendedor
+	// usuario_ids on a CrearVenta request do not resolve to a row in
+	// MSP_USUARIOS. The Details payload carries the offending ids so the
+	// HTTP layer can surface which vendedor is unknown.
+	ErrVendedorUsuarioNoEncontrado = apperror.NewValidation(
+		"vendedor_usuario_no_encontrado",
+		"el usuario_id del vendedor no existe",
+	)
 	// ErrStatusInvalido is returned for unrecognized VentaStatus values.
 	ErrStatusInvalido = apperror.NewValidation(
 		"venta_status_invalido",

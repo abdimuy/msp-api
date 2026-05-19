@@ -29,7 +29,7 @@ func TestService_ValidateClienteID_CheckerError(t *testing.T) {
 
 	dbDown := errors.New("microsip clientes unreachable")
 	checker := &fakeClienteChecker{err: dbDown}
-	h.svc = ventasapp.NewService(h.ventas, checker, h.storage, h.clock, h.outbox, h.imageProc, nil)
+	h.svc = ventasapp.NewService(h.ventas, checker, nil, h.storage, h.clock, h.outbox, h.imageProc, nil)
 
 	cid := 42
 	_, err := h.svc.ActualizarCliente(t.Context(), ventasapp.ActualizarClienteInput{

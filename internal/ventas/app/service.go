@@ -28,6 +28,7 @@ const outboxAggregateVenta = "venta"
 type Service struct {
 	ventas    outbound.VentaRepo
 	clientes  outbound.ClienteExistenceChecker
+	usuarios  outbound.VendedorUsuarioExistenceChecker
 	storage   outbound.StorageProvider
 	clock     outbound.Clock
 	outbox    outbound.OutboxEnqueuer
@@ -43,11 +44,16 @@ type Service struct {
 // clientes is consulted to validate the optional cliente_id on a venta —
 // pass nil only in tests that do not exercise the cliente link.
 //
+// usuarios is consulted to validate that every vendedor on a CrearVenta
+// request has a row in MSP_USUARIOS — pass nil only in tests that do not
+// exercise vendedor validation.
+//
 // imageProc transforms image uploads (resize + recompress) before they
 // reach the storage provider. Pass the NoOp impl for a passthrough.
 func NewService(
 	ventas outbound.VentaRepo,
 	clientes outbound.ClienteExistenceChecker,
+	usuarios outbound.VendedorUsuarioExistenceChecker,
 	storage outbound.StorageProvider,
 	clock outbound.Clock,
 	outbox outbound.OutboxEnqueuer,
@@ -57,6 +63,7 @@ func NewService(
 	return &Service{
 		ventas:    ventas,
 		clientes:  clientes,
+		usuarios:  usuarios,
 		storage:   storage,
 		clock:     clock,
 		outbox:    outbox,
@@ -80,6 +87,33 @@ func (s *Service) validateClienteID(ctx context.Context, clienteID *int) error {
 		return domain.ErrClienteIDInvalido
 	}
 	return nil
+}
+
+// validateVendedorUsuarios consults the configured checker to ensure every
+// usuario_id in the supplied vendedores has a matching row in MSP_USUARIOS.
+// Nil checker or empty input short-circuits to (nil). When at least one id
+// is missing, returns domain.ErrVendedorUsuarioNoEncontrado with the
+// missing ids attached as details so the HTTP layer can name the offender.
+func (s *Service) validateVendedorUsuarios(ctx context.Context, vendedores []CrearVentaVendedorInput) error {
+	if s.usuarios == nil || len(vendedores) == 0 {
+		return nil
+	}
+	ids := make([]uuid.UUID, len(vendedores))
+	for i, v := range vendedores {
+		ids[i] = v.UsuarioID
+	}
+	missing, err := s.usuarios.MissingIDs(ctx, ids)
+	if err != nil {
+		return err
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	missingStrs := make([]string, len(missing))
+	for i, id := range missing {
+		missingStrs[i] = id.String()
+	}
+	return domain.ErrVendedorUsuarioNoEncontrado.WithField("usuario_ids", missingStrs)
 }
 
 // runInTx delegates to the configured TxManager when one is wired, otherwise

@@ -25,6 +25,14 @@ func provideVentasClienteChecker(p *firebird.Pool) ventasoutbound.ClienteExisten
 	return ventfb.NewClienteRepo(p)
 }
 
+// provideVentasUsuarioChecker builds the Firebird-backed implementation of
+// VendedorUsuarioExistenceChecker that validates each vendedor's usuario_id
+// against MSP_USUARIOS before the venta INSERT — so unknown ids surface as
+// a 422 vendedor_usuario_no_encontrado instead of a 409 firebird_fk_violation.
+func provideVentasUsuarioChecker(p *firebird.Pool) ventasoutbound.VendedorUsuarioExistenceChecker {
+	return ventfb.NewUsuarioExistenceRepo(p)
+}
+
 // provideVentasStorage selects the StorageProvider implementation from
 // config.Storage. The factory returns the Filesystem provider in v1; an
 // R2 stub stands in for the future Cloudflare R2 adapter (see ADR-0003).
@@ -53,11 +61,12 @@ func provideVentasImageProcessor(cfg *config.Config) (ventasoutbound.ImageProces
 func provideVentasService(
 	repo ventasoutbound.VentaRepo,
 	clientes ventasoutbound.ClienteExistenceChecker,
+	usuarios ventasoutbound.VendedorUsuarioExistenceChecker,
 	store ventasoutbound.StorageProvider,
 	clock ventasoutbound.Clock,
 	outbox ventasoutbound.OutboxEnqueuer,
 	imageProc ventasoutbound.ImageProcessor,
 	fbTxMgr *firebird.TxManager,
 ) *ventasapp.Service {
-	return ventasapp.NewService(repo, clientes, store, clock, outbox, imageProc, fbTxMgr)
+	return ventasapp.NewService(repo, clientes, usuarios, store, clock, outbox, imageProc, fbTxMgr)
 }

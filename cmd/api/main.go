@@ -89,6 +89,7 @@ func appOptions() []fx.Option {
 			provideIdempotencyStore,
 			provideVentasRepo,
 			provideVentasClienteChecker,
+			provideVentasUsuarioChecker,
 			provideVentasStorage,
 			provideVentasClock,
 			provideVentasOutboxEnqueuer,

@@ -401,3 +401,38 @@ func (f *fakeClienteChecker) Exists(_ context.Context, id int) (bool, error) {
 	}
 	return f.exists, nil
 }
+
+// fakeUsuarioChecker is an in-memory outbound.VendedorUsuarioExistenceChecker.
+// The known set decides which uuids are present in MSP_USUARIOS; anything
+// outside it is returned as missing. Calls counts invocations so tests can
+// assert the checker was (or wasn't) consulted.
+type fakeUsuarioChecker struct {
+	mu    sync.Mutex
+	calls int
+	known map[uuid.UUID]struct{}
+	err   error
+}
+
+func newFakeUsuarioChecker(known ...uuid.UUID) *fakeUsuarioChecker {
+	out := &fakeUsuarioChecker{known: map[uuid.UUID]struct{}{}}
+	for _, id := range known {
+		out.known[id] = struct{}{}
+	}
+	return out
+}
+
+func (f *fakeUsuarioChecker) MissingIDs(_ context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	missing := make([]uuid.UUID, 0)
+	for _, id := range ids {
+		if _, ok := f.known[id]; !ok {
+			missing = append(missing, id)
+		}
+	}
+	return missing, nil
+}

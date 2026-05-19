@@ -57,6 +57,19 @@ type ClienteExistenceChecker interface {
 	Exists(ctx context.Context, clienteID int) (bool, error)
 }
 
+// VendedorUsuarioExistenceChecker is consulted by the ventas service to
+// validate that every vendedor on a CrearVenta request has a corresponding
+// row in MSP_USUARIOS before any INSERT is attempted. Without this check,
+// an unknown vendedor usuario_id only fails at the DB FK layer, surfacing
+// as a generic 409 "firebird_fk_violation" with no field-level hint.
+type VendedorUsuarioExistenceChecker interface {
+	// MissingIDs returns the subset of ids that do NOT have a matching row
+	// in MSP_USUARIOS. Returns an empty slice (never nil) when every id is
+	// present. Implementations may return ids in any order. Passing an
+	// empty slice short-circuits to ([], nil) without hitting the database.
+	MissingIDs(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error)
+}
+
 // VentaRepo persists and retrieves Venta aggregates as a single unit. The
 // repository implementation is responsible for keeping the multi-table
 // write transactional — child rows (combos, productos, vendedores,

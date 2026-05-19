@@ -30,7 +30,7 @@ func newHarness(_ *testing.T) *testHarness {
 	storage := newFakeStorage()
 	outbox := &fakeOutbox{}
 	imageProc := &fakeImageProcessor{}
-	svc := app.NewService(ventas, nil, storage, clock, outbox, imageProc, nil)
+	svc := app.NewService(ventas, nil, nil, storage, clock, outbox, imageProc, nil)
 	return &testHarness{
 		svc:       svc,
 		ventas:    ventas,

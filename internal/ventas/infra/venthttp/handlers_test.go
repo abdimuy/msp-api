@@ -182,7 +182,7 @@ func testServiceWith(proc ventasoutbound.ImageProcessor) (*ventasapp.Service, *f
 	repo := newFakeRepo()
 	store := newFakeStorage()
 	clock := fixedClock{T: time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC)}
-	svc := ventasapp.NewService(repo, nil, store, clock, noopOutbox{}, proc, nil)
+	svc := ventasapp.NewService(repo, nil, nil, store, clock, noopOutbox{}, proc, nil)
 	return svc, repo, store
 }
 
