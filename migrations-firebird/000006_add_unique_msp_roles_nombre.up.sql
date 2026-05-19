@@ -21,3 +21,9 @@
 
 ALTER TABLE MSP_ROLES
   ADD CONSTRAINT UQ_MSP_ROLES_NOMBRE UNIQUE (NOMBRE);
+
+-- ─── Registro ────────────────────────────────────────────────────────────────
+INSERT INTO MSP_MIGRATIONS (ID, NAME, APPLIED_AT)
+VALUES (6, '000006_add_unique_msp_roles_nombre', CURRENT_TIMESTAMP);
+
+COMMIT;
