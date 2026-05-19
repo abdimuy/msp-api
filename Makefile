@@ -265,11 +265,18 @@ test-firebird: ## Run platform Firebird integration tests against the dev Micros
 	@[ -n "$(FB_DATABASE)" ] || (echo "❌ FB_DATABASE not set — start mueblera-firebird and source .env first" && exit 1)
 	$(GO) test ./internal/platform/firebird/... ./internal/platform/fbtestutil/... -race -count=1 -timeout 120s
 
-test-firebird-all: ## Run ALL Firebird-backed tests including module repos (auth + future modules)
+test-firebird-all: ## Run ALL Firebird-backed tests including module repos (auth + ventas)
 	@[ -n "$(FB_DATABASE)" ] || (echo "❌ FB_DATABASE not set — start mueblera-firebird and source .env first" && exit 1)
 	$(GO) test ./internal/platform/firebird/... ./internal/platform/fbtestutil/... \
 	          ./internal/auth/infra/firebird/... \
-	          -race -count=1 -timeout 180s
+	          ./internal/ventas/infra/ventfb/... ./internal/ventas/infra/venthttp/... \
+	          -race -count=1 -timeout 240s
+
+test-firebird-ventas: ## Run Firebird-backed tests for the venta creation flow (platform + ventas)
+	@[ -n "$(FB_DATABASE)" ] || (echo "❌ FB_DATABASE not set — start mueblera-firebird and source .env first" && exit 1)
+	$(GO) test ./internal/platform/firebird/... ./internal/platform/fbtestutil/... \
+	          ./internal/ventas/infra/ventfb/... ./internal/ventas/infra/venthttp/... \
+	          -race -count=1 -timeout 240s
 
 coverage-auth: ## Generate per-package coverage report for the auth module (short mode)
 	$(GO) test ./internal/auth/... -count=1 -short -coverprofile=coverage-auth.out -covermode=atomic
