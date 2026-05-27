@@ -14,8 +14,10 @@ lo fiscal**, una capa propia de ventas y cobranza que: (1) **automatiza** la cap
 y el alta de ventas, (2) **predice el riesgo de crédito** antes de prestar,
 (3) **cobra de forma inteligente** (recordatorios automáticos + alerta temprana), y
 (4) **reactiva ventas** a la base de clientes que ya pagaron bien (vía WhatsApp/web).
-Recupera **~$1.0M/año** de dinero que hoy se pierde **y** habilita **~$3.2M+/año en
-ventas nuevas** de bajo riesgo — todo por mucho más de lo que cuesta construirlo.
+Ataca **~$876k/año** en pérdidas por clientes que dejan de pagar (detectables
+temprano — backtesteado; recuperable conservador ~$260k, a confirmar con piloto) **y**
+habilita **~$3.2M+/año en ventas nuevas** de bajo riesgo (reactivación de base
+dormida) — todo por mucho más de lo que cuesta construirlo.
 
 ## El problema, en pesos (datos de la empresa)
 | Métrica | Valor / año | Qué significa |
@@ -38,11 +40,12 @@ motor compartido frágil. No tiene scoring, ni cobranza inteligente, ni IA. Para
 potenciar ventas y cobranza se necesita una capa **fuera** de Microsip. Lo fiscal y
 contable **se quedan en Microsip** (no se reconstruyen — sería caro y riesgoso).
 
-## La solución: 3 palancas que forman un sistema
+## La solución: 4 palancas que forman un sistema
 ```
-1. Automatizar la venta  →  captura/aprueba/materializa sin trabajo manual + datos limpios
-2. Scoring de crédito    →  no prestar a las peores apuestas (usa esos datos)
-3. Cobranza con IA       →  cobrar antes de que el saldo se vuelva incobrable
+1. Automatizar la venta   →  captura/aprueba/materializa sin trabajo manual + datos limpios
+2. Cobranza alerta temprana → detectar y actuar antes de que el saldo se pierda  ⭐ (más probada)
+3. Scoring de crédito     →  no prestar a las peores apuestas (a confirmar con modelo)
+4. Reactivación de ventas →  vender de nuevo a la base que ya pagó bien (WhatsApp/web)
 ```
 Cada palanca **alimenta a la siguiente** (la automatización genera los datos que el
 scoring y la cobranza necesitan).
@@ -52,15 +55,18 @@ scoring y la cobranza necesitan).
 - OCR de INE (autollenado), pre-revisión automática (acelera la aprobación).
 - **Valor:** productividad (más ventas por vendedor, menos errores, ciclo más corto). Mide: ventas/vendedor, tiempo de ciclo, % errores.
 
-### Palanca 2 — Scoring de crédito
-- Modelo que predice impago **antes de aprobar**, con historial de pago + atributos del cliente.
-- **Evidencia (de la base):** los clientes que se volvieron malos ya pagaban claramente peor — **65% de lo que debían vs 82% los buenos** — con una sola variable cruda. Un modelo completo discrimina mucho más.
-- **Prueba sin riesgo (backtest):** correr el modelo sobre los clientes del último año y medir cuánta pérdida se habría evitado.
-- **Valor:** reducir el $2.15M. Conservador: −25% = **~$537k/año**.
+### Palanca 2 — Cobranza con alerta temprana (LA MÁS PROBADA) ⭐
+- Agente de WhatsApp + priorización de visitas + **alerta temprana**: detectar al cliente con saldo que **se queda callado** y actuar el día 90, no al año.
+- **Backtest (point-in-time, sin trampa, datos de la empresa):** un cliente con saldo que lleva **3-6 meses sin pagar se vuelve pérdida total en 64%** (vs 5% del que paga al corriente); 6-12m → 60%. **Pérdida así, no cachada a tiempo: ~$876k/año.**
+- **Por qué actuar temprano sirve:** la recuperabilidad cae en picada con la antigüedad de la mora (intención, capacidad, el bien y la relación se deterioran). Al mes 3 se renegocia/rescata; al mes 12 ya no contesta.
+- **PROBADO:** el problema es real y detectable temprano. **POR PROBAR (piloto A/B):** cuánto rescata la intervención — se mide interviniendo a la mitad y dejando control.
+- **Valor (conservador, a confirmar con piloto):** rescatar 30% del $876k = **~$260k/año** + mejor flujo del libro de $35M.
 
-### Palanca 3 — Cobranza con IA
-- Agente de WhatsApp (recordatorios automáticos, bien temporizados; ya hay infra de WhatsApp), priorización de visitas, y **alerta temprana** del cliente que se está degradando.
-- **Valor:** recuperar la cartera en riesgo (~$2.3M) antes del castigo, mejorar flujo del libro de $35M, y productividad del cobrador. Conservador: recuperar 20% del riesgo = **~$460k/año** + flujo.
+### Palanca 3 — Scoring de crédito al prestar (real, pero a confirmar)
+- Modelo que predice impago **antes de aprobar**.
+- **Hallazgo honesto del backtest:** predecir el default *al momento de prestar* con una sola variable simple (ratio de pago histórico) **salió débil** point-in-time — el "65% vs 82%" inicial estaba inflado por *leakage* (los malos pagaban menos *porque ya se habían caído*). Lo que SÍ es claro: los muy buenos pagadores (>=90%) son notoriamente seguros (1.5% default).
+- **Implicación:** el scoring al prestar necesita un **modelo multivariable** (regularidad, recencia, tendencia, marcas previas, antigüedad) antes de prometer un número. **No se pitchea cifra de scoring hasta construirlo y backtestearlo.**
+- **Valor:** a confirmar (no se cuenta como ahorro duro todavía).
 
 ### Palanca 4 — Reactivación de ventas (ingreso nuevo)
 - Usa la base de clientes + historial de pago para **vender de nuevo, vía WhatsApp y web**, a quienes **ya liquidaron y pagaron bien** (los mejores prospectos, riesgo bajo). IA segmenta, ofrece y pre-aprueba; el pedido entra a `MSP_VENTAS` → se materializa (Palanca 1).
@@ -75,19 +81,21 @@ scoring y la cobranza necesitan).
 - **Valor:** ingreso nuevo de bajo riesgo (clientes con pago comprobado). La utilidad es el **margen** sobre esas ventas + intereses (no el ticket completo). Se valida con un piloto de WhatsApp a los ~1,037 más frescos.
 - **Riesgo:** WhatsApp oficial + opt-in (no quemar el número); la conversión es supuesto hasta el piloto.
 
-## ROI (conservador y defendible)
+## ROI (conservador y honesto — qué está probado vs por probar)
 **Ahorro / recuperación (dinero que hoy se pierde):**
-| Palanca | Recuperable/año (conservador) |
-|---|---|
-| Scoring (−25% del $2.15M) | ~$537k |
-| Cobranza (recuperar 20% de $2.3M en riesgo) | ~$460k |
-| Automatización | productividad (no se cuenta como $ directo) |
-| **Subtotal ahorro** | **~$1.0M/año** |
+| Palanca | Recuperable/año | Estado |
+|---|---|---|
+| Cobranza / alerta temprana | **~$260k** (rescatar 30% de $876k) | problema **backtesteado**; rescate por probar (piloto A/B) |
+| Scoring al prestar | por confirmar | necesita modelo multivariable + backtest |
+| Automatización | productividad | no se cuenta como $ directo |
+| **Subtotal ahorro (conservador)** | **~$260k+/año** | |
 
 **Ingreso nuevo (ventas a base dormida):**
-| Palanca | Ventas/año (conservador) |
-|---|---|
-| Reactivación (5% del pool caliente) | **~$3.2M en ventas** (utilidad = margen) |
+| Palanca | Ventas/año (conservador) | Estado |
+|---|---|---|
+| Reactivación (5% del pool caliente) | **~$3.2M en ventas** (utilidad = margen) | pool **medido**; conversión por probar (piloto) |
+
+> Honestidad: el **ahorro duro** confirmable hoy es modesto (~$260k, vía cobranza) — pero el **problema** que ataca está backtesteado ($876k/año en clientes que se callan y se pierden). El grueso del upside es la **reactivación de ventas** (~$3.2M+), cuyo pool está medido y cuya conversión se prueba con un piloto barato.
 
 (Sin contar productividad ni el efecto de flujo sobre el libro de $35M.)
 
