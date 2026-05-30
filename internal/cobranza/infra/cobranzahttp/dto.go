@@ -90,21 +90,13 @@ type PorZonaInput struct {
 // ResumenZonasInput is the (empty) input for GET /cobranza/resumen-zonas.
 type ResumenZonasInput struct{}
 
-// ReconcileInput wraps the (empty) body for POST /_admin/saldos/reconcile.
-type ReconcileInput struct {
-	Body ReconcileBody
-}
+// ReconcileInput is the (empty) input for POST /_admin/saldos/reconcile. The
+// operation takes no parameters; a body would just be ignored.
+type ReconcileInput struct{}
 
-// ReconcileBody is intentionally empty for now. Reserved for future filters.
-type ReconcileBody struct{}
-
-// BackfillInput wraps the (empty) body for POST /_admin/saldos/backfill.
-type BackfillInput struct {
-	Body BackfillBody
-}
-
-// BackfillBody is intentionally empty; the backfill runs unconditionally.
-type BackfillBody struct{}
+// BackfillInput is the (empty) input for POST /_admin/saldos/backfill. The
+// backfill runs unconditionally over every cargo in the cache.
+type BackfillInput struct{}
 
 // ErrorsInput are the query params for GET /_admin/saldos/errors.
 type ErrorsInput struct {

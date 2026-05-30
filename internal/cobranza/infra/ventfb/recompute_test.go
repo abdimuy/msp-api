@@ -29,7 +29,7 @@ func TestE2E_Cobranza_Recompute_ReturnsFreshSaldo(t *testing.T) {
 
 		clienteID, _ := seedClienteID(t, q)
 		importe := decimal.RequireFromString("4000.00")
-		cargoID := insertCargoDoctosCC(t, q, clienteID, "RECOMP-001", importe)
+		cargoID := insertCargoDoctosCC(t, q, clienteID, "RECOMP-01", importe)
 
 		repo := cobranzaventfb.NewSaldosRepo(pool)
 

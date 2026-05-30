@@ -119,6 +119,8 @@ func insertCargoDoctosCC(
 	require.NoError(t, err, "insertCargoDoctosCC: INSERT DOCTOS_CC")
 
 	// Insert the IMPORTES_DOCTOS_CC importe for the cargo (TIPO_IMPTE='C').
+	// IMPORTES_DOCTOS_CC has no CONCEPTO_CC_ID: the concept lives on the
+	// parent DOCTOS_CC row above (the recompute procedure JOINs to read it).
 	impteID := nextMicrosipID(t, q)
 	_, err = q.ExecContext(
 		context.Background(),
@@ -126,11 +128,11 @@ func insertCargoDoctosCC(
 		  (IMPTE_DOCTO_CC_ID, DOCTO_CC_ID, FECHA,
 		   TIPO_IMPTE, DOCTO_CC_ACR_ID,
 		   IMPORTE, IMPUESTO,
-		   APLICADO, ESTATUS, CONCEPTO_CC_ID, CANCELADO)
+		   APLICADO, ESTATUS, CANCELADO)
 		VALUES (?, ?, ?,
 		        'C', NULL,
 		        ?, 0,
-		        'N', 'N', 87327, 'N')`,
+		        'N', 'N', 'N')`,
 		impteID, cargoID, now, importeTotal,
 	)
 	require.NoError(t, err, "insertCargoDoctosCC: INSERT IMPORTES_DOCTOS_CC cargo")
@@ -139,7 +141,10 @@ func insertCargoDoctosCC(
 }
 
 // insertPagoImporte inserts an IMPORTES_DOCTOS_CC payment row (TIPO_IMPTE='R')
-// crediting the given cargoID. Uses CONCEPTO_CC_ID=87327 (cobranza en ruta).
+// crediting the given cargoID. The pago line is parented to the cargo's own
+// DOCTOS_CC row (CONCEPTO_CC_ID=87327, set above), so the recompute procedure
+// counts it as cobranza-en-ruta TOTAL_IMPORTE. This is a fixture simplification
+// — in real Microsip the pago would live on a separate DOCTOS_CC abono row.
 func insertPagoImporte(
 	t *testing.T,
 	q firebird.Querier,
@@ -155,11 +160,11 @@ func insertPagoImporte(
 		  (IMPTE_DOCTO_CC_ID, DOCTO_CC_ID, FECHA,
 		   TIPO_IMPTE, DOCTO_CC_ACR_ID,
 		   IMPORTE, IMPUESTO,
-		   APLICADO, ESTATUS, CONCEPTO_CC_ID, CANCELADO)
+		   APLICADO, ESTATUS, CANCELADO)
 		VALUES (?, ?, ?,
 		        'R', ?,
 		        ?, 0,
-		        'N', 'N', 87327, 'N')`,
+		        'N', 'N', 'N')`,
 		impteID, cargoID, now, cargoID, importe,
 	)
 	require.NoError(t, err, "insertPagoImporte: INSERT IMPORTES_DOCTOS_CC pago")
@@ -172,22 +177,43 @@ func buildCobranzaService(t *testing.T, pool *firebird.Pool) *cobranzaapp.Servic
 	return cobranzaapp.NewService(repo, cobranzaventfb.NewPagosRepo(pool), cobranzaoutbound.ProductionClock{})
 }
 
-// buildCobranzaReconciler builds a real Reconciler with Firebird-backed repos.
-func buildCobranzaReconciler(t *testing.T, pool *firebird.Pool) *cobranzaapp.Reconciler {
+// buildCobranzaReconciler builds a real Reconciler with Firebird-backed
+// Recomputer + SaldosRepo, but a fixed in-memory lister so the test only
+// walks the cargo IDs the caller supplies. Walking the full MSP_SALDOS_VENTAS
+// table (~100k+ rows in dev) inside a single transaction is too slow to
+// complete within a test timeout, so we narrow the scan to the inserted
+// fixtures.
+func buildCobranzaReconciler(t *testing.T, pool *firebird.Pool, cargoIDs ...int) *cobranzaapp.Reconciler {
 	t.Helper()
 	repo := cobranzaventfb.NewSaldosRepo(pool)
 	return cobranzaapp.NewReconciler(cobranzaapp.ReconcilerDeps{
-		SaldosLister: cobranzaventfb.NewSaldosLister(pool),
+		SaldosLister: &fixedIDLister{ids: cargoIDs},
 		Recomputer:   cobranzaventfb.NewRecomputer(pool, repo),
 		SaldosRepo:   repo,
 		Clock:        cobranzaoutbound.ProductionClock{},
 		Config: cobranzaapp.ReconcilerConfig{
-			PageSize: 100,
+			PageSize: max(1, len(cargoIDs)),
 			DriftLog: true,
 			FixDrift: true,
 		},
 		Logger: testLogger(),
 	})
+}
+
+// fixedIDLister is an outbound.SaldosLister that yields a fixed set of cargo
+// IDs in one page. Used by E2E reconcile tests to scope the reconciler scan
+// to fixtures instead of the entire (large) cache.
+type fixedIDLister struct {
+	ids    []int
+	served bool
+}
+
+func (l *fixedIDLister) Page(_ context.Context, _, _ int) ([]int, int, error) {
+	if l.served {
+		return nil, 0, nil
+	}
+	l.served = true
+	return l.ids, 0, nil
 }
 
 // testLogger returns a no-op slog.Logger for tests.
@@ -278,11 +304,14 @@ func TestE2E_Cobranza_AbonoExterno_UpdatesSaldo(t *testing.T) {
 	})
 }
 
-// TestE2E_Cobranza_Cancelacion_RemovesRow inserts a cargo, verifies the cache
-// row exists, then sets CANCELADO='S' on DOCTOS_CC and verifies the row is gone.
+// TestE2E_Cobranza_Cancelacion_Tombstone inserts a cargo, verifies the cache
+// row exists, then sets CANCELADO='S' on DOCTOS_CC and verifies the row is
+// kept as a tombstone (CARGO_CANCELADO=true, saldo=0). Tombstones are
+// required so the sync-by-UPDATED_AT endpoint can propagate cancellations to
+// mobile clients (see migration 000014).
 //
 //nolint:paralleltest // serial: shares rollback-only tx.
-func TestE2E_Cobranza_Cancelacion_RemovesRow(t *testing.T) {
+func TestE2E_Cobranza_Cancelacion_Tombstone(t *testing.T) {
 	requireFBEnv(t)
 	pool := fbtestutil.NewTestFirebirdPool(t)
 
@@ -300,7 +329,8 @@ func TestE2E_Cobranza_Cancelacion_RemovesRow(t *testing.T) {
 			t.Skipf("trigger did not create cache row for cargo %d — verify migration 000010", cargoID)
 		}
 
-		// Cancel the cargo — the trigger should delete the cache row.
+		// Cancel the cargo — the trigger should mark the cache row as a
+		// tombstone (CARGO_CANCELADO='S'), not delete it.
 		_, err = q.ExecContext(
 			context.Background(),
 			`UPDATE DOCTOS_CC SET CANCELADO = 'S' WHERE DOCTO_CC_ID = ?`,
@@ -308,11 +338,15 @@ func TestE2E_Cobranza_Cancelacion_RemovesRow(t *testing.T) {
 		)
 		require.NoError(t, err, "cancelar cargo")
 
-		_, err = repo.PorCargo(ctx, cargoID)
-		require.ErrorIs(t, err, domain.ErrSaldoNoEncontrado,
-			"cache row must be removed after cancellation")
+		tomb, err := repo.PorCargo(ctx, cargoID)
+		require.NoError(t, err, "tombstone row must exist after cancellation")
+		require.NotNil(t, tomb)
+		assert.True(t, tomb.CargoCancelado(), "tombstone must have cargo_cancelado=true")
+		assert.True(t, tomb.Saldo().IsZero(), "tombstone saldo must be zero")
+		assert.Equal(t, 0, tomb.NumPagos(), "tombstone num_pagos must be zero")
 
-		t.Logf("cargo %d: deleted from cache after CANCELADO='S'", cargoID)
+		t.Logf("cargo %d: tombstone created after CANCELADO='S' (cargo_cancelado=%v)",
+			cargoID, tomb.CargoCancelado())
 	})
 }
 
@@ -398,11 +432,12 @@ func TestE2E_Cobranza_Reconcile_Sano(t *testing.T) {
 			t.Skipf("trigger did not create cache row for cargo %d", cargo1)
 		}
 
-		reconciler := buildCobranzaReconciler(t, pool)
+		reconciler := buildCobranzaReconciler(t, pool, cargo1)
 		report, err := reconciler.Run(ctx)
 		require.NoError(t, err)
 
 		assert.GreaterOrEqual(t, report.Checked, 1, "reconciler should have checked at least 1 row")
+		assert.Equal(t, 0, report.Drift, "no drift expected on a freshly inserted cargo")
 		t.Logf("reconcile sano: checked=%d drift=%d errors=%d", report.Checked, report.Drift, report.Errors)
 	})
 }
@@ -421,7 +456,7 @@ func TestE2E_Cobranza_Reconcile_DetectaDrift(t *testing.T) {
 
 		clienteID, _ := seedClienteID(t, q)
 		importe := decimal.RequireFromString("3000.00")
-		cargoID := insertCargoDoctosCC(t, q, clienteID, "REC-DRIFT-001", importe)
+		cargoID := insertCargoDoctosCC(t, q, clienteID, "RDRIFT-01", importe)
 
 		repo := cobranzaventfb.NewSaldosRepo(pool)
 		saldoOK, err := repo.PorCargo(ctx, cargoID)
@@ -437,7 +472,7 @@ func TestE2E_Cobranza_Reconcile_DetectaDrift(t *testing.T) {
 		)
 		require.NoError(t, err, "corrupt cache row")
 
-		reconciler := buildCobranzaReconciler(t, pool)
+		reconciler := buildCobranzaReconciler(t, pool, cargoID)
 		report, err := reconciler.Run(ctx)
 		require.NoError(t, err)
 
