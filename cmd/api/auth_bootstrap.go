@@ -316,7 +316,8 @@ func (fmtWriter) Write(p []byte) (int, error) { return fmt.Print(string(p)) }
 // outbound port because user-management calls (Create, Delete, List) are
 // admin-side concerns that the port intentionally does not expose.
 func newFirebaseAdminClient(ctx context.Context, cfg config.Firebase) (*auth.Client, error) {
-	app, err := firebasesdk.NewApp(ctx,
+	app, err := firebasesdk.NewApp(
+		ctx,
 		&firebasesdk.Config{ProjectID: cfg.ProjectID},
 		option.WithCredentialsFile(cfg.ServiceAccountPath),
 	)
@@ -404,7 +405,8 @@ func wipeAuthTables(ctx context.Context, db *sql.DB) error {
 		n, _ := res.RowsAffected()
 		slog.InfoContext(ctx, "auth_bootstrap.table_wiped", "table", t, "rows", n)
 	}
-	if _, err := db.ExecContext(ctx,
+	if _, err := db.ExecContext(
+		ctx,
 		`UPDATE MSP_USUARIOS SET CREATED_BY = ID, UPDATED_BY = ID
 		 WHERE CREATED_BY <> ID OR UPDATED_BY <> ID`,
 	); err != nil {

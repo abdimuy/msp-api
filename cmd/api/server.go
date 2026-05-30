@@ -26,6 +26,10 @@ import (
 	"github.com/abdimuy/msp-api/internal/platform/middleware"
 	ventasapp "github.com/abdimuy/msp-api/internal/ventas/app"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/venthttp"
+
+	cobranzaapp "github.com/abdimuy/msp-api/internal/cobranza/app"
+	"github.com/abdimuy/msp-api/internal/cobranza/infra/cobranzahttp"
+	cobranzaoutbound "github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
 )
 
 // RootHandler is the assembled chi router exposed as an fx-typed dependency.
@@ -118,6 +122,9 @@ func provideRootHandler(
 	ventasSvc *ventasapp.Service,
 	fiCaptureCfg failedintent.Config,
 	fiSvc *failedintenthttp.Service,
+	cobranzaSvc *cobranzaapp.Service,
+	cobranzaReconciler *cobranzaapp.Reconciler,
+	cobranzaErrors cobranzaoutbound.ErrorsRepo,
 ) RootHandler {
 	r := chi.NewRouter()
 
@@ -162,6 +169,18 @@ func provideRootHandler(
 		r.Group(func(r chi.Router) {
 			r.Use(skipAuthForPublicDocs(authn.Handler), idem, capture)
 			venthttp.MountRouter(r, ventasSvc)
+		})
+
+		// Cobranza read endpoints — authn only; no idempotency (GET routes).
+		r.Route("/cobranza", func(r chi.Router) {
+			r.Use(authn.Handler)
+			cobranzahttp.MountReadRouter(r, cobranzaSvc)
+		})
+
+		// Cobranza admin endpoints — authn only; no failed-intent capture.
+		r.Route("/_admin/saldos", func(r chi.Router) {
+			r.Use(authn.Handler)
+			cobranzahttp.MountAdminRouter(r, cobranzaSvc, cobranzaReconciler, cobranzaErrors)
 		})
 
 		// Admin endpoints for failed-intent inspection / replay / resolution.

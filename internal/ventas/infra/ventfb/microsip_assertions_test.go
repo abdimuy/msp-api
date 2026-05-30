@@ -29,7 +29,10 @@ type saldoEsperado struct {
 // DOCTOS_ENTRE_SIS links DOCTO_PV → DOCTO_CC via CLAVE_SIS_FTE='PV' and
 // CLAVE_SIS_DEST='CC'.
 //
-// TODO(FASE A.5): switch to cobranzaRepo.PorVenta when available.
+// Note: switching to cobranzaventfb.SaldosRepo.PorVenta was considered but
+// depguard's no-cross-module-internals rule forbids importing
+// internal/cobranza/infra/ventfb from internal/ventas/infra/ventfb_test.
+// The correlated SQL below is the compliant fallback.
 func assertSaldoVenta(t *testing.T, q firebird.Querier, doctoPVID int, want saldoEsperado) {
 	t.Helper()
 	ctx := context.Background()
