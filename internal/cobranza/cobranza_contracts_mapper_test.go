@@ -75,6 +75,53 @@ func TestToContract_NilOptionalFields(t *testing.T) {
 	assert.Nil(t, got.FechaUltPago)
 }
 
+func TestPagoToContract_AllFieldsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	zonaID := 3
+	fecha := time.Date(2026, 5, 30, 14, 25, 13, 0, time.UTC)
+	lat := decimal.RequireFromString("20.12345678")
+	lon := decimal.RequireFromString("-103.87654321")
+
+	p := domain.HydratePago(domain.HydratePagoParams{
+		ImpteDoctoCCID: 999,
+		DoctoCCID:      998,
+		DoctoCCAcrID:   997,
+		ClienteID:      7,
+		ZonaClienteID:  &zonaID,
+		Folio:          "cv0000001",
+		ConceptoCCID:   87327,
+		Fecha:          fecha,
+		Importe:        decimal.NewFromInt(2500),
+		Impuesto:       decimal.NewFromInt(100),
+		Lat:            &lat,
+		Lon:            &lon,
+		Cancelado:      false,
+		Aplicado:       true,
+		UpdatedAt:      fecha,
+	})
+
+	got := cobranza.PagoToContract(p)
+	assert.Equal(t, 999, got.ImpteDoctoCCID)
+	assert.Equal(t, 998, got.DoctoCCID)
+	assert.Equal(t, 997, got.DoctoCCAcrID)
+	assert.Equal(t, 7, got.ClienteID)
+	assert.Equal(t, &zonaID, got.ZonaClienteID)
+	assert.Equal(t, "cv0000001", got.Folio)
+	assert.Equal(t, 87327, got.ConceptoCCID)
+	assert.Equal(t, fecha, got.Fecha)
+	assert.True(t, decimal.NewFromInt(2500).Equal(got.Importe))
+	assert.True(t, decimal.NewFromInt(100).Equal(got.Impuesto))
+	if assert.NotNil(t, got.Lat) {
+		assert.True(t, lat.Equal(*got.Lat))
+	}
+	if assert.NotNil(t, got.Lon) {
+		assert.True(t, lon.Equal(*got.Lon))
+	}
+	assert.False(t, got.Cancelado)
+	assert.True(t, got.Aplicado)
+}
+
 func TestResumenToContract_AllFieldsRoundTrip(t *testing.T) {
 	t.Parallel()
 

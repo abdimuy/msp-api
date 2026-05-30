@@ -1,4 +1,7 @@
-//nolint:misspell // cobranza vocabulary is Spanish per project convention.
+// Package cobranzahttp hosts the cobranza module's HTTP transport: handlers,
+// DTOs, and the Huma-over-chi router mount points.
+//
+//nolint:misspell // Spanish domain vocabulary by project convention.
 package cobranzahttp
 
 import (
@@ -57,91 +60,75 @@ func MountAdminRouter(r chi.Router, svc *cobranzaapp.Service, reconciler *cobran
 	return api
 }
 
-// registerReadOperations declares the cobranza read endpoints.
+// op builds a huma.Operation with the cobranza defaults (Tags, Security,
+// DefaultStatus) baked in so each huma.Register call stays a single line.
+func op(tag, id, method, path, summary, description string) huma.Operation {
+	return huma.Operation{
+		OperationID:   id,
+		Method:        method,
+		Path:          path,
+		Summary:       summary,
+		Description:   description,
+		Tags:          []string{tag},
+		Security:      []map[string][]string{{securitySchemeName: {}}},
+		DefaultStatus: http.StatusOK,
+	}
+}
+
+// registerReadOperations declares every cobranza read endpoint.
 func registerReadOperations(api huma.API, h *Handlers) {
-	security := []map[string][]string{{securitySchemeName: {}}}
-	tags := []string{"cobranza"}
+	const tag = "cobranza"
 
-	huma.Register(api, huma.Operation{
-		OperationID:   "cobranza-saldo-por-venta",
-		Method:        http.MethodGet,
-		Path:          "/saldos/venta/{id}",
-		Summary:       "Saldo por venta (DOCTO_PV)",
-		Description:   "Devuelve el saldo materializado en MSP_SALDOS_VENTAS para el DOCTO_PV_ID indicado.",
-		Tags:          tags,
-		Security:      security,
-		DefaultStatus: http.StatusOK,
-	}, h.PorVenta)
+	huma.Register(api, op(tag, "cobranza-saldo-por-venta", http.MethodGet, "/saldos/venta/{id}",
+		"Saldo por venta (DOCTO_PV)",
+		"Devuelve el saldo materializado en MSP_SALDOS_VENTAS para el DOCTO_PV_ID indicado."), h.PorVenta)
 
-	huma.Register(api, huma.Operation{
-		OperationID:   "cobranza-saldos-por-cliente",
-		Method:        http.MethodGet,
-		Path:          "/saldos/cliente/{cliente_id}",
-		Summary:       "Saldos abiertos por cliente",
-		Description:   "Devuelve todos los saldos con balance positivo para el cliente indicado.",
-		Tags:          tags,
-		Security:      security,
-		DefaultStatus: http.StatusOK,
-	}, h.PorCliente)
+	huma.Register(api, op(tag, "cobranza-saldos-por-cliente", http.MethodGet, "/saldos/cliente/{cliente_id}",
+		"Saldos abiertos por cliente",
+		"Devuelve todos los saldos con balance positivo para el cliente indicado."), h.PorCliente)
 
-	huma.Register(api, huma.Operation{
-		OperationID:   "cobranza-saldos-por-zona",
-		Method:        http.MethodGet,
-		Path:          "/saldos/zona/{zona_id}",
-		Summary:       "Saldos en ruta por zona",
-		Description:   "Devuelve ventas abiertas y recientemente pagadas (dentro de ventana_dias) para la zona indicada.",
-		Tags:          tags,
-		Security:      security,
-		DefaultStatus: http.StatusOK,
-	}, h.PorZona)
+	huma.Register(api, op(tag, "cobranza-saldos-por-zona", http.MethodGet, "/saldos/zona/{zona_id}",
+		"Saldos en ruta por zona",
+		"Devuelve ventas abiertas y recientemente pagadas (dentro de ventana_dias) para la zona indicada."), h.PorZona)
 
-	huma.Register(api, huma.Operation{
-		OperationID:   "cobranza-resumen-zonas",
-		Method:        http.MethodGet,
-		Path:          "/resumen-zonas",
-		Summary:       "Resumen de saldos por zona",
-		Description:   "Devuelve un resumen agregado de saldos pendientes agrupados por zona.",
-		Tags:          tags,
-		Security:      security,
-		DefaultStatus: http.StatusOK,
-	}, h.ResumenZonas)
+	huma.Register(api, op(tag, "cobranza-resumen-zonas", http.MethodGet, "/resumen-zonas",
+		"Resumen de saldos por zona",
+		"Devuelve un resumen agregado de saldos pendientes agrupados por zona."), h.ResumenZonas)
+
+	huma.Register(api, op(tag, "cobranza-pagos-por-venta", http.MethodGet, "/pagos/venta/{docto_cc_id}",
+		"Pagos acreditados a un cargo",
+		"Devuelve todos los pagos materializados en MSP_PAGOS_VENTAS cuyo DOCTO_CC_ACR_ID coincide con el cargo indicado."), h.PagosPorVenta)
+
+	huma.Register(api, op(tag, "cobranza-pagos-por-cliente", http.MethodGet, "/pagos/cliente/{cliente_id}",
+		"Historial de pagos por cliente",
+		"Devuelve todos los pagos hechos por el cliente, ordenados por fecha descendente."), h.PagosPorCliente)
+
+	huma.Register(api, op(tag, "cobranza-pagos-por-zona", http.MethodGet, "/pagos/zona/{zona_id}",
+		"Pagos por zona y ventana de fecha",
+		"Devuelve los pagos hechos en la zona con FECHA >= cutoff (semántica de cobranza)."), h.PagosPorZona)
+
+	huma.Register(api, op(tag, "cobranza-sync-saldos-por-zona", http.MethodGet, "/sync/saldos/zona/{zona_id}",
+		"Sync incremental de saldos por zona",
+		"Devuelve un page de saldos modificados desde el cursor server_ts, con max_updated_at y server_now para que el cliente avance sin usar su reloj. Incluye tombstones (cargo_cancelado=true) para propagar cancelaciones."), h.SyncSaldosPorZona)
+
+	huma.Register(api, op(tag, "cobranza-sync-pagos-por-zona", http.MethodGet, "/sync/pagos/zona/{zona_id}",
+		"Sync incremental de pagos por zona",
+		"Devuelve un page de pagos modificados desde el cursor server_ts. Misma mecánica que sync/saldos pero a nivel de MSP_PAGOS_VENTAS."), h.SyncPagosPorZona)
 }
 
 // registerAdminOperations declares the cobranza admin endpoints.
 func registerAdminOperations(api huma.API, h *Handlers) {
-	security := []map[string][]string{{securitySchemeName: {}}}
-	tags := []string{"cobranza-admin"}
+	const tag = "cobranza-admin"
 
-	huma.Register(api, huma.Operation{
-		OperationID:   "cobranza-admin-reconcile",
-		Method:        http.MethodPost,
-		Path:          "/reconcile",
-		Summary:       "Reconciliar saldos",
-		Description:   "Ejecuta un paso completo de reconciliación: compara el caché con los datos en Microsip y corrige divergencias.",
-		Tags:          tags,
-		Security:      security,
-		DefaultStatus: http.StatusOK,
-	}, h.Reconcile)
+	huma.Register(api, op(tag, "cobranza-admin-reconcile", http.MethodPost, "/reconcile",
+		"Reconciliar saldos",
+		"Ejecuta un paso completo de reconciliación: compara el caché con los datos en Microsip y corrige divergencias."), h.Reconcile)
 
-	huma.Register(api, huma.Operation{
-		OperationID:   "cobranza-admin-backfill",
-		Method:        http.MethodPost,
-		Path:          "/backfill",
-		Summary:       "Backfill de saldos",
-		Description:   "Recomputa incondicionalmente todos los saldos en MSP_SALDOS_VENTAS. Equivalente al bloque EXECUTE BLOCK de la migración 000010.",
-		Tags:          tags,
-		Security:      security,
-		DefaultStatus: http.StatusOK,
-	}, h.Backfill)
+	huma.Register(api, op(tag, "cobranza-admin-backfill", http.MethodPost, "/backfill",
+		"Backfill de saldos",
+		"Recomputa incondicionalmente todos los saldos en MSP_SALDOS_VENTAS. Equivalente al bloque EXECUTE BLOCK de la migración 000010."), h.Backfill)
 
-	huma.Register(api, huma.Operation{
-		OperationID:   "cobranza-admin-errors",
-		Method:        http.MethodGet,
-		Path:          "/errors",
-		Summary:       "Errores del caché de saldos",
-		Description:   "Devuelve los errores más recientes registrados en MSP_SALDOS_ERRORS por los triggers y el procedimiento de recompute.",
-		Tags:          tags,
-		Security:      security,
-		DefaultStatus: http.StatusOK,
-	}, h.Errors)
+	huma.Register(api, op(tag, "cobranza-admin-errors", http.MethodGet, "/errors",
+		"Errores del caché de saldos",
+		"Devuelve los errores más recientes registrados en MSP_SALDOS_ERRORS por los triggers y el procedimiento de recompute."), h.Errors)
 }

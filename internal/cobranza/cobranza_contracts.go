@@ -42,3 +42,22 @@ type ResumenZona struct {
 	TotalVentas int
 	SaldoTotal  decimal.Decimal
 }
+
+// Pago is the projected, cross-module view of a MSP_PAGOS_VENTAS row.
+type Pago struct {
+	ImpteDoctoCCID int
+	DoctoCCID      int
+	DoctoCCAcrID   int
+	ClienteID      int
+	ZonaClienteID  *int
+	Folio          string
+	ConceptoCCID   int
+	Fecha          time.Time
+	Importe        decimal.Decimal
+	Impuesto       decimal.Decimal
+	Lat            *decimal.Decimal
+	Lon            *decimal.Decimal
+	Cancelado      bool
+	Aplicado       bool
+	UpdatedAt      time.Time
+}

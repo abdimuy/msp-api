@@ -20,15 +20,30 @@ func provideCobranzaSaldosRepo(p *firebird.Pool) cobranzaoutbound.SaldosRepo {
 	return cobranzaventfb.NewSaldosRepo(p)
 }
 
+// provideCobranzaPagosRepo builds the Firebird-backed PagosRepo.
+func provideCobranzaPagosRepo(p *firebird.Pool) cobranzaoutbound.PagosRepo {
+	return cobranzaventfb.NewPagosRepo(p)
+}
+
 // provideCobranzaRecomputer builds the Firebird-backed SaldosRecomputer.
 // The repo is injected so the re-read step shares the same pool.
 func provideCobranzaRecomputer(p *firebird.Pool, repo cobranzaoutbound.SaldosRepo) cobranzaoutbound.SaldosRecomputer {
 	return cobranzaventfb.NewRecomputer(p, repo)
 }
 
+// provideCobranzaPagosRecomputer builds the Firebird-backed PagosRecomputer.
+func provideCobranzaPagosRecomputer(p *firebird.Pool) cobranzaoutbound.PagosRecomputer {
+	return cobranzaventfb.NewPagosRecomputer(p)
+}
+
 // provideCobranzaSaldosLister builds the Firebird-backed SaldosLister.
 func provideCobranzaSaldosLister(p *firebird.Pool) cobranzaoutbound.SaldosLister {
 	return cobranzaventfb.NewSaldosLister(p)
+}
+
+// provideCobranzaPagosLister builds the Firebird-backed PagosLister.
+func provideCobranzaPagosLister(p *firebird.Pool) cobranzaoutbound.PagosLister {
+	return cobranzaventfb.NewPagosLister(p)
 }
 
 // provideCobranzaErrorsRepo builds the Firebird-backed ErrorsRepo.
@@ -42,8 +57,12 @@ func provideCobranzaClock() cobranzaoutbound.Clock {
 }
 
 // provideCobranzaService assembles the cobranza query service.
-func provideCobranzaService(repo cobranzaoutbound.SaldosRepo, clock cobranzaoutbound.Clock) *cobranzaapp.Service {
-	return cobranzaapp.NewService(repo, clock)
+func provideCobranzaService(
+	saldos cobranzaoutbound.SaldosRepo,
+	pagos cobranzaoutbound.PagosRepo,
+	clock cobranzaoutbound.Clock,
+) *cobranzaapp.Service {
+	return cobranzaapp.NewService(saldos, pagos, clock)
 }
 
 // provideCobranzaReconcilerConfig returns the reconciler configuration.
@@ -51,23 +70,43 @@ func provideCobranzaService(repo cobranzaoutbound.SaldosRepo, clock cobranzaoutb
 // needs different cadence.
 func provideCobranzaReconcilerConfig() cobranzaapp.ReconcilerConfig {
 	return cobranzaapp.ReconcilerConfig{
-		Interval: 7 * 24 * time.Hour,
-		PageSize: 1000,
-		DriftLog: true,
-		FixDrift: true,
+		Interval:               7 * 24 * time.Hour,
+		PageSize:               1000,
+		DriftLog:               true,
+		FixDrift:               true,
+		TombstoneRetentionDays: 30,
 	}
+}
+
+// provideCobranzaTombstoneCleaner exposes the SaldosRepo as a
+// SaldosTombstoneCleaner port (the concrete *SaldosRepo satisfies both).
+func provideCobranzaTombstoneCleaner(p *firebird.Pool) cobranzaoutbound.SaldosTombstoneCleaner {
+	return cobranzaventfb.NewSaldosRepo(p)
 }
 
 // provideCobranzaReconciler assembles the cobranza reconciler.
 func provideCobranzaReconciler(
-	lister cobranzaoutbound.SaldosLister,
+	saldosLister cobranzaoutbound.SaldosLister,
 	recomputer cobranzaoutbound.SaldosRecomputer,
-	repo cobranzaoutbound.SaldosRepo,
+	saldosRepo cobranzaoutbound.SaldosRepo,
+	pagosLister cobranzaoutbound.PagosLister,
+	pagosRecomputer cobranzaoutbound.PagosRecomputer,
+	cleaner cobranzaoutbound.SaldosTombstoneCleaner,
 	clock cobranzaoutbound.Clock,
 	cfg cobranzaapp.ReconcilerConfig,
 	logger *slog.Logger,
 ) *cobranzaapp.Reconciler {
-	return cobranzaapp.NewReconciler(lister, recomputer, repo, clock, cfg, logger)
+	return cobranzaapp.NewReconciler(cobranzaapp.ReconcilerDeps{
+		SaldosLister:     saldosLister,
+		SaldosRepo:       saldosRepo,
+		Recomputer:       recomputer,
+		PagosLister:      pagosLister,
+		PagosRecomputer:  pagosRecomputer,
+		TombstoneCleaner: cleaner,
+		Clock:            clock,
+		Config:           cfg,
+		Logger:           logger,
+	})
 }
 
 // registerCobranzaReconcilerLifecycle hooks the reconciler into the fx lifecycle.

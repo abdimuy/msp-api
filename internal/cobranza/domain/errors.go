@@ -45,4 +45,16 @@ var (
 		"cobranza_desde_invalido",
 		"el parámetro 'desde' debe ser una fecha YYYY-MM-DD o un timestamp RFC3339",
 	)
+
+	// ErrPagoNoEncontrado is returned when a pago lookup misses.
+	ErrPagoNoEncontrado = apperror.NewNotFound(
+		"pago_no_encontrado",
+		"no se encontró el pago",
+	)
+
+	// ErrCursorInvalido is returned when the sync cursor cannot be parsed.
+	ErrCursorInvalido = apperror.NewValidation(
+		"cobranza_cursor_invalido",
+		"el parámetro 'cursor' debe ser un timestamp RFC3339",
+	)
 )

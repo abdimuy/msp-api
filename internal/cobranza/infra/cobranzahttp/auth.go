@@ -42,6 +42,17 @@ func requirePerm(cu auth.CurrentUser, perms ...auth.Permission) error {
 	return nil
 }
 
+// authorize is the standard handler preamble: pull the CurrentUser from the
+// context, then assert it holds every required permission. Returns the
+// translated huma error (401/403) on failure; nil on success.
+func authorize(ctx context.Context, perms ...auth.Permission) error {
+	cu, err := currentUserOrError(ctx)
+	if err != nil {
+		return err
+	}
+	return requirePerm(cu, perms...)
+}
+
 // mapAppError translates a typed apperror.Error into a huma.StatusError. Non-
 // apperror errors fall through as 500.
 func mapAppError(err error) error {

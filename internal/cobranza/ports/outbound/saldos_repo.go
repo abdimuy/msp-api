@@ -33,6 +33,25 @@ type SaldosRepo interface {
 	// ResumenZonas aggregates open saldos by zona, returning one ResumenZona
 	// per zona that has at least one open cargo.
 	ResumenZonas(ctx context.Context) ([]domain.ResumenZona, error)
+
+	// SyncPorZona returns a page of saldos whose UPDATED_AT > cursor AND
+	// UPDATED_AT <= server_now - 5 seconds (lag window). Tombstones
+	// (CARGO_CANCELADO='S') ARE included so the client can propagate
+	// cancellations. Items ordered by (UPDATED_AT, DOCTO_CC_ID) ascending;
+	// afterID is used for sub-cursor pagination when has_more=true.
+	// Pass cursor=time.Time{} for a full initial sync.
+	SyncPorZona(ctx context.Context, zonaID int, cursor time.Time, afterID, limit int) (SyncPage[domain.Saldo], error)
+}
+
+// SaldosTombstoneCleaner physically deletes saldo rows marked as cancelled
+// (CARGO_CANCELADO='S') whose UPDATED_AT is older than the cutoff. Used by
+// the reconciler to keep the cache bounded — any mobile client that hasn't
+// synced for >cutoff has already lost its session and will resync from
+// scratch anyway.
+type SaldosTombstoneCleaner interface {
+	// DeleteTombstonesOlderThan deletes tombstones whose UPDATED_AT < cutoff
+	// and returns how many rows were removed.
+	DeleteTombstonesOlderThan(ctx context.Context, cutoff time.Time) (int, error)
 }
 
 // SaldosRecomputer wraps the MSP_RECOMPUTE_SALDO_VENTA stored procedure.

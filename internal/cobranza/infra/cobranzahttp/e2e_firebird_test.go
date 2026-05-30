@@ -241,15 +241,15 @@ func TestE2E_Cobranza_HTTP_PorVenta_HappyPath(t *testing.T) {
 		// The PorVenta endpoint requires a DOCTO_PV_ID. Since this cargo was
 		// inserted directly (no PV document), use PorCargo path via the Saldo.
 		// For HTTP happy-path we query by cargo directly via the reconcile report.
-		svc := cobranzaapp.NewService(repo, cobranzaoutbound.ProductionClock{})
-		reconciler := cobranzaapp.NewReconciler(
-			cobranzaventfb.NewSaldosLister(pool),
-			cobranzaventfb.NewRecomputer(pool, repo),
-			repo,
-			cobranzaoutbound.ProductionClock{},
-			cobranzaapp.ReconcilerConfig{PageSize: 10, DriftLog: false, FixDrift: false},
-			slog.Default(),
-		)
+		svc := cobranzaapp.NewService(repo, cobranzaventfb.NewPagosRepo(pool), cobranzaoutbound.ProductionClock{})
+		reconciler := cobranzaapp.NewReconciler(cobranzaapp.ReconcilerDeps{
+			SaldosLister: cobranzaventfb.NewSaldosLister(pool),
+			Recomputer:   cobranzaventfb.NewRecomputer(pool, repo),
+			SaldosRepo:   repo,
+			Clock:        cobranzaoutbound.ProductionClock{},
+			Config:       cobranzaapp.ReconcilerConfig{PageSize: 10, DriftLog: false, FixDrift: false},
+			Logger:       slog.Default(),
+		})
 		errorsRepo := cobranzaventfb.NewErrorsRepo(pool)
 
 		cu := e2eCobranzaUser()
@@ -279,7 +279,7 @@ func TestE2E_Cobranza_HTTP_PermDenied(t *testing.T) {
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		repo := cobranzaventfb.NewSaldosRepo(pool)
-		svc := cobranzaapp.NewService(repo, cobranzaoutbound.ProductionClock{})
+		svc := cobranzaapp.NewService(repo, cobranzaventfb.NewPagosRepo(pool), cobranzaoutbound.ProductionClock{})
 
 		// User with NO cobranza permissions.
 		cu := auth.CurrentUser{
@@ -311,7 +311,7 @@ func TestE2E_Cobranza_HTTP_VentanaDias_TooLarge(t *testing.T) {
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		repo := cobranzaventfb.NewSaldosRepo(pool)
-		svc := cobranzaapp.NewService(repo, cobranzaoutbound.ProductionClock{})
+		svc := cobranzaapp.NewService(repo, cobranzaventfb.NewPagosRepo(pool), cobranzaoutbound.ProductionClock{})
 
 		cu := e2eCobranzaUser()
 		r := buildReadRouter(ctx, svc, cu)
@@ -340,16 +340,16 @@ func TestE2E_Cobranza_HTTP_Reconcile_Admin(t *testing.T) {
 		e2eRequireMigration000010(t, q)
 
 		repo := cobranzaventfb.NewSaldosRepo(pool)
-		lister := cobranzaventfb.NewSaldosLister(pool)
-		recomputer := cobranzaventfb.NewRecomputer(pool, repo)
 		errorsRepo := cobranzaventfb.NewErrorsRepo(pool)
-		svc := cobranzaapp.NewService(repo, cobranzaoutbound.ProductionClock{})
-		reconciler := cobranzaapp.NewReconciler(
-			lister, recomputer, repo,
-			cobranzaoutbound.ProductionClock{},
-			cobranzaapp.ReconcilerConfig{PageSize: 50, DriftLog: true, FixDrift: true},
-			slog.Default(),
-		)
+		svc := cobranzaapp.NewService(repo, cobranzaventfb.NewPagosRepo(pool), cobranzaoutbound.ProductionClock{})
+		reconciler := cobranzaapp.NewReconciler(cobranzaapp.ReconcilerDeps{
+			SaldosLister: cobranzaventfb.NewSaldosLister(pool),
+			Recomputer:   cobranzaventfb.NewRecomputer(pool, repo),
+			SaldosRepo:   repo,
+			Clock:        cobranzaoutbound.ProductionClock{},
+			Config:       cobranzaapp.ReconcilerConfig{PageSize: 50, DriftLog: true, FixDrift: true},
+			Logger:       slog.Default(),
+		})
 
 		cu := e2eCobranzaUser()
 		r := buildAdminRouter(ctx, svc, reconciler, errorsRepo, cu)
@@ -381,7 +381,7 @@ func TestE2E_Cobranza_HTTP_ResumenZonas(t *testing.T) {
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		repo := cobranzaventfb.NewSaldosRepo(pool)
-		svc := cobranzaapp.NewService(repo, cobranzaoutbound.ProductionClock{})
+		svc := cobranzaapp.NewService(repo, cobranzaventfb.NewPagosRepo(pool), cobranzaoutbound.ProductionClock{})
 
 		cu := e2eCobranzaUser()
 		r := buildReadRouter(ctx, svc, cu)

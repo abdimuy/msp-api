@@ -98,6 +98,8 @@ const (
 
 	// PermCobranzaVerSaldos — see domain.PermCobranzaVerSaldos.
 	PermCobranzaVerSaldos = domain.PermCobranzaVerSaldos
+	// PermCobranzaVerPagos — see domain.PermCobranzaVerPagos.
+	PermCobranzaVerPagos = domain.PermCobranzaVerPagos
 	// PermCobranzaReconciliar — see domain.PermCobranzaReconciliar.
 	PermCobranzaReconciliar = domain.PermCobranzaReconciliar
 	// PermCobranzaBackfill — see domain.PermCobranzaBackfill.

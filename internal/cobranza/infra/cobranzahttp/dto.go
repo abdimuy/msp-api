@@ -82,9 +82,9 @@ type PorClienteInput struct {
 // Accepts YYYY-MM-DD or RFC3339 (e.g. 2026-05-23 or 2026-05-23T08:00:00Z).
 // The time component is truncated to DATE precision by the cache schema.
 type PorZonaInput struct {
-	ZonaID      int     `path:"zona_id"                                                                doc:"ID de la zona de cobranza"`
-	Desde       *string `query:"desde"                                                                 doc:"Fecha absoluta (YYYY-MM-DD o RFC3339). Excluyente con ventana_dias"`
-	VentanaDias *int    `query:"ventana_dias" minimum:"0" maximum:"90"                                 doc:"Días hacia atrás desde hoy. Excluyente con desde. Default 7 si ninguno"`
+	ZonaID      int    `path:"zona_id"                                doc:"ID de la zona de cobranza"`
+	Desde       string `query:"desde"                                 doc:"Fecha absoluta (YYYY-MM-DD o RFC3339). Excluyente con ventana_dias"`
+	VentanaDias int    `query:"ventana_dias" minimum:"-1" maximum:"90" default:"-1" doc:"Días hacia atrás desde hoy. -1 = no supplied (usa default 7). Excluyente con desde"`
 }
 
 // ResumenZonasInput is the (empty) input for GET /cobranza/resumen-zonas.

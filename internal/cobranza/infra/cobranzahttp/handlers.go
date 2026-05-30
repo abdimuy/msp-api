@@ -1,4 +1,4 @@
-//nolint:misspell // cobranza vocabulary is Spanish per project convention.
+//nolint:misspell // Spanish domain vocabulary by project convention.
 package cobranzahttp
 
 import (
@@ -41,11 +41,7 @@ func NewHandlers(svc *cobranzaapp.Service, reconciler *cobranzaapp.Reconciler, e
 
 // PorVenta handles GET /cobranza/saldos/venta/{id}.
 func (h *Handlers) PorVenta(ctx context.Context, in *PorVentaInput) (*SaldoOutput, error) {
-	cu, err := currentUserOrError(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if err := requirePerm(cu, auth.PermCobranzaVerSaldos); err != nil {
+	if err := authorize(ctx, auth.PermCobranzaVerSaldos); err != nil {
 		return nil, err
 	}
 	saldo, err := h.svc.PorVenta(ctx, in.ID)
@@ -57,22 +53,14 @@ func (h *Handlers) PorVenta(ctx context.Context, in *PorVentaInput) (*SaldoOutpu
 
 // PorCliente handles GET /cobranza/saldos/cliente/{cliente_id}.
 func (h *Handlers) PorCliente(ctx context.Context, in *PorClienteInput) (*SaldosOutput, error) {
-	cu, err := currentUserOrError(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if err := requirePerm(cu, auth.PermCobranzaVerSaldos); err != nil {
+	if err := authorize(ctx, auth.PermCobranzaVerSaldos); err != nil {
 		return nil, err
 	}
 	saldos, err := h.svc.AbiertasPorCliente(ctx, in.ClienteID)
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	items := make([]SaldoDTO, 0, len(saldos))
-	for _, s := range saldos {
-		items = append(items, toSaldoDTO(s))
-	}
-	return &SaldosOutput{Body: items}, nil
+	return &SaldosOutput{Body: mapSaldos(saldos)}, nil
 }
 
 // PorZona handles GET /cobranza/saldos/zona/{zona_id}.
@@ -82,41 +70,23 @@ func (h *Handlers) PorCliente(ctx context.Context, in *PorClienteInput) (*Saldos
 // neither is supplied. Returns 422 cobranza_parametros_excluyentes when both
 // are present.
 func (h *Handlers) PorZona(ctx context.Context, in *PorZonaInput) (*SaldosOutput, error) {
-	cu, err := currentUserOrError(ctx)
+	if err := authorize(ctx, auth.PermCobranzaVerSaldos); err != nil {
+		return nil, err
+	}
+	desde, err := parseOptionalDesde(in.Desde)
 	if err != nil {
 		return nil, err
 	}
-	if err := requirePerm(cu, auth.PermCobranzaVerSaldos); err != nil {
-		return nil, err
-	}
-
-	var desde *time.Time
-	if in.Desde != nil {
-		t, err := parseDesde(*in.Desde)
-		if err != nil {
-			return nil, mapAppError(err)
-		}
-		desde = &t
-	}
-
-	saldos, err := h.svc.EnRutaPorZona(ctx, in.ZonaID, desde, in.VentanaDias)
+	saldos, err := h.svc.EnRutaPorZona(ctx, in.ZonaID, desde, optionalVentanaDias(in.VentanaDias))
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	items := make([]SaldoDTO, 0, len(saldos))
-	for _, s := range saldos {
-		items = append(items, toSaldoDTO(s))
-	}
-	return &SaldosOutput{Body: items}, nil
+	return &SaldosOutput{Body: mapSaldos(saldos)}, nil
 }
 
 // ResumenZonas handles GET /cobranza/resumen-zonas.
 func (h *Handlers) ResumenZonas(ctx context.Context, _ *ResumenZonasInput) (*ResumenZonasOutput, error) {
-	cu, err := currentUserOrError(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if err := requirePerm(cu, auth.PermCobranzaVerSaldos); err != nil {
+	if err := authorize(ctx, auth.PermCobranzaVerSaldos); err != nil {
 		return nil, err
 	}
 	resumenes, err := h.svc.ResumenZonas(ctx)
@@ -132,11 +102,7 @@ func (h *Handlers) ResumenZonas(ctx context.Context, _ *ResumenZonasInput) (*Res
 
 // Reconcile handles POST /_admin/saldos/reconcile.
 func (h *Handlers) Reconcile(ctx context.Context, _ *ReconcileInput) (*ReconcileOutput, error) {
-	cu, err := currentUserOrError(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if err := requirePerm(cu, auth.PermCobranzaReconciliar); err != nil {
+	if err := authorize(ctx, auth.PermCobranzaReconciliar); err != nil {
 		return nil, err
 	}
 	report, err := h.reconciler.Run(ctx)
@@ -152,11 +118,7 @@ func (h *Handlers) Reconcile(ctx context.Context, _ *ReconcileInput) (*Reconcile
 // the migration's EXECUTE BLOCK backfill, available as an HTTP endpoint for
 // re-runs after migration issues or data repairs.
 func (h *Handlers) Backfill(ctx context.Context, _ *BackfillInput) (*BackfillOutput, error) {
-	cu, err := currentUserOrError(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if err := requirePerm(cu, auth.PermCobranzaBackfill); err != nil {
+	if err := authorize(ctx, auth.PermCobranzaBackfill); err != nil {
 		return nil, err
 	}
 	report, err := h.reconciler.Run(ctx)
@@ -168,11 +130,7 @@ func (h *Handlers) Backfill(ctx context.Context, _ *BackfillInput) (*BackfillOut
 
 // Errors handles GET /_admin/saldos/errors.
 func (h *Handlers) Errors(ctx context.Context, in *ErrorsInput) (*ErrorsOutput, error) {
-	cu, err := currentUserOrError(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if err := requirePerm(cu, auth.PermCobranzaReconciliar); err != nil {
+	if err := authorize(ctx, auth.PermCobranzaReconciliar); err != nil {
 		return nil, err
 	}
 	limit := in.Limit
@@ -188,6 +146,39 @@ func (h *Handlers) Errors(ctx context.Context, in *ErrorsInput) (*ErrorsOutput, 
 		items = append(items, toErrorDTO(e))
 	}
 	return &ErrorsOutput{Body: items}, nil
+}
+
+// parseOptionalDesde resolves the optional ?desde= query parameter. Empty
+// input yields a nil pointer (treated by the service as "not supplied"); a
+// parse error is translated through mapAppError.
+func parseOptionalDesde(raw string) (*time.Time, error) {
+	if raw == "" {
+		return nil, nil //nolint:nilnil // nil = not supplied, by handler contract.
+	}
+	t, err := parseDesde(raw)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+	return &t, nil
+}
+
+// optionalVentanaDias maps the wire-level sentinel (-1 = not supplied) to the
+// service's nil-pointer contract.
+func optionalVentanaDias(v int) *int {
+	if v < 0 {
+		return nil
+	}
+	return &v
+}
+
+// mapSaldos projects each domain.Saldo into its DTO. Used by every list-style
+// handler that returns []domain.Saldo.
+func mapSaldos(saldos []domain.Saldo) []SaldoDTO {
+	out := make([]SaldoDTO, 0, len(saldos))
+	for _, s := range saldos {
+		out = append(out, toSaldoDTO(s))
+	}
+	return out
 }
 
 // ─── Compile-time handler signature checks ────────────────────────────────────

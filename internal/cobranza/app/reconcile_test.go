@@ -18,8 +18,6 @@ import (
 
 // fakeLister is an in-memory outbound.SaldosLister.
 type fakeLister struct {
-	// pages holds the cargo IDs returned per Page call. Each element is a
-	// "page" of IDs; the last page returns nextCursor=0.
 	pages [][]int
 	calls int
 	err   error
@@ -34,17 +32,14 @@ func (f *fakeLister) Page(_ context.Context, _, _ int) ([]int, int, error) {
 	}
 	ids := f.pages[f.calls]
 	f.calls++
-	// If there are more pages, return a non-zero cursor; otherwise 0.
 	var next int
 	if f.calls < len(f.pages) {
-		next = f.calls * 1000 // arbitrary non-zero value
+		next = f.calls * 1000
 	}
 	return ids, next, nil
 }
 
-// fakeRecomputer is an in-memory outbound.SaldosRecomputer. It returns the
-// saldo stored in the results map for the given cargo ID, or the configured
-// error.
+// fakeRecomputer is an in-memory outbound.SaldosRecomputer.
 type fakeRecomputer struct {
 	results map[int]*domain.Saldo
 	err     error
@@ -63,6 +58,56 @@ func (f *fakeRecomputer) Recompute(_ context.Context, cargoCCID int) (*domain.Sa
 	return s, nil
 }
 
+// fakePagosLister implements outbound.PagosLister.
+type fakePagosLister struct {
+	pages [][]int
+	calls int
+}
+
+func (f *fakePagosLister) Page(_ context.Context, _, _ int) ([]int, int, error) {
+	if f.calls >= len(f.pages) {
+		return nil, 0, nil
+	}
+	ids := f.pages[f.calls]
+	f.calls++
+	var next int
+	if f.calls < len(f.pages) {
+		next = f.calls * 1000
+	}
+	return ids, next, nil
+}
+
+// fakePagosRecomputer implements outbound.PagosRecomputer.
+type fakePagosRecomputer struct {
+	failOn map[int]bool
+	calls  int
+}
+
+func (f *fakePagosRecomputer) Recompute(_ context.Context, impteID int) error {
+	f.calls++
+	if f.failOn[impteID] {
+		return errors.New("boom")
+	}
+	return nil
+}
+
+// fakeTombstoneCleaner implements outbound.SaldosTombstoneCleaner.
+type fakeTombstoneCleaner struct {
+	deleted   int
+	err       error
+	lastUsed  time.Time
+	callCount int
+}
+
+func (f *fakeTombstoneCleaner) DeleteTombstonesOlderThan(_ context.Context, cutoff time.Time) (int, error) {
+	f.callCount++
+	f.lastUsed = cutoff
+	if f.err != nil {
+		return 0, f.err
+	}
+	return f.deleted, nil
+}
+
 func newTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 }
@@ -73,6 +118,14 @@ func makeRepoWithCargos(cargos map[int]*domain.Saldo) *fakeSaldosRepo {
 		repo.byCargo[id] = s
 	}
 	return repo
+}
+
+func newReconciler(t *testing.T, deps app.ReconcilerDeps) *app.Reconciler {
+	t.Helper()
+	if deps.Logger == nil {
+		deps.Logger = newTestLogger()
+	}
+	return app.NewReconciler(deps)
 }
 
 func TestReconciler_Run_NoDrift(t *testing.T) {
@@ -86,12 +139,13 @@ func TestReconciler_Run_NoDrift(t *testing.T) {
 	repo := makeRepoWithCargos(map[int]*domain.Saldo{1: &s1, 2: &s2})
 	clock := fixedClock{T: time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)}
 
-	r := app.NewReconciler(lister, recomputer, repo, clock, app.ReconcilerConfig{
-		Interval: time.Hour,
-		PageSize: 100,
-		DriftLog: true,
-		FixDrift: true,
-	}, newTestLogger())
+	r := newReconciler(t, app.ReconcilerDeps{
+		SaldosLister: lister,
+		Recomputer:   recomputer,
+		SaldosRepo:   repo,
+		Clock:        clock,
+		Config:       app.ReconcilerConfig{Interval: time.Hour, PageSize: 100, DriftLog: true, FixDrift: true},
+	})
 
 	report, err := r.Run(context.Background())
 	require.NoError(t, err)
@@ -104,7 +158,6 @@ func TestReconciler_Run_NoDrift(t *testing.T) {
 func TestReconciler_Run_DetectsDrift(t *testing.T) {
 	t.Parallel()
 
-	// cached row has saldo=5000; recomputed row has saldo=4500 (drift)
 	cached := makeSaldo(10, decimal.NewFromInt(5000))
 	recomputed := makeSaldo(10, decimal.NewFromInt(4500))
 
@@ -113,12 +166,13 @@ func TestReconciler_Run_DetectsDrift(t *testing.T) {
 	repo := makeRepoWithCargos(map[int]*domain.Saldo{10: &cached})
 	clock := fixedClock{T: time.Now()}
 
-	r := app.NewReconciler(lister, recomputer, repo, clock, app.ReconcilerConfig{
-		Interval: time.Hour,
-		PageSize: 100,
-		DriftLog: true,
-		FixDrift: true,
-	}, newTestLogger())
+	r := newReconciler(t, app.ReconcilerDeps{
+		SaldosLister: lister,
+		Recomputer:   recomputer,
+		SaldosRepo:   repo,
+		Clock:        clock,
+		Config:       app.ReconcilerConfig{Interval: time.Hour, PageSize: 100, DriftLog: true, FixDrift: true},
+	})
 
 	report, err := r.Run(context.Background())
 	require.NoError(t, err)
@@ -134,16 +188,18 @@ func TestReconciler_Run_MultiPage(t *testing.T) {
 	s2 := makeSaldo(2, decimal.NewFromInt(200))
 	s3 := makeSaldo(3, decimal.NewFromInt(300))
 
-	// Three pages: [1], [2], [3]
 	lister := &fakeLister{pages: [][]int{{1}, {2}, {3}}}
 	recomputer := &fakeRecomputer{results: map[int]*domain.Saldo{1: &s1, 2: &s2, 3: &s3}}
 	repo := makeRepoWithCargos(map[int]*domain.Saldo{1: &s1, 2: &s2, 3: &s3})
 	clock := fixedClock{T: time.Now()}
 
-	r := app.NewReconciler(lister, recomputer, repo, clock, app.ReconcilerConfig{
-		Interval: time.Hour,
-		PageSize: 1,
-	}, newTestLogger())
+	r := newReconciler(t, app.ReconcilerDeps{
+		SaldosLister: lister,
+		Recomputer:   recomputer,
+		SaldosRepo:   repo,
+		Clock:        clock,
+		Config:       app.ReconcilerConfig{Interval: time.Hour, PageSize: 1},
+	})
 
 	report, err := r.Run(context.Background())
 	require.NoError(t, err)
@@ -161,13 +217,16 @@ func TestReconciler_Run_RecomputeError_CountedAsError(t *testing.T) {
 	repo := makeRepoWithCargos(map[int]*domain.Saldo{20: &cached})
 	clock := fixedClock{T: time.Now()}
 
-	r := app.NewReconciler(lister, recomputer, repo, clock, app.ReconcilerConfig{
-		Interval: time.Hour,
-		PageSize: 100,
-	}, newTestLogger())
+	r := newReconciler(t, app.ReconcilerDeps{
+		SaldosLister: lister,
+		Recomputer:   recomputer,
+		SaldosRepo:   repo,
+		Clock:        clock,
+		Config:       app.ReconcilerConfig{Interval: time.Hour, PageSize: 100},
+	})
 
 	report, err := r.Run(context.Background())
-	require.NoError(t, err) // transient errors inside Run are counted, not propagated
+	require.NoError(t, err)
 	assert.Equal(t, 1, report.Checked)
 	assert.Equal(t, 0, report.Drift)
 	assert.Equal(t, 1, report.Errors)
@@ -181,10 +240,13 @@ func TestReconciler_Run_ListerError_PropagatesImmediately(t *testing.T) {
 	repo := newFakeSaldosRepo()
 	clock := fixedClock{T: time.Now()}
 
-	r := app.NewReconciler(lister, recomputer, repo, clock, app.ReconcilerConfig{
-		Interval: time.Hour,
-		PageSize: 100,
-	}, newTestLogger())
+	r := newReconciler(t, app.ReconcilerDeps{
+		SaldosLister: lister,
+		Recomputer:   recomputer,
+		SaldosRepo:   repo,
+		Clock:        clock,
+		Config:       app.ReconcilerConfig{Interval: time.Hour, PageSize: 100},
+	})
 
 	_, err := r.Run(context.Background())
 	require.Error(t, err)
@@ -193,16 +255,19 @@ func TestReconciler_Run_ListerError_PropagatesImmediately(t *testing.T) {
 func TestReconciler_Run_ReportTimestamps(t *testing.T) {
 	t.Parallel()
 
-	lister := &fakeLister{pages: [][]int{{}}} // empty page — one pass with 0 rows
+	lister := &fakeLister{pages: [][]int{{}}}
 	recomputer := &fakeRecomputer{}
 	repo := newFakeSaldosRepo()
 	now := time.Date(2025, 5, 1, 10, 0, 0, 0, time.UTC)
 	clock := fixedClock{T: now}
 
-	r := app.NewReconciler(lister, recomputer, repo, clock, app.ReconcilerConfig{
-		Interval: time.Hour,
-		PageSize: 100,
-	}, newTestLogger())
+	r := newReconciler(t, app.ReconcilerDeps{
+		SaldosLister: lister,
+		Recomputer:   recomputer,
+		SaldosRepo:   repo,
+		Clock:        clock,
+		Config:       app.ReconcilerConfig{Interval: time.Hour, PageSize: 100},
+	})
 
 	report, err := r.Run(context.Background())
 	require.NoError(t, err)
@@ -218,40 +283,103 @@ func TestReconciler_StartStop(t *testing.T) {
 	repo := newFakeSaldosRepo()
 	clock := fixedClock{T: time.Now()}
 
-	r := app.NewReconciler(lister, recomputer, repo, clock, app.ReconcilerConfig{
-		// Very short interval so the loop ticks at least once before Stop.
-		Interval: 10 * time.Millisecond,
-		PageSize: 100,
-	}, newTestLogger())
+	r := newReconciler(t, app.ReconcilerDeps{
+		SaldosLister: lister,
+		Recomputer:   recomputer,
+		SaldosRepo:   repo,
+		Clock:        clock,
+		Config:       app.ReconcilerConfig{Interval: 10 * time.Millisecond, PageSize: 100},
+	})
 
 	require.NoError(t, r.Start(context.Background()))
 
 	// Second Start must be idempotent.
 	require.NoError(t, r.Start(context.Background()))
 
-	// Let at least one tick happen before stopping.
 	time.Sleep(30 * time.Millisecond)
 
 	stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	require.NoError(t, r.Stop(stopCtx))
-
-	// Second Stop must be idempotent.
 	require.NoError(t, r.Stop(stopCtx))
 }
 
 func TestReconciler_Stop_WithoutStart_IsNoop(t *testing.T) {
 	t.Parallel()
 
-	r := app.NewReconciler(
-		&fakeLister{},
-		&fakeRecomputer{},
-		newFakeSaldosRepo(),
-		fixedClock{T: time.Now()},
-		app.ReconcilerConfig{Interval: time.Hour, PageSize: 100},
-		newTestLogger(),
-	)
+	r := newReconciler(t, app.ReconcilerDeps{
+		SaldosLister: &fakeLister{},
+		Recomputer:   &fakeRecomputer{},
+		SaldosRepo:   newFakeSaldosRepo(),
+		Clock:        fixedClock{T: time.Now()},
+		Config:       app.ReconcilerConfig{Interval: time.Hour, PageSize: 100},
+	})
 
-	ctx := context.Background()
-	require.NoError(t, r.Stop(ctx))
+	require.NoError(t, r.Stop(context.Background()))
+}
+
+func TestReconciler_Run_PagosPassRecomputesEachImpteID(t *testing.T) {
+	t.Parallel()
+
+	s := makeSaldo(1, decimal.NewFromInt(100))
+	pagosLister := &fakePagosLister{pages: [][]int{{10, 20, 30}}}
+	pagosRecomputer := &fakePagosRecomputer{failOn: map[int]bool{20: true}}
+
+	r := newReconciler(t, app.ReconcilerDeps{
+		SaldosLister:    &fakeLister{pages: [][]int{{1}}},
+		Recomputer:      &fakeRecomputer{results: map[int]*domain.Saldo{1: &s}},
+		SaldosRepo:      makeRepoWithCargos(map[int]*domain.Saldo{1: &s}),
+		PagosLister:     pagosLister,
+		PagosRecomputer: pagosRecomputer,
+		Clock:           fixedClock{T: time.Now()},
+		Config:          app.ReconcilerConfig{Interval: time.Hour, PageSize: 100},
+	})
+
+	report, err := r.Run(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 3, report.PagosChecked)
+	assert.Equal(t, 1, report.PagosErrors)
+}
+
+func TestReconciler_Run_TombstoneCleanup(t *testing.T) {
+	t.Parallel()
+
+	cleaner := &fakeTombstoneCleaner{deleted: 42}
+	now := time.Date(2026, 5, 30, 0, 0, 0, 0, time.UTC)
+
+	r := newReconciler(t, app.ReconcilerDeps{
+		SaldosLister:     &fakeLister{pages: [][]int{{}}},
+		Recomputer:       &fakeRecomputer{},
+		SaldosRepo:       newFakeSaldosRepo(),
+		TombstoneCleaner: cleaner,
+		Clock:            fixedClock{T: now},
+		Config:           app.ReconcilerConfig{Interval: time.Hour, PageSize: 100, TombstoneRetentionDays: 30},
+	})
+
+	report, err := r.Run(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 42, report.TombstonesDeleted)
+	assert.Equal(t, 1, cleaner.callCount)
+	expectedCutoff := now.AddDate(0, 0, -30)
+	assert.Equal(t, expectedCutoff, cleaner.lastUsed)
+}
+
+func TestReconciler_Run_TombstoneCleanup_DisabledWhenRetentionZero(t *testing.T) {
+	t.Parallel()
+
+	cleaner := &fakeTombstoneCleaner{deleted: 99}
+
+	r := newReconciler(t, app.ReconcilerDeps{
+		SaldosLister:     &fakeLister{pages: [][]int{{}}},
+		Recomputer:       &fakeRecomputer{},
+		SaldosRepo:       newFakeSaldosRepo(),
+		TombstoneCleaner: cleaner,
+		Clock:            fixedClock{T: time.Now()},
+		Config:           app.ReconcilerConfig{Interval: time.Hour, PageSize: 100, TombstoneRetentionDays: 0},
+	})
+
+	report, err := r.Run(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 0, report.TombstonesDeleted)
+	assert.Equal(t, 0, cleaner.callCount)
 }

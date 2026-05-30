@@ -33,3 +33,24 @@ func ResumenToContract(r domain.ResumenZona) ResumenZona {
 		SaldoTotal:  r.SaldoTotal(),
 	}
 }
+
+// PagoToContract projects a domain Pago into the cross-module Pago view.
+func PagoToContract(p domain.Pago) Pago {
+	return Pago{
+		ImpteDoctoCCID: p.ImpteDoctoCCID(),
+		DoctoCCID:      p.DoctoCCID(),
+		DoctoCCAcrID:   p.DoctoCCAcrID(),
+		ClienteID:      p.ClienteID(),
+		ZonaClienteID:  p.ZonaClienteID(),
+		Folio:          p.Folio(),
+		ConceptoCCID:   p.ConceptoCCID(),
+		Fecha:          p.Fecha(),
+		Importe:        p.Importe(),
+		Impuesto:       p.Impuesto(),
+		Lat:            p.Lat(),
+		Lon:            p.Lon(),
+		Cancelado:      p.Cancelado(),
+		Aplicado:       p.Aplicado(),
+		UpdatedAt:      p.UpdatedAt(),
+	}
+}

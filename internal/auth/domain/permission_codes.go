@@ -78,6 +78,8 @@ const (
 
 	// PermCobranzaVerSaldos grants reading materialized cobranza balances.
 	PermCobranzaVerSaldos Permission = "cobranza:ver_saldos"
+	// PermCobranzaVerPagos grants reading materialized pagos detail (per-importe rows).
+	PermCobranzaVerPagos Permission = "cobranza:ver_pagos"
 	// PermCobranzaReconciliar grants triggering a manual reconcile and viewing cache errors.
 	PermCobranzaReconciliar Permission = "cobranza:reconciliar"
 	// PermCobranzaBackfill grants triggering an admin backfill of the balances cache.
@@ -138,6 +140,7 @@ func AllPermissions() []PermissionMeta {
 		{PermFailedIntentsResolver, "reproducir, ignorar y resolver intents fallidos", categoriaFailedIntents},
 
 		{PermCobranzaVerSaldos, "ver saldos materializados de cobranza", categoriaCobranza},
+		{PermCobranzaVerPagos, "ver pagos materializados (detalle por importe)", categoriaCobranza},
 		{PermCobranzaReconciliar, "disparar reconcile y ver errores del cache de saldos", categoriaCobranza},
 		{PermCobranzaBackfill, "disparar backfill manual del cache de saldos", categoriaCobranza},
 	}

@@ -169,25 +169,25 @@ func insertPagoImporte(
 func buildCobranzaService(t *testing.T, pool *firebird.Pool) *cobranzaapp.Service {
 	t.Helper()
 	repo := cobranzaventfb.NewSaldosRepo(pool)
-	return cobranzaapp.NewService(repo, cobranzaoutbound.ProductionClock{})
+	return cobranzaapp.NewService(repo, cobranzaventfb.NewPagosRepo(pool), cobranzaoutbound.ProductionClock{})
 }
 
 // buildCobranzaReconciler builds a real Reconciler with Firebird-backed repos.
 func buildCobranzaReconciler(t *testing.T, pool *firebird.Pool) *cobranzaapp.Reconciler {
 	t.Helper()
 	repo := cobranzaventfb.NewSaldosRepo(pool)
-	lister := cobranzaventfb.NewSaldosLister(pool)
-	recomputer := cobranzaventfb.NewRecomputer(pool, repo)
-	return cobranzaapp.NewReconciler(
-		lister, recomputer, repo,
-		cobranzaoutbound.ProductionClock{},
-		cobranzaapp.ReconcilerConfig{
+	return cobranzaapp.NewReconciler(cobranzaapp.ReconcilerDeps{
+		SaldosLister: cobranzaventfb.NewSaldosLister(pool),
+		Recomputer:   cobranzaventfb.NewRecomputer(pool, repo),
+		SaldosRepo:   repo,
+		Clock:        cobranzaoutbound.ProductionClock{},
+		Config: cobranzaapp.ReconcilerConfig{
 			PageSize: 100,
 			DriftLog: true,
 			FixDrift: true,
 		},
-		testLogger(),
-	)
+		Logger: testLogger(),
+	})
 }
 
 // testLogger returns a no-op slog.Logger for tests.

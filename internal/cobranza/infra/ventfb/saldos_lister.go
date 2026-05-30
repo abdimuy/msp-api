@@ -23,39 +23,10 @@ func NewSaldosLister(pool *firebird.Pool) *SaldosLister {
 
 // Page returns up to limit cargo IDs from MSP_SALDOS_VENTAS starting AFTER
 // cursorAfter. Pass 0 to start from the beginning.
-// nextCursor is 0 when fewer than limit rows remain (end of table).
 func (l *SaldosLister) Page(ctx context.Context, cursorAfter, limit int) ([]int, int, error) {
-	q := firebird.GetQuerier(ctx, l.pool.DB)
-	rows, err := q.QueryContext(
-		ctx, `
+	return listIDPage(ctx, l.pool, `
 SELECT FIRST ? DOCTO_CC_ID
 FROM MSP_SALDOS_VENTAS
 WHERE DOCTO_CC_ID > ?
-ORDER BY DOCTO_CC_ID`,
-		limit, cursorAfter,
-	)
-	if err != nil {
-		return nil, 0, firebird.MapError(err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var ids []int
-	for rows.Next() {
-		var id int
-		if scanErr := rows.Scan(&id); scanErr != nil {
-			return nil, 0, firebird.MapError(scanErr)
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, 0, firebird.MapError(err)
-	}
-
-	if len(ids) < limit {
-		// Fewer than limit rows means we reached the end.
-		return ids, 0, nil
-	}
-
-	// The next call should start after the last seen ID.
-	return ids, ids[len(ids)-1], nil
+ORDER BY DOCTO_CC_ID`, cursorAfter, limit)
 }

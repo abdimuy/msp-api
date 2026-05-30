@@ -1,4 +1,4 @@
-//nolint:misspell // Spanish vocabulary (saldo, zona, cargo, cobranza, etc.) by convention.
+//nolint:misspell // Spanish domain vocabulary by project convention.
 package ventfb
 
 import (
@@ -7,13 +7,18 @@ import (
 	"errors"
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/abdimuy/msp-api/internal/cobranza/domain"
 	"github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 )
 
-// Compile-time assertion: SaldosRepo satisfies the outbound port.
-var _ outbound.SaldosRepo = (*SaldosRepo)(nil)
+// Compile-time assertions: SaldosRepo satisfies both ports.
+var (
+	_ outbound.SaldosRepo             = (*SaldosRepo)(nil)
+	_ outbound.SaldosTombstoneCleaner = (*SaldosRepo)(nil)
+)
 
 // SaldosRepo implements outbound.SaldosRepo backed by the MSP_SALDOS_VENTAS
 // materialized cache in Firebird. All reads are expected to hit PK or
@@ -186,200 +191,195 @@ ORDER BY ZONA_CLIENTE_ID`)
 	return result, nil
 }
 
+// SyncPorZona returns a page of saldos for incremental sync. Tombstones are
+// included so the client can propagate cancellations. See port doc.
+func (r *SaldosRepo) SyncPorZona(
+	ctx context.Context, zonaID int, cursor time.Time, afterID, limit int,
+) (outbound.SyncPage[domain.Saldo], error) {
+	pageQuery := func(ctx context.Context, q firebird.Querier, upper time.Time) (*sql.Rows, error) {
+		return querySyncPage(ctx, q, syncPageSpec{
+			columns:    selectSaldoCols,
+			table:      "MSP_SALDOS_VENTAS",
+			pkColumn:   "DOCTO_CC_ID",
+			zonaID:     zonaID,
+			cursor:     cursor,
+			upperBound: upper,
+			afterID:    afterID,
+			limit:      limit,
+		})
+	}
+	return runSyncPage[domain.Saldo](ctx, r.pool, cursor, limit, pageQuery, scanSaldoRows)
+}
+
+// DeleteTombstonesOlderThan deletes tombstones whose UPDATED_AT < cutoff and
+// returns how many rows were removed. Implements
+// outbound.SaldosTombstoneCleaner.
+func (r *SaldosRepo) DeleteTombstonesOlderThan(ctx context.Context, cutoff time.Time) (int, error) {
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	res, err := q.ExecContext(ctx, `
+DELETE FROM MSP_SALDOS_VENTAS
+WHERE CARGO_CANCELADO = 'S' AND UPDATED_AT < ?`,
+		firebird.ToWallClock(cutoff),
+	)
+	if err != nil {
+		return 0, firebird.MapError(err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, firebird.MapError(err)
+	}
+	return int(n), nil
+}
+
 // ─── scan helpers ─────────────────────────────────────────────────────────────
 
-// scanSaldo scans one MSP_SALDOS_VENTAS row into a domain.Saldo.
-func scanSaldo(row *sql.Row) (*domain.Saldo, error) {
-	var (
-		doctoCCID       int
-		doctoPVIDRaw    sql.NullInt64
-		clienteID       int
-		zonaRaw         sql.NullInt64
-		folio           sql.NullString
-		fechaCargoRaw   any
-		precioTotalRaw  any
-		totalImporteRaw any
-		impteRestRaw    any
-		saldoRaw        any
-		numPagos        int
-		fechaUltRaw     any
-		cargoCancelado  string
-		updatedAtRaw    any
-	)
-	if err := row.Scan(
-		&doctoCCID,
-		&doctoPVIDRaw,
-		&clienteID,
-		&zonaRaw,
-		&folio,
-		&fechaCargoRaw,
-		&precioTotalRaw,
-		&totalImporteRaw,
-		&impteRestRaw,
-		&saldoRaw,
-		&numPagos,
-		&fechaUltRaw,
-		&cargoCancelado,
-		&updatedAtRaw,
-	); err != nil {
-		return nil, err
-	}
-	return hydrateSaldo(
-		doctoCCID, doctoPVIDRaw, clienteID, zonaRaw, folio,
-		fechaCargoRaw, precioTotalRaw, totalImporteRaw, impteRestRaw,
-		saldoRaw, numPagos, fechaUltRaw, cargoCancelado, updatedAtRaw,
+// saldoRowScan mirrors the SELECT list 1:1 in scan-friendly types. Splitting
+// the raw scan from the type conversions keeps each step short enough that
+// cyclomatic complexity stays under the linter thresholds without nolints.
+type saldoRowScan struct {
+	doctoCCID       int
+	doctoPVIDRaw    sql.NullInt64
+	clienteID       int
+	zonaRaw         sql.NullInt64
+	folio           sql.NullString
+	fechaCargoRaw   any
+	precioTotalRaw  any
+	totalImporteRaw any
+	impteRestRaw    any
+	saldoRaw        any
+	numPagos        int
+	fechaUltRaw     any
+	cargoCancelado  string
+	updatedAtRaw    any
+}
+
+// scannable is the common surface of *sql.Row and *sql.Rows. Allows
+// saldoRowScan.scanFrom to back both the single-row and the iterator path.
+type scannable interface {
+	Scan(dest ...any) error
+}
+
+func (s *saldoRowScan) scanFrom(r scannable) error {
+	return r.Scan(
+		&s.doctoCCID, &s.doctoPVIDRaw, &s.clienteID, &s.zonaRaw, &s.folio,
+		&s.fechaCargoRaw, &s.precioTotalRaw, &s.totalImporteRaw, &s.impteRestRaw,
+		&s.saldoRaw, &s.numPagos, &s.fechaUltRaw, &s.cargoCancelado, &s.updatedAtRaw,
 	)
 }
 
-// scanSaldoRow scans one row from a *sql.Rows iterator into a domain.Saldo.
-func scanSaldoRow(rows *sql.Rows) (*domain.Saldo, error) {
-	var (
-		doctoCCID       int
-		doctoPVIDRaw    sql.NullInt64
-		clienteID       int
-		zonaRaw         sql.NullInt64
-		folio           sql.NullString
-		fechaCargoRaw   any
-		precioTotalRaw  any
-		totalImporteRaw any
-		impteRestRaw    any
-		saldoRaw        any
-		numPagos        int
-		fechaUltRaw     any
-		cargoCancelado  string
-		updatedAtRaw    any
-	)
-	if err := rows.Scan(
-		&doctoCCID,
-		&doctoPVIDRaw,
-		&clienteID,
-		&zonaRaw,
-		&folio,
-		&fechaCargoRaw,
-		&precioTotalRaw,
-		&totalImporteRaw,
-		&impteRestRaw,
-		&saldoRaw,
-		&numPagos,
-		&fechaUltRaw,
-		&cargoCancelado,
-		&updatedAtRaw,
-	); err != nil {
+// hydrate converts the raw scan values into a domain.Saldo.
+func (s *saldoRowScan) hydrate() (domain.Saldo, error) {
+	amounts, err := s.scanDecimals()
+	if err != nil {
+		return domain.Saldo{}, err
+	}
+	timestamps, err := s.scanTimestamps()
+	if err != nil {
+		return domain.Saldo{}, err
+	}
+	return domain.HydrateSaldo(domain.HydrateSaldoParams{
+		DoctoCCID:      s.doctoCCID,
+		DoctoPVID:      nullableInt(s.doctoPVIDRaw),
+		ClienteID:      s.clienteID,
+		ZonaClienteID:  nullableInt(s.zonaRaw),
+		Folio:          nullableString(s.folio),
+		FechaCargo:     timestamps.fechaCargo,
+		PrecioTotal:    amounts.precioTotal,
+		TotalImporte:   amounts.totalImporte,
+		ImpteRest:      amounts.impteRest,
+		Saldo:          amounts.saldo,
+		NumPagos:       s.numPagos,
+		FechaUltPago:   timestamps.fechaUltPago,
+		CargoCancelado: s.cargoCancelado == "S",
+		UpdatedAt:      timestamps.updatedAt,
+	}), nil
+}
+
+// saldoAmounts holds the four parsed decimal columns of a saldo row.
+type saldoAmounts struct {
+	precioTotal  decimal.Decimal
+	totalImporte decimal.Decimal
+	impteRest    decimal.Decimal
+	saldo        decimal.Decimal
+}
+
+func (s *saldoRowScan) scanDecimals() (saldoAmounts, error) {
+	precio, err := firebird.ScanDecimal(s.precioTotalRaw, 2)
+	if err != nil {
+		return saldoAmounts{}, err
+	}
+	total, err := firebird.ScanDecimal(s.totalImporteRaw, 2)
+	if err != nil {
+		return saldoAmounts{}, err
+	}
+	rest, err := firebird.ScanDecimal(s.impteRestRaw, 2)
+	if err != nil {
+		return saldoAmounts{}, err
+	}
+	saldo, err := firebird.ScanDecimal(s.saldoRaw, 2)
+	if err != nil {
+		return saldoAmounts{}, err
+	}
+	return saldoAmounts{precio, total, rest, saldo}, nil
+}
+
+// saldoTimestamps holds the three parsed timestamp columns. fechaUltPago is
+// optional (nil when the column was SQL NULL).
+type saldoTimestamps struct {
+	fechaCargo   time.Time
+	fechaUltPago *time.Time
+	updatedAt    time.Time
+}
+
+func (s *saldoRowScan) scanTimestamps() (saldoTimestamps, error) {
+	fechaCargo, err := firebird.ScanUTCTime(s.fechaCargoRaw)
+	if err != nil {
+		return saldoTimestamps{}, err
+	}
+	updatedAt, err := firebird.ScanUTCTime(s.updatedAtRaw)
+	if err != nil {
+		return saldoTimestamps{}, err
+	}
+	ts := saldoTimestamps{fechaCargo: fechaCargo, updatedAt: updatedAt}
+	if s.fechaUltRaw != nil {
+		t, err := firebird.ScanUTCTime(s.fechaUltRaw)
+		if err != nil {
+			return saldoTimestamps{}, err
+		}
+		ts.fechaUltPago = &t
+	}
+	return ts, nil
+}
+
+// scanSaldo scans one MSP_SALDOS_VENTAS row into a domain.Saldo.
+func scanSaldo(row *sql.Row) (*domain.Saldo, error) {
+	var rs saldoRowScan
+	if err := rs.scanFrom(row); err != nil {
 		return nil, err
 	}
-	return hydrateSaldo(
-		doctoCCID, doctoPVIDRaw, clienteID, zonaRaw, folio,
-		fechaCargoRaw, precioTotalRaw, totalImporteRaw, impteRestRaw,
-		saldoRaw, numPagos, fechaUltRaw, cargoCancelado, updatedAtRaw,
-	)
+	s, err := rs.hydrate()
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
 }
 
 // scanSaldoRows iterates a *sql.Rows, scanning each into a domain.Saldo slice.
 func scanSaldoRows(rows *sql.Rows) ([]domain.Saldo, error) {
 	var result []domain.Saldo
 	for rows.Next() {
-		s, err := scanSaldoRow(rows)
-		if err != nil {
+		var rs saldoRowScan
+		if err := rs.scanFrom(rows); err != nil {
 			return nil, firebird.MapError(err)
 		}
-		result = append(result, *s)
+		s, err := rs.hydrate()
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, s)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, firebird.MapError(err)
 	}
 	return result, nil
-}
-
-// hydrateSaldo converts raw scanned values into a domain.Saldo.
-//
-//nolint:cyclop,funlen // scan conversions are mechanical; one per column; extracted for reuse.
-func hydrateSaldo(
-	doctoCCID int,
-	doctoPVIDRaw sql.NullInt64,
-	clienteID int,
-	zonaRaw sql.NullInt64,
-	folio sql.NullString,
-	fechaCargoRaw any,
-	precioTotalRaw any,
-	totalImporteRaw any,
-	impteRestRaw any,
-	saldoRaw any,
-	numPagos int,
-	fechaUltRaw any,
-	cargoCancelado string,
-	updatedAtRaw any,
-) (*domain.Saldo, error) {
-	var doctoPVID *int
-	if doctoPVIDRaw.Valid {
-		v := int(doctoPVIDRaw.Int64)
-		doctoPVID = &v
-	}
-
-	var zonaID *int
-	if zonaRaw.Valid {
-		v := int(zonaRaw.Int64)
-		zonaID = &v
-	}
-
-	folioStr := ""
-	if folio.Valid {
-		folioStr = folio.String
-	}
-
-	fechaCargo, err := firebird.ScanUTCTime(fechaCargoRaw)
-	if err != nil {
-		return nil, err
-	}
-
-	precioTotal, err := firebird.ScanDecimal(precioTotalRaw, 2)
-	if err != nil {
-		return nil, err
-	}
-
-	totalImporte, err := firebird.ScanDecimal(totalImporteRaw, 2)
-	if err != nil {
-		return nil, err
-	}
-
-	impteRest, err := firebird.ScanDecimal(impteRestRaw, 2)
-	if err != nil {
-		return nil, err
-	}
-
-	saldo, err := firebird.ScanDecimal(saldoRaw, 2)
-	if err != nil {
-		return nil, err
-	}
-
-	var fechaUltPago *time.Time
-	if fechaUltRaw != nil {
-		t, scanErr := firebird.ScanUTCTime(fechaUltRaw)
-		if scanErr != nil {
-			return nil, scanErr
-		}
-		fechaUltPago = &t
-	}
-
-	updatedAt, err := firebird.ScanUTCTime(updatedAtRaw)
-	if err != nil {
-		return nil, err
-	}
-
-	s := domain.HydrateSaldo(domain.HydrateSaldoParams{
-		DoctoCCID:      doctoCCID,
-		DoctoPVID:      doctoPVID,
-		ClienteID:      clienteID,
-		ZonaClienteID:  zonaID,
-		Folio:          folioStr,
-		FechaCargo:     fechaCargo,
-		PrecioTotal:    precioTotal,
-		TotalImporte:   totalImporte,
-		ImpteRest:      impteRest,
-		Saldo:          saldo,
-		NumPagos:       numPagos,
-		FechaUltPago:   fechaUltPago,
-		CargoCancelado: cargoCancelado == "S",
-		UpdatedAt:      updatedAt,
-	})
-	return &s, nil
 }

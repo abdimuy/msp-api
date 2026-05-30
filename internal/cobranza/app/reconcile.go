@@ -26,6 +26,12 @@ type ReconcilerConfig struct {
 	// Recompute already updates the MSP_SALDOS_VENTAS row atomically, so
 	// after the call the cache is refreshed. Defaults to true.
 	FixDrift bool
+	// TombstoneRetentionDays is how many days a CARGO_CANCELADO='S' row
+	// stays in MSP_SALDOS_VENTAS before the reconciler hard-deletes it.
+	// Defaults to 30 — long enough that any mobile client which was offline
+	// will have either resynced from scratch or seen the tombstone. Set to 0
+	// to disable tombstone cleanup entirely.
+	TombstoneRetentionDays int
 }
 
 func (c *ReconcilerConfig) applyDefaults() {
@@ -39,56 +45,57 @@ func (c *ReconcilerConfig) applyDefaults() {
 
 // ReconcileReport summarises a single reconcile pass.
 type ReconcileReport struct {
-	// Checked is the total number of cargo IDs visited.
+	// Checked is the total number of cargo IDs visited in the saldos pass.
 	Checked int
-	// Drift is how many rows had mismatched saldo/totalImporte/numPagos
-	// compared to the recomputed value.
+	// Drift is how many saldo rows had mismatched values compared to the
+	// recomputed version.
 	Drift int
-	// Errors is how many rows could not be checked due to transient errors.
-	Errors     int
-	StartedAt  time.Time
-	FinishedAt time.Time
+	// Errors counts saldo rows that could not be checked due to transient
+	// errors during the saldos pass.
+	Errors int
+	// PagosChecked is the total number of pago IMPTE IDs visited during the
+	// pagos pass. Zero when pagos reconciliation is not configured.
+	PagosChecked int
+	// PagosErrors counts pago IDs whose recompute call failed.
+	PagosErrors int
+	// TombstonesDeleted is how many CARGO_CANCELADO='S' rows the reconciler
+	// hard-deleted in this pass.
+	TombstonesDeleted int
+	StartedAt         time.Time
+	FinishedAt        time.Time
 }
 
-// Reconciler walks every row in MSP_SALDOS_VENTAS on a configurable interval,
-// recomputes each cargo's saldo via the Firebird stored procedure, and logs
-// (and optionally fixes) any drift it finds. It implements lifecycle.Hooks so
-// fx can manage its goroutine.
+// ReconcilerDeps groups the Reconciler's collaborators. Required: SaldosLister,
+// SaldosRepo, Recomputer, Clock, Logger. Optional (pagos reconciliation):
+// PagosLister + PagosRecomputer. Optional (tombstone cleanup): TombstoneCleaner.
+type ReconcilerDeps struct {
+	SaldosLister     outbound.SaldosLister
+	SaldosRepo       outbound.SaldosRepo
+	Recomputer       outbound.SaldosRecomputer
+	PagosLister      outbound.PagosLister
+	PagosRecomputer  outbound.PagosRecomputer
+	TombstoneCleaner outbound.SaldosTombstoneCleaner
+	Clock            outbound.Clock
+	Config           ReconcilerConfig
+	Logger           *slog.Logger
+}
+
+// Reconciler walks every row in MSP_SALDOS_VENTAS (and optionally
+// MSP_PAGOS_VENTAS) on a configurable interval, recomputes each row via the
+// Firebird stored procedure, logs (and optionally fixes) any drift, and prunes
+// expired tombstones. It implements lifecycle.Hooks so fx can manage its goroutine.
 type Reconciler struct {
-	lister     outbound.SaldosLister
-	recomputer outbound.SaldosRecomputer
-	repo       outbound.SaldosRepo
-	clock      outbound.Clock
-	cfg        ReconcilerConfig
-	mu         sync.Mutex
-	running    bool
-	cancel     context.CancelFunc
-	done       chan struct{}
-	logger     *slog.Logger
+	deps    ReconcilerDeps
+	mu      sync.Mutex
+	running bool
+	cancel  context.CancelFunc
+	done    chan struct{}
 }
 
-// NewReconciler builds a Reconciler with cfg defaults applied.
-func NewReconciler(
-	lister outbound.SaldosLister,
-	recomputer outbound.SaldosRecomputer,
-	repo outbound.SaldosRepo,
-	clock outbound.Clock,
-	cfg ReconcilerConfig,
-	logger *slog.Logger,
-) *Reconciler {
-	cfg.applyDefaults()
-	// DriftLog and FixDrift default to true (zero value is false, so we
-	// invert the semantics with an explicit setter rather than a bool pointer).
-	// The caller passes the desired values directly; we rely on ReconcilerConfig
-	// being populated by the wiring layer with explicit true values.
-	return &Reconciler{
-		lister:     lister,
-		recomputer: recomputer,
-		repo:       repo,
-		clock:      clock,
-		cfg:        cfg,
-		logger:     logger,
-	}
+// NewReconciler builds a Reconciler from a deps struct.
+func NewReconciler(deps ReconcilerDeps) *Reconciler {
+	deps.Config.applyDefaults()
+	return &Reconciler{deps: deps}
 }
 
 // Start implements lifecycle.Hooks. Launches the ticker goroutine and returns
@@ -99,8 +106,6 @@ func (r *Reconciler) Start(_ context.Context) error {
 	if r.running {
 		return nil
 	}
-	// Decouple from the fx start context — it is short-lived, but the
-	// reconciler must outlive it.
 	runCtx, cancel := context.WithCancel(context.Background())
 	r.cancel = cancel
 	r.done = make(chan struct{})
@@ -136,7 +141,7 @@ func (r *Reconciler) Stop(ctx context.Context) error {
 // logged and the loop continues.
 func (r *Reconciler) loop(ctx context.Context) {
 	defer close(r.done)
-	ticker := time.NewTicker(r.cfg.Interval)
+	ticker := time.NewTicker(r.deps.Config.Interval)
 	defer ticker.Stop()
 
 	for {
@@ -149,94 +154,152 @@ func (r *Reconciler) loop(ctx context.Context) {
 				if errors.Is(err, context.Canceled) {
 					return
 				}
-				r.logger.ErrorContext(ctx, "cobranza.reconciler: pass failed", "error", err)
+				r.deps.Logger.ErrorContext(ctx, "cobranza.reconciler: pass failed", "error", err)
 				continue
 			}
-			r.logger.InfoContext(
+			r.deps.Logger.InfoContext(
 				ctx, "cobranza.reconciler: pass complete",
 				"checked", report.Checked,
 				"drift", report.Drift,
 				"errors", report.Errors,
+				"pagos_checked", report.PagosChecked,
+				"pagos_errors", report.PagosErrors,
+				"tombstones_deleted", report.TombstonesDeleted,
 				"duration_ms", report.FinishedAt.Sub(report.StartedAt).Milliseconds(),
 			)
 		}
 	}
 }
 
-// Run executes one full reconcile pass: pages through all cargo IDs, fetches
-// the current cached row, recomputes via the stored procedure, and compares
-// the two snapshots. Returns a summary report.
+// Run executes one full reconcile pass.
 func (r *Reconciler) Run(ctx context.Context) (ReconcileReport, error) {
-	report := ReconcileReport{StartedAt: r.clock.Now()}
+	report := ReconcileReport{StartedAt: r.deps.Clock.Now()}
 
+	if err := r.runSaldosPass(ctx, &report); err != nil {
+		report.FinishedAt = r.deps.Clock.Now()
+		return report, err
+	}
+
+	if r.deps.PagosLister != nil && r.deps.PagosRecomputer != nil {
+		if err := r.runPagosPass(ctx, &report); err != nil {
+			report.FinishedAt = r.deps.Clock.Now()
+			return report, err
+		}
+	}
+
+	if r.deps.TombstoneCleaner != nil && r.deps.Config.TombstoneRetentionDays > 0 {
+		cutoff := r.deps.Clock.Now().AddDate(0, 0, -r.deps.Config.TombstoneRetentionDays)
+		n, err := r.deps.TombstoneCleaner.DeleteTombstonesOlderThan(ctx, cutoff)
+		if err != nil {
+			r.deps.Logger.WarnContext(ctx, "cobranza.reconciler: tombstone cleanup failed",
+				"error", err, "cutoff", cutoff)
+		} else {
+			report.TombstonesDeleted = n
+		}
+	}
+
+	report.FinishedAt = r.deps.Clock.Now()
+	return report, nil
+}
+
+// runSaldosPass pages through saldos and recomputes each cargo.
+func (r *Reconciler) runSaldosPass(ctx context.Context, report *ReconcileReport) error {
 	cursor := 0
 	for {
-		// Yield to ctx between pages so Stop can drain cleanly.
-		select {
-		case <-ctx.Done():
-			report.FinishedAt = r.clock.Now()
-			return report, ctx.Err()
-		default:
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 
-		ids, nextCursor, err := r.lister.Page(ctx, cursor, r.cfg.PageSize)
+		ids, nextCursor, err := r.deps.SaldosLister.Page(ctx, cursor, r.deps.Config.PageSize)
 		if err != nil {
-			return report, err
+			return err
 		}
 
 		for _, cargoID := range ids {
-			select {
-			case <-ctx.Done():
-				report.FinishedAt = r.clock.Now()
-				return report, ctx.Err()
-			default:
+			if err := ctx.Err(); err != nil {
+				return err
 			}
+			r.checkOneSaldo(ctx, cargoID, report)
+		}
 
-			report.Checked++
+		if nextCursor == 0 {
+			return nil
+		}
+		cursor = nextCursor
+	}
+}
 
-			cached, err := r.repo.PorCargo(ctx, cargoID)
-			if err != nil {
-				report.Errors++
-				r.logger.WarnContext(ctx, "cobranza.reconciler: could not read cached row",
-					"cargo_id", cargoID, "error", err)
-				continue
+// checkOneSaldo recomputes a single cargo and compares it against the cache.
+// All errors are counted in the report, not propagated.
+func (r *Reconciler) checkOneSaldo(ctx context.Context, cargoID int, report *ReconcileReport) {
+	report.Checked++
+
+	cached, err := r.deps.SaldosRepo.PorCargo(ctx, cargoID)
+	if err != nil {
+		report.Errors++
+		r.deps.Logger.WarnContext(ctx, "cobranza.reconciler: could not read cached row",
+			"cargo_id", cargoID, "error", err)
+		return
+	}
+
+	recomputed, err := r.deps.Recomputer.Recompute(ctx, cargoID)
+	if err != nil {
+		report.Errors++
+		r.deps.Logger.WarnContext(ctx, "cobranza.reconciler: recompute failed",
+			"cargo_id", cargoID, "error", err)
+		return
+	}
+
+	if r.hasDrift(cached, recomputed) {
+		report.Drift++
+		if r.deps.Config.DriftLog {
+			r.deps.Logger.WarnContext(
+				ctx, "cobranza.reconciler: drift detected",
+				"cargo_id", cargoID,
+				"cached_saldo", cached.Saldo().String(),
+				"recomputed_saldo", recomputed.Saldo().String(),
+				"cached_total_importe", cached.TotalImporte().String(),
+				"recomputed_total_importe", recomputed.TotalImporte().String(),
+				"cached_num_pagos", cached.NumPagos(),
+				"recomputed_num_pagos", recomputed.NumPagos(),
+			)
+		}
+	}
+}
+
+// runPagosPass pages through MSP_PAGOS_VENTAS and recomputes each pago. We
+// don't compare values here — the recompute is idempotent and updates
+// UPDATED_AT when the row changes, which is the only signal mobile clients
+// care about. Drift detection lives in the saldos pass.
+func (r *Reconciler) runPagosPass(ctx context.Context, report *ReconcileReport) error {
+	cursor := 0
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		ids, nextCursor, err := r.deps.PagosLister.Page(ctx, cursor, r.deps.Config.PageSize)
+		if err != nil {
+			return err
+		}
+
+		for _, impteID := range ids {
+			if err := ctx.Err(); err != nil {
+				return err
 			}
-
-			recomputed, err := r.recomputer.Recompute(ctx, cargoID)
-			if err != nil {
-				report.Errors++
-				r.logger.WarnContext(ctx, "cobranza.reconciler: recompute failed",
-					"cargo_id", cargoID, "error", err)
-				continue
-			}
-
-			if r.hasDrift(cached, recomputed) {
-				report.Drift++
-				if r.cfg.DriftLog {
-					r.logger.WarnContext(
-						ctx, "cobranza.reconciler: drift detected",
-						"cargo_id", cargoID,
-						"cached_saldo", cached.Saldo().String(),
-						"recomputed_saldo", recomputed.Saldo().String(),
-						"cached_total_importe", cached.TotalImporte().String(),
-						"recomputed_total_importe", recomputed.TotalImporte().String(),
-						"cached_num_pagos", cached.NumPagos(),
-						"recomputed_num_pagos", recomputed.NumPagos(),
-					)
-				}
-				// When FixDrift is true, Recompute already updated the row
-				// atomically, so no additional write is needed here.
+			report.PagosChecked++
+			if err := r.deps.PagosRecomputer.Recompute(ctx, impteID); err != nil {
+				report.PagosErrors++
+				r.deps.Logger.WarnContext(ctx, "cobranza.reconciler: pago recompute failed",
+					"impte_id", impteID, "error", err)
 			}
 		}
 
 		if nextCursor == 0 {
-			break
+			return nil
 		}
 		cursor = nextCursor
 	}
-
-	report.FinishedAt = r.clock.Now()
-	return report, nil
 }
 
 // hasDrift reports whether the cached and recomputed saldo snapshots differ
