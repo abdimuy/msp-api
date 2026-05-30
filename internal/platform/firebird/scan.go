@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -60,6 +61,19 @@ func ScanDecimal(src any, scale int) (decimal.Decimal, error) {
 		return v, nil
 	case int64:
 		return decimal.New(v, int32(-scale)), nil
+	case *big.Int:
+		// nakagami/firebirdsql emits *big.Int for SUM/AVG aggregates over
+		// NUMERIC columns (and for NUMERIC values that exceed int64 range).
+		// The big.Int carries the unscaled value; scale recovers the decimal
+		// point, identical to the int64 case.
+		if v == nil {
+			return decimal.Decimal{}, apperror.NewInternal(
+				"firebird_scan_error",
+				"no se pudo decodificar valor de base de datos").
+				WithSource("firebird").
+				WithField("reason", "nil *big.Int scanned into non-nullable decimal")
+		}
+		return decimal.NewFromBigInt(v, int32(-scale)), nil
 	case float64:
 		slog.Warn("firebird: NUMERIC value arrived as float64; precision may degrade",
 			"value", v, "scale", scale)

@@ -1029,19 +1029,27 @@ func TestE2E_Firebird_IdempotencyKey_Aplicar_Replays(t *testing.T) {
 		}))
 		venthttp.MountRouter(r, svc)
 
-		// Seed a CONTADO venta with the real-catalog client + zona IDs that
-		// AplicarVenta requires (testClienteID in CLIENTES and testZonaID in
-		// MSP_CFG_ZONA_CAJA). These constants are defined in e2e_firebird_aplicar_test.go
-		// in the ventfb_test package, so we inline the same values here.
+		// Seed a CONTADO venta with the real-catalog IDs that AplicarVenta
+		// requires. Inserts into Microsip's DOCTOS_PV / DOCTOS_PV_DET enforce
+		// FKs on CLIENTES, ARTICULOS and ALMACENES; the synthetic IDs from
+		// validCreateBody (ArticuloID=42, almacenes 1/2) would 409 with a
+		// firebird_fk_violation. Mirrors the constants from
+		// e2e_firebird_aplicar_test.go in the ventfb_test package.
 		const (
-			aplicarClienteID = 11486 // matches testClienteID in ventfb_test
-			aplicarZonaID    = 21563 // matches testZonaID in ventfb_test
+			aplicarClienteID  = 11486 // testClienteID
+			aplicarZonaID     = 21563 // testZonaID  (MSP_CFG_ZONA_CAJA row)
+			aplicarArticuloID = 378   // testArticuloID — TASA 0%, almacenable
+			aplicarAlmacenID  = 11058 // testAlmacenID — RUTA25 source
+			aplicarAlmDestID  = 11059 // destination warehouse
 		)
 
 		body := validCreateBody()
 		body.Vendedores[0].UsuarioID = usuarioID.String()
 		body.Cliente.ClienteID = intPtr(aplicarClienteID)
 		body.Direccion.ZonaClienteID = intPtr(aplicarZonaID)
+		body.Productos[0].ArticuloID = aplicarArticuloID
+		body.Productos[0].AlmacenOrigenID = intPtr(aplicarAlmacenID)
+		body.Productos[0].AlmacenDestinoID = intPtr(aplicarAlmDestID)
 		req := jsonRequest(t, http.MethodPost, "/ventas", body)
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)

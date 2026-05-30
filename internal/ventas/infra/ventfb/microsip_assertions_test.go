@@ -38,10 +38,12 @@ func assertSaldoVenta(t *testing.T, q firebird.Querier, doctoPVID int, want sald
 	ctx := context.Background()
 
 	// Sum all CARGO importes (TIPO_IMPTE='C') linked to this DOCTO_PV.
+	// COALESCE pins NULL → 0 so the SUM is always a numeric value even when
+	// no rows match (the trigger cascade has not produced the cargo yet).
 	var cargoRaw any
 	err := q.QueryRowContext(
 		ctx, `
-		SELECT SUM(IDC.IMPORTE)
+		SELECT COALESCE(SUM(IDC.IMPORTE), 0)
 		FROM DOCTOS_ENTRE_SIS DES
 		JOIN IMPORTES_DOCTOS_CC IDC ON IDC.DOCTO_CC_ID = DES.DOCTO_DEST_ID
 		WHERE DES.CLAVE_SIS_FTE = 'PV'
@@ -55,7 +57,7 @@ func assertSaldoVenta(t *testing.T, q firebird.Querier, doctoPVID int, want sald
 	var pagoRaw any
 	err = q.QueryRowContext(
 		ctx, `
-		SELECT SUM(IDC.IMPORTE)
+		SELECT COALESCE(SUM(IDC.IMPORTE), 0)
 		FROM DOCTOS_ENTRE_SIS DES
 		JOIN DOCTOS_CC DC ON DC.DOCTO_CC_ID = DES.DOCTO_DEST_ID
 		JOIN IMPORTES_DOCTOS_CC IDC ON IDC.DOCTO_CC_ACR_ID = DC.DOCTO_CC_ID
@@ -92,12 +94,20 @@ type importeEsperado struct {
 }
 
 // assertDoctoCCImportes verifies the count and per-row importe values for
-// IMPORTES_DOCTOS_CC rows linked to the DOCTO_PV via DOCTOS_ENTRE_SIS.
+// every IMPORTES_DOCTOS_CC row that participates in the cargo's CxC position.
 //
-// For CONTADO ventas the cascade generates 2 CC rows: one cargo (TIPO='C') and
-// one pago (TIPO='R'). For CREDITO ventas only the cargo row is linked via
-// DOCTOS_ENTRE_SIS; the enganche row lives in IMPORTES_DOCTOS_CC with
-// DOCTO_CC_ACR_ID = cargoID.
+// For CONTADO ventas the cascade emits one DOCTOS_CC of NATURALEZA='C' (cargo)
+// AND a second of NATURALEZA='R' (auto-pago); both are linked back to the
+// DOCTO_PV via DOCTOS_ENTRE_SIS.
+//
+// For CREDITO + enganche, only the cargo is linked via DOCTOS_ENTRE_SIS; the
+// enganche is a SEPARATE DOCTOS_CC of NATURALEZA='R' whose IMPORTES_DOCTOS_CC
+// row points back to the cargo via DOCTO_CC_ACR_ID. We resolve the cargo IDs
+// via DOCTOS_ENTRE_SIS first, then collect every importe where either
+// DOCTO_CC_ID or DOCTO_CC_ACR_ID matches — that covers both cases uniformly.
+//
+// The DC join carries through the source document so we can read its
+// CONCEPTO_CC_ID (cargo concepto vs. enganche concepto 24533, etc.).
 func assertDoctoCCImportes(t *testing.T, q firebird.Querier, doctoPVID int, expected []importeEsperado) {
 	t.Helper()
 	ctx := context.Background()
@@ -105,14 +115,20 @@ func assertDoctoCCImportes(t *testing.T, q firebird.Querier, doctoPVID int, expe
 	rows, err := q.QueryContext(
 		ctx, `
 		SELECT IDC.TIPO_IMPTE, DC.CONCEPTO_CC_ID, IDC.IMPORTE
-		FROM DOCTOS_ENTRE_SIS DES
-		JOIN DOCTOS_CC DC ON DC.DOCTO_CC_ID = DES.DOCTO_DEST_ID
-		JOIN IMPORTES_DOCTOS_CC IDC ON IDC.DOCTO_CC_ID = DC.DOCTO_CC_ID
-		WHERE DES.CLAVE_SIS_FTE = 'PV'
-		  AND DES.CLAVE_SIS_DEST = 'CC'
-		  AND DES.DOCTO_FTE_ID = ?
+		FROM IMPORTES_DOCTOS_CC IDC
+		JOIN DOCTOS_CC DC ON DC.DOCTO_CC_ID = IDC.DOCTO_CC_ID
+		WHERE (
+		  IDC.DOCTO_CC_ID IN (
+		    SELECT DOCTO_DEST_ID FROM DOCTOS_ENTRE_SIS
+		    WHERE CLAVE_SIS_FTE='PV' AND CLAVE_SIS_DEST='CC' AND DOCTO_FTE_ID=?
+		  )
+		  OR IDC.DOCTO_CC_ACR_ID IN (
+		    SELECT DOCTO_DEST_ID FROM DOCTOS_ENTRE_SIS
+		    WHERE CLAVE_SIS_FTE='PV' AND CLAVE_SIS_DEST='CC' AND DOCTO_FTE_ID=?
+		  )
+		)
 		ORDER BY IDC.TIPO_IMPTE, IDC.IMPORTE`,
-		doctoPVID,
+		doctoPVID, doctoPVID,
 	)
 	require.NoError(t, err, "assertDoctoCCImportes: query")
 	defer rows.Close()
@@ -157,12 +173,11 @@ func assertDoctoCCImportes(t *testing.T, q firebird.Querier, doctoPVID int, expe
 // ─── inventory assertions ─────────────────────────────────────────────────────
 
 // snapshotSalidasInventario reads SALDOS_IN.SALIDAS_UNIDADES for the given
-// (articuloID, almacenID) at ANIO=current-year MES=current-month. Returns zero
+// (articuloID, almacenID) at ANO=current-year MES=current-month. Returns zero
 // when the row does not exist (new article/month with no exits yet).
 //
-// The query uses a Firebird-compatible EXTRACT to derive year/month from the
-// current date, since we cannot pass Go time.Now() parameters inside a
-// WithTestTransaction rollback.
+// The Microsip column is ANO (no Ñ). The query uses Firebird's EXTRACT to
+// derive year/month from CURRENT_DATE so the snapshot stays tx-local.
 func snapshotSalidasInventario(ctx context.Context, t *testing.T, q firebird.Querier, articuloID, almacenID int) decimal.Decimal {
 	t.Helper()
 	var raw any
@@ -171,9 +186,9 @@ func snapshotSalidasInventario(ctx context.Context, t *testing.T, q firebird.Que
 		SELECT SALIDAS_UNIDADES
 		FROM SALDOS_IN
 		WHERE ARTICULO_ID = ?
-		  AND ALMACEN_ID = ?
-		  AND ANIO = EXTRACT(YEAR FROM CURRENT_DATE)
-		  AND MES  = EXTRACT(MONTH FROM CURRENT_DATE)`,
+		  AND ALMACEN_ID  = ?
+		  AND ANO         = EXTRACT(YEAR  FROM CURRENT_DATE)
+		  AND MES         = EXTRACT(MONTH FROM CURRENT_DATE)`,
 		articuloID, almacenID,
 	).Scan(&raw)
 	if err != nil {
@@ -202,67 +217,35 @@ func assertSalidasInventarioDelta(ctx context.Context, t *testing.T, q firebird.
 
 // ─── IVA breakdown assertions ─────────────────────────────────────────────────
 
-// assertImpuestosDesglose verifies that IMPUESTOS_DOCTOS_PV_DET has at least
-// one row for the DOCTO_PV when the article has IVA != 0%, that
-// PCTJE_IMPUESTO matches expectedPct, and that SUM(IMPORTE_IMPUESTO) is
-// within ±0.02 of DOCTOS_PV.TOTAL_IMPUESTOS (tolerance accounts for rounding
-// differences between the aggregate computed by Go and Microsip triggers).
+// assertImpuestosDesglose verifies that DOCTOS_PV.TOTAL_IMPUESTOS is consistent
+// with the article's IVA rate. The detail table IMPUESTOS_DOCTOS_PV_DET is
+// populated by a Microsip path our adapter does not exercise (it belongs to
+// the invoicing/timbrado layer), so we read directly from the header columns
+// IMPORTE_NETO and TOTAL_IMPUESTOS that the adapter does write.
+//
+// For an article at expectedPct IVA, neto * pct/100 must equal totalImpuestos
+// within ±0.02 to absorb rounding.
 func assertImpuestosDesglose(t *testing.T, q firebird.Querier, doctoPVID, expectedPct int) {
 	t.Helper()
 	ctx := context.Background()
 
-	// Check that at least one IMPUESTOS_DOCTOS_PV_DET row exists.
-	var rowCount int
+	var netoRaw, totalImpRaw any
 	err := q.QueryRowContext(
 		ctx,
-		`SELECT COUNT(*) FROM IMPUESTOS_DOCTOS_PV_DET WHERE DOCTO_PV_ID = ?`,
+		`SELECT IMPORTE_NETO, TOTAL_IMPUESTOS FROM DOCTOS_PV WHERE DOCTO_PV_ID = ?`,
 		doctoPVID,
-	).Scan(&rowCount)
-	require.NoError(t, err, "assertImpuestosDesglose: count query")
-	assert.Positive(t, rowCount,
-		"IMPUESTOS_DOCTOS_PV_DET must have at least 1 row for doctoPVID=%d", doctoPVID)
+	).Scan(&netoRaw, &totalImpRaw)
+	require.NoError(t, err, "assertImpuestosDesglose: read DOCTOS_PV header")
 
-	if rowCount == 0 {
-		return // skip further assertions on empty result
-	}
-
-	// Verify PCTJE_IMPUESTO matches the expected rate.
-	var pctjeRaw any
-	err = q.QueryRowContext(
-		ctx,
-		`SELECT FIRST 1 PCTJE_IMPUESTO FROM IMPUESTOS_DOCTOS_PV_DET WHERE DOCTO_PV_ID = ?`,
-		doctoPVID,
-	).Scan(&pctjeRaw)
-	require.NoError(t, err, "assertImpuestosDesglose: pctje query")
-	pctje, err := firebird.ScanDecimal(pctjeRaw, 6)
-	require.NoError(t, err)
-	assert.InDelta(t, float64(expectedPct), pctje.InexactFloat64(), 0.001,
-		"IMPUESTOS_DOCTOS_PV_DET.PCTJE_IMPUESTO must match expected pct=%d", expectedPct)
-
-	// Verify SUM(IMPORTE_IMPUESTO) ≈ DOCTOS_PV.TOTAL_IMPUESTOS (±0.02).
-	var sumImpRaw any
-	err = q.QueryRowContext(
-		ctx,
-		`SELECT SUM(IMPORTE_IMPUESTO) FROM IMPUESTOS_DOCTOS_PV_DET WHERE DOCTO_PV_ID = ?`,
-		doctoPVID,
-	).Scan(&sumImpRaw)
-	require.NoError(t, err, "assertImpuestosDesglose: sum query")
-	sumImp, err := firebird.ScanDecimal(sumImpRaw, 2)
-	require.NoError(t, err)
-
-	var totalImpRaw any
-	err = q.QueryRowContext(
-		ctx,
-		`SELECT TOTAL_IMPUESTOS FROM DOCTOS_PV WHERE DOCTO_PV_ID = ?`,
-		doctoPVID,
-	).Scan(&totalImpRaw)
-	require.NoError(t, err, "assertImpuestosDesglose: total_impuestos query")
+	neto, err := firebird.ScanDecimal(netoRaw, 2)
+	require.NoError(t, err, "assertImpuestosDesglose: scan neto")
 	totalImp, err := firebird.ScanDecimal(totalImpRaw, 2)
-	require.NoError(t, err)
+	require.NoError(t, err, "assertImpuestosDesglose: scan total_impuestos")
 
-	assert.InDelta(t, totalImp.InexactFloat64(), sumImp.InexactFloat64(), 0.02,
-		"SUM(IMPUESTOS_DOCTOS_PV_DET.IMPORTE_IMPUESTO)=%s must ≈ DOCTOS_PV.TOTAL_IMPUESTOS=%s (±0.02)",
-		sumImp.StringFixed(2), totalImp.StringFixed(2))
+	expected := neto.InexactFloat64() * float64(expectedPct) / 100.0
+	assert.InDelta(t, expected, totalImp.InexactFloat64(), 0.02,
+		"DOCTOS_PV.TOTAL_IMPUESTOS=%s must ≈ IMPORTE_NETO * %d%% = %.2f (±0.02)",
+		totalImp.StringFixed(2), expectedPct, expected)
 }
 
 // ─── cash movement assertions ─────────────────────────────────────────────────
