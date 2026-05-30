@@ -97,6 +97,8 @@ COMMIT;
 -- En caso de error: registra en MSP_SALDOS_ERRORS y retorna limpiamente
 -- (WHEN ANY DO / EXIT). Nunca relanza — no debe abortar la tx del usuario.
 
+SET TERM ^ ;
+
 CREATE PROCEDURE MSP_RECOMPUTE_SALDO_VENTA (
   CARGO_ID INTEGER
 )
@@ -151,22 +153,26 @@ BEGIN
     INTO :v_precio_total;
 
   -- 5. Agrupación de pagos (TIPO_IMPTE='R', CANCELADO='N', acreditados al cargo).
+  --    CONCEPTO_CC_ID vive en DOCTOS_CC (el documento header del abono), no en
+  --    IMPORTES_DOCTOS_CC — por eso el JOIN al header del importe via DOCTO_CC_ID.
   --    TOTAL_IMPORTE: conceptos de cobranza activos (87327, 155, 11).
   SELECT COALESCE(SUM(IDC.IMPORTE), 0)
     FROM IMPORTES_DOCTOS_CC IDC
+    JOIN DOCTOS_CC DC2 ON DC2.DOCTO_CC_ID = IDC.DOCTO_CC_ID
     WHERE IDC.DOCTO_CC_ACR_ID   = :CARGO_ID
       AND IDC.TIPO_IMPTE        = 'R'
       AND IDC.CANCELADO         = 'N'
-      AND IDC.CONCEPTO_CC_ID   IN (87327, 155, 11)
+      AND DC2.CONCEPTO_CC_ID   IN (87327, 155, 11)
     INTO :v_total_importe;
 
   --    IMPTE_REST: cualquier otro concepto (enganches, condonaciones, fugas).
   SELECT COALESCE(SUM(IDC.IMPORTE), 0)
     FROM IMPORTES_DOCTOS_CC IDC
+    JOIN DOCTOS_CC DC2 ON DC2.DOCTO_CC_ID = IDC.DOCTO_CC_ID
     WHERE IDC.DOCTO_CC_ACR_ID   = :CARGO_ID
       AND IDC.TIPO_IMPTE        = 'R'
       AND IDC.CANCELADO         = 'N'
-      AND IDC.CONCEPTO_CC_ID NOT IN (87327, 155, 11)
+      AND DC2.CONCEPTO_CC_ID NOT IN (87327, 155, 11)
     INTO :v_impte_rest;
 
   --    NUM_PAGOS y FECHA_ULT_PAGO (MAX(FECHA) — columna estándar de Microsip).
@@ -224,8 +230,9 @@ BEGIN
   );
   EXIT;
 END
-END;
-COMMIT;
+END^
+
+COMMIT^
 
 -- ─── Triggers ────────────────────────────────────────────────────────────────
 --
@@ -269,8 +276,8 @@ BEGIN
     CURRENT_TIMESTAMP
   );
 END
-END;
-COMMIT;
+END^
+COMMIT^
 
 -- Trigger 2: AFTER DELETE en DOCTOS_CC.
 --   Si el cargo eliminado era de naturaleza 'C', remover del caché.
@@ -296,8 +303,8 @@ BEGIN
     CURRENT_TIMESTAMP
   );
 END
-END;
-COMMIT;
+END^
+COMMIT^
 
 -- Trigger 3: AFTER INSERT OR UPDATE OR DELETE en IMPORTES_DOCTOS_CC.
 --   Recomputa el cargo afectado por el importe insertado/modificado/eliminado.
@@ -338,8 +345,8 @@ BEGIN
     CURRENT_TIMESTAMP
   );
 END
-END;
-COMMIT;
+END^
+COMMIT^
 
 -- Trigger 4: AFTER UPDATE en CLIENTES.
 --   Si cambia ZONA_CLIENTE_ID, actualizar el campo denormalizado en el caché.
@@ -369,8 +376,8 @@ BEGIN
     CURRENT_TIMESTAMP
   );
 END
-END;
-COMMIT;
+END^
+COMMIT^
 
 -- ─── Backfill inicial ─────────────────────────────────────────────────────────
 -- Rellena MSP_SALDOS_VENTAS para todos los cargos activos existentes.
@@ -388,8 +395,10 @@ BEGIN
         INTO :cargo_id
   DO
     EXECUTE PROCEDURE MSP_RECOMPUTE_SALDO_VENTA(:cargo_id);
-END;
-COMMIT;
+END^
+COMMIT^
+
+SET TERM ; ^
 
 -- ─── Registro ────────────────────────────────────────────────────────────────
 INSERT INTO MSP_MIGRATIONS (ID, NAME, APPLIED_AT)
