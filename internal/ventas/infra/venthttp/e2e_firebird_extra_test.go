@@ -16,9 +16,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/abdimuy/msp-api/internal/auth"
+	authdomain "github.com/abdimuy/msp-api/internal/auth/domain"
 	"github.com/abdimuy/msp-api/internal/platform/fbtestutil"
+	"github.com/abdimuy/msp-api/internal/platform/firebird"
 	"github.com/abdimuy/msp-api/internal/platform/idempotency"
+	"github.com/abdimuy/msp-api/internal/platform/imageprocessor"
+	ventasapp "github.com/abdimuy/msp-api/internal/ventas/app"
+	"github.com/abdimuy/msp-api/internal/ventas/infra/microsip"
+	"github.com/abdimuy/msp-api/internal/ventas/infra/ventfb"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/venthttp"
+	ventasoutbound "github.com/abdimuy/msp-api/internal/ventas/ports/outbound"
 )
 
 // inMemIdempotencyStore is a minimal idempotency.Store backed by a map for
@@ -942,6 +950,170 @@ func TestE2E_Firebird_IdempotencyKey_POST_Replays(t *testing.T) {
 			}
 		}
 		assert.Equal(t, 1, count, "exactly one MSP_VENTAS row must exist for the idempotency key")
+	})
+}
+
+// ─── B6: Idempotency-Key replay on POST /aplicar ─────────────────────────
+
+// e2eAllPermsUser returns a CurrentUser holding every ventas permission,
+// including revisar, aprobar, and aplicar which are absent from e2eFullPermsUser.
+func e2eAllPermsUser(usuarioID uuid.UUID) auth.CurrentUser {
+	return auth.CurrentUser{
+		ID:          usuarioID,
+		FirebaseUID: "fb-e2e-all-" + usuarioID.String(),
+		Email:       "e2e-all@example.invalid",
+		Nombre:      "E2E All Perms Tester",
+		Permisos: []string{
+			string(authdomain.PermVentasListar),
+			string(authdomain.PermVentasVer),
+			string(authdomain.PermVentasCrear),
+			string(authdomain.PermVentasCancelar),
+			string(authdomain.PermVentasEditar),
+			string(authdomain.PermVentasSubirImagenes),
+			string(authdomain.PermVentasEliminarImagenes),
+			string(authdomain.PermVentasRevisar),
+			string(authdomain.PermVentasAprobar),
+			string(authdomain.PermVentasAplicar),
+		},
+	}
+}
+
+// buildE2EAplicarService builds a ventasapp.Service wired with the full
+// AplicarVenta stack: real ventfb repo, real AplicarConfigRepo, real
+// VentaWriter, and a caller-supplied outbox.
+//
+// TxManager IS provided here (unlike buildE2EService) because AplicarVenta
+// calls runInTx internally and must open a real nested transaction to acquire
+// the SELECT ... WITH LOCK on the venta row.
+func buildE2EAplicarService(pool *firebird.Pool, outbox ventasoutbound.OutboxEnqueuer) *ventasapp.Service {
+	repo := ventfb.NewVentaRepo(pool)
+	cfg := ventfb.NewAplicarConfigRepo(pool)
+	writer := microsip.NewVentaWriter(pool)
+	store := newFakeStorage()
+	clock := fixedClock{T: e2eFixedTime()}
+	txMgr := firebird.NewTxManager(pool.DB)
+	return ventasapp.NewService(
+		repo, nil, nil, store, clock, outbox, imageprocessor.NoOpProcessor{},
+		txMgr, cfg, writer,
+	)
+}
+
+// TestE2E_Firebird_IdempotencyKey_Aplicar_Replays verifies that two identical
+// POST /ventas/{id}/aplicar requests carrying the same Idempotency-Key:
+//   - both return HTTP 200 with identical bodies,
+//   - the second response has "Idempotent-Replay: true",
+//   - the outbox event "venta.aplicada" is enqueued exactly once, and
+//   - exactly ONE DOCTOS_PV row exists for the venta.
+//
+// The venta is advanced to APROBADA via the HTTP revisar + aprobar endpoints
+// before the idempotency test begins.
+//
+//nolint:paralleltest,funlen // serial E2E; sequential state machine journey.
+func TestE2E_Firebird_IdempotencyKey_Aplicar_Replays(t *testing.T) {
+	pool := e2eTestPool(t)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		usuarioID := seedE2EUsuario(ctx, t, pool)
+		recorder := &e2eRecordingOutbox{}
+		svc := buildE2EAplicarService(pool, recorder)
+
+		store := newInMemIdempotencyStore()
+		r := chi.NewRouter()
+		r.Use(txInjector(ctx))
+		// e2eFullPermsUser does not include revisar/aprobar/aplicar perms;
+		// wire a user with the complete permission set for this journey.
+		r.Use(planter(e2eAllPermsUser(usuarioID)))
+		r.Use(idempotency.Middleware(idempotency.Config{
+			Store:      store,
+			Methods:    []string{http.MethodPost, http.MethodPatch},
+			RequireKey: false,
+		}))
+		venthttp.MountRouter(r, svc)
+
+		// Seed a CONTADO venta with the real-catalog client + zona IDs that
+		// AplicarVenta requires (testClienteID in CLIENTES and testZonaID in
+		// MSP_CFG_ZONA_CAJA). These constants are defined in e2e_firebird_aplicar_test.go
+		// in the ventfb_test package, so we inline the same values here.
+		const (
+			aplicarClienteID = 11486 // matches testClienteID in ventfb_test
+			aplicarZonaID    = 21563 // matches testZonaID in ventfb_test
+		)
+
+		body := validCreateBody()
+		body.Vendedores[0].UsuarioID = usuarioID.String()
+		body.Cliente.ClienteID = intPtr(aplicarClienteID)
+		body.Direccion.ZonaClienteID = intPtr(aplicarZonaID)
+		req := jsonRequest(t, http.MethodPost, "/ventas", body)
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusCreated, rec.Code, "seed venta: %s", rec.Body.String())
+		var created venthttp.VentaDTO
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+		ventaID := created.ID
+
+		// Advance to REVISADA via POST /ventas/{id}/revisar.
+		req = jsonRequest(t, http.MethodPost, "/ventas/"+ventaID+"/revisar", struct{}{})
+		rec = httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, "revisar: %s", rec.Body.String())
+
+		// Advance to APROBADA via POST /ventas/{id}/aprobar.
+		req = jsonRequest(t, http.MethodPost, "/ventas/"+ventaID+"/aprobar", struct{}{})
+		rec = httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, "aprobar: %s", rec.Body.String())
+
+		// Reset outbox so we only count events from aplicar onwards.
+		capturedBefore := len(recorder.snapshot())
+
+		key := "test-idem-aplicar-" + uuid.NewString()
+
+		// First POST /ventas/{id}/aplicar with Idempotency-Key.
+		req1 := httptest.NewRequest(http.MethodPost, "/ventas/"+ventaID+"/aplicar", http.NoBody)
+		req1.Header.Set("Content-Type", "application/json")
+		req1.Header.Set(idempotency.HeaderKey, key)
+		rec1 := httptest.NewRecorder()
+		r.ServeHTTP(rec1, req1)
+		require.Equal(t, http.StatusOK, rec1.Code, "first aplicar: %s", rec1.Body.String())
+		afterFirst := len(recorder.snapshot())
+		require.Greater(t, afterFirst, capturedBefore,
+			"outbox must have captured at least one event from the first aplicar")
+
+		// Second POST with the SAME key — must be replayed.
+		req2 := httptest.NewRequest(http.MethodPost, "/ventas/"+ventaID+"/aplicar", http.NoBody)
+		req2.Header.Set("Content-Type", "application/json")
+		req2.Header.Set(idempotency.HeaderKey, key)
+		rec2 := httptest.NewRecorder()
+		r.ServeHTTP(rec2, req2)
+		require.Equal(t, http.StatusOK, rec2.Code, "second aplicar: %s", rec2.Body.String())
+
+		// Bodies must match exactly.
+		assert.Equal(t, rec1.Body.String(), rec2.Body.String(),
+			"replay must return identical body")
+		// Replay header must be set.
+		assert.Equal(t, "true", rec2.Header().Get("Idempotent-Replay"),
+			"second aplicar must be flagged as replay")
+
+		// Outbox must NOT have fired again on the replay.
+		afterSecond := len(recorder.snapshot())
+		assert.Equal(t, afterFirst, afterSecond,
+			"replay must not duplicate outbox enqueue: after_first=%d after_second=%d",
+			afterFirst, afterSecond)
+
+		// Parse the DoctoPVID from the response to verify only 1 DOCTOS_PV row.
+		var applied venthttp.VentaDTO
+		require.NoError(t, json.Unmarshal(rec1.Body.Bytes(), &applied))
+		require.NotNil(t, applied.MicrosipDoctoPVID,
+			"applied venta must carry MicrosipDoctoPVID")
+
+		q := firebird.GetQuerier(ctx, pool.DB)
+		var doctoCount int
+		err := q.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM DOCTOS_PV WHERE DOCTO_PV_ID = ?`,
+			*applied.MicrosipDoctoPVID,
+		).Scan(&doctoCount)
+		require.NoError(t, err)
+		assert.Equal(t, 1, doctoCount,
+			"exactly one DOCTOS_PV row must exist after idempotent double-aplicar")
 	})
 }
 
