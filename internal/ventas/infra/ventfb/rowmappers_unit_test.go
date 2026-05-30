@@ -484,9 +484,11 @@ func completeVentaRowRaw(t *testing.T) *ventaRowRaw {
 		canceledByRaw:      sql.NullString{Valid: false},
 		cancelReason:       sql.NullString{Valid: false},
 		clienteID:          sql.NullInt32{Valid: false},
-		status:             string(domain.StatusBorrador),
+		status:             string(domain.EstadoActive),
 		approvedAtRaw:      nil,
 		approvedByRaw:      sql.NullString{Valid: false},
+		situacion:          string(domain.SituacionBorrador),
+		sincronizacion:     string(domain.SincronizacionPendiente),
 	}
 }
 

@@ -207,7 +207,7 @@ func TestProperty_ActualizarHeader(t *testing.T) {
 		h := newHarness(t)
 		before := seedVentaFromHarness(t, h, rt)
 		preID := before.ID()
-		preStatus := before.Status()
+		preSituacion := before.Situacion()
 		preCliente := before.Cliente()
 		preProductosCount := before.ProductosCount()
 		preVendedoresCount := before.VendedoresCount()
@@ -278,8 +278,8 @@ func TestProperty_ActualizarHeader(t *testing.T) {
 		if out.ID() != preID {
 			rt.Fatalf("ID changed: got %v want %v", out.ID(), preID)
 		}
-		if out.Status() != preStatus {
-			rt.Fatalf("status changed: got %v want %v", out.Status(), preStatus)
+		if out.Situacion() != preSituacion {
+			rt.Fatalf("situacion changed: got %v want %v", out.Situacion(), preSituacion)
 		}
 		if out.Cliente().Nombre().Value() != preCliente.Nombre().Value() {
 			rt.Fatalf("cliente changed: got %q want %q", out.Cliente().Nombre().Value(), preCliente.Nombre().Value())

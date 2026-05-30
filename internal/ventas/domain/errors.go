@@ -52,11 +52,108 @@ var (
 		"vendedor_usuario_no_encontrado",
 		"el usuario_id del vendedor no existe",
 	)
-	// ErrStatusInvalido is returned for unrecognized VentaStatus values.
-	ErrStatusInvalido = apperror.NewValidation(
-		"venta_status_invalido",
-		"el status de la venta no es válido",
+	// ErrEstadoRegistroInvalido is returned for unrecognized EstadoRegistro
+	// values.
+	ErrEstadoRegistroInvalido = apperror.NewValidation(
+		"venta_estado_registro_invalido",
+		"el estado del registro no es válido",
 	)
+	// ErrSituacionInvalida is returned for unrecognized Situacion values.
+	ErrSituacionInvalida = apperror.NewValidation(
+		"venta_situacion_invalida",
+		"la situación de la venta no es válida",
+	)
+	// ErrSincronizacionInvalida is returned for unrecognized Sincronizacion
+	// values.
+	ErrSincronizacionInvalida = apperror.NewValidation(
+		"venta_sincronizacion_invalida",
+		"la sincronización de la venta no es válida",
+	)
+	// ErrVentaNoEnviableARevision is returned when EnviarARevision is called on
+	// a venta whose situación is not 'borrador'.
+	ErrVentaNoEnviableARevision = apperror.NewConflict(
+		"venta_no_enviable_a_revision",
+		"la venta solo se puede enviar a revisión desde borrador",
+	)
+	// ErrVentaNoAprobable is returned when Aprobar is called on a venta whose
+	// situación is not 'revisada'.
+	ErrVentaNoAprobable = apperror.NewConflict(
+		"venta_no_aprobable",
+		"la venta solo se puede aprobar desde revisada",
+	)
+	// ErrVentaNoRegresableABorrador is returned when RegresarABorrador is
+	// called on a venta whose situación is not 'revisada'.
+	ErrVentaNoRegresableABorrador = apperror.NewConflict(
+		"venta_no_regresable_a_borrador",
+		"la venta solo se puede regresar a borrador desde revisada",
+	)
+	// ErrVentaNoAplicable is returned when MarcarAplicada is called on a venta
+	// that is not active+aprobada+pendiente.
+	ErrVentaNoAplicable = apperror.NewConflict(
+		"venta_no_aplicable",
+		"solo se puede aplicar una venta activa, aprobada y pendiente",
+	)
+	// ErrVentaYaAplicada is returned when attempting to apply or cancel a venta
+	// already materialized in Microsip.
+	ErrVentaYaAplicada = apperror.NewConflict(
+		"venta_ya_aplicada",
+		"la venta ya fue aplicada en microsip",
+	)
+	// ErrVentaNoActiva is returned when an operation requires an active venta
+	// but the registro is 'deleted'.
+	ErrVentaNoActiva = apperror.NewConflict(
+		"venta_no_activa",
+		"la venta no está activa",
+	)
+	// ErrMicrosipArtefactosRequeridos is returned when MarcarAplicada is given
+	// an empty docto id or folio.
+	ErrMicrosipArtefactosRequeridos = apperror.NewValidation(
+		"microsip_artefactos_requeridos",
+		"el docto y folio de microsip son obligatorios",
+	)
+	// ErrZonaSinCaja is returned when the cliente's zona has no caja/cajero
+	// mapping in MSP_CFG_ZONA_CAJA.
+	ErrZonaSinCaja = apperror.NewValidation(
+		"zona_sin_caja",
+		"la zona del cliente no tiene caja configurada",
+	)
+	// ErrVentaSinZona is returned when applying a venta whose dirección has no
+	// zona_cliente_id (required to resolve the caja).
+	ErrVentaSinZona = apperror.NewValidation(
+		"venta_sin_zona",
+		"la venta no tiene zona de cliente para resolver la caja",
+	)
+	// ErrFrecuenciaSinFormaPago is returned when a credit frequency has no
+	// FORMA_DE_PAGO mapping in MSP_CFG_FRECUENCIA_FORMA_PAGO.
+	ErrFrecuenciaSinFormaPago = apperror.NewValidation(
+		"frecuencia_sin_forma_pago",
+		"la frecuencia de pago no tiene forma de pago configurada",
+	)
+	// ErrPlazoSinCreditoMeses is returned when a credit term has no
+	// CREDITO_EN_MESES mapping in MSP_CFG_PLAZO_CREDITO.
+	ErrPlazoSinCreditoMeses = apperror.NewValidation(
+		"plazo_sin_credito_meses",
+		"el plazo en meses no tiene crédito en meses configurado",
+	)
+	// ErrNumVendedoresSinMapeo is returned when a seller count has no
+	// NUMERO_DE_VENDEDORES mapping in MSP_CFG_NUM_VENDEDORES.
+	ErrNumVendedoresSinMapeo = apperror.NewValidation(
+		"num_vendedores_sin_mapeo",
+		"el número de vendedores no tiene mapeo configurado",
+	)
+	// ErrConfigAplicarFaltante is returned when the singleton MSP_CFG_APLICAR
+	// row is missing.
+	ErrConfigAplicarFaltante = apperror.NewValidation(
+		"config_aplicar_faltante",
+		"falta la configuración de aplicación de ventas",
+	)
+	// ErrVentaSinClienteMicrosip is returned when AplicarVenta is called on a
+	// venta that has no cliente_id link to Microsip's CLIENTES table.
+	ErrVentaSinClienteMicrosip = apperror.NewValidation(
+		"venta_sin_cliente_microsip",
+		"la venta no tiene cliente de microsip para aplicar",
+	)
+
 	// ErrAprobacionFechaZero is returned when constructing an Aprobacion
 	// with a zero timestamp.
 	ErrAprobacionFechaZero = apperror.NewValidation(

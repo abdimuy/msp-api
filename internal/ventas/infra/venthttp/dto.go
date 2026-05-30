@@ -123,27 +123,32 @@ type AprobacionDTO struct {
 
 // VentaDTO is the full projection of a domain.Venta.
 type VentaDTO struct {
-	ID          string             `json:"id"                    format:"uuid"`
-	Cliente     ClienteSnapshotDTO `json:"cliente"`
-	Direccion   DireccionDTO       `json:"direccion"`
-	GPS         GPSDTO             `json:"gps"`
-	FechaVenta  string             `json:"fecha_venta"`
-	TipoVenta   string             `json:"tipo_venta"            enum:"CONTADO,CREDITO"`
-	Status      string             `json:"status"                enum:"borrador,aprobada,cancelada"`
-	Montos      MontosDTO          `json:"montos"`
-	PlanCredito *PlanCreditoDTO    `json:"plan_credito,omitempty"`
-	DiaCobranza *DiaCobranzaDTO    `json:"dia_cobranza,omitempty"`
-	Nota        *string            `json:"nota,omitempty"          maxLength:"500" doc:"Nota libre, máximo 500 caracteres"`
-	Combos      []ComboDTO         `json:"combos"`
-	Productos   []ProductoDTO      `json:"productos"`
-	Vendedores  []VendedorDTO      `json:"vendedores"`
-	Imagenes    []ImagenDTO        `json:"imagenes"`
-	Cancelacion *CancelacionDTO    `json:"cancelacion,omitempty"`
-	Aprobacion  *AprobacionDTO     `json:"aprobacion,omitempty"`
-	CreatedAt   string             `json:"created_at"`
-	UpdatedAt   string             `json:"updated_at"`
-	CreatedBy   string             `json:"created_by"            format:"uuid"`
-	UpdatedBy   string             `json:"updated_by"            format:"uuid"`
+	ID                 string             `json:"id"                    format:"uuid"`
+	Cliente            ClienteSnapshotDTO `json:"cliente"`
+	Direccion          DireccionDTO       `json:"direccion"`
+	GPS                GPSDTO             `json:"gps"`
+	FechaVenta         string             `json:"fecha_venta"`
+	TipoVenta          string             `json:"tipo_venta"            enum:"CONTADO,CREDITO"`
+	Estado             string             `json:"estado"                enum:"active,deleted"`
+	Situacion          string             `json:"situacion"             enum:"borrador,revisada,aprobada,cancelada"`
+	Sincronizacion     string             `json:"sincronizacion"        enum:"pendiente,aplicada"`
+	MicrosipFolio      *string            `json:"microsip_folio,omitempty"       maxLength:"9"`
+	MicrosipDoctoPVID  *int               `json:"microsip_docto_pv_id,omitempty"`
+	MicrosipAplicadaAt *string            `json:"microsip_aplicada_at,omitempty"`
+	Montos             MontosDTO          `json:"montos"`
+	PlanCredito        *PlanCreditoDTO    `json:"plan_credito,omitempty"`
+	DiaCobranza        *DiaCobranzaDTO    `json:"dia_cobranza,omitempty"`
+	Nota               *string            `json:"nota,omitempty"          maxLength:"500" doc:"Nota libre, máximo 500 caracteres"`
+	Combos             []ComboDTO         `json:"combos"`
+	Productos          []ProductoDTO      `json:"productos"`
+	Vendedores         []VendedorDTO      `json:"vendedores"`
+	Imagenes           []ImagenDTO        `json:"imagenes"`
+	Cancelacion        *CancelacionDTO    `json:"cancelacion,omitempty"`
+	Aprobacion         *AprobacionDTO     `json:"aprobacion,omitempty"`
+	CreatedAt          string             `json:"created_at"`
+	UpdatedAt          string             `json:"updated_at"`
+	CreatedBy          string             `json:"created_by"            format:"uuid"`
+	UpdatedBy          string             `json:"updated_by"            format:"uuid"`
 }
 
 // ─── Request bodies ─────────────────────────────────────────────────────────
@@ -233,6 +238,43 @@ type CancelarVentaInput struct {
 
 // CancelarVentaOutput is the response wrapper.
 type CancelarVentaOutput struct {
+	Body VentaDTO
+}
+
+// RevisarVentaInput carries the path parameter for POST /v2/ventas/{id}/revisar.
+// No request body — the transition is keyed by path id alone.
+type RevisarVentaInput struct {
+	ID             string `path:"id"                format:"uuid"`
+	IdempotencyKey string `header:"Idempotency-Key" doc:"Idempotency key opcional"`
+}
+
+// RevisarVentaOutput is the response wrapper.
+type RevisarVentaOutput struct {
+	Body VentaDTO
+}
+
+// AprobarVentaInput carries the path parameter for POST /v2/ventas/{id}/aprobar.
+// No request body — the transition is keyed by path id alone.
+type AprobarVentaInput struct {
+	ID             string `path:"id"                format:"uuid"`
+	IdempotencyKey string `header:"Idempotency-Key" doc:"Idempotency key opcional"`
+}
+
+// AprobarVentaOutput is the response wrapper.
+type AprobarVentaOutput struct {
+	Body VentaDTO
+}
+
+// RegresarBorradorVentaInput carries the path parameter for
+// POST /v2/ventas/{id}/regresar-borrador.
+// No request body — the transition is keyed by path id alone.
+type RegresarBorradorVentaInput struct {
+	ID             string `path:"id"                format:"uuid"`
+	IdempotencyKey string `header:"Idempotency-Key" doc:"Idempotency key opcional"`
+}
+
+// RegresarBorradorVentaOutput is the response wrapper.
+type RegresarBorradorVentaOutput struct {
 	Body VentaDTO
 }
 
@@ -333,4 +375,16 @@ type AdjuntarImagenOutput struct {
 type EliminarImagenInput struct {
 	ID      string `path:"id"     format:"uuid"`
 	ImageID string `path:"img_id" format:"uuid"`
+}
+
+// AplicarVentaInput carries the venta id path param for POST /v2/ventas/{id}/aplicar.
+// No request body — the operation is keyed by path id alone.
+type AplicarVentaInput struct {
+	ID             string `path:"id"                format:"uuid"`
+	IdempotencyKey string `header:"Idempotency-Key" doc:"Idempotency key opcional"`
+}
+
+// AplicarVentaOutput is the response wrapper.
+type AplicarVentaOutput struct {
+	Body VentaDTO
 }

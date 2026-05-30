@@ -46,6 +46,15 @@ const (
 	// EventTypeVentaVendedoresReemplazados is emitted when the vendedores
 	// collection is replaced via ReemplazarVendedores.
 	EventTypeVentaVendedoresReemplazados = "venta.vendedores_reemplazados"
+	// EventTypeVentaEnviadaARevision is emitted on borrador → revisada.
+	EventTypeVentaEnviadaARevision = "venta.enviada_a_revision"
+	// EventTypeVentaAprobada is emitted on revisada → aprobada.
+	EventTypeVentaAprobada = "venta.aprobada"
+	// EventTypeVentaRegresadaABorrador is emitted on revisada → borrador.
+	EventTypeVentaRegresadaABorrador = "venta.regresada_a_borrador"
+	// EventTypeVentaAplicada is emitted when a venta is materialized in
+	// Microsip (sincronización pendiente → aplicada).
+	EventTypeVentaAplicada = "venta.aplicada"
 )
 
 // VentaCreadaEvent is emitted when a venta is created.
@@ -300,4 +309,79 @@ func (e VentaVendedoresReemplazadosEvent) Payload() map[string]any {
 	p := e.basePayload()
 	p["vendedores_count"] = e.itemsCount
 	return p
+}
+
+// VentaEnviadaARevisionEvent is emitted on borrador → revisada.
+type VentaEnviadaARevisionEvent struct{ ventaEditEvent }
+
+// NewVentaEnviadaARevisionEvent constructs the event.
+func NewVentaEnviadaARevisionEvent(ventaID, by uuid.UUID, now time.Time) VentaEnviadaARevisionEvent {
+	return VentaEnviadaARevisionEvent{ventaEditEvent{
+		ventaID: ventaID, by: by, occurredAt: now,
+		eventType: EventTypeVentaEnviadaARevision,
+	}}
+}
+
+// Payload returns the serializable event payload.
+func (e VentaEnviadaARevisionEvent) Payload() map[string]any { return e.basePayload() }
+
+// VentaAprobadaEvent is emitted on revisada → aprobada.
+type VentaAprobadaEvent struct{ ventaEditEvent }
+
+// NewVentaAprobadaEvent constructs the event.
+func NewVentaAprobadaEvent(ventaID, by uuid.UUID, now time.Time) VentaAprobadaEvent {
+	return VentaAprobadaEvent{ventaEditEvent{
+		ventaID: ventaID, by: by, occurredAt: now,
+		eventType: EventTypeVentaAprobada,
+	}}
+}
+
+// Payload returns the serializable event payload.
+func (e VentaAprobadaEvent) Payload() map[string]any { return e.basePayload() }
+
+// VentaRegresadaABorradorEvent is emitted on revisada → borrador.
+type VentaRegresadaABorradorEvent struct{ ventaEditEvent }
+
+// NewVentaRegresadaABorradorEvent constructs the event.
+func NewVentaRegresadaABorradorEvent(ventaID, by uuid.UUID, now time.Time) VentaRegresadaABorradorEvent {
+	return VentaRegresadaABorradorEvent{ventaEditEvent{
+		ventaID: ventaID, by: by, occurredAt: now,
+		eventType: EventTypeVentaRegresadaABorrador,
+	}}
+}
+
+// Payload returns the serializable event payload.
+func (e VentaRegresadaABorradorEvent) Payload() map[string]any { return e.basePayload() }
+
+// VentaAplicadaEvent is emitted when a venta is materialized in Microsip.
+type VentaAplicadaEvent struct {
+	ventaID    uuid.UUID
+	doctoPVID  int
+	folio      string
+	by         uuid.UUID
+	occurredAt time.Time
+}
+
+// NewVentaAplicadaEvent constructs the event.
+func NewVentaAplicadaEvent(ventaID uuid.UUID, doctoPVID int, folio string, by uuid.UUID, now time.Time) VentaAplicadaEvent {
+	return VentaAplicadaEvent{ventaID: ventaID, doctoPVID: doctoPVID, folio: folio, by: by, occurredAt: now}
+}
+
+// EventType returns the canonical event identifier.
+func (e VentaAplicadaEvent) EventType() string { return EventTypeVentaAplicada }
+
+// AggregateID returns the venta ID.
+func (e VentaAplicadaEvent) AggregateID() uuid.UUID { return e.ventaID }
+
+// OccurredAt returns the materialization timestamp.
+func (e VentaAplicadaEvent) OccurredAt() time.Time { return e.occurredAt }
+
+// Payload returns the serializable event payload.
+func (e VentaAplicadaEvent) Payload() map[string]any {
+	return map[string]any{
+		"venta_id":             e.ventaID.String(),
+		"microsip_docto_pv_id": e.doctoPVID,
+		"microsip_folio":       e.folio,
+		"applied_by":           e.by.String(),
+	}
 }

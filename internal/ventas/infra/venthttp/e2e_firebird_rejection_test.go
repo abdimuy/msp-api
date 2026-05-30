@@ -29,7 +29,7 @@ func buildE2EServiceWithUsuarios(pool *firebird.Pool) *ventasapp.Service {
 	usuarios := ventfb.NewUsuarioExistenceRepo(pool)
 	store := newFakeStorage()
 	clock := fixedClock{T: e2eFixedTime()}
-	return ventasapp.NewService(repo, nil, usuarios, store, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil)
+	return ventasapp.NewService(repo, nil, usuarios, store, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil, nil, nil)
 }
 
 // TestE2E_Firebird_Rejection verifies that the HTTP layer returns the correct

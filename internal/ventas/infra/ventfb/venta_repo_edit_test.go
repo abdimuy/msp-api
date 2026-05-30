@@ -60,7 +60,7 @@ func TestVentaRepo_UpdateHeader_PersistsFields(t *testing.T) {
 		assert.True(t, got.Montos().Anual().Equal(decimal.RequireFromString("3500.00")))
 		require.NotNil(t, got.Nota())
 		assert.Equal(t, "corrección posterior", *got.Nota())
-		assert.Equal(t, domain.StatusBorrador, got.Status())
+		assert.Equal(t, domain.SituacionBorrador, got.Situacion())
 	})
 }
 

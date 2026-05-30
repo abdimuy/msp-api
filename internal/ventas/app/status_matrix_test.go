@@ -131,59 +131,90 @@ func editOps() []matrixOp {
 	}
 }
 
-// seedAprobada injects a pre-built Venta in StatusAprobada directly into the
-// fake repo. There is no Aprobar() domain method yet, so HydrateVenta is the
-// only way to construct an aprobada aggregate from outside the domain package.
-func (h *testHarness) seedAprobada(t *testing.T) uuid.UUID {
-	t.Helper()
+// hydrateOverrides carries the lifecycle dimensions a seed helper wants to
+// stamp onto a cloned venta. Empty values fall back to the active/borrador/
+// pendiente defaults.
+type hydrateOverrides struct {
+	situacion          domain.Situacion
+	sincronizacion     domain.Sincronizacion
+	microsipDoctoPVID  *int
+	microsipFolio      *string
+	microsipAplicadaAt *time.Time
+}
 
-	// Build a minimal but valid Venta in borrador first via the service so
-	// all required fields are present, then overwrite the repo entry with a
-	// hydrated clone that carries StatusAprobada.
+// seedWithSituacion clones the seeded venta into a hydrated copy carrying the
+// requested lifecycle dimensions and swaps it into the fake repo. Used to
+// stage revisada/aprobada/aplicada ventas without driving every transition.
+func (h *testHarness) seedWithSituacion(t *testing.T, o hydrateOverrides) uuid.UUID {
+	t.Helper()
 	ventaID := h.seedVenta(t)
 
-	// Retrieve the live pointer that the fake repo holds.
 	h.ventas.mu.Lock()
 	original := h.ventas.byID[*ventaID]
 	h.ventas.mu.Unlock()
 
-	// audit.Auditable methods are on pointer receivers; the Audit() accessor
-	// returns a value copy, so we capture timestamps via the fixed clock used
-	// during seeding rather than through the accessor methods.
 	now := h.clock.T
+	sincronizacion := o.sincronizacion
+	if sincronizacion == "" {
+		sincronizacion = domain.SincronizacionPendiente
+	}
 
-	// HydrateVenta rebuilds the aggregate from its persisted shape —
-	// we copy every accessible field and override Status to StatusAprobada.
-	aprobada := domain.HydrateVenta(domain.HydrateVentaParams{
-		ID:          original.ID(),
-		ClienteID:   original.ClienteID(),
-		Cliente:     original.Cliente(),
-		Direccion:   original.Direccion(),
-		GPS:         original.GPS(),
-		FechaVenta:  original.FechaVenta(),
-		TipoVenta:   original.TipoVenta(),
-		Montos:      original.Montos(),
-		PlanCredito: original.PlanCredito(),
-		DiaCobranza: original.DiaCobranza(),
-		Nota:        original.Nota(),
-		Status:      domain.StatusAprobada,
-		Combos:      nil,
-		Productos:   nil,
-		Vendedores:  nil,
-		Imagenes:    nil,
-		Cancelacion: nil,
-		Aprobacion:  nil,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-		CreatedBy:   uuid.Nil,
-		UpdatedBy:   uuid.Nil,
+	clone := domain.HydrateVenta(domain.HydrateVentaParams{
+		ID:                 original.ID(),
+		ClienteID:          original.ClienteID(),
+		Cliente:            original.Cliente(),
+		Direccion:          original.Direccion(),
+		GPS:                original.GPS(),
+		FechaVenta:         original.FechaVenta(),
+		TipoVenta:          original.TipoVenta(),
+		Montos:             original.Montos(),
+		PlanCredito:        original.PlanCredito(),
+		DiaCobranza:        original.DiaCobranza(),
+		Nota:               original.Nota(),
+		Estado:             domain.EstadoActive,
+		Situacion:          o.situacion,
+		Sincronizacion:     sincronizacion,
+		MicrosipDoctoPVID:  o.microsipDoctoPVID,
+		MicrosipFolio:      o.microsipFolio,
+		MicrosipAplicadaAt: o.microsipAplicadaAt,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+		CreatedBy:          uuid.Nil,
+		UpdatedBy:          uuid.Nil,
 	})
 
 	h.ventas.mu.Lock()
-	h.ventas.byID[*ventaID] = aprobada
+	h.ventas.byID[*ventaID] = clone
 	h.ventas.mu.Unlock()
 
 	return *ventaID
+}
+
+// seedRevisada stages a venta in situación 'revisada'.
+func (h *testHarness) seedRevisada(t *testing.T) uuid.UUID {
+	t.Helper()
+	return h.seedWithSituacion(t, hydrateOverrides{situacion: domain.SituacionRevisada})
+}
+
+// seedAprobada stages a venta in situación 'aprobada' (sincronización pendiente).
+func (h *testHarness) seedAprobada(t *testing.T) uuid.UUID {
+	t.Helper()
+	return h.seedWithSituacion(t, hydrateOverrides{situacion: domain.SituacionAprobada})
+}
+
+// seedAplicada stages an aprobada venta already materialized in Microsip.
+func (h *testHarness) seedAplicada(t *testing.T) uuid.UUID {
+	t.Helper()
+	doctoID := 15239197
+	folio := "Y00002266"
+	at := h.clock.T
+	return h.seedWithSituacion(t, hydrateOverrides{
+		situacion:          domain.SituacionAprobada,
+		sincronizacion:     domain.SincronizacionAplicada,
+		microsipDoctoPVID:  &doctoID,
+		microsipFolio:      &folio,
+		microsipAplicadaAt: &at,
+	})
 }
 
 // seedCancelada creates a venta via the service and then cancels it, returning
@@ -220,10 +251,30 @@ func TestStatus_Borrador_AllowsEdits(t *testing.T) {
 	}
 }
 
+// ─── Revisada rejects every edit ───────────────────────────────────────────
+
+// TestStatus_Revisada_RejectsEdits verifies that every edit operation returns
+// domain.ErrVentaNoEditable once the venta leaves borrador for revisada.
+func TestStatus_Revisada_RejectsEdits(t *testing.T) {
+	t.Parallel()
+	for _, op := range editOps() {
+		op := op
+		t.Run(op.opName, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			ventaID := h.seedRevisada(t)
+			by := uuid.New()
+			err := op.invoke(h.svc, ventaID, by)
+			require.ErrorIs(t, err, domain.ErrVentaNoEditable,
+				"revisada should reject %s with ErrVentaNoEditable", op.opName)
+		})
+	}
+}
+
 // ─── Aprobada rejects every edit ───────────────────────────────────────────
 
 // TestStatus_Aprobada_RejectsEdits verifies that every edit operation returns
-// domain.ErrVentaNoEditable when the venta is in StatusAprobada.
+// domain.ErrVentaNoEditable when the venta is in situación aprobada.
 func TestStatus_Aprobada_RejectsEdits(t *testing.T) {
 	t.Parallel()
 	for _, op := range editOps() {
@@ -275,17 +326,27 @@ func TestStatus_Cancelada_RejectsCancelAgain(t *testing.T) {
 	require.ErrorIs(t, err, domain.ErrVentaYaCancelada)
 }
 
-// TestStatus_Aprobada_RejectsCancel verifies that CancelarVenta is rejected
-// once a venta reaches StatusAprobada. Aprobada is a terminal state for
-// direct mutation: cancellation must be preceded by a revert-to-borrador
-// step (future operation) so the two sources of truth (MSP + Microsip)
-// cannot diverge silently.
-func TestStatus_Aprobada_RejectsCancel(t *testing.T) {
+// TestStatus_Aprobada_AllowsCancel verifies that an aprobada venta that has
+// NOT been materialized in Microsip can still be canceled directly. Cancelar
+// is generalized to any non-canceled, non-aplicada situación.
+func TestStatus_Aprobada_AllowsCancel(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	ventaID := h.seedAprobada(t)
 
-	_, err := h.svc.CancelarVenta(context.Background(), ventaID, "gerencia revocó la aprobación", uuid.New())
-	require.ErrorIs(t, err, domain.ErrVentaNoEditable,
-		"aprobada venta must NOT be directly cancelable; revert to borrador first")
+	v, err := h.svc.CancelarVenta(context.Background(), ventaID, "gerencia revocó la aprobación", uuid.New())
+	require.NoError(t, err)
+	require.Equal(t, domain.SituacionCancelada, v.Situacion())
+}
+
+// TestStatus_Aplicada_RejectsCancel verifies that a venta already materialized
+// in Microsip cannot be canceled through this flow — reversing an applied
+// venta requires reversing the DOCTOS_PV documents (out of scope).
+func TestStatus_Aplicada_RejectsCancel(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ventaID := h.seedAplicada(t)
+
+	_, err := h.svc.CancelarVenta(context.Background(), ventaID, "ya no", uuid.New())
+	require.ErrorIs(t, err, domain.ErrVentaYaAplicada)
 }

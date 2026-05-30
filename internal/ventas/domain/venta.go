@@ -19,31 +19,37 @@ const maxNotaLength = 500
 // dirección, vendedores and pricing at the moment of sale, and owns the
 // child Combos / Productos / Vendedores / Imagenes collections.
 //
-// Lifecycle: a venta is born in StatusBorrador. While in borrador it is
-// freely editable through the Actualizar* / Reemplazar* methods. The
-// terminal transitions are Cancelar (→ StatusCancelada) and approval
-// (→ StatusAprobada, reserved for the future promotion-to-Microsip flow).
+// Lifecycle is tracked across three independent dimensions: EstadoRegistro
+// (active|deleted), Situacion (borrador→revisada→aprobada→cancelada), and
+// Sincronizacion (pendiente→aplicada). A venta is born active/borrador/
+// pendiente and is freely editable only while active+borrador. Approval
+// (Aprobar) unlocks materialization in Microsip (MarcarAplicada).
 type Venta struct {
-	id            uuid.UUID
-	clienteID     *int
-	cliente       ClienteSnapshot
-	direccion     Direccion
-	gps           GPSCoords
-	fechaVenta    time.Time
-	tipoVenta     TipoVenta
-	montos        MontoSnapshot
-	planCredito   *PlanCredito
-	diaCobranza   *DiaCobranza
-	nota          *string
-	status        VentaStatus
-	combos        []*Combo
-	productos     []*Producto
-	vendedores    []*Vendedor
-	imagenes      []*Imagen
-	audit         audit.Auditable
-	cancelacion   *Cancelacion
-	aprobacion    *Aprobacion
-	pendingEvents []Event
+	id                 uuid.UUID
+	clienteID          *int
+	cliente            ClienteSnapshot
+	direccion          Direccion
+	gps                GPSCoords
+	fechaVenta         time.Time
+	tipoVenta          TipoVenta
+	montos             MontoSnapshot
+	planCredito        *PlanCredito
+	diaCobranza        *DiaCobranza
+	nota               *string
+	estado             EstadoRegistro
+	situacion          Situacion
+	sincroniza         Sincronizacion
+	microsipDoctoPVID  *int
+	microsipFolio      *string
+	microsipAplicadaAt *time.Time
+	combos             []*Combo
+	productos          []*Producto
+	vendedores         []*Vendedor
+	imagenes           []*Imagen
+	audit              audit.Auditable
+	cancelacion        *Cancelacion
+	aprobacion         *Aprobacion
+	pendingEvents      []Event
 }
 
 // CrearVentaProductoInput is one producto line submitted to CrearVenta.
@@ -128,7 +134,9 @@ func CrearVenta(p CrearVentaParams) (*Venta, error) {
 		planCredito: p.PlanCredito,
 		diaCobranza: p.DiaCobranza,
 		nota:        nota,
-		status:      StatusBorrador,
+		estado:      EstadoActive,
+		situacion:   SituacionBorrador,
+		sincroniza:  SincronizacionPendiente,
 		combos:      combos,
 		productos:   productos,
 		vendedores:  vendedores,
@@ -309,52 +317,62 @@ func buildVendedores(in []CrearVentaVendedorInput, createdBy uuid.UUID, now time
 // HydrateVentaParams carries the persisted shape of a Venta for repository
 // reconstruction.
 type HydrateVentaParams struct {
-	ID          uuid.UUID
-	ClienteID   *int
-	Cliente     ClienteSnapshot
-	Direccion   Direccion
-	GPS         GPSCoords
-	FechaVenta  time.Time
-	TipoVenta   TipoVenta
-	Montos      MontoSnapshot
-	PlanCredito *PlanCredito
-	DiaCobranza *DiaCobranza
-	Nota        *string
-	Status      VentaStatus
-	Combos      []*Combo
-	Productos   []*Producto
-	Vendedores  []*Vendedor
-	Imagenes    []*Imagen
-	Cancelacion *Cancelacion
-	Aprobacion  *Aprobacion
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	CreatedBy   uuid.UUID
-	UpdatedBy   uuid.UUID
+	ID                 uuid.UUID
+	ClienteID          *int
+	Cliente            ClienteSnapshot
+	Direccion          Direccion
+	GPS                GPSCoords
+	FechaVenta         time.Time
+	TipoVenta          TipoVenta
+	Montos             MontoSnapshot
+	PlanCredito        *PlanCredito
+	DiaCobranza        *DiaCobranza
+	Nota               *string
+	Estado             EstadoRegistro
+	Situacion          Situacion
+	Sincronizacion     Sincronizacion
+	MicrosipDoctoPVID  *int
+	MicrosipFolio      *string
+	MicrosipAplicadaAt *time.Time
+	Combos             []*Combo
+	Productos          []*Producto
+	Vendedores         []*Vendedor
+	Imagenes           []*Imagen
+	Cancelacion        *Cancelacion
+	Aprobacion         *Aprobacion
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	CreatedBy          uuid.UUID
+	UpdatedBy          uuid.UUID
 }
 
 // HydrateVenta rebuilds a Venta from persistence without validation.
 func HydrateVenta(p HydrateVentaParams) *Venta {
 	return &Venta{
-		id:          p.ID,
-		clienteID:   p.ClienteID,
-		cliente:     p.Cliente,
-		direccion:   p.Direccion,
-		gps:         p.GPS,
-		fechaVenta:  p.FechaVenta,
-		tipoVenta:   p.TipoVenta,
-		montos:      p.Montos,
-		planCredito: p.PlanCredito,
-		diaCobranza: p.DiaCobranza,
-		nota:        p.Nota,
-		status:      p.Status,
-		combos:      p.Combos,
-		productos:   p.Productos,
-		vendedores:  p.Vendedores,
-		imagenes:    p.Imagenes,
-		audit:       audit.HydrateAuditable(p.CreatedAt, p.UpdatedAt, p.CreatedBy, p.UpdatedBy),
-		cancelacion: p.Cancelacion,
-		aprobacion:  p.Aprobacion,
+		id:                 p.ID,
+		clienteID:          p.ClienteID,
+		cliente:            p.Cliente,
+		direccion:          p.Direccion,
+		gps:                p.GPS,
+		fechaVenta:         p.FechaVenta,
+		tipoVenta:          p.TipoVenta,
+		montos:             p.Montos,
+		planCredito:        p.PlanCredito,
+		diaCobranza:        p.DiaCobranza,
+		nota:               p.Nota,
+		estado:             p.Estado,
+		situacion:          p.Situacion,
+		sincroniza:         p.Sincronizacion,
+		microsipDoctoPVID:  p.MicrosipDoctoPVID,
+		microsipFolio:      p.MicrosipFolio,
+		microsipAplicadaAt: p.MicrosipAplicadaAt,
+		combos:             p.Combos,
+		productos:          p.Productos,
+		vendedores:         p.Vendedores,
+		imagenes:           p.Imagenes,
+		audit:              audit.HydrateAuditable(p.CreatedAt, p.UpdatedAt, p.CreatedBy, p.UpdatedBy),
+		cancelacion:        p.Cancelacion,
+		aprobacion:         p.Aprobacion,
 	}
 }
 
@@ -393,8 +411,28 @@ func (v *Venta) DiaCobranza() *DiaCobranza { return v.diaCobranza }
 // Nota returns the optional free-form note.
 func (v *Venta) Nota() *string { return v.nota }
 
-// Status returns the current lifecycle stage.
-func (v *Venta) Status() VentaStatus { return v.status }
+// Estado returns the technical existence dimension (active|deleted).
+func (v *Venta) Estado() EstadoRegistro { return v.estado }
+
+// Situacion returns the business-lifecycle dimension.
+func (v *Venta) Situacion() Situacion { return v.situacion }
+
+// Sincronizacion returns the Microsip-integration dimension.
+func (v *Venta) Sincronizacion() Sincronizacion { return v.sincroniza }
+
+// MicrosipDoctoPVID returns the DOCTOS_PV id produced by materialization, or
+// nil when the venta has not been applied.
+func (v *Venta) MicrosipDoctoPVID() *int { return v.microsipDoctoPVID }
+
+// MicrosipFolio returns the Microsip folio produced by materialization, or nil
+// when the venta has not been applied.
+func (v *Venta) MicrosipFolio() *string { return v.microsipFolio }
+
+// MicrosipAplicadaAt returns the moment the venta was materialized, or nil.
+func (v *Venta) MicrosipAplicadaAt() *time.Time { return v.microsipAplicadaAt }
+
+// IsAplicada reports whether the venta has been materialized in Microsip.
+func (v *Venta) IsAplicada() bool { return v.sincroniza == SincronizacionAplicada }
 
 // Audit returns a copy of the audit subrecord.
 func (v *Venta) Audit() audit.Auditable { return v.audit }
@@ -406,12 +444,14 @@ func (v *Venta) Cancelacion() *Cancelacion { return v.cancelacion }
 func (v *Venta) Aprobacion() *Aprobacion { return v.aprobacion }
 
 // IsCanceled reports whether the venta has been canceled.
-func (v *Venta) IsCanceled() bool { return v.cancelacion != nil }
+func (v *Venta) IsCanceled() bool { return v.situacion == SituacionCancelada }
 
 // puedeEditarse reports whether the venta is in a state that accepts edits.
-// Only StatusBorrador allows edits — aprobada and cancelada are terminal
-// states for the purposes of mutation.
-func (v *Venta) puedeEditarse() bool { return v.status == StatusBorrador }
+// Only an active venta in 'borrador' allows edits — revisada, aprobada and
+// cancelada are terminal for the purposes of mutation.
+func (v *Venta) puedeEditarse() bool {
+	return v.estado == EstadoActive && v.situacion == SituacionBorrador
+}
 
 // ─── Read-only child iterators ─────────────────────────────────────────────
 
@@ -552,29 +592,94 @@ func (v *Venta) EliminarImagen(id, by uuid.UUID, now time.Time) error {
 	return nil
 }
 
-// Cancelar soft-cancels the venta and transitions status to StatusCancelada.
+// Cancelar soft-cancels the venta and transitions SITUACION to cancelada.
 //
-// Only StatusBorrador may be canceled. An already-canceled venta returns
-// ErrVentaYaCancelada; an aprobada venta returns ErrVentaNoEditable —
-// once approved the venta is terminal (either pushed to Microsip or
-// awaiting the push), and direct cancellation would diverge the two
-// sources of truth. The correct flow for an approved venta is to first
-// revert the approval (future operation), then cancel from borrador.
+// Any non-canceled situación (borrador, revisada, aprobada) may be canceled.
+// An already-canceled venta returns ErrVentaYaCancelada. A venta already
+// materialized in Microsip returns ErrVentaYaAplicada — reversing an applied
+// venta requires reversing the DOCTOS_PV documents, which is out of scope for
+// this flow.
 func (v *Venta) Cancelar(reason string, by uuid.UUID, now time.Time) error {
 	if v.IsCanceled() {
 		return ErrVentaYaCancelada
 	}
-	if v.status != StatusBorrador {
-		return ErrVentaNoEditable
+	if v.IsAplicada() {
+		return ErrVentaYaAplicada
 	}
 	c, err := NewCancelacion(now, by, reason)
 	if err != nil {
 		return err
 	}
 	v.cancelacion = &c
-	v.status = StatusCancelada
+	v.situacion = SituacionCancelada
 	v.audit.MarkUpdated(by)
 	v.pendingEvents = append(v.pendingEvents, NewVentaCanceladaEvent(v.id, by, strings.TrimSpace(reason), now))
+	return nil
+}
+
+// EnviarARevision transitions the venta from 'borrador' to 'revisada'.
+// Returns ErrVentaNoEnviableARevision from any other situación.
+func (v *Venta) EnviarARevision(by uuid.UUID, now time.Time) error {
+	if v.estado != EstadoActive || v.situacion != SituacionBorrador {
+		return ErrVentaNoEnviableARevision
+	}
+	v.situacion = SituacionRevisada
+	v.audit.MarkUpdated(by)
+	v.pendingEvents = append(v.pendingEvents, NewVentaEnviadaARevisionEvent(v.id, by, now))
+	return nil
+}
+
+// Aprobar transitions the venta from 'revisada' to 'aprobada' and records the
+// Aprobacion. Returns ErrVentaNoAprobable from any other situación.
+func (v *Venta) Aprobar(by uuid.UUID, now time.Time) error {
+	if v.estado != EstadoActive || v.situacion != SituacionRevisada {
+		return ErrVentaNoAprobable
+	}
+	a, err := NewAprobacion(now, by)
+	if err != nil {
+		return err
+	}
+	v.aprobacion = &a
+	v.situacion = SituacionAprobada
+	v.audit.MarkUpdated(by)
+	v.pendingEvents = append(v.pendingEvents, NewVentaAprobadaEvent(v.id, by, now))
+	return nil
+}
+
+// RegresarABorrador transitions the venta from 'revisada' back to 'borrador'
+// (review rejection) and clears any pending Aprobacion. Returns
+// ErrVentaNoRegresableABorrador from any other situación.
+func (v *Venta) RegresarABorrador(by uuid.UUID, now time.Time) error {
+	if v.estado != EstadoActive || v.situacion != SituacionRevisada {
+		return ErrVentaNoRegresableABorrador
+	}
+	v.situacion = SituacionBorrador
+	v.aprobacion = nil
+	v.audit.MarkUpdated(by)
+	v.pendingEvents = append(v.pendingEvents, NewVentaRegresadaABorradorEvent(v.id, by, now))
+	return nil
+}
+
+// MarcarAplicada records a successful materialization in Microsip: it sets
+// SINCRONIZACION to aplicada and stores the artifact triple (docto id, folio,
+// timestamp). Only valid for an active, aprobada, pendiente venta — otherwise
+// returns ErrVentaNoAplicable. An empty doctoID or folio returns
+// ErrMicrosipArtefactosRequeridos.
+func (v *Venta) MarcarAplicada(doctoID int, folio string, at time.Time, by uuid.UUID) error {
+	if v.estado != EstadoActive || v.situacion != SituacionAprobada || v.sincroniza != SincronizacionPendiente {
+		return ErrVentaNoAplicable
+	}
+	folio = strings.TrimSpace(folio)
+	if doctoID <= 0 || folio == "" {
+		return ErrMicrosipArtefactosRequeridos
+	}
+	atCopy := at
+	v.sincroniza = SincronizacionAplicada
+	v.microsipDoctoPVID = &doctoID
+	v.microsipFolio = &folio
+	v.microsipAplicadaAt = &atCopy
+	v.audit.MarkUpdated(by)
+	v.pendingEvents = append(v.pendingEvents, NewVentaAplicadaEvent(v.id, doctoID, folio, by, at))
 	return nil
 }
 

@@ -147,7 +147,7 @@ func TestE2E_Firebird_CrearVenta(t *testing.T) { //nolint:paralleltest // see co
 		// TxMgr is nil — the ambient test tx is supplied via context, and
 		// firebird.GetQuerier picks it up. The service-level runInTx becomes a
 		// no-op which is exactly what we want here.
-		svc := ventasapp.NewService(repo, nil, nil, store, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil)
+		svc := ventasapp.NewService(repo, nil, nil, store, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil, nil, nil)
 
 		cu := auth.CurrentUser{
 			ID:          usuarioID,
@@ -280,7 +280,7 @@ func TestE2E_Firebird_StandardProcessor_ResizesAndShrinks(t *testing.T) {
 		opts.JPEGQuality = 75
 		opts.PreserveSmallImages = false
 		proc := imageprocessor.NewStandardProcessor(opts)
-		svc := ventasapp.NewService(repo, nil, nil, store, clock, noopOutbox{}, proc, nil)
+		svc := ventasapp.NewService(repo, nil, nil, store, clock, noopOutbox{}, proc, nil, nil, nil)
 
 		cu := e2eFullPermsUser(usuarioID)
 		r := chi.NewRouter()
@@ -532,7 +532,7 @@ func TestE2E_Firebird_ObtenerImagen(t *testing.T) {
 		fsStore, err := storage.NewFilesystemProvider(t.TempDir())
 		require.NoError(t, err, "filesystem provider must build under t.TempDir")
 		clock := fixedClock{T: e2eFixedTime()}
-		svc := ventasapp.NewService(repo, nil, nil, fsStore, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil)
+		svc := ventasapp.NewService(repo, nil, nil, fsStore, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil, nil, nil)
 
 		cu := e2eFullPermsUser(usuarioID)
 		r := chi.NewRouter()
@@ -590,7 +590,7 @@ func TestE2E_Firebird_ObtenerImagen_MultiplesImagenes(t *testing.T) {
 		fsStore, err := storage.NewFilesystemProvider(t.TempDir())
 		require.NoError(t, err)
 		clock := fixedClock{T: e2eFixedTime()}
-		svc := ventasapp.NewService(repo, nil, nil, fsStore, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil)
+		svc := ventasapp.NewService(repo, nil, nil, fsStore, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil, nil, nil)
 
 		cu := e2eFullPermsUser(usuarioID)
 		r := chi.NewRouter()
@@ -708,7 +708,7 @@ func buildE2EService(pool *firebird.Pool) *ventasapp.Service {
 	repo := ventfb.NewVentaRepo(pool)
 	store := newFakeStorage()
 	clock := fixedClock{T: e2eFixedTime()}
-	return ventasapp.NewService(repo, nil, nil, store, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil)
+	return ventasapp.NewService(repo, nil, nil, store, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil, nil, nil)
 }
 
 // buildE2EServiceWithCliente is buildE2EService plus the real Firebird-backed
@@ -718,7 +718,7 @@ func buildE2EServiceWithCliente(pool *firebird.Pool) *ventasapp.Service {
 	clientes := ventfb.NewClienteRepo(pool)
 	store := newFakeStorage()
 	clock := fixedClock{T: e2eFixedTime()}
-	return ventasapp.NewService(repo, clientes, nil, store, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil)
+	return ventasapp.NewService(repo, clientes, nil, store, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil, nil, nil)
 }
 
 // buildE2EServiceWithOutbox is buildE2EService with a caller-supplied outbox
@@ -727,7 +727,7 @@ func buildE2EServiceWithOutbox(pool *firebird.Pool, outbox ventasoutbound.Outbox
 	repo := ventfb.NewVentaRepo(pool)
 	store := newFakeStorage()
 	clock := fixedClock{T: e2eFixedTime()}
-	return ventasapp.NewService(repo, nil, nil, store, clock, outbox, imageprocessor.NoOpProcessor{}, nil)
+	return ventasapp.NewService(repo, nil, nil, store, clock, outbox, imageprocessor.NoOpProcessor{}, nil, nil, nil)
 }
 
 // e2eFullPermsUser returns a CurrentUser holding every ventas permission.

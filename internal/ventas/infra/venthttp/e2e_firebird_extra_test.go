@@ -540,7 +540,7 @@ func TestE2E_Firebird_FullLifecycle(t *testing.T) {
 		var created venthttp.VentaDTO
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
 		assert.Equal(t, "CREDITO", created.TipoVenta)
-		assert.Equal(t, "borrador", created.Status)
+		assert.Equal(t, "borrador", created.Situacion)
 
 		// 3. PATCH header — change direccion, fechaVenta, montos.
 		hdr := validHeaderBody()
@@ -653,7 +653,7 @@ func TestE2E_Firebird_FullLifecycle(t *testing.T) {
 		assert.Len(t, mid.Combos, 1)
 		assert.Len(t, mid.Vendedores, 1)
 		assert.Empty(t, mid.Imagenes, "imagen must be deleted")
-		assert.Equal(t, "borrador", mid.Status)
+		assert.Equal(t, "borrador", mid.Situacion)
 
 		// 12. PATCH cancel.
 		cancelBody, err := json.Marshal(venthttp.CancelarVentaBody{Reason: "lifecycle cancel"})
@@ -683,7 +683,7 @@ func TestE2E_Firebird_FullLifecycle(t *testing.T) {
 		require.Equal(t, http.StatusOK, rec.Code)
 		var final venthttp.VentaDTO
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &final))
-		assert.Equal(t, "cancelada", final.Status)
+		assert.Equal(t, "cancelada", final.Situacion)
 		require.NotNil(t, final.Cancelacion)
 		assert.Equal(t, "lifecycle cancel", final.Cancelacion.Reason)
 	})

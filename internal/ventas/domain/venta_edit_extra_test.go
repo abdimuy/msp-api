@@ -14,10 +14,10 @@ import (
 	"github.com/abdimuy/msp-api/internal/ventas/domain"
 )
 
-// rebuildVentaWithStatus rebuilds an aggregate via HydrateVenta with the
-// supplied status — used to drive the "not borrador" rejection branches
+// rebuildVentaWithSituacion rebuilds an aggregate via HydrateVenta with the
+// supplied situacion — used to drive the "not borrador" rejection branches
 // since the domain has no app-level transition to Aprobada yet.
-func rebuildVentaWithStatus(t *testing.T, src *domain.Venta, status domain.VentaStatus) *domain.Venta {
+func rebuildVentaWithSituacion(t *testing.T, src *domain.Venta, situacion domain.Situacion) *domain.Venta {
 	t.Helper()
 	a := src.Audit()
 	return domain.HydrateVenta(domain.HydrateVentaParams{
@@ -25,7 +25,7 @@ func rebuildVentaWithStatus(t *testing.T, src *domain.Venta, status domain.Venta
 		Cliente: src.Cliente(), Direccion: src.Direccion(), GPS: src.GPS(),
 		FechaVenta: src.FechaVenta(), TipoVenta: src.TipoVenta(), Montos: src.Montos(),
 		PlanCredito: src.PlanCredito(), DiaCobranza: src.DiaCobranza(), Nota: src.Nota(),
-		Status: status,
+		Estado: domain.EstadoActive, Situacion: situacion, Sincronizacion: domain.SincronizacionPendiente,
 		Combos: src.CombosForRepo(), Productos: src.ProductosForRepo(),
 		Vendedores: src.VendedoresForRepo(), Imagenes: src.ImagenesForRepo(),
 		Cancelacion: src.Cancelacion(), Aprobacion: src.Aprobacion(),
@@ -36,7 +36,7 @@ func rebuildVentaWithStatus(t *testing.T, src *domain.Venta, status domain.Venta
 
 func TestVenta_ActualizarHeader_RejectsIfAprobada(t *testing.T) {
 	t.Parallel()
-	v := rebuildVentaWithStatus(t, buildValidVenta(t), domain.StatusAprobada)
+	v := rebuildVentaWithSituacion(t, buildValidVenta(t), domain.SituacionAprobada)
 	err := v.ActualizarHeader(domain.ActualizarHeaderParams{
 		Direccion: v.Direccion(), GPS: v.GPS(),
 		FechaVenta: v.FechaVenta(), Montos: v.Montos(),
@@ -50,7 +50,7 @@ func TestVenta_ActualizarHeader_RejectsIfAprobada(t *testing.T) {
 
 func TestVenta_ActualizarCliente_RejectsIfAprobada(t *testing.T) {
 	t.Parallel()
-	v := rebuildVentaWithStatus(t, buildValidVenta(t), domain.StatusAprobada)
+	v := rebuildVentaWithSituacion(t, buildValidVenta(t), domain.SituacionAprobada)
 	snap, _ := domain.NewClienteSnapshot(domain.NewClienteSnapshotParams{Nombre: v.Cliente().Nombre()})
 	err := v.ActualizarCliente(domain.ActualizarClienteParams{
 		Cliente: snap, By: uuid.New(), Now: time.Now(),
@@ -60,7 +60,7 @@ func TestVenta_ActualizarCliente_RejectsIfAprobada(t *testing.T) {
 
 func TestVenta_ReemplazarProductos_RejectsIfAprobada(t *testing.T) {
 	t.Parallel()
-	v := rebuildVentaWithStatus(t, buildValidVenta(t), domain.StatusAprobada)
+	v := rebuildVentaWithSituacion(t, buildValidVenta(t), domain.SituacionAprobada)
 	one, two := 1, 2
 	montos, _ := domain.NewMontoSnapshot(decimal.NewFromInt(1), decimal.NewFromInt(1), decimal.NewFromInt(1))
 	err := v.ReemplazarProductos(domain.ReemplazarProductosParams{
@@ -75,7 +75,7 @@ func TestVenta_ReemplazarProductos_RejectsIfAprobada(t *testing.T) {
 
 func TestVenta_ReemplazarCombos_RejectsIfAprobada(t *testing.T) {
 	t.Parallel()
-	v := rebuildVentaWithStatus(t, buildValidVenta(t), domain.StatusAprobada)
+	v := rebuildVentaWithSituacion(t, buildValidVenta(t), domain.SituacionAprobada)
 	err := v.ReemplazarCombos(domain.ReemplazarCombosParams{
 		Combos: nil, By: uuid.New(), Now: time.Now(),
 	})
@@ -84,7 +84,7 @@ func TestVenta_ReemplazarCombos_RejectsIfAprobada(t *testing.T) {
 
 func TestVenta_ReemplazarVendedores_RejectsIfAprobada(t *testing.T) {
 	t.Parallel()
-	v := rebuildVentaWithStatus(t, buildValidVenta(t), domain.StatusAprobada)
+	v := rebuildVentaWithSituacion(t, buildValidVenta(t), domain.SituacionAprobada)
 	err := v.ReemplazarVendedores(domain.ReemplazarVendedoresParams{
 		Vendedores: []domain.CrearVentaVendedorInput{{
 			ID: uuid.New(), UsuarioID: uuid.New(), Email: "x@y.com", Nombre: "X",
@@ -178,22 +178,23 @@ func TestVenta_HydrateWithAprobacionRoundtrip(t *testing.T) {
 	require.NoError(t, err)
 	montos, _ := domain.NewMontoSnapshot(decimal.NewFromInt(1), decimal.NewFromInt(1), decimal.NewFromInt(1))
 	v := domain.HydrateVenta(domain.HydrateVentaParams{
-		ID: uuid.New(), TipoVenta: domain.TipoVentaContado, Status: domain.StatusAprobada,
+		ID: uuid.New(), TipoVenta: domain.TipoVentaContado,
+		Estado: domain.EstadoActive, Situacion: domain.SituacionAprobada, Sincronizacion: domain.SincronizacionPendiente,
 		Montos:     montos,
 		Aprobacion: &approval,
 	})
 	require.NotNil(t, v.Aprobacion())
 	assert.Equal(t, at, v.Aprobacion().At())
 	assert.Equal(t, by, v.Aprobacion().By())
-	assert.Equal(t, domain.StatusAprobada, v.Status())
+	assert.Equal(t, domain.SituacionAprobada, v.Situacion())
 }
 
-func TestVenta_AllStatusesAreValid(t *testing.T) {
+func TestVenta_AllSituacionesAreValid(t *testing.T) {
 	t.Parallel()
-	for _, s := range []domain.VentaStatus{domain.StatusBorrador, domain.StatusAprobada, domain.StatusCancelada} {
-		assert.True(t, s.IsValid(), "status=%q must be valid", s)
-		got, err := domain.ParseVentaStatus(string(s))
-		require.NoError(t, err, "ParseVentaStatus(%q)", s)
+	for _, s := range []domain.Situacion{domain.SituacionBorrador, domain.SituacionAprobada, domain.SituacionCancelada} {
+		assert.True(t, s.IsValid(), "situacion=%q must be valid", s)
+		got, err := domain.ParseSituacion(string(s))
+		require.NoError(t, err, "ParseSituacion(%q)", s)
 		assert.Equal(t, s, got)
 	}
 }

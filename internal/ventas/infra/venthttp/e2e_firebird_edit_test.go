@@ -93,7 +93,7 @@ func TestE2E_Firebird_EditarVentaHeader(t *testing.T) {
 		var got venthttp.VentaDTO
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
 		assert.Equal(t, "Av. Editada", got.Direccion.Calle)
-		assert.Equal(t, "borrador", got.Status)
+		assert.Equal(t, "borrador", got.Situacion)
 		assert.Equal(t, "2026-05-01T09:00:00Z", got.FechaVenta)
 	})
 }

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -181,9 +182,22 @@ func headerInsertArgs(v *domain.Venta) []any {
 		firebird.ToWallClock(a.CreatedAt()), firebird.ToWallClock(a.UpdatedAt()),
 		a.CreatedBy().String(), a.UpdatedBy().String(),
 		canceledAt, canceledBy, cancelReason,
-		nullableIntArg(v.ClienteID()), v.Status().String(),
+		nullableIntArg(v.ClienteID()), v.Estado().String(),
 		approvedAt, approvedBy,
+		v.Situacion().String(), v.Sincronizacion().String(),
+		nullableIntArg(v.MicrosipDoctoPVID()),
+		nullableStringArg(v.MicrosipFolio()),
+		nullableWallClockArg(v.MicrosipAplicadaAt()),
 	}
+}
+
+// nullableWallClockArg returns the wall-clock-shifted timestamp as a driver
+// arg, or nil for SQL NULL.
+func nullableWallClockArg(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return firebird.ToWallClock(*t)
 }
 
 // aprobacionFields decomposes an optional Aprobacion into the two nullable
@@ -270,15 +284,22 @@ func cancelacionFields(c *domain.Cancelacion) (at, by, reason any) {
 	return firebird.ToWallClock(c.At()), c.By().String(), c.Reason()
 }
 
-// Update writes back the cancellation triplet plus STATUS and the audit
-// fields. Used for the Cancelar path.
+// Update writes back the full state-machine surface of v (the three lifecycle
+// dimensions, the Microsip artifacts, and the cancelación/aprobación triplets)
+// plus the audit fields. Used by every transition command: Cancelar,
+// EnviarARevision, Aprobar, RegresarABorrador, and AplicarVenta.
 func (r *VentaRepo) Update(ctx context.Context, v *domain.Venta) error {
 	q := firebird.GetQuerier(ctx, r.pool.DB)
 	canceledAt, canceledBy, cancelReason := cancelacionFields(v.Cancelacion())
+	approvedAt, approvedBy := aprobacionFields(v.Aprobacion())
 	a := v.Audit()
 	res, err := q.ExecContext(ctx, updateVentaHeader,
+		v.Estado().String(), v.Situacion().String(), v.Sincronizacion().String(),
+		nullableIntArg(v.MicrosipDoctoPVID()),
+		nullableStringArg(v.MicrosipFolio()),
+		nullableWallClockArg(v.MicrosipAplicadaAt()),
 		canceledAt, canceledBy, cancelReason,
-		v.Status().String(),
+		approvedAt, approvedBy,
 		firebird.ToWallClock(a.UpdatedAt()), a.UpdatedBy().String(),
 		v.ID().String(),
 	)
@@ -286,6 +307,23 @@ func (r *VentaRepo) Update(ctx context.Context, v *domain.Venta) error {
 		return firebird.MapError(err)
 	}
 	return ensureRowAffected(res, domain.ErrVentaNotFound)
+}
+
+// LockByID takes a pessimistic row lock (SELECT ... WITH LOCK) on the venta so
+// concurrent AplicarVenta attempts serialize. Must run inside a transaction
+// (GetQuerier resolves the active tx). Returns ErrVentaNotFound when the row
+// does not exist.
+func (r *VentaRepo) LockByID(ctx context.Context, id uuid.UUID) error {
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	var one int
+	err := q.QueryRowContext(ctx, lockVentaByID, id.String()).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.ErrVentaNotFound
+	}
+	if err != nil {
+		return firebird.MapError(err)
+	}
+	return nil
 }
 
 // ensureRowAffected maps RowsAffected==0 to notFound and propagates driver

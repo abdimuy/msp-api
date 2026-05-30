@@ -24,27 +24,32 @@ const cantidadScale int32 = 4
 func toVentaDTO(v *domain.Venta) VentaDTO {
 	a := v.Audit()
 	dto := VentaDTO{
-		ID:          v.ID().String(),
-		Cliente:     toClienteSnapshotDTO(v.ClienteID(), v.Cliente()),
-		Direccion:   toDireccionDTO(v.Direccion()),
-		GPS:         toGPSDTO(v.GPS()),
-		FechaVenta:  formatTime(v.FechaVenta()),
-		TipoVenta:   v.TipoVenta().String(),
-		Status:      v.Status().String(),
-		Montos:      toMontosDTO(v.Montos()),
-		PlanCredito: toPlanCreditoDTO(v.PlanCredito()),
-		DiaCobranza: toDiaCobranzaDTO(v.DiaCobranza()),
-		Nota:        v.Nota(),
-		Combos:      toCombosDTO(v),
-		Productos:   toProductosDTO(v),
-		Vendedores:  toVendedoresDTO(v),
-		Imagenes:    toImagenesDTO(v),
-		Cancelacion: toCancelacionDTO(v.Cancelacion()),
-		Aprobacion:  toAprobacionDTO(v.Aprobacion()),
-		CreatedAt:   formatTime(a.CreatedAt()),
-		UpdatedAt:   formatTime(a.UpdatedAt()),
-		CreatedBy:   a.CreatedBy().String(),
-		UpdatedBy:   a.UpdatedBy().String(),
+		ID:                 v.ID().String(),
+		Cliente:            toClienteSnapshotDTO(v.ClienteID(), v.Cliente()),
+		Direccion:          toDireccionDTO(v.Direccion()),
+		GPS:                toGPSDTO(v.GPS()),
+		FechaVenta:         formatTime(v.FechaVenta()),
+		TipoVenta:          v.TipoVenta().String(),
+		Estado:             v.Estado().String(),
+		Situacion:          v.Situacion().String(),
+		Sincronizacion:     v.Sincronizacion().String(),
+		MicrosipFolio:      v.MicrosipFolio(),
+		MicrosipDoctoPVID:  v.MicrosipDoctoPVID(),
+		MicrosipAplicadaAt: formatTimePtr(v.MicrosipAplicadaAt()),
+		Montos:             toMontosDTO(v.Montos()),
+		PlanCredito:        toPlanCreditoDTO(v.PlanCredito()),
+		DiaCobranza:        toDiaCobranzaDTO(v.DiaCobranza()),
+		Nota:               v.Nota(),
+		Combos:             toCombosDTO(v),
+		Productos:          toProductosDTO(v),
+		Vendedores:         toVendedoresDTO(v),
+		Imagenes:           toImagenesDTO(v),
+		Cancelacion:        toCancelacionDTO(v.Cancelacion()),
+		Aprobacion:         toAprobacionDTO(v.Aprobacion()),
+		CreatedAt:          formatTime(a.CreatedAt()),
+		UpdatedAt:          formatTime(a.UpdatedAt()),
+		CreatedBy:          a.CreatedBy().String(),
+		UpdatedBy:          a.UpdatedBy().String(),
 	}
 	return dto
 }
@@ -254,4 +259,14 @@ func formatTime(t time.Time) string {
 		return ""
 	}
 	return t.UTC().Format(time.RFC3339Nano)
+}
+
+// formatTimePtr renders an optional timestamp as RFC3339Nano in UTC, or nil
+// when the pointer is nil (so the field is omitted from the JSON response).
+func formatTimePtr(t *time.Time) *string {
+	if t == nil {
+		return nil
+	}
+	s := t.UTC().Format(time.RFC3339Nano)
+	return &s
 }

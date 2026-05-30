@@ -13,7 +13,9 @@ const ventaColumns = `ID, NOMBRE_CLIENTE, TELEFONO, AVAL_O_RESPONSABLE,
     NOTA,
     CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY,
     CANCELED_AT, CANCELED_BY, CANCEL_REASON,
-    CLIENTE_ID, STATUS, APPROVED_AT, APPROVED_BY`
+    CLIENTE_ID, STATUS, APPROVED_AT, APPROVED_BY,
+    SITUACION, SINCRONIZACION,
+    MICROSIP_DOCTO_PV_ID, MICROSIP_FOLIO, MICROSIP_APLICADA_AT`
 
 const insertVenta = `
 INSERT INTO MSP_VENTAS
@@ -27,21 +29,33 @@ INSERT INTO MSP_VENTAS
      NOTA,
      CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY,
      CANCELED_AT, CANCELED_BY, CANCEL_REASON,
-     CLIENTE_ID, STATUS, APPROVED_AT, APPROVED_BY)
+     CLIENTE_ID, STATUS, APPROVED_AT, APPROVED_BY,
+     SITUACION, SINCRONIZACION,
+     MICROSIP_DOCTO_PV_ID, MICROSIP_FOLIO, MICROSIP_APLICADA_AT)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-// updateVentaHeader updates cancellation-related fields plus the venta's
-// STATUS — used by the Cancelar path. Other edits go through dedicated
-// update statements below.
+// updateVentaHeader writes back the full state-machine surface of a venta:
+// the three lifecycle dimensions (STATUS/SITUACION/SINCRONIZACION), the
+// Microsip materialization artifacts, the cancelación and aprobación triplets,
+// and the audit fields. Every transition command (Cancelar, EnviarARevision,
+// Aprobar, RegresarABorrador, AplicarVenta) persists through this statement.
+// Field-level edits go through the dedicated update statements below.
 const updateVentaHeader = `
 UPDATE MSP_VENTAS
-SET CANCELED_AT   = ?,
-    CANCELED_BY   = ?,
-    CANCEL_REASON = ?,
-    STATUS        = ?,
-    UPDATED_AT    = ?,
-    UPDATED_BY    = ?
+SET STATUS               = ?,
+    SITUACION            = ?,
+    SINCRONIZACION       = ?,
+    MICROSIP_DOCTO_PV_ID = ?,
+    MICROSIP_FOLIO       = ?,
+    MICROSIP_APLICADA_AT = ?,
+    CANCELED_AT          = ?,
+    CANCELED_BY          = ?,
+    CANCEL_REASON        = ?,
+    APPROVED_AT          = ?,
+    APPROVED_BY          = ?,
+    UPDATED_AT           = ?,
+    UPDATED_BY           = ?
 WHERE ID = ?`
 
 // updateVentaHeaderFull rewrites the editable header fields used by
@@ -85,6 +99,12 @@ WHERE ID = ?`
 const selectVentaByID = `
 SELECT ` + ventaColumns + `
 FROM MSP_VENTAS WHERE ID = ?`
+
+// lockVentaByID takes a pessimistic row lock on a single MSP_VENTAS row.
+// Used by AplicarVenta to serialize concurrent materialization attempts on the
+// same venta: a second transaction blocks here until the first commits/rolls
+// back, then re-reads and sees SINCRONIZACION='aplicada' (idempotent return).
+const lockVentaByID = `SELECT 1 FROM MSP_VENTAS WHERE ID = ? WITH LOCK`
 
 // ─── Combo ──────────────────────────────────────────────────────────────────
 

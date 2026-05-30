@@ -122,7 +122,7 @@ func TestVenta_ReemplazarVendedores_Happy(t *testing.T) {
 func TestVenta_Cancelar_TransitionsToStatusCancelada(t *testing.T) {
 	t.Parallel()
 	v := buildValidVenta(t)
-	assert.Equal(t, domain.StatusBorrador, v.Status())
+	assert.Equal(t, domain.SituacionBorrador, v.Situacion())
 	require.NoError(t, v.Cancelar("razon", uuid.New(), time.Now()))
-	assert.Equal(t, domain.StatusCancelada, v.Status())
+	assert.Equal(t, domain.SituacionCancelada, v.Situacion())
 }

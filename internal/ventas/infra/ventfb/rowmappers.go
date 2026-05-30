@@ -116,6 +116,13 @@ type ventaRowRaw struct {
 	status        string
 	approvedAtRaw any
 	approvedByRaw sql.NullString
+
+	// Estado 3D (situación + sincronización) + artefactos Microsip
+	situacion             string
+	sincronizacion        string
+	microsipDoctoPVID     sql.NullInt32
+	microsipFolio         sql.NullString
+	microsipAplicadaAtRaw any
 }
 
 // scanVentaRowRaw runs the wide Scan over an MSP_VENTAS row.
@@ -133,6 +140,8 @@ func scanVentaRowRaw(s rowScanner) (*ventaRowRaw, error) {
 		&r.createdAtRaw, &r.updatedAtRaw, &r.createdByRaw, &r.updatedByRaw,
 		&r.canceledAtRaw, &r.canceledByRaw, &r.cancelReason,
 		&r.clienteID, &r.status, &r.approvedAtRaw, &r.approvedByRaw,
+		&r.situacion, &r.sincronizacion,
+		&r.microsipDoctoPVID, &r.microsipFolio, &r.microsipAplicadaAtRaw,
 	); err != nil {
 		return nil, err
 	}
@@ -183,30 +192,63 @@ func assembleVenta(
 		v := int(r.clienteID.Int32)
 		clienteID = &v
 	}
+	microsipDoctoPVID, microsipFolio, microsipAplicadaAtPtr, err := buildMicrosipArtifacts(r)
+	if err != nil {
+		return nil, err
+	}
 	return domain.HydrateVenta(domain.HydrateVentaParams{
-		ID:          ids.id,
-		ClienteID:   clienteID,
-		Cliente:     cliente,
-		Direccion:   direccion,
-		GPS:         gps,
-		FechaVenta:  times.fechaVenta,
-		TipoVenta:   domain.TipoVenta(r.tipoVenta),
-		Montos:      montos,
-		PlanCredito: plan,
-		DiaCobranza: diaCobranza,
-		Nota:        nota,
-		Status:      domain.VentaStatus(r.status),
-		Combos:      combos,
-		Productos:   productos,
-		Vendedores:  vendedores,
-		Imagenes:    imagenes,
-		Cancelacion: cancelacion,
-		Aprobacion:  aprobacion,
-		CreatedAt:   times.createdAt,
-		UpdatedAt:   times.updatedAt,
-		CreatedBy:   ids.createdBy,
-		UpdatedBy:   ids.updatedBy,
+		ID:                 ids.id,
+		ClienteID:          clienteID,
+		Cliente:            cliente,
+		Direccion:          direccion,
+		GPS:                gps,
+		FechaVenta:         times.fechaVenta,
+		TipoVenta:          domain.TipoVenta(r.tipoVenta),
+		Montos:             montos,
+		PlanCredito:        plan,
+		DiaCobranza:        diaCobranza,
+		Nota:               nota,
+		Estado:             domain.EstadoRegistro(r.status),
+		Situacion:          domain.Situacion(r.situacion),
+		Sincronizacion:     domain.Sincronizacion(r.sincronizacion),
+		MicrosipDoctoPVID:  microsipDoctoPVID,
+		MicrosipFolio:      microsipFolio,
+		MicrosipAplicadaAt: microsipAplicadaAtPtr,
+		Combos:             combos,
+		Productos:          productos,
+		Vendedores:         vendedores,
+		Imagenes:           imagenes,
+		Cancelacion:        cancelacion,
+		Aprobacion:         aprobacion,
+		CreatedAt:          times.createdAt,
+		UpdatedAt:          times.updatedAt,
+		CreatedBy:          ids.createdBy,
+		UpdatedBy:          ids.updatedBy,
 	}), nil
+}
+
+// buildMicrosipArtifacts decodes the three MICROSIP_* materialization columns
+// into their optional-pointer domain shape.
+//
+//nolint:nonamedreturns // multi-arity tuple is clearer when named.
+func buildMicrosipArtifacts(r *ventaRowRaw) (doctoPVID *int, folio *string, aplicadaAt *time.Time, err error) {
+	aplicada, err := firebird.ScanNullUTCTime(r.microsipAplicadaAtRaw)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if r.microsipDoctoPVID.Valid {
+		v := int(r.microsipDoctoPVID.Int32)
+		doctoPVID = &v
+	}
+	if r.microsipFolio.Valid {
+		v := r.microsipFolio.String
+		folio = &v
+	}
+	if aplicada.Valid {
+		t := aplicada.Time
+		aplicadaAt = &t
+	}
+	return doctoPVID, folio, aplicadaAt, nil
 }
 
 // buildAprobacion turns the optional APPROVED_AT/APPROVED_BY pair into a
