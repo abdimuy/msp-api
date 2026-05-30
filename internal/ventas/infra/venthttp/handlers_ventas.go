@@ -419,10 +419,94 @@ func fieldRef(arr string, idx int, leaf string) string {
 	return arr + "[" + strconv.Itoa(idx) + "]." + leaf
 }
 
+// RevisarVenta is the handler for POST /v2/ventas/{id}/revisar.
+func (h *Handlers) RevisarVenta(ctx context.Context, in *RevisarVentaInput) (*RevisarVentaOutput, error) {
+	cu, err := currentUserOrError(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := requirePerm(cu, auth.PermVentasRevisar); err != nil {
+		return nil, err
+	}
+	id, err := parseUUIDField(in.ID, "id")
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+	v, err := h.svc.EnviarARevision(ctx, id, cu.ID)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+	return &RevisarVentaOutput{Body: toVentaDTO(v)}, nil
+}
+
+// AprobarVenta is the handler for POST /v2/ventas/{id}/aprobar.
+func (h *Handlers) AprobarVenta(ctx context.Context, in *AprobarVentaInput) (*AprobarVentaOutput, error) {
+	cu, err := currentUserOrError(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := requirePerm(cu, auth.PermVentasAprobar); err != nil {
+		return nil, err
+	}
+	id, err := parseUUIDField(in.ID, "id")
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+	v, err := h.svc.Aprobar(ctx, id, cu.ID)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+	return &AprobarVentaOutput{Body: toVentaDTO(v)}, nil
+}
+
+// RegresarBorradorVenta is the handler for POST /v2/ventas/{id}/regresar-borrador.
+func (h *Handlers) RegresarBorradorVenta(ctx context.Context, in *RegresarBorradorVentaInput) (*RegresarBorradorVentaOutput, error) {
+	cu, err := currentUserOrError(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := requirePerm(cu, auth.PermVentasAprobar); err != nil {
+		return nil, err
+	}
+	id, err := parseUUIDField(in.ID, "id")
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+	v, err := h.svc.RegresarABorrador(ctx, id, cu.ID)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+	return &RegresarBorradorVentaOutput{Body: toVentaDTO(v)}, nil
+}
+
+// AplicarVenta is the handler for POST /v2/ventas/{id}/aplicar.
+func (h *Handlers) AplicarVenta(ctx context.Context, in *AplicarVentaInput) (*AplicarVentaOutput, error) {
+	cu, err := currentUserOrError(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := requirePerm(cu, auth.PermVentasAplicar); err != nil {
+		return nil, err
+	}
+	id, err := parseUUIDField(in.ID, "id")
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+	v, err := h.svc.AplicarVenta(ctx, id, cu.ID)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+	return &AplicarVentaOutput{Body: toVentaDTO(v)}, nil
+}
+
 // Compile-time assertions: handler signatures match Huma's expected shape.
 var (
-	_ func(context.Context, *CrearVentaInput) (*CrearVentaOutput, error)       = (*Handlers)(nil).CrearVenta
-	_ func(context.Context, *ObtenerVentaInput) (*ObtenerVentaOutput, error)   = (*Handlers)(nil).ObtenerVenta
-	_ func(context.Context, *CancelarVentaInput) (*CancelarVentaOutput, error) = (*Handlers)(nil).CancelarVenta
-	_ func(context.Context, *ListarVentasInput) (*ListarVentasOutput, error)   = (*Handlers)(nil).ListarVentas
+	_ func(context.Context, *CrearVentaInput) (*CrearVentaOutput, error)                       = (*Handlers)(nil).CrearVenta
+	_ func(context.Context, *ObtenerVentaInput) (*ObtenerVentaOutput, error)                   = (*Handlers)(nil).ObtenerVenta
+	_ func(context.Context, *CancelarVentaInput) (*CancelarVentaOutput, error)                 = (*Handlers)(nil).CancelarVenta
+	_ func(context.Context, *ListarVentasInput) (*ListarVentasOutput, error)                   = (*Handlers)(nil).ListarVentas
+	_ func(context.Context, *RevisarVentaInput) (*RevisarVentaOutput, error)                   = (*Handlers)(nil).RevisarVenta
+	_ func(context.Context, *AprobarVentaInput) (*AprobarVentaOutput, error)                   = (*Handlers)(nil).AprobarVenta
+	_ func(context.Context, *RegresarBorradorVentaInput) (*RegresarBorradorVentaOutput, error) = (*Handlers)(nil).RegresarBorradorVenta
+	_ func(context.Context, *AplicarVentaInput) (*AplicarVentaOutput, error)                   = (*Handlers)(nil).AplicarVenta
 )

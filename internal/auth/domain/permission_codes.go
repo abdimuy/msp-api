@@ -62,6 +62,12 @@ const (
 	PermVentasSubirImagenes Permission = "ventas:subir_imagenes"
 	// PermVentasEliminarImagenes grants deleting evidence images of a venta.
 	PermVentasEliminarImagenes Permission = "ventas:eliminar_imagenes"
+	// PermVentasRevisar grants sending a venta to revision.
+	PermVentasRevisar Permission = "ventas:revisar"
+	// PermVentasAprobar grants approving or returning a venta to borrador.
+	PermVentasAprobar Permission = "ventas:aprobar"
+	// PermVentasAplicar grants materializing (applying) a venta in Microsip.
+	PermVentasAplicar Permission = "ventas:aplicar"
 
 	// PermFailedIntentsVer grants reading captured failed intents (full
 	// request payload included — see ADR-0005 for the PII trade-off).
@@ -116,6 +122,9 @@ func AllPermissions() []PermissionMeta {
 		{PermVentasEditar, "editar una venta en borrador", categoriaVentas},
 		{PermVentasSubirImagenes, "subir imágenes de evidencia a una venta", categoriaVentas},
 		{PermVentasEliminarImagenes, "eliminar imágenes de evidencia de una venta", categoriaVentas},
+		{PermVentasRevisar, "enviar una venta a revisión", categoriaVentas},
+		{PermVentasAprobar, "aprobar o regresar a borrador una venta", categoriaVentas},
+		{PermVentasAplicar, "aplicar (materializar) una venta en Microsip", categoriaVentas},
 
 		{PermFailedIntentsVer, "ver intents fallidos y sus payloads", categoriaFailedIntents},
 		{PermFailedIntentsResolver, "reproducir, ignorar y resolver intents fallidos", categoriaFailedIntents},

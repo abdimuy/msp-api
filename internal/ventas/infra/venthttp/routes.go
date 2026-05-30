@@ -114,6 +114,39 @@ func registerOperations(api huma.API, h *Handlers) {
 	}, h.CancelarVenta)
 
 	huma.Register(api, huma.Operation{
+		OperationID:   "revisar-venta",
+		Method:        http.MethodPost,
+		Path:          "/ventas/{id}/revisar",
+		Summary:       "Enviar venta a revisión",
+		Description:   "Transiciona la venta de borrador a revisada para su evaluación. Solo permitido mientras la venta esté en situación 'borrador'.",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+	}, h.RevisarVenta)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "aprobar-venta",
+		Method:        http.MethodPost,
+		Path:          "/ventas/{id}/aprobar",
+		Summary:       "Aprobar venta",
+		Description:   "Transiciona la venta de revisada a aprobada, registrando quién la aprobó y cuándo. Solo permitido mientras la venta esté en situación 'revisada'.",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+	}, h.AprobarVenta)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "regresar-borrador-venta",
+		Method:        http.MethodPost,
+		Path:          "/ventas/{id}/regresar-borrador",
+		Summary:       "Regresar venta a borrador",
+		Description:   "Regresa la venta de revisada a borrador, limpiando el registro de aprobación. Solo permitido mientras la venta esté en situación 'revisada'.",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+	}, h.RegresarBorradorVenta)
+
+	huma.Register(api, huma.Operation{
 		OperationID:   "actualizar-header-venta",
 		Method:        http.MethodPatch,
 		Path:          "/ventas/{id}",
@@ -167,6 +200,17 @@ func registerOperations(api huma.API, h *Handlers) {
 		Security:      security,
 		DefaultStatus: http.StatusOK,
 	}, h.ReemplazarVendedores)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "aplicar-venta",
+		Method:        http.MethodPost,
+		Path:          "/ventas/{id}/aplicar",
+		Summary:       "Aplicar venta en Microsip",
+		Description:   "Materializa la venta aprobada en el libro mayor DOCTOS_PV de Microsip. Genera inventario (DOCTOS_IN), cuenta por cobrar (DOCTOS_CC) y, para crédito, los datos particulares (LIBRES_CARGOS_CC) y el enganche. La operación es idempotente: una venta ya aplicada devuelve los mismos artefactos sin re-materializarse.",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+	}, h.AplicarVenta)
 
 	huma.Register(api, huma.Operation{
 		OperationID:   "adjuntar-imagen",

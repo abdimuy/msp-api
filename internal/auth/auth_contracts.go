@@ -84,6 +84,12 @@ const (
 	PermVentasSubirImagenes = domain.PermVentasSubirImagenes
 	// PermVentasEliminarImagenes — see domain.PermVentasEliminarImagenes.
 	PermVentasEliminarImagenes = domain.PermVentasEliminarImagenes
+	// PermVentasRevisar — see domain.PermVentasRevisar.
+	PermVentasRevisar = domain.PermVentasRevisar
+	// PermVentasAprobar — see domain.PermVentasAprobar.
+	PermVentasAprobar = domain.PermVentasAprobar
+	// PermVentasAplicar — see domain.PermVentasAplicar.
+	PermVentasAplicar = domain.PermVentasAplicar
 
 	// PermFailedIntentsVer — see domain.PermFailedIntentsVer.
 	PermFailedIntentsVer = domain.PermFailedIntentsVer
