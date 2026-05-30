@@ -7,6 +7,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/platform/imageprocessor"
 	"github.com/abdimuy/msp-api/internal/platform/transaction"
 	ventasapp "github.com/abdimuy/msp-api/internal/ventas/app"
+	"github.com/abdimuy/msp-api/internal/ventas/infra/microsip"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/storage"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/ventfb"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/ventoutbox"
@@ -56,6 +57,18 @@ func provideVentasImageProcessor(cfg *config.Config) (ventasoutbound.ImageProces
 	return imageprocessor.New(cfg.ImageProcessor)
 }
 
+// provideVentasAplicarConfig builds the Firebird-backed AplicarConfig that
+// resolves MSP_CFG_* mappings (zona → caja, frecuencia → forma_pago, etc.).
+func provideVentasAplicarConfig(p *firebird.Pool) ventasoutbound.AplicarConfig {
+	return ventfb.NewAplicarConfigRepo(p)
+}
+
+// provideVentasMicrosipWriter builds the Firebird-backed MicrosipVentaWriter
+// that materializes approved ventas into Microsip's DOCTOS_PV family.
+func provideVentasMicrosipWriter(p *firebird.Pool) ventasoutbound.MicrosipVentaWriter {
+	return microsip.NewVentaWriter(p)
+}
+
 // provideVentasService assembles the ventas application service. Multi-step
 // writes are coordinated through the supplied Firebird transaction manager.
 func provideVentasService(
@@ -67,6 +80,8 @@ func provideVentasService(
 	outbox ventasoutbound.OutboxEnqueuer,
 	imageProc ventasoutbound.ImageProcessor,
 	fbTxMgr *firebird.TxManager,
+	aplicarCfg ventasoutbound.AplicarConfig,
+	microsipWriter ventasoutbound.MicrosipVentaWriter,
 ) *ventasapp.Service {
-	return ventasapp.NewService(repo, clientes, usuarios, store, clock, outbox, imageProc, fbTxMgr)
+	return ventasapp.NewService(repo, clientes, usuarios, store, clock, outbox, imageProc, fbTxMgr, aplicarCfg, microsipWriter)
 }

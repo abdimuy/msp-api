@@ -296,6 +296,17 @@ func (f *fakeVentaRepo) FindByID(_ context.Context, id uuid.UUID) (*domain.Venta
 	return v, nil
 }
 
+// LockByID is a no-op lock for the in-memory fake: it only validates existence
+// so the AplicarVenta anti-double-submit guard can be exercised in unit tests.
+func (f *fakeVentaRepo) LockByID(_ context.Context, id uuid.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.byID[id]; !ok {
+		return domain.ErrVentaNotFound
+	}
+	return nil
+}
+
 // List returns the configured ListPage or the in-memory contents when the
 // page is unset, capped by p.PageSize.
 func (f *fakeVentaRepo) List(_ context.Context, p outbound.ListParams, _ outbound.ListVentasFilters) (outbound.Page[*domain.Venta], error) {

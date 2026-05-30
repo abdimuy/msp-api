@@ -26,14 +26,16 @@ const outboxAggregateVenta = "venta"
 // Service is the ventas module's command/query surface. Handlers depend on
 // *Service; everything Service depends on goes through the outbound ports.
 type Service struct {
-	ventas    outbound.VentaRepo
-	clientes  outbound.ClienteExistenceChecker
-	usuarios  outbound.VendedorUsuarioExistenceChecker
-	storage   outbound.StorageProvider
-	clock     outbound.Clock
-	outbox    outbound.OutboxEnqueuer
-	imageProc outbound.ImageProcessor
-	txMgr     *firebird.TxManager
+	ventas         outbound.VentaRepo
+	clientes       outbound.ClienteExistenceChecker
+	usuarios       outbound.VendedorUsuarioExistenceChecker
+	storage        outbound.StorageProvider
+	clock          outbound.Clock
+	outbox         outbound.OutboxEnqueuer
+	imageProc      outbound.ImageProcessor
+	txMgr          *firebird.TxManager
+	aplicarCfg     outbound.AplicarConfig
+	microsipWriter outbound.MicrosipVentaWriter
 }
 
 // NewService builds a Service wired against the given ports. The
@@ -50,6 +52,12 @@ type Service struct {
 //
 // imageProc transforms image uploads (resize + recompress) before they
 // reach the storage provider. Pass the NoOp impl for a passthrough.
+//
+// aplicarCfg resolves the MSP_CFG_* mappings needed by AplicarVenta.
+// Pass nil only in tests that do not exercise that command.
+//
+// microsipWriter materializes ventas into Microsip's DOCTOS_PV family.
+// Pass nil only in tests that do not exercise AplicarVenta.
 func NewService(
 	ventas outbound.VentaRepo,
 	clientes outbound.ClienteExistenceChecker,
@@ -59,16 +67,20 @@ func NewService(
 	outbox outbound.OutboxEnqueuer,
 	imageProc outbound.ImageProcessor,
 	txMgr *firebird.TxManager,
+	aplicarCfg outbound.AplicarConfig,
+	microsipWriter outbound.MicrosipVentaWriter,
 ) *Service {
 	return &Service{
-		ventas:    ventas,
-		clientes:  clientes,
-		usuarios:  usuarios,
-		storage:   storage,
-		clock:     clock,
-		outbox:    outbox,
-		imageProc: imageProc,
-		txMgr:     txMgr,
+		ventas:         ventas,
+		clientes:       clientes,
+		usuarios:       usuarios,
+		storage:        storage,
+		clock:          clock,
+		outbox:         outbox,
+		imageProc:      imageProc,
+		txMgr:          txMgr,
+		aplicarCfg:     aplicarCfg,
+		microsipWriter: microsipWriter,
 	}
 }
 

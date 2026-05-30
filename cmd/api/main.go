@@ -94,6 +94,8 @@ func appOptions() []fx.Option {
 			provideVentasClock,
 			provideVentasOutboxEnqueuer,
 			provideVentasImageProcessor,
+			provideVentasAplicarConfig,
+			provideVentasMicrosipWriter,
 			provideVentasService,
 			provideFailedIntentStore,
 			provideFailedIntentCaptureConfig,

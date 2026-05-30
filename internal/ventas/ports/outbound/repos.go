@@ -109,6 +109,12 @@ type VentaRepo interface {
 	// Returns ErrVentaNotFound on miss.
 	FindByID(ctx context.Context, id uuid.UUID) (*domain.Venta, error)
 
+	// LockByID takes a pessimistic row lock on the venta header (SELECT ...
+	// WITH LOCK) to serialize concurrent mutations on the same venta. Must be
+	// called inside a transaction. Returns ErrVentaNotFound on miss. Used by
+	// AplicarVenta as an anti-double-submit guard.
+	LockByID(ctx context.Context, id uuid.UUID) error
+
 	// List returns a cursor-paginated page of ventas matching the filters.
 	List(ctx context.Context, p ListParams, f ListVentasFilters) (Page[*domain.Venta], error)
 

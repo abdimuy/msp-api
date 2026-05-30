@@ -50,7 +50,7 @@ func TestService_runInTx_PropagatesError(t *testing.T) {
 
 	h := newHarness(t)
 	// Replace the service with one that has a real (failing) TxManager.
-	h.svc = app.NewService(h.ventas, nil, nil, h.storage, h.clock, h.outbox, h.imageProc, txMgr)
+	h.svc = app.NewService(h.ventas, nil, nil, h.storage, h.clock, h.outbox, h.imageProc, txMgr, nil, nil)
 
 	_, err := h.svc.CrearVenta(t.Context(), validContadoInput(), uuid.New())
 	require.ErrorIs(t, err, sentinel,

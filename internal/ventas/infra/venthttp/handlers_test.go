@@ -108,6 +108,15 @@ func (r *fakeRepo) FindByID(_ context.Context, id uuid.UUID) (*ventasdomain.Vent
 	return v, nil
 }
 
+func (r *fakeRepo) LockByID(_ context.Context, id uuid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.store[id]; !ok {
+		return ventasdomain.ErrVentaNotFound
+	}
+	return nil
+}
+
 func (r *fakeRepo) List(_ context.Context, _ ventasoutbound.ListParams, _ ventasoutbound.ListVentasFilters) (ventasoutbound.Page[*ventasdomain.Venta], error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -182,7 +191,7 @@ func testServiceWith(proc ventasoutbound.ImageProcessor) (*ventasapp.Service, *f
 	repo := newFakeRepo()
 	store := newFakeStorage()
 	clock := fixedClock{T: time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC)}
-	svc := ventasapp.NewService(repo, nil, nil, store, clock, noopOutbox{}, proc, nil)
+	svc := ventasapp.NewService(repo, nil, nil, store, clock, noopOutbox{}, proc, nil, nil, nil)
 	return svc, repo, store
 }
 
