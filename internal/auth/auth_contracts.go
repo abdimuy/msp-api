@@ -95,4 +95,11 @@ const (
 	PermFailedIntentsVer = domain.PermFailedIntentsVer
 	// PermFailedIntentsResolver — see domain.PermFailedIntentsResolver.
 	PermFailedIntentsResolver = domain.PermFailedIntentsResolver
+
+	// PermCobranzaVerSaldos — see domain.PermCobranzaVerSaldos.
+	PermCobranzaVerSaldos = domain.PermCobranzaVerSaldos
+	// PermCobranzaReconciliar — see domain.PermCobranzaReconciliar.
+	PermCobranzaReconciliar = domain.PermCobranzaReconciliar
+	// PermCobranzaBackfill — see domain.PermCobranzaBackfill.
+	PermCobranzaBackfill = domain.PermCobranzaBackfill
 )

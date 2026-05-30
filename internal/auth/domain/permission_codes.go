@@ -75,6 +75,13 @@ const (
 	// PermFailedIntentsResolver grants replaying, ignoring and resolving
 	// captured failed intents.
 	PermFailedIntentsResolver Permission = "failed_intents:resolver"
+
+	// PermCobranzaVerSaldos grants reading materialized cobranza balances.
+	PermCobranzaVerSaldos Permission = "cobranza:ver_saldos"
+	// PermCobranzaReconciliar grants triggering a manual reconcile and viewing cache errors.
+	PermCobranzaReconciliar Permission = "cobranza:reconciliar"
+	// PermCobranzaBackfill grants triggering an admin backfill of the balances cache.
+	PermCobranzaBackfill Permission = "cobranza:backfill"
 )
 
 // PermissionMeta is a catalog entry pairing a permission code with the
@@ -95,6 +102,7 @@ const (
 	categoriaPermisos      = "permisos"
 	categoriaVentas        = "ventas"
 	categoriaFailedIntents = "failed_intents"
+	categoriaCobranza      = "cobranza"
 )
 
 // AllPermissions returns every permission known to the auth module, sorted
@@ -128,6 +136,10 @@ func AllPermissions() []PermissionMeta {
 
 		{PermFailedIntentsVer, "ver intents fallidos y sus payloads", categoriaFailedIntents},
 		{PermFailedIntentsResolver, "reproducir, ignorar y resolver intents fallidos", categoriaFailedIntents},
+
+		{PermCobranzaVerSaldos, "ver saldos materializados de cobranza", categoriaCobranza},
+		{PermCobranzaReconciliar, "disparar reconcile y ver errores del cache de saldos", categoriaCobranza},
+		{PermCobranzaBackfill, "disparar backfill manual del cache de saldos", categoriaCobranza},
 	}
 	sort.Slice(perms, func(i, j int) bool { return perms[i].Code < perms[j].Code })
 	return perms

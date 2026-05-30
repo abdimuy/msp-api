@@ -213,6 +213,12 @@ linters:
           alias: ventasdomain
         - pkg: github.com/abdimuy/msp-api/internal/ventas/ports/outbound
           alias: ventasoutbound
+        - pkg: github.com/abdimuy/msp-api/internal/cobranza/app
+          alias: cobranzaapp
+        - pkg: github.com/abdimuy/msp-api/internal/cobranza/infra/ventfb
+          alias: cobranzaventfb
+        - pkg: github.com/abdimuy/msp-api/internal/cobranza/ports/outbound
+          alias: cobranzaoutbound
         - pkg: github.com/go-playground/validator/v10
           alias: pv
         - pkg: firebase.google.com/go/v4
@@ -270,6 +276,7 @@ linters:
             - github.com/abdimuy/msp-api/internal/platform/audit
             - github.com/abdimuy/msp-api/internal/auth/domain
             - github.com/abdimuy/msp-api/internal/ventas/domain
+            - github.com/abdimuy/msp-api/internal/cobranza/domain
 
         app-no-infra:
           list-mode: lax
