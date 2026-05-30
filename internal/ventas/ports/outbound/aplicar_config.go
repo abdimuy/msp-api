@@ -1,0 +1,47 @@
+//nolint:misspell // ventas vocabulary is Spanish per project convention.
+package outbound
+
+import "context"
+
+// CajaCajero is the caja + cajero + vendedor assigned to a cliente zona. The
+// vendedor is the Microsip ruta vendedor (display/quick-reference only — the
+// authoritative seller attribution lives in MSP_VENTAS_VENDEDORES). It is -1
+// when the zona has no matching ruta vendedor.
+type CajaCajero struct {
+	CajaID     int
+	CajeroID   int
+	VendedorID int
+}
+
+// AplicarDefaults is the singleton MSP_CFG_APLICAR configuration row.
+type AplicarDefaults struct {
+	SucursalID          int
+	FormaCobroContadoID int
+	FormaCobroCreditoID int
+}
+
+// AplicarConfig resolves the editable Microsip mapping needed to materialize a
+// venta into DOCTOS_PV (the MSP_CFG_* tables). Every lookup miss surfaces a
+// specific domain validation error so the operator learns exactly which
+// mapping is missing.
+type AplicarConfig interface {
+	// CajaCajero resolves the caja and cajero for a cliente zona. Returns
+	// domain.ErrZonaSinCaja when the zona has no mapping.
+	CajaCajero(ctx context.Context, zonaClienteID int) (CajaCajero, error)
+
+	// FormaDePagoID maps a credit frequency (domain FrecPago string) to its
+	// Microsip list id. Returns domain.ErrFrecuenciaSinFormaPago when unmapped.
+	FormaDePagoID(ctx context.Context, frecuencia string) (int, error)
+
+	// CreditoEnMesesID maps a credit term in months to its Microsip list id.
+	// Returns domain.ErrPlazoSinCreditoMeses when unmapped.
+	CreditoEnMesesID(ctx context.Context, plazoMeses int) (int, error)
+
+	// NumeroDeVendedoresID maps a seller count to its Microsip list id.
+	// Returns domain.ErrNumVendedoresSinMapeo when unmapped.
+	NumeroDeVendedoresID(ctx context.Context, n int) (int, error)
+
+	// Defaults returns the singleton MSP_CFG_APLICAR row. Returns
+	// domain.ErrConfigAplicarFaltante when the row is absent.
+	Defaults(ctx context.Context) (AplicarDefaults, error)
+}
