@@ -93,10 +93,12 @@ func (r *SaldosRepo) PorCargo(ctx context.Context, doctoCCID int) (*domain.Saldo
 	return s, nil
 }
 
-// EnRutaPorZona returns ventas abiertas (saldo > 0) and recently paid
-// (saldo <= 0, fecha_ult_pago within ventanaDias days) for the given zona.
-// When ventanaDias == 0, only abiertas are returned (no UNION branch).
-func (r *SaldosRepo) EnRutaPorZona(ctx context.Context, zonaID, ventanaDias int) ([]domain.Saldo, error) {
+// EnRutaPorZona returns ventas abiertas (saldo > 0) for the given zona, plus
+// ventas saldadas whose FECHA_ULT_PAGO >= desde. Pass desde=time.Time{} (zero
+// value) to suppress the UNION branch and return only open balances. desde is
+// truncated to DATE precision by the underlying column type, so any HH:MM:SS
+// component is ignored.
+func (r *SaldosRepo) EnRutaPorZona(ctx context.Context, zonaID int, desde time.Time) ([]domain.Saldo, error) {
 	q := firebird.GetQuerier(ctx, r.pool.DB)
 
 	var (
@@ -104,8 +106,8 @@ func (r *SaldosRepo) EnRutaPorZona(ctx context.Context, zonaID, ventanaDias int)
 		err  error
 	)
 
-	if ventanaDias == 0 {
-		// Simplified: only open (positive balance) rows for the zona.
+	if desde.IsZero() {
+		// Single branch: only abiertas. Uses IDX_MSP_SALDOS_ZONA_SALDO.
 		query := `
 SELECT ` + selectSaldoCols + `
 FROM MSP_SALDOS_VENTAS
@@ -113,8 +115,8 @@ WHERE ZONA_CLIENTE_ID = ? AND SALDO > 0
 ORDER BY FECHA_CARGO DESC`
 		rows, err = q.QueryContext(ctx, query, zonaID)
 	} else {
-		// UNION: open rows + recently-paid rows within the window.
-		desde := time.Now().UTC().AddDate(0, 0, -ventanaDias)
+		// UNION: abiertas + recientemente pagadas. Each branch uses its own
+		// covering index: IDX_..._ZONA_SALDO and IDX_..._ZONA_FUP.
 		query := `
 SELECT ` + selectSaldoCols + `
 FROM MSP_SALDOS_VENTAS

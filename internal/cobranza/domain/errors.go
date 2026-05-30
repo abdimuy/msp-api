@@ -29,4 +29,20 @@ var (
 		"cobranza_ventana_dias_invalida",
 		"ventana de días fuera de rango (0-90)",
 	)
+
+	// ErrParametrosExcluyentes is returned when both `desde` and `ventana_dias`
+	// are supplied to EnRutaPorZona. Only one of the two is accepted per call.
+	//
+	//nolint:misspell // "parametros" (Spanish) appears in the user-facing code.
+	ErrParametrosExcluyentes = apperror.NewValidation(
+		"cobranza_parametros_excluyentes",
+		"se debe pasar 'desde' o 'ventana_dias' pero no ambos",
+	)
+
+	// ErrDesdeInvalido is returned when the `desde` timestamp cannot be parsed
+	// or falls outside the supported window.
+	ErrDesdeInvalido = apperror.NewValidation(
+		"cobranza_desde_invalido",
+		"el parámetro 'desde' debe ser una fecha YYYY-MM-DD o un timestamp RFC3339",
+	)
 )

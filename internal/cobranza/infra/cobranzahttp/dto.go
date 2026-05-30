@@ -70,11 +70,21 @@ type PorClienteInput struct {
 	ClienteID int `path:"cliente_id" doc:"ID del cliente en Microsip CLIENTES"`
 }
 
-// PorZonaInput contains the path parameter and optional query param for
+// PorZonaInput contains the path parameter and optional query params for
 // GET /cobranza/saldos/zona/{zona_id}.
+//
+// Exactly one of `desde` or `ventana_dias` should be supplied. When both are
+// omitted, the handler defaults to ventana_dias=7. When both are present the
+// service returns 422 cobranza_parametros_excluyentes.
+//
+// `desde` is the recommended parameter for deterministic results — the cutoff
+// stays fixed across polling calls instead of drifting with the server clock.
+// Accepts YYYY-MM-DD or RFC3339 (e.g. 2026-05-23 or 2026-05-23T08:00:00Z).
+// The time component is truncated to DATE precision by the cache schema.
 type PorZonaInput struct {
-	ZonaID      int `path:"zona_id"                                                        doc:"ID de la zona de cobranza"`
-	VentanaDias int `query:"ventana_dias" default:"7" minimum:"0" maximum:"90" doc:"Días de ventana para ventas recientemente pagadas"`
+	ZonaID      int     `path:"zona_id"                                                                doc:"ID de la zona de cobranza"`
+	Desde       *string `query:"desde"                                                                 doc:"Fecha absoluta (YYYY-MM-DD o RFC3339). Excluyente con ventana_dias"`
+	VentanaDias *int    `query:"ventana_dias" minimum:"0" maximum:"90"                                 doc:"Días hacia atrás desde hoy. Excluyente con desde. Default 7 si ninguno"`
 }
 
 // ResumenZonasInput is the (empty) input for GET /cobranza/resumen-zonas.

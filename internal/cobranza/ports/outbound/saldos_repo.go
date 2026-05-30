@@ -2,6 +2,7 @@ package outbound
 
 import (
 	"context"
+	"time"
 
 	"github.com/abdimuy/msp-api/internal/cobranza/domain"
 )
@@ -18,9 +19,12 @@ type SaldosRepo interface {
 	// ErrSaldoNoEncontrado when no cache row exists.
 	PorCargo(ctx context.Context, doctoCCID int) (*domain.Saldo, error)
 
-	// EnRutaPorZona returns ventas abiertas and recently paid (within the
-	// last ventanaDias days) for the given zona.
-	EnRutaPorZona(ctx context.Context, zonaID, ventanaDias int) ([]domain.Saldo, error)
+	// EnRutaPorZona returns ventas abiertas (saldo > 0) for the given zona,
+	// plus ventas saldadas whose FECHA_ULT_PAGO >= desde (when desde is
+	// non-zero). Pass time.Time{} (the zero value) to suppress the
+	// recently-paid branch entirely. desde is truncated to DATE precision by
+	// the underlying column type.
+	EnRutaPorZona(ctx context.Context, zonaID int, desde time.Time) ([]domain.Saldo, error)
 
 	// AbiertasPorCliente returns all open saldos (saldo > 0, not cancelled)
 	// for the given cliente.

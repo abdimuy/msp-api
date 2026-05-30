@@ -59,7 +59,7 @@ func (f *fakeSaldosRepo) PorCargo(_ context.Context, doctoCCID int) (*domain.Sal
 	return s, nil
 }
 
-func (f *fakeSaldosRepo) EnRutaPorZona(_ context.Context, _, _ int) ([]domain.Saldo, error) {
+func (f *fakeSaldosRepo) EnRutaPorZona(_ context.Context, _ int, _ time.Time) ([]domain.Saldo, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -167,7 +167,8 @@ func TestService_EnRutaPorZona_VentanaDias_Validation(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := svc.EnRutaPorZona(ctx, 1, tc.ventanaDias)
+			vd := tc.ventanaDias
+			_, err := svc.EnRutaPorZona(ctx, 1, nil, &vd)
 			if tc.wantErr {
 				require.ErrorIs(t, err, domain.ErrVentanaDiasInvalida)
 			} else {
@@ -186,9 +187,47 @@ func TestService_EnRutaPorZona_DelegatesToRepo(t *testing.T) {
 	repo.porZona = []domain.Saldo{s1, s2}
 	svc := app.NewService(repo, fixedClock{T: time.Now()})
 
-	got, err := svc.EnRutaPorZona(context.Background(), 3, 7)
+	vd := 7
+	got, err := svc.EnRutaPorZona(context.Background(), 3, nil, &vd)
 	require.NoError(t, err)
 	assert.Len(t, got, 2)
+}
+
+func TestService_EnRutaPorZona_DesdeAbsoluto(t *testing.T) {
+	t.Parallel()
+
+	repo := newFakeSaldosRepo()
+	repo.porZona = []domain.Saldo{makeSaldo(1, decimal.NewFromInt(1000))}
+	svc := app.NewService(repo, fixedClock{T: time.Date(2026, 5, 30, 0, 0, 0, 0, time.UTC)})
+
+	desde := time.Date(2026, 5, 23, 8, 0, 0, 0, time.UTC)
+	got, err := svc.EnRutaPorZona(context.Background(), 3, &desde, nil)
+	require.NoError(t, err)
+	assert.Len(t, got, 1)
+}
+
+func TestService_EnRutaPorZona_ParametrosExcluyentes(t *testing.T) {
+	t.Parallel()
+
+	repo := newFakeSaldosRepo()
+	svc := app.NewService(repo, fixedClock{T: time.Now()})
+
+	desde := time.Now()
+	vd := 7
+	_, err := svc.EnRutaPorZona(context.Background(), 3, &desde, &vd)
+	require.ErrorIs(t, err, domain.ErrParametrosExcluyentes)
+}
+
+func TestService_EnRutaPorZona_DefaultVentana(t *testing.T) {
+	t.Parallel()
+
+	repo := newFakeSaldosRepo()
+	repo.porZona = []domain.Saldo{}
+	svc := app.NewService(repo, fixedClock{T: time.Now()})
+
+	// Both nil → default ventana 7
+	_, err := svc.EnRutaPorZona(context.Background(), 1, nil, nil)
+	require.NoError(t, err)
 }
 
 func TestService_AbiertasPorCliente_DelegatesToRepo(t *testing.T) {

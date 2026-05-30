@@ -3,11 +3,29 @@ package cobranzahttp
 
 import (
 	"context"
+	"time"
 
 	"github.com/abdimuy/msp-api/internal/auth"
 	cobranzaapp "github.com/abdimuy/msp-api/internal/cobranza/app"
+	"github.com/abdimuy/msp-api/internal/cobranza/domain"
 	"github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
 )
+
+// parseDesde accepts either an RFC3339 timestamp or a YYYY-MM-DD date string
+// and returns the parsed time in UTC. Empty input returns (zero, nil) — the
+// caller treats that as "not supplied".
+func parseDesde(raw string) (time.Time, error) {
+	if raw == "" {
+		return time.Time{}, nil
+	}
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return t.UTC(), nil
+	}
+	if t, err := time.Parse("2006-01-02", raw); err == nil {
+		return t.UTC(), nil
+	}
+	return time.Time{}, domain.ErrDesdeInvalido
+}
 
 // Handlers groups every Huma handler for the cobranza module.
 type Handlers struct {
@@ -57,7 +75,12 @@ func (h *Handlers) PorCliente(ctx context.Context, in *PorClienteInput) (*Saldos
 	return &SaldosOutput{Body: items}, nil
 }
 
-// PorZona handles GET /cobranza/saldos/zona/{zona_id}?ventana_dias=7.
+// PorZona handles GET /cobranza/saldos/zona/{zona_id}.
+//
+// Accepts ?desde=YYYY-MM-DD (or RFC3339) for a deterministic cutoff, or
+// ?ventana_dias=N for a relative window. Defaults to ventana_dias=7 when
+// neither is supplied. Returns 422 cobranza_parametros_excluyentes when both
+// are present.
 func (h *Handlers) PorZona(ctx context.Context, in *PorZonaInput) (*SaldosOutput, error) {
 	cu, err := currentUserOrError(ctx)
 	if err != nil {
@@ -66,7 +89,17 @@ func (h *Handlers) PorZona(ctx context.Context, in *PorZonaInput) (*SaldosOutput
 	if err := requirePerm(cu, auth.PermCobranzaVerSaldos); err != nil {
 		return nil, err
 	}
-	saldos, err := h.svc.EnRutaPorZona(ctx, in.ZonaID, in.VentanaDias)
+
+	var desde *time.Time
+	if in.Desde != nil {
+		t, err := parseDesde(*in.Desde)
+		if err != nil {
+			return nil, mapAppError(err)
+		}
+		desde = &t
+	}
+
+	saldos, err := h.svc.EnRutaPorZona(ctx, in.ZonaID, desde, in.VentanaDias)
 	if err != nil {
 		return nil, mapAppError(err)
 	}

@@ -6,10 +6,20 @@ package app
 
 import (
 	"context"
+	"time"
 
 	"github.com/abdimuy/msp-api/internal/cobranza/domain"
 	"github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
 )
+
+// DefaultVentanaDias is the value the HTTP handler supplies when neither
+// `desde` nor `ventana_dias` is provided. 7 days matches the cobrador's
+// typical routing window.
+const DefaultVentanaDias = 7
+
+// MaxVentanaDias caps the relative window at 90 days; beyond that the caller
+// is expected to use the absolute `desde` parameter, which has no cap.
+const MaxVentanaDias = 90
 
 // Service is the cobranza module's query surface. Handlers depend on
 // *Service; everything Service depends on goes through the outbound ports.
@@ -35,15 +45,41 @@ func (s *Service) PorCargo(ctx context.Context, doctoCCID int) (*domain.Saldo, e
 	return s.repo.PorCargo(ctx, doctoCCID)
 }
 
-// EnRutaPorZona returns ventas abiertas and recently paid (within ventanaDias
-// days) for the given zona. ventanaDias must be in [0, 90]; the HTTP layer
-// supplies the default of 7. Returns domain.ErrVentanaDiasInvalida when the
-// range constraint is violated.
-func (s *Service) EnRutaPorZona(ctx context.Context, zonaID, ventanaDias int) ([]domain.Saldo, error) {
-	if ventanaDias < 0 || ventanaDias > 90 {
-		return nil, domain.ErrVentanaDiasInvalida
+// EnRutaPorZona returns ventas abiertas for a zona plus saldadas with
+// FECHA_ULT_PAGO >= the resolved cutoff date.
+//
+// Exactly one of desde or ventanaDias may be non-nil:
+//   - desde: explicit RFC3339 cutoff (deterministic across calls); the time
+//     component is preserved on the way in but truncated to DATE precision
+//     by the underlying column.
+//   - ventanaDias: relative window in days, resolved at call time via the
+//     injected clock. Must be in [0, MaxVentanaDias].
+//   - both nil: defaults to ventanaDias=DefaultVentanaDias (7).
+//   - both non-nil: returns ErrParametrosExcluyentes.
+//
+// When the resolved cutoff is zero-valued, the repo returns only abiertas
+// (no UNION branch — faster).
+func (s *Service) EnRutaPorZona(ctx context.Context, zonaID int, desde *time.Time, ventanaDias *int) ([]domain.Saldo, error) {
+	if desde != nil && ventanaDias != nil {
+		return nil, domain.ErrParametrosExcluyentes
 	}
-	return s.repo.EnRutaPorZona(ctx, zonaID, ventanaDias)
+
+	var cutoff time.Time
+	switch {
+	case desde != nil:
+		cutoff = *desde
+	case ventanaDias != nil:
+		if *ventanaDias < 0 || *ventanaDias > MaxVentanaDias {
+			return nil, domain.ErrVentanaDiasInvalida
+		}
+		if *ventanaDias > 0 {
+			cutoff = s.clock.Now().AddDate(0, 0, -*ventanaDias)
+		}
+	default:
+		cutoff = s.clock.Now().AddDate(0, 0, -DefaultVentanaDias)
+	}
+
+	return s.repo.EnRutaPorZona(ctx, zonaID, cutoff)
 }
 
 // AbiertasPorCliente returns all open saldos (positive balance, not cancelled)
