@@ -22,5 +22,12 @@ type VentasRepo interface {
 	// Items ordered by (UPDATED_AT, DOCTO_CC_ID) ascending; afterID is used
 	// for sub-cursor pagination when has_more=true. Pass cursor=time.Time{}
 	// for a full initial sync.
-	SyncPorZona(ctx context.Context, zonaID int, cursor time.Time, afterID, limit int) (SyncPage[domain.Venta], error)
+	//
+	// desde controla el filtro de saldo en el sync inicial (cursor zero):
+	//   - desde zero:   solo cargos activos + tombstones (legacy).
+	//   - desde set:    activos + tombstones + saldados con FECHA_ULT_PAGO >= desde.
+	// En sync incremental (cursor set) el filtro de saldo se quita: cualquier
+	// row con UPDATED_AT > cursor entra, incluyendo ventas que acaban de
+	// saldarse y tombstones — el cliente decide qué hacer con cada caso.
+	SyncPorZona(ctx context.Context, zonaID int, cursor time.Time, afterID, limit int, desde time.Time) (SyncPage[domain.Venta], error)
 }

@@ -72,6 +72,7 @@ type SyncVentasInput struct {
 	Cursor  string `query:"cursor"                              doc:"Cursor server_ts (RFC3339 UTC). Vacío para sync inicial"`
 	AfterID int    `query:"after_id" minimum:"0"                doc:"PK de la última fila recibida para paginar dentro del mismo cursor"`
 	Limit   int    `query:"limit"    minimum:"0" maximum:"5000" doc:"Tamaño máximo de página. Default 1000, máximo 5000"`
+	Desde   string `query:"desde"                               doc:"Fecha absoluta (YYYY-MM-DD o RFC3339 UTC) que extiende el sync inicial con ventas saldadas con FECHA_ULT_PAGO >= desde. Ignorado cuando cursor != vacío"`
 }
 
 // SyncVentasOutput wraps a ventas sync page.

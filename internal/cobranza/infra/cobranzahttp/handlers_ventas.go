@@ -21,7 +21,11 @@ func (h *Handlers) SyncVentasPorZona(ctx context.Context, in *SyncVentasInput) (
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	page, err := h.svc.SyncVentasPorZona(ctx, in.ZonaID, cursor, in.AfterID, in.Limit)
+	desde, err := parseOptionalDesde(in.Desde)
+	if err != nil {
+		return nil, err
+	}
+	page, err := h.svc.SyncVentasPorZona(ctx, in.ZonaID, cursor, in.AfterID, in.Limit, desde)
 	if err != nil {
 		return nil, mapAppError(err)
 	}

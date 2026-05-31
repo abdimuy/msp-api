@@ -86,7 +86,7 @@ func TestE2E_VentasRepo_SyncPorZona_ReturnsEnrichedRow(t *testing.T) {
 		require.NoError(t, err)
 		cursor := saldo.UpdatedAt().Add(-time.Second)
 
-		page, err := repo.SyncPorZona(ctx, zonaID, cursor, 0, 5000)
+		page, err := repo.SyncPorZona(ctx, zonaID, cursor, 0, 5000, time.Time{})
 		require.NoError(t, err)
 
 		v := findVenta(page.Items, cargoID)
@@ -103,6 +103,65 @@ func TestE2E_VentasRepo_SyncPorZona_ReturnsEnrichedRow(t *testing.T) {
 
 		t.Logf("cargo %d enriquecido: cliente=%q zona=%d cobrador=%q",
 			cargoID, v.ClienteNombre(), zonaID, v.NombreCobrador())
+	})
+}
+
+// TestE2E_VentasRepo_SyncPorZona_SaldadaConDesde verifica el contrato del
+// nuevo parámetro `desde` en sync inicial (cursor zero):
+//
+//  1. cursor=zero, desde=zero → venta saldada NO viaja (legacy admin).
+//  2. cursor=zero, desde<fechaUltPago → venta saldada SÍ viaja.
+//  3. cursor!=zero → venta saldada SÍ viaja (filtro de saldo removido en
+//     incremental para propagar el pago final).
+//
+//nolint:paralleltest // serial: shares rollback-only tx.
+func TestE2E_VentasRepo_SyncPorZona_SaldadaConDesde(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		q := firebird.GetQuerier(ctx, pool.DB)
+		requireMigration000010(t, q)
+
+		clienteID, zonaID := seedZonedCliente(t, q)
+
+		importe := decimal.RequireFromString("1500.00")
+		cargoID := insertCargoDoctosCC(t, q, clienteID, "VENT-SLD-1", importe)
+		// Pago completo: SALDO queda en 0, FECHA_ULT_PAGO ≈ now.
+		insertPagoImporte(t, q, cargoID, importe)
+
+		saldoRepo := cobranzaventfb.NewSaldosRepo(pool)
+		saldo, err := saldoRepo.PorCargo(ctx, cargoID)
+		require.NoError(t, err)
+		require.True(t, saldo.Saldo().IsZero(),
+			"prerequisito: saldo debe quedar en 0 tras el pago completo; got=%s", saldo.Saldo())
+
+		// Wait out the sync lag window so the row is visible.
+		time.Sleep(6 * time.Second)
+
+		repo := cobranzaventfb.NewVentasRepo(pool)
+
+		// Caso 1: sync inicial legacy (sin desde) — saldada no debe aparecer.
+		pageLegacy, err := repo.SyncPorZona(ctx, zonaID, time.Time{}, 0, 5000, time.Time{})
+		require.NoError(t, err)
+		assert.Nil(t, findVenta(pageLegacy.Items, cargoID),
+			"sin desde, la venta saldada no debería aparecer en sync inicial")
+
+		// Caso 2: sync inicial con desde anterior al pago — saldada SÍ viaja.
+		desde := time.Now().Add(-24 * time.Hour)
+		pageConDesde, err := repo.SyncPorZona(ctx, zonaID, time.Time{}, 0, 5000, desde)
+		require.NoError(t, err)
+		v := findVenta(pageConDesde.Items, cargoID)
+		require.NotNil(t, v, "con desde<fechaUltPago, la venta saldada debe aparecer")
+		assert.True(t, v.Saldo().IsZero(), "venta debe traer saldo=0")
+
+		// Caso 3: sync incremental (cursor antes del UPDATED_AT del saldo) —
+		// el filtro de saldo está removido y la venta saldada debe propagarse.
+		cursor := saldo.UpdatedAt().Add(-time.Second)
+		pageIncr, err := repo.SyncPorZona(ctx, zonaID, cursor, 0, 5000, time.Time{})
+		require.NoError(t, err)
+		assert.NotNil(t, findVenta(pageIncr.Items, cargoID),
+			"en incremental, la venta recién saldada debe viajar al cliente")
 	})
 }
 
@@ -137,7 +196,7 @@ func TestE2E_VentasRepo_SyncPorZona_Tombstone(t *testing.T) {
 		cursor := saldo.UpdatedAt().Add(-time.Second)
 
 		repo := cobranzaventfb.NewVentasRepo(pool)
-		page, err := repo.SyncPorZona(ctx, zonaID, cursor, 0, 5000)
+		page, err := repo.SyncPorZona(ctx, zonaID, cursor, 0, 5000, time.Time{})
 		require.NoError(t, err)
 
 		v := findVenta(page.Items, cargoID)

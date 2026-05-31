@@ -47,7 +47,14 @@ type PagosRepo interface {
 	// transactions). Items are ordered by (UPDATED_AT, IMPTE_DOCTO_CC_ID)
 	// ascending; afterID is used for sub-cursor pagination when has_more=true.
 	// Pass cursor=time.Time{} for a full initial sync.
-	SyncPorZona(ctx context.Context, zonaID int, cursor time.Time, afterID, limit int) (SyncPage[domain.Pago], error)
+	//
+	// desde controla el filtro de saldo en el sync inicial (cursor zero):
+	//   - desde zero:   solo pagos de cargos con saldo activo (legacy).
+	//   - desde set:    pagos de cargos activos + pagos cuyo p.FECHA >= desde
+	//                   (incluye pagos finales que saldaron una venta).
+	// En sync incremental (cursor set) el filtro de saldo se quita; el filtro
+	// de concepto (87327, 27969) se mantiene siempre.
+	SyncPorZona(ctx context.Context, zonaID int, cursor time.Time, afterID, limit int, desde time.Time) (SyncPage[domain.Pago], error)
 }
 
 // PagosRecomputer wraps the MSP_RECOMPUTE_PAGO stored procedure. Used only

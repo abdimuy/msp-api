@@ -115,28 +115,27 @@ ORDER BY FECHA DESC`, zonaID, firebird.ToWallClock(desde))
 
 // SyncPorZona returns a page of pagos for incremental sync. See port doc.
 //
-// JOIN con MSP_SALDOS_VENTAS + filtro `s.SALDO > 0` restringe el set a
-// pagos de ventas con saldo activo, alineado con `/sync/ventas`. Los pagos
-// de ventas saldadas o canceladas no se mandan: las saldadas no se ven en
-// la ruta, y las canceladas las borra el tombstone de `/sync/ventas`.
+// Filtro de saldo dinámico (ver queryPagoSyncPage):
+//   - cursor zero + desde zero: solo pagos de cargos con saldo activo.
+//   - cursor zero + desde set:  + pagos cuyo p.FECHA >= desde (incluye el
+//     pago final que saldó una venta).
+//   - cursor set:               sin filtro de saldo; los pagos de ventas
+//     recién saldadas viajan al cliente.
 //
-// Trade-off: si una venta se salda, los pagos viejos asociados dejan de
-// venir por sync. El cliente los conserva en su tabla local (no las borra
-// automaticamente), asi que reportes historicos (semanal, diario) siguen
-// teniendolos.
+// El filtro de concepto IN (87327, 27969) — cobranza en ruta y abono
+// mostrador — se mantiene en todos los modos para excluir conceptos
+// internos del cache (155, 11, ...) que confundirían al cobrador.
 func (r *PagosRepo) SyncPorZona(
-	ctx context.Context, zonaID int, cursor time.Time, afterID, limit int,
+	ctx context.Context, zonaID int, cursor time.Time, afterID, limit int, desde time.Time,
 ) (outbound.SyncPage[domain.Pago], error) {
 	pageQuery := func(ctx context.Context, q firebird.Querier, upper time.Time) (*sql.Rows, error) {
-		return queryPagoSyncPage(ctx, q, syncPageSpec{
-			columns:    selectPagoCols,
-			table:      "MSP_PAGOS_VENTAS",
-			pkColumn:   "IMPTE_DOCTO_CC_ID",
+		return queryPagoSyncPage(ctx, q, pagoSyncSpec{
 			zonaID:     zonaID,
 			cursor:     cursor,
 			upperBound: upper,
 			afterID:    afterID,
 			limit:      limit,
+			desde:      desde,
 		})
 	}
 	return runSyncPage[domain.Pago](ctx, r.pool, cursor, limit, pageQuery, scanEnrichedPagoRows)
@@ -192,32 +191,54 @@ JOIN CLIENTES c            ON c.CLIENTE_ID = p.CLIENTE_ID
 LEFT JOIN FORMAS_COBRO_DOCTOS fcd
        ON fcd.NOM_TABLA_DOCTOS = 'DOCTOS_CC' AND fcd.DOCTO_ID = p.DOCTO_CC_ID`
 
-const pagoStatusFilter = `s.SALDO > 0 AND p.CONCEPTO_CC_ID IN (87327, 27969)`
+// pagoConceptoFilter excluye conceptos internos del cache que el cobrador
+// no debe ver (155, 11, 27968…). Se mantiene en todos los modos.
+const pagoConceptoFilter = `p.CONCEPTO_CC_ID IN (87327, 27969)`
 
-func queryPagoSyncPage(ctx context.Context, q firebird.Querier, spec syncPageSpec) (*sql.Rows, error) {
+// pagoSyncSpec parametriza el query de sync de pagos. desde acota el filtro
+// de saldo en el sync inicial; ignorado cuando cursor != zero.
+type pagoSyncSpec struct {
+	zonaID     int
+	cursor     time.Time
+	upperBound time.Time
+	afterID    int
+	limit      int
+	desde      time.Time
+}
+
+func queryPagoSyncPage(ctx context.Context, q firebird.Querier, spec pagoSyncSpec) (*sql.Rows, error) {
 	upper := firebird.ToWallClock(spec.upperBound)
 	if spec.cursor.IsZero() {
+		saldoFilter := `s.SALDO > 0`
+		args := []any{spec.limit, spec.zonaID, upper, spec.afterID}
+		if !spec.desde.IsZero() {
+			saldoFilter = `(s.SALDO > 0 OR p.FECHA >= ?)`
+			args = append(args, firebird.ToWallClock(spec.desde))
+		}
 		query := `
 SELECT FIRST ? ` + selectPagoColsP + pagoFromClause + `
 WHERE p.ZONA_CLIENTE_ID = ?
   AND p.UPDATED_AT <= ?
   AND p.IMPTE_DOCTO_CC_ID > ?
-  AND ` + pagoStatusFilter + `
+  AND ` + saldoFilter + `
+  AND ` + pagoConceptoFilter + `
 ORDER BY p.UPDATED_AT, p.IMPTE_DOCTO_CC_ID`
-		rows, err := q.QueryContext(ctx, query, spec.limit, spec.zonaID, upper, spec.afterID)
+		rows, err := q.QueryContext(ctx, query, args...)
 		if err != nil {
 			return nil, firebird.MapError(err)
 		}
 		return rows, nil
 	}
 	cur := firebird.ToWallClock(spec.cursor)
+	// Sin filtro de saldo en incremental: el pago final que saldó una
+	// venta debe llegar al cliente. El filtro de concepto se conserva.
 	query := `
 SELECT FIRST ? ` + selectPagoColsP + pagoFromClause + `
 WHERE p.ZONA_CLIENTE_ID = ?
   AND p.UPDATED_AT >= ?
   AND p.UPDATED_AT <= ?
   AND (p.UPDATED_AT > ? OR (p.UPDATED_AT = ? AND p.IMPTE_DOCTO_CC_ID > ?))
-  AND ` + pagoStatusFilter + `
+  AND ` + pagoConceptoFilter + `
 ORDER BY p.UPDATED_AT, p.IMPTE_DOCTO_CC_ID`
 	rows, err := q.QueryContext(ctx, query, spec.limit, spec.zonaID, cur, upper, cur, cur, spec.afterID)
 	if err != nil {

@@ -93,11 +93,12 @@ func (f *fakeSaldosRepo) SyncPorZona(
 
 // fakePagosRepo is an in-memory outbound.PagosRepo for unit tests.
 type fakePagosRepo struct {
-	byVenta   map[int][]domain.Pago
-	byCliente map[int][]domain.Pago
-	porZona   []domain.Pago
-	syncPage  outbound.SyncPage[domain.Pago]
-	err       error
+	byVenta      map[int][]domain.Pago
+	byCliente    map[int][]domain.Pago
+	porZona      []domain.Pago
+	syncPage     outbound.SyncPage[domain.Pago]
+	lastSyncCall syncPagosCall
+	err          error
 }
 
 func newFakePagosRepo() *fakePagosRepo {
@@ -129,12 +130,21 @@ func (f *fakePagosRepo) EnRutaPorZona(_ context.Context, _ int, _ time.Time) ([]
 }
 
 func (f *fakePagosRepo) SyncPorZona(
-	_ context.Context, _ int, _ time.Time, _, _ int,
+	_ context.Context, _ int, cursor time.Time, afterID, limit int, desde time.Time,
 ) (outbound.SyncPage[domain.Pago], error) {
+	f.lastSyncCall = syncPagosCall{cursor: cursor, afterID: afterID, limit: limit, desde: desde}
 	if f.err != nil {
 		return outbound.SyncPage[domain.Pago]{}, f.err
 	}
 	return f.syncPage, nil
+}
+
+// syncPagosCall records the args of the last fakePagosRepo.SyncPorZona call.
+type syncPagosCall struct {
+	cursor  time.Time
+	afterID int
+	limit   int
+	desde   time.Time
 }
 
 // makeSaldo builds a minimal Saldo for test use.
@@ -406,7 +416,18 @@ func TestService_SyncPagosPorZona_DelegatesToRepo(t *testing.T) {
 		ServerNow: time.Date(2026, 5, 30, 0, 0, 0, 0, time.UTC),
 	}
 
-	page, err := svc.SyncPagosPorZona(context.Background(), 21563, time.Time{}, 0, 1000)
+	page, err := svc.SyncPagosPorZona(context.Background(), 21563, time.Time{}, 0, 1000, nil)
 	require.NoError(t, err)
 	assert.Len(t, page.Items, 1)
+	assert.True(t, pagos.lastSyncCall.desde.IsZero(), "desde nil debe propagarse como zero time al repo")
+}
+
+func TestService_SyncPagosPorZona_PropagatesDesde(t *testing.T) {
+	t.Parallel()
+	svc, _, pagos := newSvc(t)
+	desde := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+
+	_, err := svc.SyncPagosPorZona(context.Background(), 21563, time.Time{}, 0, 1000, &desde)
+	require.NoError(t, err)
+	assert.True(t, desde.Equal(pagos.lastSyncCall.desde), "desde no nil debe propagarse al repo")
 }

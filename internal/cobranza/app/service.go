@@ -131,27 +131,48 @@ func (s *Service) PagosEnRutaPorZona(
 }
 
 // SyncPagosPorZona returns a page of pagos for incremental sync.
+//
+// desde acota la ventana de saldados en el sync inicial (cursor zero): nil
+// devuelve solo pagos de cargos con saldo activo (legacy), set incluye
+// además pagos con FECHA >= desde aunque la venta ya esté saldada. Ignorado
+// cuando cursor != zero. Mismo contrato wire que /cobranza/pagos/zona.
 func (s *Service) SyncPagosPorZona(
-	ctx context.Context, zonaID int, cursor time.Time, afterID, limit int,
+	ctx context.Context, zonaID int, cursor time.Time, afterID, limit int, desde *time.Time,
 ) (outbound.SyncPage[domain.Pago], error) {
 	limit, err := clampSyncLimit(limit)
 	if err != nil {
 		return outbound.SyncPage[domain.Pago]{}, err
 	}
-	return s.pagos.SyncPorZona(ctx, zonaID, cursor, afterID, limit)
+	return s.pagos.SyncPorZona(ctx, zonaID, cursor, afterID, limit, optionalDesdeOrZero(desde))
 }
 
 // SyncVentasPorZona returns a page of enriched ventas for incremental sync.
 // Each item carries the saldo row plus the static cliente/direccion/contrato
 // fields needed to render the mobile cobranza UI without a follow-up call.
+//
+// desde acota la ventana de saldadas en el sync inicial (cursor zero): nil
+// devuelve solo activas + tombstones (legacy), set incluye además ventas
+// saldadas con FECHA_ULT_PAGO >= desde para que la app del cobrador las
+// conserve dentro de su ventana visible. Ignorado cuando cursor != zero.
 func (s *Service) SyncVentasPorZona(
-	ctx context.Context, zonaID int, cursor time.Time, afterID, limit int,
+	ctx context.Context, zonaID int, cursor time.Time, afterID, limit int, desde *time.Time,
 ) (outbound.SyncPage[domain.Venta], error) {
 	limit, err := clampSyncLimit(limit)
 	if err != nil {
 		return outbound.SyncPage[domain.Venta]{}, err
 	}
-	return s.ventas.SyncPorZona(ctx, zonaID, cursor, afterID, limit)
+	return s.ventas.SyncPorZona(ctx, zonaID, cursor, afterID, limit, optionalDesdeOrZero(desde))
+}
+
+// optionalDesdeOrZero unwraps a nullable desde for the sync repos, which take
+// time.Time{} as the "no cutoff" sentinel. Sync no honra `ventana_dias` (la
+// app móvil pasa siempre la fecha absoluta de FECHA_CARGA_INICIAL), por eso
+// no reutilizamos resolveCutoff aquí — su default de 7 días no aplica.
+func optionalDesdeOrZero(desde *time.Time) time.Time {
+	if desde == nil {
+		return time.Time{}
+	}
+	return *desde
 }
 
 // resolveCutoff applies the desde / ventanaDias contract used by saldos and

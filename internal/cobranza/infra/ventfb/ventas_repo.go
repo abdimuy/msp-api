@@ -74,7 +74,7 @@ LEFT JOIN DOCTOS_PV dc         ON dc.DOCTO_PV_ID     = s.DOCTO_PV_ID`
 
 // SyncPorZona returns a page of enriched ventas for incremental sync.
 func (r *VentasRepo) SyncPorZona(
-	ctx context.Context, zonaID int, cursor time.Time, afterID, limit int,
+	ctx context.Context, zonaID int, cursor time.Time, afterID, limit int, desde time.Time,
 ) (outbound.SyncPage[domain.Venta], error) {
 	pageQuery := func(ctx context.Context, q firebird.Querier, upper time.Time) (*sql.Rows, error) {
 		return queryVentaSyncPage(ctx, q, ventaSyncSpec{
@@ -83,6 +83,7 @@ func (r *VentasRepo) SyncPorZona(
 			upperBound: upper,
 			afterID:    afterID,
 			limit:      limit,
+			desde:      desde,
 		})
 	}
 	return runSyncPage[domain.Venta](ctx, r.pool, cursor, limit, pageQuery, scanVentaRows)
@@ -97,36 +98,48 @@ type ventaSyncSpec struct {
 	upperBound time.Time
 	afterID    int
 	limit      int
+	// desde acota el filtro de saldados en el sync inicial (cursor zero).
+	// Ignorado cuando cursor != zero. Ver queryVentaSyncPage.
+	desde time.Time
 }
 
 // queryVentaSyncPage builds and executes the enriched venta page query. Same
 // cursor-and-tie-break semantics as querySyncPage in page_helpers.go but with
 // the JOIN baked in.
 //
-// Solo devuelve:
-//   - cargos con saldo activo (SALDO > 0)
-//   - tombstones de cancelación (CARGO_CANCELADO = 'S') para que el cliente
-//     pueda borrar la venta de su cache local
+// Filtro de saldo dinámico según cursor + desde:
 //
-// Los cargos saldados (SALDO ≤ 0 sin cancelar) NO se devuelven — la ruta
-// del cobrador no los necesita. Trade-off: si una venta se salda
-// silenciosamente, la app mantendrá el row local hasta que el usuario
-// dispare un resync limpio (cursor = null). Para el ciclo normal de
-// cobranza no es problema porque las transiciones de pago siempre suben
-// el saldo o lo bajan en una sola operación que la app procesa.
-const ventaSyncStatusFilter = `(s.SALDO > 0 OR s.CARGO_CANCELADO = 'S')`
-
+//   - cursor zero + desde zero (legacy admin/full sync sin ventana):
+//     activos (SALDO > 0) + tombstones (CARGO_CANCELADO = 'S'). Saldados
+//     silenciosos no se mandan.
+//
+//   - cursor zero + desde set (sync inicial del cobrador con
+//     FECHA_CARGA_INICIAL): activos + tombstones + saldados con
+//     FECHA_ULT_PAGO >= desde. Mismo patrón que SaldosRepo.EnRutaPorZona —
+//     la app conserva la venta saldada mientras su último pago caiga en
+//     la ventana del cobrador.
+//
+//   - cursor set (sync incremental): sin filtro de saldo. Cualquier row con
+//     UPDATED_AT > cursor entra — incluyendo la venta que acaba de saldarse
+//     por el pago final y el tombstone si fue cancelada. El cliente decide
+//     cómo tratar cada caso según su propia ventana.
 func queryVentaSyncPage(ctx context.Context, q firebird.Querier, spec ventaSyncSpec) (*sql.Rows, error) {
 	upper := firebird.ToWallClock(spec.upperBound)
 	if spec.cursor.IsZero() {
+		statusFilter := `(s.SALDO > 0 OR s.CARGO_CANCELADO = 'S')`
+		args := []any{spec.limit, spec.zonaID, upper, spec.afterID}
+		if !spec.desde.IsZero() {
+			statusFilter = `(s.SALDO > 0 OR s.CARGO_CANCELADO = 'S' OR s.FECHA_ULT_PAGO >= ?)`
+			args = append(args, firebird.ToWallClock(spec.desde))
+		}
 		query := `
 SELECT FIRST ? ` + selectVentaCols + ventaFromClause + `
 WHERE s.ZONA_CLIENTE_ID = ?
   AND s.UPDATED_AT <= ?
   AND s.DOCTO_CC_ID > ?
-  AND ` + ventaSyncStatusFilter + `
+  AND ` + statusFilter + `
 ORDER BY s.UPDATED_AT, s.DOCTO_CC_ID`
-		rows, err := q.QueryContext(ctx, query, spec.limit, spec.zonaID, upper, spec.afterID)
+		rows, err := q.QueryContext(ctx, query, args...)
 		if err != nil {
 			return nil, firebird.MapError(err)
 		}
@@ -136,13 +149,16 @@ ORDER BY s.UPDATED_AT, s.DOCTO_CC_ID`
 	// UPDATED_AT >= cursor (no estricto) habilita el tie-break por
 	// DOCTO_CC_ID. Ver page_helpers.queryVentaSyncPage para el detalle del
 	// caso que motiva esta forma.
+	//
+	// Sin filtro de saldo aquí: en incremental queremos propagar ventas
+	// recién saldadas y tombstones por igual; el filtro de saldo en el
+	// sync inicial es solo para limitar el peso del primer page.
 	query := `
 SELECT FIRST ? ` + selectVentaCols + ventaFromClause + `
 WHERE s.ZONA_CLIENTE_ID = ?
   AND s.UPDATED_AT >= ?
   AND s.UPDATED_AT <= ?
   AND (s.UPDATED_AT > ? OR (s.UPDATED_AT = ? AND s.DOCTO_CC_ID > ?))
-  AND ` + ventaSyncStatusFilter + `
 ORDER BY s.UPDATED_AT, s.DOCTO_CC_ID`
 	rows, err := q.QueryContext(ctx, query, spec.limit, spec.zonaID, cur, upper, cur, cur, spec.afterID)
 	if err != nil {

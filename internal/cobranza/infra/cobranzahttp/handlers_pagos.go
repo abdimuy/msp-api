@@ -74,7 +74,11 @@ func (h *Handlers) SyncPagosPorZona(ctx context.Context, in *SyncPagosInput) (*S
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	page, err := h.svc.SyncPagosPorZona(ctx, in.ZonaID, cursor, in.AfterID, in.Limit)
+	desde, err := parseOptionalDesde(in.Desde)
+	if err != nil {
+		return nil, err
+	}
+	page, err := h.svc.SyncPagosPorZona(ctx, in.ZonaID, cursor, in.AfterID, in.Limit, desde)
 	if err != nil {
 		return nil, mapAppError(err)
 	}
