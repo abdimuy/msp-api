@@ -61,6 +61,14 @@ func ScanDecimal(src any, scale int) (decimal.Decimal, error) {
 		return v, nil
 	case int64:
 		return decimal.New(v, int32(-scale)), nil
+	case int32:
+		// Firebird stores NUMERIC(p,s) with p ≤ 9 as a 32-bit integer; the
+		// driver hands those back as int32 rather than int64. Promote and
+		// recover the decimal point via scale.
+		return decimal.New(int64(v), int32(-scale)), nil
+	case int16:
+		// NUMERIC(p,s) with p ≤ 4 lands as int16 — same promotion path.
+		return decimal.New(int64(v), int32(-scale)), nil
 	case *big.Int:
 		// nakagami/firebirdsql emits *big.Int for SUM/AVG aggregates over
 		// NUMERIC columns (and for NUMERIC values that exceed int64 range).

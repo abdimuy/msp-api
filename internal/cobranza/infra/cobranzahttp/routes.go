@@ -114,6 +114,10 @@ func registerReadOperations(api huma.API, h *Handlers) {
 	huma.Register(api, op(tag, "cobranza-sync-pagos-por-zona", http.MethodGet, "/sync/pagos/zona/{zona_id}",
 		"Sync incremental de pagos por zona",
 		"Devuelve un page de pagos modificados desde el cursor server_ts. Misma mecánica que sync/saldos pero a nivel de MSP_PAGOS_VENTAS."), h.SyncPagosPorZona)
+
+	huma.Register(api, op(tag, "cobranza-sync-ventas-por-zona", http.MethodGet, "/sync/ventas/zona/{zona_id}",
+		"Sync incremental de ventas enriquecidas por zona",
+		"Devuelve un page de ventas (saldo + cliente + dirección + contrato) modificadas desde el cursor server_ts. Pensado para alimentar la app móvil de cobranza en una sola request por zona."), h.SyncVentasPorZona)
 }
 
 // registerAdminOperations declares the cobranza admin endpoints.

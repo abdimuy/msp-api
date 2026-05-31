@@ -174,7 +174,7 @@ func insertPagoImporte(
 func buildCobranzaService(t *testing.T, pool *firebird.Pool) *cobranzaapp.Service {
 	t.Helper()
 	repo := cobranzaventfb.NewSaldosRepo(pool)
-	return cobranzaapp.NewService(repo, cobranzaventfb.NewPagosRepo(pool), cobranzaoutbound.ProductionClock{})
+	return cobranzaapp.NewService(repo, cobranzaventfb.NewPagosRepo(pool), cobranzaventfb.NewVentasRepo(pool), cobranzaoutbound.ProductionClock{})
 }
 
 // buildCobranzaReconciler builds a real Reconciler with Firebird-backed

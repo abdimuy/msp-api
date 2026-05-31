@@ -1,0 +1,379 @@
+//nolint:misspell // Spanish domain vocabulary by project convention.
+package ventfb
+
+import (
+	"context"
+	"database/sql"
+	"time"
+
+	"github.com/shopspring/decimal"
+
+	"github.com/abdimuy/msp-api/internal/cobranza/domain"
+	"github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
+	"github.com/abdimuy/msp-api/internal/platform/firebird"
+)
+
+// Compile-time assertion: VentasRepo satisfies the outbound port.
+var _ outbound.VentasRepo = (*VentasRepo)(nil)
+
+// VentasRepo implements outbound.VentasRepo backed by a JOIN over
+// MSP_SALDOS_VENTAS + CLIENTES + ZONAS_CLIENTES + COBRADORES + DIRS_CLIENTES +
+// LIBRES_CARGOS_CC + DOCTOS_PV. Performance is gated by the
+// IDX_MSP_SALDOS_ZONA_FUP index on the driving table; downstream JOINs are
+// pure PK lookups (~51 ms for a 1000-row page on a representative zone).
+type VentasRepo struct {
+	pool *firebird.Pool
+}
+
+// NewVentasRepo builds a VentasRepo wired to the given pool.
+func NewVentasRepo(pool *firebird.Pool) *VentasRepo {
+	return &VentasRepo{pool: pool}
+}
+
+// ─── SQL ─────────────────────────────────────────────────────────────────────
+
+// selectVentaCols is the canonical SELECT list for the enriched venta query.
+// Order matches ventaRowScan.scanFrom one-to-one.
+//
+// Notes:
+//   - FREC_PAGO does NOT exist in LIBRES_CARGOS_CC (the Microsip side has no
+//     such column); the mobile app derives it from the contract terms or
+//     defaults to SEMANAL. The DTO surfaces an empty string so the contract
+//     can be populated later without a wire break.
+//   - ESTADO comes from joining DIRS_CLIENTES.ESTADO_ID against the ESTADOS
+//     catalog table to surface the human-readable name.
+const selectVentaCols = `
+	s.DOCTO_CC_ID, s.DOCTO_PV_ID, s.CLIENTE_ID, s.ZONA_CLIENTE_ID, s.FOLIO,
+	s.FECHA_CARGO, s.PRECIO_TOTAL, s.TOTAL_IMPORTE, s.IMPTE_REST,
+	s.SALDO, s.NUM_PAGOS, s.FECHA_ULT_PAGO, s.CARGO_CANCELADO, s.UPDATED_AT,
+	dc.FECHA,
+	c.NOMBRE, c.LIMITE_CREDITO, c.NOTAS, c.COBRADOR_ID,
+	z.NOMBRE,
+	cob.NOMBRE,
+	d.CALLE, d.POBLACION, e.NOMBRE, d.TELEFONO1,
+	l.PARCIALIDAD, l.ENGANCHE, l.TIEMPO_A_CORTO_PLAZOMESES,
+	l.MONTO_A_CORTO_PLAZO, l.PRECIO_DE_CONTADO, l.AVAL_O_RESPONSABLE,
+	l.VENDEDOR_1, l.VENDEDOR_2, l.VENDEDOR_3`
+
+const ventaFromClause = `
+FROM MSP_SALDOS_VENTAS s
+JOIN CLIENTES c              ON c.CLIENTE_ID       = s.CLIENTE_ID
+LEFT JOIN ZONAS_CLIENTES z   ON z.ZONA_CLIENTE_ID  = s.ZONA_CLIENTE_ID
+LEFT JOIN COBRADORES cob     ON cob.COBRADOR_ID    = c.COBRADOR_ID
+LEFT JOIN DIRS_CLIENTES d    ON d.CLIENTE_ID       = s.CLIENTE_ID AND d.ES_DIR_PPAL = 'S'
+LEFT JOIN ESTADOS e          ON e.ESTADO_ID        = d.ESTADO_ID
+LEFT JOIN LIBRES_CARGOS_CC l ON l.DOCTO_CC_ID      = s.DOCTO_CC_ID
+LEFT JOIN DOCTOS_PV dc       ON dc.DOCTO_PV_ID     = s.DOCTO_PV_ID`
+
+// SyncPorZona returns a page of enriched ventas for incremental sync.
+func (r *VentasRepo) SyncPorZona(
+	ctx context.Context, zonaID int, cursor time.Time, afterID, limit int,
+) (outbound.SyncPage[domain.Venta], error) {
+	pageQuery := func(ctx context.Context, q firebird.Querier, upper time.Time) (*sql.Rows, error) {
+		return queryVentaSyncPage(ctx, q, ventaSyncSpec{
+			zonaID:     zonaID,
+			cursor:     cursor,
+			upperBound: upper,
+			afterID:    afterID,
+			limit:      limit,
+		})
+	}
+	return runSyncPage[domain.Venta](ctx, r.pool, cursor, limit, pageQuery, scanVentaRows)
+}
+
+// ventaSyncSpec parametrizes the enriched venta sync page query. Same cursor
+// semantics as syncPageSpec but the SELECT/FROM are fixed to the enriched
+// projection.
+type ventaSyncSpec struct {
+	zonaID     int
+	cursor     time.Time
+	upperBound time.Time
+	afterID    int
+	limit      int
+}
+
+// queryVentaSyncPage builds and executes the enriched venta page query. Same
+// cursor-and-tie-break semantics as querySyncPage in page_helpers.go but with
+// the JOIN baked in.
+func queryVentaSyncPage(ctx context.Context, q firebird.Querier, spec ventaSyncSpec) (*sql.Rows, error) {
+	upper := firebird.ToWallClock(spec.upperBound)
+	if spec.cursor.IsZero() {
+		query := `
+SELECT FIRST ? ` + selectVentaCols + ventaFromClause + `
+WHERE s.ZONA_CLIENTE_ID = ?
+  AND s.UPDATED_AT <= ?
+  AND s.DOCTO_CC_ID > ?
+ORDER BY s.UPDATED_AT, s.DOCTO_CC_ID`
+		rows, err := q.QueryContext(ctx, query, spec.limit, spec.zonaID, upper, spec.afterID)
+		if err != nil {
+			return nil, firebird.MapError(err)
+		}
+		return rows, nil
+	}
+	cur := firebird.ToWallClock(spec.cursor)
+	query := `
+SELECT FIRST ? ` + selectVentaCols + ventaFromClause + `
+WHERE s.ZONA_CLIENTE_ID = ?
+  AND s.UPDATED_AT > ?
+  AND s.UPDATED_AT <= ?
+  AND (s.UPDATED_AT > ? OR (s.UPDATED_AT = ? AND s.DOCTO_CC_ID > ?))
+ORDER BY s.UPDATED_AT, s.DOCTO_CC_ID`
+	rows, err := q.QueryContext(ctx, query, spec.limit, spec.zonaID, cur, upper, cur, cur, spec.afterID)
+	if err != nil {
+		return nil, firebird.MapError(err)
+	}
+	return rows, nil
+}
+
+// ─── scan helpers ─────────────────────────────────────────────────────────────
+
+// ventaRowScan mirrors selectVentaCols 1:1. Splitting the raw scan from the
+// type conversions keeps cyclomatic complexity bounded.
+type ventaRowScan struct {
+	// MSP_SALDOS_VENTAS.
+	doctoCCID       int
+	doctoPVIDRaw    sql.NullInt64
+	clienteID       int
+	zonaRaw         sql.NullInt64
+	folio           sql.NullString
+	fechaCargoRaw   any
+	precioTotalRaw  any
+	totalImporteRaw any
+	impteRestRaw    any
+	saldoRaw        any
+	numPagos        int
+	fechaUltRaw     any
+	cargoCancelado  string
+	updatedAtRaw    any
+
+	// DOCTOS_PV.
+	fechaVentaRaw any
+
+	// CLIENTES.
+	clienteNombreRaw sql.NullString
+	limiteCreditoRaw any
+	clienteNotasRaw  sql.NullString
+	cobradorIDRaw    sql.NullInt64
+
+	// ZONAS_CLIENTES.
+	zonaNombreRaw sql.NullString
+
+	// COBRADORES.
+	nombreCobradorRaw sql.NullString
+
+	// DIRS_CLIENTES.
+	calleRaw    sql.NullString
+	ciudadRaw   sql.NullString
+	estadoRaw   sql.NullString
+	telefonoRaw sql.NullString
+
+	// LIBRES_CARGOS_CC.
+	parcialidadRaw           sql.NullInt64
+	engancheRaw              any
+	tiempoCortoPlazoMesesRaw sql.NullInt64
+	montoCortoPlazoRaw       any
+	precioDeContadoRaw       any
+	avalOResponsableRaw      sql.NullString
+	vendedor1IDRaw           sql.NullInt64
+	vendedor2IDRaw           sql.NullInt64
+	vendedor3IDRaw           sql.NullInt64
+}
+
+func (s *ventaRowScan) scanFrom(r scannable) error {
+	return r.Scan(
+		&s.doctoCCID, &s.doctoPVIDRaw, &s.clienteID, &s.zonaRaw, &s.folio,
+		&s.fechaCargoRaw, &s.precioTotalRaw, &s.totalImporteRaw, &s.impteRestRaw,
+		&s.saldoRaw, &s.numPagos, &s.fechaUltRaw, &s.cargoCancelado, &s.updatedAtRaw,
+		&s.fechaVentaRaw,
+		&s.clienteNombreRaw, &s.limiteCreditoRaw, &s.clienteNotasRaw, &s.cobradorIDRaw,
+		&s.zonaNombreRaw,
+		&s.nombreCobradorRaw,
+		&s.calleRaw, &s.ciudadRaw, &s.estadoRaw, &s.telefonoRaw,
+		&s.parcialidadRaw, &s.engancheRaw, &s.tiempoCortoPlazoMesesRaw,
+		&s.montoCortoPlazoRaw, &s.precioDeContadoRaw, &s.avalOResponsableRaw,
+		&s.vendedor1IDRaw, &s.vendedor2IDRaw, &s.vendedor3IDRaw,
+	)
+}
+
+// hydrate converts the raw scan values into a domain.Venta.
+func (s *ventaRowScan) hydrate() (domain.Venta, error) {
+	amounts, err := s.scanSaldoAmounts()
+	if err != nil {
+		return domain.Venta{}, err
+	}
+	timestamps, err := s.scanTimestamps()
+	if err != nil {
+		return domain.Venta{}, err
+	}
+	contract, err := s.scanContrato()
+	if err != nil {
+		return domain.Venta{}, err
+	}
+	return domain.HydrateVenta(domain.HydrateVentaParams{
+		DoctoCCID:      s.doctoCCID,
+		DoctoPVID:      nullableInt(s.doctoPVIDRaw),
+		ClienteID:      s.clienteID,
+		ZonaClienteID:  nullableInt(s.zonaRaw),
+		Folio:          nullableString(s.folio),
+		FechaCargo:     timestamps.fechaCargo,
+		PrecioTotal:    amounts.precioTotal,
+		TotalImporte:   amounts.totalImporte,
+		ImpteRest:      amounts.impteRest,
+		Saldo:          amounts.saldo,
+		NumPagos:       s.numPagos,
+		FechaUltPago:   timestamps.fechaUltPago,
+		CargoCancelado: s.cargoCancelado == "S",
+		UpdatedAt:      timestamps.updatedAt,
+
+		FechaVenta: timestamps.fechaVenta,
+
+		ClienteNombre:  nullableString(s.clienteNombreRaw),
+		LimiteCredito:  contract.limiteCredito,
+		ClienteNotas:   nullableString(s.clienteNotasRaw),
+		CobradorID:     nullableInt(s.cobradorIDRaw),
+		NombreCobrador: nullableString(s.nombreCobradorRaw),
+
+		ZonaNombre: nullableString(s.zonaNombreRaw),
+
+		Calle:    nullableString(s.calleRaw),
+		Ciudad:   nullableString(s.ciudadRaw),
+		Estado:   nullableString(s.estadoRaw),
+		Telefono: nullableString(s.telefonoRaw),
+
+		Parcialidad:           nullableInt(s.parcialidadRaw),
+		Enganche:              contract.enganche,
+		TiempoCortoPlazoMeses: nullableInt(s.tiempoCortoPlazoMesesRaw),
+		MontoCortoPlazo:       contract.montoCortoPlazo,
+		PrecioDeContado:       contract.precioDeContado,
+		AvalOResponsable:      nullableString(s.avalOResponsableRaw),
+		Vendedor1ID:           nullableInt(s.vendedor1IDRaw),
+		Vendedor2ID:           nullableInt(s.vendedor2IDRaw),
+		Vendedor3ID:           nullableInt(s.vendedor3IDRaw),
+	}), nil
+}
+
+// ventaSaldoAmounts groups the four MSP_SALDOS_VENTAS decimal columns.
+type ventaSaldoAmounts struct {
+	precioTotal  decimal.Decimal
+	totalImporte decimal.Decimal
+	impteRest    decimal.Decimal
+	saldo        decimal.Decimal
+}
+
+func (s *ventaRowScan) scanSaldoAmounts() (ventaSaldoAmounts, error) {
+	precio, err := firebird.ScanDecimal(s.precioTotalRaw, 2)
+	if err != nil {
+		return ventaSaldoAmounts{}, err
+	}
+	total, err := firebird.ScanDecimal(s.totalImporteRaw, 2)
+	if err != nil {
+		return ventaSaldoAmounts{}, err
+	}
+	rest, err := firebird.ScanDecimal(s.impteRestRaw, 2)
+	if err != nil {
+		return ventaSaldoAmounts{}, err
+	}
+	saldo, err := firebird.ScanDecimal(s.saldoRaw, 2)
+	if err != nil {
+		return ventaSaldoAmounts{}, err
+	}
+	return ventaSaldoAmounts{precio, total, rest, saldo}, nil
+}
+
+// ventaTimestamps groups all the timestamp columns; fechaUltPago and
+// fechaVenta are optional.
+type ventaTimestamps struct {
+	fechaCargo   time.Time
+	fechaUltPago *time.Time
+	updatedAt    time.Time
+	fechaVenta   *time.Time
+}
+
+func (s *ventaRowScan) scanTimestamps() (ventaTimestamps, error) {
+	fechaCargo, err := firebird.ScanUTCTime(s.fechaCargoRaw)
+	if err != nil {
+		return ventaTimestamps{}, err
+	}
+	updatedAt, err := firebird.ScanUTCTime(s.updatedAtRaw)
+	if err != nil {
+		return ventaTimestamps{}, err
+	}
+	ts := ventaTimestamps{fechaCargo: fechaCargo, updatedAt: updatedAt}
+	if s.fechaUltRaw != nil {
+		t, err := firebird.ScanUTCTime(s.fechaUltRaw)
+		if err != nil {
+			return ventaTimestamps{}, err
+		}
+		ts.fechaUltPago = &t
+	}
+	if s.fechaVentaRaw != nil {
+		t, err := firebird.ScanUTCTime(s.fechaVentaRaw)
+		if err != nil {
+			return ventaTimestamps{}, err
+		}
+		ts.fechaVenta = &t
+	}
+	return ts, nil
+}
+
+// ventaContractAmounts groups the LIBRES_CARGOS_CC nullable decimals plus
+// CLIENTES.LIMITE_CREDITO. nil pointer when the source column was SQL NULL.
+type ventaContractAmounts struct {
+	limiteCredito   *decimal.Decimal
+	enganche        *decimal.Decimal
+	montoCortoPlazo *decimal.Decimal
+	precioDeContado *decimal.Decimal
+}
+
+func (s *ventaRowScan) scanContrato() (ventaContractAmounts, error) {
+	limite, err := scanNullDecimal2Ptr(s.limiteCreditoRaw)
+	if err != nil {
+		return ventaContractAmounts{}, err
+	}
+	enganche, err := scanNullDecimal2Ptr(s.engancheRaw)
+	if err != nil {
+		return ventaContractAmounts{}, err
+	}
+	monto, err := scanNullDecimal2Ptr(s.montoCortoPlazoRaw)
+	if err != nil {
+		return ventaContractAmounts{}, err
+	}
+	contado, err := scanNullDecimal2Ptr(s.precioDeContadoRaw)
+	if err != nil {
+		return ventaContractAmounts{}, err
+	}
+	return ventaContractAmounts{limite, enganche, monto, contado}, nil
+}
+
+// scanNullDecimal2Ptr maps a possibly-nil NUMERIC(_,2) driver value to
+// *decimal.Decimal. Returns nil when src is nil.
+func scanNullDecimal2Ptr(src any) (*decimal.Decimal, error) {
+	if src == nil {
+		return nil, nil //nolint:nilnil // nil = column was SQL NULL.
+	}
+	d, err := firebird.ScanDecimal(src, 2)
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// scanVentaRows iterates a *sql.Rows, scanning each into a domain.Venta slice.
+func scanVentaRows(rows *sql.Rows) ([]domain.Venta, error) {
+	var result []domain.Venta
+	for rows.Next() {
+		var rs ventaRowScan
+		if err := rs.scanFrom(rows); err != nil {
+			return nil, firebird.MapError(err)
+		}
+		v, err := rs.hydrate()
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, firebird.MapError(err)
+	}
+	return result, nil
+}

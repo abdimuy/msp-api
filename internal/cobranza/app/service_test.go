@@ -171,7 +171,7 @@ func newSvc(t *testing.T) (*app.Service, *fakeSaldosRepo, *fakePagosRepo) {
 	t.Helper()
 	saldos := newFakeSaldosRepo()
 	pagos := newFakePagosRepo()
-	svc := app.NewService(saldos, pagos, fixedClock{T: time.Now()})
+	svc := app.NewService(saldos, pagos, nil, fixedClock{T: time.Now()})
 	return svc, saldos, pagos
 }
 

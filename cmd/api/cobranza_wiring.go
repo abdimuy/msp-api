@@ -25,6 +25,13 @@ func provideCobranzaPagosRepo(p *firebird.Pool) cobranzaoutbound.PagosRepo {
 	return cobranzaventfb.NewPagosRepo(p)
 }
 
+// provideCobranzaVentasRepo builds the Firebird-backed VentasRepo (enriched
+// JOIN over MSP_SALDOS_VENTAS + CLIENTES + DIRS_CLIENTES + ZONAS_CLIENTES +
+// COBRADORES + LIBRES_CARGOS_CC + DOCTOS_PV).
+func provideCobranzaVentasRepo(p *firebird.Pool) cobranzaoutbound.VentasRepo {
+	return cobranzaventfb.NewVentasRepo(p)
+}
+
 // provideCobranzaRecomputer builds the Firebird-backed SaldosRecomputer.
 // The repo is injected so the re-read step shares the same pool.
 func provideCobranzaRecomputer(p *firebird.Pool, repo cobranzaoutbound.SaldosRepo) cobranzaoutbound.SaldosRecomputer {
@@ -60,9 +67,10 @@ func provideCobranzaClock() cobranzaoutbound.Clock {
 func provideCobranzaService(
 	saldos cobranzaoutbound.SaldosRepo,
 	pagos cobranzaoutbound.PagosRepo,
+	ventas cobranzaoutbound.VentasRepo,
 	clock cobranzaoutbound.Clock,
 ) *cobranzaapp.Service {
-	return cobranzaapp.NewService(saldos, pagos, clock)
+	return cobranzaapp.NewService(saldos, pagos, ventas, clock)
 }
 
 // provideCobranzaReconcilerConfig returns the reconciler configuration.

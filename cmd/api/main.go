@@ -99,6 +99,7 @@ func appOptions() []fx.Option {
 			provideVentasService,
 			provideCobranzaSaldosRepo,
 			provideCobranzaPagosRepo,
+			provideCobranzaVentasRepo,
 			provideCobranzaRecomputer,
 			provideCobranzaPagosRecomputer,
 			provideCobranzaSaldosLister,

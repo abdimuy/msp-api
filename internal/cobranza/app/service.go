@@ -33,12 +33,21 @@ const (
 type Service struct {
 	saldos outbound.SaldosRepo
 	pagos  outbound.PagosRepo
+	ventas outbound.VentasRepo
 	clock  outbound.Clock
 }
 
-// NewService builds a Service wired against the given ports.
-func NewService(saldos outbound.SaldosRepo, pagos outbound.PagosRepo, clock outbound.Clock) *Service {
-	return &Service{saldos: saldos, pagos: pagos, clock: clock}
+// NewService builds a Service wired against the given ports. ventas may be
+// nil for tests that only exercise the saldos/pagos surface; the sync-ventas
+// endpoint will panic if called without a wired VentasRepo (caught by the
+// fx wiring at startup).
+func NewService(
+	saldos outbound.SaldosRepo,
+	pagos outbound.PagosRepo,
+	ventas outbound.VentasRepo,
+	clock outbound.Clock,
+) *Service {
+	return &Service{saldos: saldos, pagos: pagos, ventas: ventas, clock: clock}
 }
 
 // PorVenta returns the cached saldo for the given PV document ID.
@@ -130,6 +139,19 @@ func (s *Service) SyncPagosPorZona(
 		return outbound.SyncPage[domain.Pago]{}, err
 	}
 	return s.pagos.SyncPorZona(ctx, zonaID, cursor, afterID, limit)
+}
+
+// SyncVentasPorZona returns a page of enriched ventas for incremental sync.
+// Each item carries the saldo row plus the static cliente/direccion/contrato
+// fields needed to render the mobile cobranza UI without a follow-up call.
+func (s *Service) SyncVentasPorZona(
+	ctx context.Context, zonaID int, cursor time.Time, afterID, limit int,
+) (outbound.SyncPage[domain.Venta], error) {
+	limit, err := clampSyncLimit(limit)
+	if err != nil {
+		return outbound.SyncPage[domain.Venta]{}, err
+	}
+	return s.ventas.SyncPorZona(ctx, zonaID, cursor, afterID, limit)
 }
 
 // resolveCutoff applies the desde / ventanaDias contract used by saldos and
