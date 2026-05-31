@@ -52,9 +52,10 @@ type VentaDTO struct {
 	MontoCortoPlazo       *string `json:"monto_corto_plazo"         doc:"Monto a corto plazo"`
 	PrecioDeContado       *string `json:"precio_de_contado"         doc:"Precio de contado equivalente"`
 	AvalOResponsable      string  `json:"aval_o_responsable"        doc:"Aval o responsable solidario"`
-	Vendedor1ID           *int    `json:"vendedor_1_id"             doc:"Vendedor 1 (display-only)"`
-	Vendedor2ID           *int    `json:"vendedor_2_id"             doc:"Vendedor 2 (display-only)"`
-	Vendedor3ID           *int    `json:"vendedor_3_id"             doc:"Vendedor 3 (display-only)"`
+	Vendedor1             string  `json:"vendedor_1"                doc:"Nombre del vendedor 1 (resuelto desde LISTAS_ATRIBUTOS)"`
+	Vendedor2             string  `json:"vendedor_2"                doc:"Nombre del vendedor 2"`
+	Vendedor3             string  `json:"vendedor_3"                doc:"Nombre del vendedor 3"`
+	FrecPago              string  `json:"frec_pago"                 doc:"Frecuencia de pago (SEMANAL/QUINCENAL/MENSUAL), resuelta desde LIBRES_CARGOS_CC.FORMA_DE_PAGO"`
 }
 
 // SyncVentasBody envuelve un page de ventas enriquecidas para sync incremental.
@@ -110,9 +111,10 @@ func toVentaDTO(v domain.Venta) VentaDTO {
 		Parcialidad:           v.Parcialidad(),
 		TiempoCortoPlazoMeses: v.TiempoCortoPlazoMeses(),
 		AvalOResponsable:      v.AvalOResponsable(),
-		Vendedor1ID:           v.Vendedor1ID(),
-		Vendedor2ID:           v.Vendedor2ID(),
-		Vendedor3ID:           v.Vendedor3ID(),
+		Vendedor1:             v.Vendedor1(),
+		Vendedor2:             v.Vendedor2(),
+		Vendedor3:             v.Vendedor3(),
+		FrecPago:              v.FrecPago(),
 	}
 	if fup := v.FechaUltPago(); fup != nil {
 		s := fup.UTC().Format(time.RFC3339Nano)

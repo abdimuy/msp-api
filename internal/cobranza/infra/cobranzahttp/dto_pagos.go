@@ -18,15 +18,21 @@ type PagoDTO struct {
 	ClienteID      int     `json:"cliente_id"        doc:"ID del cliente en Microsip CLIENTES"`
 	ZonaClienteID  *int    `json:"zona_cliente_id"   doc:"Zona del cliente, null si no tiene"`
 	Folio          string  `json:"folio"             doc:"Folio del documento abono"`
-	ConceptoCCID   int     `json:"concepto_cc_id"    doc:"Concepto de cobranza (87327, 155, 11, etc.)"`
+	ConceptoCCID   int     `json:"concepto_cc_id"    doc:"Concepto de cobranza (87327, 27969)"`
 	Fecha          string  `json:"fecha"             doc:"Timestamp del pago (RFC3339 UTC); precisión de hora cuando proviene de la app móvil, sino día"`
-	Importe        string  `json:"importe"           doc:"Monto del pago"`
+	Importe        string  `json:"importe"           doc:"Monto del pago con IVA incluido (IMPORTE + IMPUESTO)"`
 	Impuesto       string  `json:"impuesto"          doc:"Impuesto incluido en el pago"`
-	Lat            *string `json:"lat"               doc:"Latitud GPS donde se registró el pago (reservado para futuro)"`
-	Lon            *string `json:"lon"               doc:"Longitud GPS donde se registró el pago (reservado para futuro)"`
+	Lat            *string `json:"lat"               doc:"Latitud GPS donde se registró el pago"`
+	Lon            *string `json:"lon"               doc:"Longitud GPS donde se registró el pago"`
 	Cancelado      bool    `json:"cancelado"         doc:"true si el importe fue cancelado en Microsip"`
 	Aplicado       bool    `json:"aplicado"          doc:"true si el importe está aplicado (IMPORTES_DOCTOS_CC.APLICADO='S')"`
 	UpdatedAt      string  `json:"updated_at"        doc:"Timestamp del último refresco del caché (RFC3339 UTC)"`
+
+	// Campos enriquecidos para el listado de pagos por venta en la app móvil.
+	Cobrador      string `json:"cobrador"        doc:"DOCTOS_CC.DESCRIPCION — texto libre que típicamente lleva el nombre del cobrador"`
+	CobradorID    *int   `json:"cobrador_id"     doc:"COBRADORES.COBRADOR_ID"`
+	NombreCliente string `json:"nombre_cliente"  doc:"CLIENTES.NOMBRE"`
+	FormaCobroID  *int   `json:"forma_cobro_id"  doc:"FORMAS_COBRO_DOCTOS.FORMA_COBRO_ID (efectivo/cheque/transferencia)"`
 }
 
 // SyncSaldosBody envuelve un page de saldos para sync incremental.
@@ -124,6 +130,10 @@ func toPagoDTO(p domain.Pago) PagoDTO {
 		Cancelado:      p.Cancelado(),
 		Aplicado:       p.Aplicado(),
 		UpdatedAt:      p.UpdatedAt().UTC().Format(time.RFC3339Nano),
+		Cobrador:       p.Cobrador(),
+		CobradorID:     p.CobradorID(),
+		NombreCliente:  p.NombreCliente(),
+		FormaCobroID:   p.FormaCobroID(),
 	}
 	if lat := p.Lat(); lat != nil {
 		s := lat.StringFixed(8)

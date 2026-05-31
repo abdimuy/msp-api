@@ -114,11 +114,21 @@ ORDER BY FECHA DESC`, zonaID, firebird.ToWallClock(desde))
 }
 
 // SyncPorZona returns a page of pagos for incremental sync. See port doc.
+//
+// JOIN con MSP_SALDOS_VENTAS + filtro `s.SALDO > 0` restringe el set a
+// pagos de ventas con saldo activo, alineado con `/sync/ventas`. Los pagos
+// de ventas saldadas o canceladas no se mandan: las saldadas no se ven en
+// la ruta, y las canceladas las borra el tombstone de `/sync/ventas`.
+//
+// Trade-off: si una venta se salda, los pagos viejos asociados dejan de
+// venir por sync. El cliente los conserva en su tabla local (no las borra
+// automaticamente), asi que reportes historicos (semanal, diario) siguen
+// teniendolos.
 func (r *PagosRepo) SyncPorZona(
 	ctx context.Context, zonaID int, cursor time.Time, afterID, limit int,
 ) (outbound.SyncPage[domain.Pago], error) {
 	pageQuery := func(ctx context.Context, q firebird.Querier, upper time.Time) (*sql.Rows, error) {
-		return querySyncPage(ctx, q, syncPageSpec{
+		return queryPagoSyncPage(ctx, q, syncPageSpec{
 			columns:    selectPagoCols,
 			table:      "MSP_PAGOS_VENTAS",
 			pkColumn:   "IMPTE_DOCTO_CC_ID",
@@ -129,7 +139,91 @@ func (r *PagosRepo) SyncPorZona(
 			limit:      limit,
 		})
 	}
-	return runSyncPage[domain.Pago](ctx, r.pool, cursor, limit, pageQuery, scanPagoRows)
+	return runSyncPage[domain.Pago](ctx, r.pool, cursor, limit, pageQuery, scanEnrichedPagoRows)
+}
+
+// selectPagoColsP es la lista enriquecida que la app movil consume via
+// /sync/pagos. Incluye campos resueltos desde DOCTOS_CC (descripcion como
+// COBRADOR), CLIENTES (NOMBRE_CLIENTE) y FORMAS_COBRO_DOCTOS (FORMA_COBRO_ID)
+// que el sistema Node legacy entregaba. La suma IMPORTE + IMPUESTO se hace
+// en SELECT para que el cliente reciba el importe con IVA, alineado con la
+// parcialidad que el cobrador realmente cobra.
+//
+// Las columnas s.* del JOIN con MSP_SALDOS_VENTAS no se exponen; solo se
+// usan para filtrar `s.SALDO > 0` (ver queryPagoSyncPage).
+const selectPagoColsP = `
+	p.IMPTE_DOCTO_CC_ID,
+	p.DOCTO_CC_ID,
+	p.DOCTO_CC_ACR_ID,
+	p.CLIENTE_ID,
+	p.ZONA_CLIENTE_ID,
+	p.FOLIO,
+	p.CONCEPTO_CC_ID,
+	p.FECHA,
+	(p.IMPORTE + p.IMPUESTO),
+	p.IMPUESTO,
+	p.LAT,
+	p.LON,
+	p.CANCELADO,
+	p.APLICADO,
+	p.UPDATED_AT,
+	COALESCE(dc.DESCRIPCION, ''),
+	c.NOMBRE,
+	dc.COBRADOR_ID,
+	fcd.FORMA_COBRO_ID`
+
+// queryPagoSyncPage es la variante del helper generico con JOIN contra
+// MSP_SALDOS_VENTAS para filtrar solo pagos de ventas activas. Misma
+// semantica de cursor (>= con tie-break por pk) que el helper estandar.
+// pagoFromClause arma el FROM completo: pagos cache + saldos cache para
+// filtrar (solo activos), DOCTOS_CC del header del abono para DESCRIPCION
+// y COBRADOR_ID, CLIENTES para NOMBRE_CLIENTE, FORMAS_COBRO_DOCTOS para
+// FORMA_COBRO_ID. El sistema Node legacy hace estos JOINs.
+//
+// Filtro de concepto: el Node solo entrega pagos con CONCEPTO_CC_ID IN
+// (87327, 27969) — cobranza en ruta y abono mostrador. El cache pre-incluye
+// otros conceptos (155, 11, 27968...) que no son cobranza activa y
+// confundirian al cobrador. Lo filtramos a nivel del query del sync.
+const pagoFromClause = `
+FROM MSP_PAGOS_VENTAS p
+JOIN MSP_SALDOS_VENTAS s   ON s.DOCTO_CC_ID = p.DOCTO_CC_ACR_ID
+JOIN DOCTOS_CC dc          ON dc.DOCTO_CC_ID = p.DOCTO_CC_ID
+JOIN CLIENTES c            ON c.CLIENTE_ID = p.CLIENTE_ID
+LEFT JOIN FORMAS_COBRO_DOCTOS fcd
+       ON fcd.NOM_TABLA_DOCTOS = 'DOCTOS_CC' AND fcd.DOCTO_ID = p.DOCTO_CC_ID`
+
+const pagoStatusFilter = `s.SALDO > 0 AND p.CONCEPTO_CC_ID IN (87327, 27969)`
+
+func queryPagoSyncPage(ctx context.Context, q firebird.Querier, spec syncPageSpec) (*sql.Rows, error) {
+	upper := firebird.ToWallClock(spec.upperBound)
+	if spec.cursor.IsZero() {
+		query := `
+SELECT FIRST ? ` + selectPagoColsP + pagoFromClause + `
+WHERE p.ZONA_CLIENTE_ID = ?
+  AND p.UPDATED_AT <= ?
+  AND p.IMPTE_DOCTO_CC_ID > ?
+  AND ` + pagoStatusFilter + `
+ORDER BY p.UPDATED_AT, p.IMPTE_DOCTO_CC_ID`
+		rows, err := q.QueryContext(ctx, query, spec.limit, spec.zonaID, upper, spec.afterID)
+		if err != nil {
+			return nil, firebird.MapError(err)
+		}
+		return rows, nil
+	}
+	cur := firebird.ToWallClock(spec.cursor)
+	query := `
+SELECT FIRST ? ` + selectPagoColsP + pagoFromClause + `
+WHERE p.ZONA_CLIENTE_ID = ?
+  AND p.UPDATED_AT >= ?
+  AND p.UPDATED_AT <= ?
+  AND (p.UPDATED_AT > ? OR (p.UPDATED_AT = ? AND p.IMPTE_DOCTO_CC_ID > ?))
+  AND ` + pagoStatusFilter + `
+ORDER BY p.UPDATED_AT, p.IMPTE_DOCTO_CC_ID`
+	rows, err := q.QueryContext(ctx, query, spec.limit, spec.zonaID, cur, upper, cur, cur, spec.afterID)
+	if err != nil {
+		return nil, firebird.MapError(err)
+	}
+	return rows, nil
 }
 
 // ─── scan helpers ─────────────────────────────────────────────────────────────
@@ -217,6 +311,75 @@ func scanPagoRows(rows *sql.Rows) ([]domain.Pago, error) {
 	var result []domain.Pago
 	for rows.Next() {
 		var rs pagoRowScan
+		if err := rs.scanFrom(rows); err != nil {
+			return nil, firebird.MapError(err)
+		}
+		p, err := rs.hydrate()
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, firebird.MapError(err)
+	}
+	return result, nil
+}
+
+// pagoEnrichedRowScan extiende pagoRowScan con los 4 campos resueltos via
+// JOIN para el endpoint /sync/pagos (cobrador, cliente, forma_cobro).
+type pagoEnrichedRowScan struct {
+	pagoRowScan
+	cobradorRaw      sql.NullString
+	nombreClienteRaw sql.NullString
+	cobradorIDRaw    sql.NullInt64
+	formaCobroIDRaw  sql.NullInt64
+}
+
+func (p *pagoEnrichedRowScan) scanFrom(rows *sql.Rows) error {
+	return rows.Scan(
+		&p.impteID, &p.doctoCCID, &p.acrID, &p.clienteID,
+		&p.zonaRaw, &p.folioRaw, &p.conceptoCCID,
+		&p.fechaRaw, &p.importeRaw, &p.impuestoRaw,
+		&p.latRaw, &p.lonRaw,
+		&p.cancelado, &p.aplicado, &p.updatedAtRaw,
+		&p.cobradorRaw, &p.nombreClienteRaw,
+		&p.cobradorIDRaw, &p.formaCobroIDRaw,
+	)
+}
+
+func (p *pagoEnrichedRowScan) hydrate() (domain.Pago, error) {
+	base, err := p.pagoRowScan.hydrate()
+	if err != nil {
+		return domain.Pago{}, err
+	}
+	return domain.HydratePago(domain.HydratePagoParams{
+		ImpteDoctoCCID: base.ImpteDoctoCCID(),
+		DoctoCCID:      base.DoctoCCID(),
+		DoctoCCAcrID:   base.DoctoCCAcrID(),
+		ClienteID:      base.ClienteID(),
+		ZonaClienteID:  base.ZonaClienteID(),
+		Folio:          base.Folio(),
+		ConceptoCCID:   base.ConceptoCCID(),
+		Fecha:          base.Fecha(),
+		Importe:        base.Importe(),
+		Impuesto:       base.Impuesto(),
+		Lat:            base.Lat(),
+		Lon:            base.Lon(),
+		Cancelado:      base.Cancelado(),
+		Aplicado:       base.Aplicado(),
+		UpdatedAt:      base.UpdatedAt(),
+		Cobrador:       nullableString(p.cobradorRaw),
+		CobradorID:     nullableInt(p.cobradorIDRaw),
+		NombreCliente:  nullableString(p.nombreClienteRaw),
+		FormaCobroID:   nullableInt(p.formaCobroIDRaw),
+	}), nil
+}
+
+func scanEnrichedPagoRows(rows *sql.Rows) ([]domain.Pago, error) {
+	var result []domain.Pago
+	for rows.Next() {
+		var rs pagoEnrichedRowScan
 		if err := rs.scanFrom(rows); err != nil {
 			return nil, firebird.MapError(err)
 		}

@@ -51,9 +51,10 @@ type Venta struct {
 	montoCortoPlazo       *decimal.Decimal
 	precioDeContado       *decimal.Decimal
 	avalOResponsable      string
-	vendedor1ID           *int
-	vendedor2ID           *int
-	vendedor3ID           *int
+	vendedor1             string
+	vendedor2             string
+	vendedor3             string
+	frecPago              string
 }
 
 // HydrateVentaParams carries the persisted shape of a Venta for repository
@@ -96,9 +97,10 @@ type HydrateVentaParams struct {
 	MontoCortoPlazo       *decimal.Decimal
 	PrecioDeContado       *decimal.Decimal
 	AvalOResponsable      string
-	Vendedor1ID           *int
-	Vendedor2ID           *int
-	Vendedor3ID           *int
+	Vendedor1             string
+	Vendedor2             string
+	Vendedor3             string
+	FrecPago              string
 }
 
 // HydrateVenta reconstructs an existing Venta from the JOIN query result.
@@ -135,9 +137,10 @@ func HydrateVenta(p HydrateVentaParams) Venta {
 		montoCortoPlazo:       p.MontoCortoPlazo,
 		precioDeContado:       p.PrecioDeContado,
 		avalOResponsable:      p.AvalOResponsable,
-		vendedor1ID:           p.Vendedor1ID,
-		vendedor2ID:           p.Vendedor2ID,
-		vendedor3ID:           p.Vendedor3ID,
+		vendedor1:             p.Vendedor1,
+		vendedor2:             p.Vendedor2,
+		vendedor3:             p.Vendedor3,
+		frecPago:              p.FrecPago,
 	}
 }
 
@@ -249,11 +252,14 @@ func (v Venta) PrecioDeContado() *decimal.Decimal { return v.precioDeContado }
 // AvalOResponsable returns the guarantor or responsible party.
 func (v Venta) AvalOResponsable() string { return v.avalOResponsable }
 
-// Vendedor1ID returns the first vendedor's ID (display-only attribution).
-func (v Venta) Vendedor1ID() *int { return v.vendedor1ID }
+// Vendedor1 returns the display name of the first vendedor.
+func (v Venta) Vendedor1() string { return v.vendedor1 }
 
-// Vendedor2ID returns the second vendedor's ID (display-only attribution).
-func (v Venta) Vendedor2ID() *int { return v.vendedor2ID }
+// Vendedor2 returns the display name of the second vendedor.
+func (v Venta) Vendedor2() string { return v.vendedor2 }
 
-// Vendedor3ID returns the third vendedor's ID (display-only attribution).
-func (v Venta) Vendedor3ID() *int { return v.vendedor3ID }
+// Vendedor3 returns the display name of the third vendedor.
+func (v Venta) Vendedor3() string { return v.vendedor3 }
+
+// FrecPago returns the payment frequency (SEMANAL/QUINCENAL/MENSUAL).
+func (v Venta) FrecPago() string { return v.frecPago }

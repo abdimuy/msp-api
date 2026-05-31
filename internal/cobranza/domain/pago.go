@@ -30,6 +30,14 @@ type Pago struct {
 	cancelado      bool
 	aplicado       bool
 	updatedAt      time.Time
+
+	// Campos enriquecidos via JOINs en el sync. Las queries simples
+	// (PorVenta/PorCliente/EnRutaPorZona del endpoint admin) los dejan en
+	// zero values; solo SyncPorZona los llena.
+	cobrador      string
+	cobradorID    *int
+	nombreCliente string
+	formaCobroID  *int
 }
 
 // HydratePagoParams carries the persisted shape of a Pago for repository
@@ -51,6 +59,12 @@ type HydratePagoParams struct {
 	Cancelado      bool
 	Aplicado       bool
 	UpdatedAt      time.Time
+
+	// Campos enriquecidos (solo /sync/pagos los llena).
+	Cobrador      string
+	CobradorID    *int
+	NombreCliente string
+	FormaCobroID  *int
 }
 
 // HydratePago reconstructs an existing Pago from persistent storage. It does
@@ -73,8 +87,27 @@ func HydratePago(p HydratePagoParams) Pago {
 		cancelado:      p.Cancelado,
 		aplicado:       p.Aplicado,
 		updatedAt:      p.UpdatedAt,
+		cobrador:       p.Cobrador,
+		cobradorID:     p.CobradorID,
+		nombreCliente:  p.NombreCliente,
+		formaCobroID:   p.FormaCobroID,
 	}
 }
+
+// Cobrador returns DOCTOS_CC.DESCRIPCION (free-text cobrador name, what the
+// Node legacy used) — populated only by /sync/pagos via JOIN.
+func (p Pago) Cobrador() string { return p.cobrador }
+
+// CobradorID returns COBRADORES.COBRADOR_ID — populated only by /sync/pagos.
+func (p Pago) CobradorID() *int { return p.cobradorID }
+
+// NombreCliente returns CLIENTES.NOMBRE — populated only by /sync/pagos.
+func (p Pago) NombreCliente() string { return p.nombreCliente }
+
+// FormaCobroID returns FORMAS_COBRO_DOCTOS.FORMA_COBRO_ID — populated only by
+// /sync/pagos. Distinct from ConceptoCCID; this maps to "efectivo / cheque /
+// transferencia / etc." in the mobile app.
+func (p Pago) FormaCobroID() *int { return p.formaCobroID }
 
 // ─── Getters ────────────────────────────────────────────────────────────────
 

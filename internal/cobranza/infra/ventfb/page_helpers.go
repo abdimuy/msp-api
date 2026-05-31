@@ -84,11 +84,16 @@ ORDER BY UPDATED_AT, ` + spec.pkColumn
 		return rows, nil
 	}
 	cur := firebird.ToWallClock(spec.cursor)
+	// UPDATED_AT >= cursor (no estricto): habilita el tie-break por pk para
+	// el caso comun en backfills donde miles de rows comparten el mismo
+	// UPDATED_AT. Sin esto, una primera pagina llena con max=T1 hace que la
+	// segunda llamada con cursor=T1 no encuentre ninguno (UPDATED_AT > T1
+	// excluiria todos los rows con UPDATED_AT == T1 que no entraron).
 	query := `
 SELECT FIRST ? ` + spec.columns + `
 FROM ` + spec.table + `
 WHERE ZONA_CLIENTE_ID = ?
-  AND UPDATED_AT > ?
+  AND UPDATED_AT >= ?
   AND UPDATED_AT <= ?
   AND (UPDATED_AT > ? OR (UPDATED_AT = ? AND ` + spec.pkColumn + ` > ?))
 ORDER BY UPDATED_AT, ` + spec.pkColumn

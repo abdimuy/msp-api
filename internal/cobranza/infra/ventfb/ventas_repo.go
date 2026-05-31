@@ -36,12 +36,12 @@ func NewVentasRepo(pool *firebird.Pool) *VentasRepo {
 // Order matches ventaRowScan.scanFrom one-to-one.
 //
 // Notes:
-//   - FREC_PAGO does NOT exist in LIBRES_CARGOS_CC (the Microsip side has no
-//     such column); the mobile app derives it from the contract terms or
-//     defaults to SEMANAL. The DTO surfaces an empty string so the contract
-//     can be populated later without a wire break.
-//   - ESTADO comes from joining DIRS_CLIENTES.ESTADO_ID against the ESTADOS
-//     catalog table to surface the human-readable name.
+//   - VENDEDOR_1/2/3 y FREC_PAGO se resuelven desde LISTAS_ATRIBUTOS a su
+//     VALOR_DESPLEGADO (texto humano). LIBRES_CARGOS_CC guarda solo los IDs
+//     (l.VENDEDOR_1/2/3 son IDs de atributo, l.FORMA_DE_PAGO es el ID que
+//     mapea a SEMANAL/QUINCENAL/MENSUAL). El sistema Node legacy hace
+//     exactamente estos JOINs — los respetamos para no romper la app.
+//   - ESTADO se resuelve desde el catalogo ESTADOS via DIRS_CLIENTES.ESTADO_ID.
 const selectVentaCols = `
 	s.DOCTO_CC_ID, s.DOCTO_PV_ID, s.CLIENTE_ID, s.ZONA_CLIENTE_ID, s.FOLIO,
 	s.FECHA_CARGO, s.PRECIO_TOTAL, s.TOTAL_IMPORTE, s.IMPTE_REST,
@@ -53,17 +53,24 @@ const selectVentaCols = `
 	d.CALLE, d.POBLACION, e.NOMBRE, d.TELEFONO1,
 	l.PARCIALIDAD, l.ENGANCHE, l.TIEMPO_A_CORTO_PLAZOMESES,
 	l.MONTO_A_CORTO_PLAZO, l.PRECIO_DE_CONTADO, l.AVAL_O_RESPONSABLE,
-	l.VENDEDOR_1, l.VENDEDOR_2, l.VENDEDOR_3`
+	UPPER(lv1.VALOR_DESPLEGADO),
+	UPPER(lv2.VALOR_DESPLEGADO),
+	UPPER(lv3.VALOR_DESPLEGADO),
+	UPPER(lfp.VALOR_DESPLEGADO)`
 
 const ventaFromClause = `
 FROM MSP_SALDOS_VENTAS s
-JOIN CLIENTES c              ON c.CLIENTE_ID       = s.CLIENTE_ID
-LEFT JOIN ZONAS_CLIENTES z   ON z.ZONA_CLIENTE_ID  = s.ZONA_CLIENTE_ID
-LEFT JOIN COBRADORES cob     ON cob.COBRADOR_ID    = c.COBRADOR_ID
-LEFT JOIN DIRS_CLIENTES d    ON d.CLIENTE_ID       = s.CLIENTE_ID AND d.ES_DIR_PPAL = 'S'
-LEFT JOIN ESTADOS e          ON e.ESTADO_ID        = d.ESTADO_ID
-LEFT JOIN LIBRES_CARGOS_CC l ON l.DOCTO_CC_ID      = s.DOCTO_CC_ID
-LEFT JOIN DOCTOS_PV dc       ON dc.DOCTO_PV_ID     = s.DOCTO_PV_ID`
+JOIN CLIENTES c                ON c.CLIENTE_ID       = s.CLIENTE_ID
+LEFT JOIN ZONAS_CLIENTES z     ON z.ZONA_CLIENTE_ID  = s.ZONA_CLIENTE_ID
+LEFT JOIN COBRADORES cob       ON cob.COBRADOR_ID    = c.COBRADOR_ID
+LEFT JOIN DIRS_CLIENTES d      ON d.CLIENTE_ID       = s.CLIENTE_ID AND d.ES_DIR_PPAL = 'S'
+LEFT JOIN ESTADOS e            ON e.ESTADO_ID        = d.ESTADO_ID
+LEFT JOIN LIBRES_CARGOS_CC l   ON l.DOCTO_CC_ID      = s.DOCTO_CC_ID
+LEFT JOIN LISTAS_ATRIBUTOS lv1 ON lv1.LISTA_ATRIB_ID = l.VENDEDOR_1
+LEFT JOIN LISTAS_ATRIBUTOS lv2 ON lv2.LISTA_ATRIB_ID = l.VENDEDOR_2
+LEFT JOIN LISTAS_ATRIBUTOS lv3 ON lv3.LISTA_ATRIB_ID = l.VENDEDOR_3
+LEFT JOIN LISTAS_ATRIBUTOS lfp ON lfp.LISTA_ATRIB_ID = l.FORMA_DE_PAGO
+LEFT JOIN DOCTOS_PV dc         ON dc.DOCTO_PV_ID     = s.DOCTO_PV_ID`
 
 // SyncPorZona returns a page of enriched ventas for incremental sync.
 func (r *VentasRepo) SyncPorZona(
@@ -95,6 +102,20 @@ type ventaSyncSpec struct {
 // queryVentaSyncPage builds and executes the enriched venta page query. Same
 // cursor-and-tie-break semantics as querySyncPage in page_helpers.go but with
 // the JOIN baked in.
+//
+// Solo devuelve:
+//   - cargos con saldo activo (SALDO > 0)
+//   - tombstones de cancelación (CARGO_CANCELADO = 'S') para que el cliente
+//     pueda borrar la venta de su cache local
+//
+// Los cargos saldados (SALDO ≤ 0 sin cancelar) NO se devuelven — la ruta
+// del cobrador no los necesita. Trade-off: si una venta se salda
+// silenciosamente, la app mantendrá el row local hasta que el usuario
+// dispare un resync limpio (cursor = null). Para el ciclo normal de
+// cobranza no es problema porque las transiciones de pago siempre suben
+// el saldo o lo bajan en una sola operación que la app procesa.
+const ventaSyncStatusFilter = `(s.SALDO > 0 OR s.CARGO_CANCELADO = 'S')`
+
 func queryVentaSyncPage(ctx context.Context, q firebird.Querier, spec ventaSyncSpec) (*sql.Rows, error) {
 	upper := firebird.ToWallClock(spec.upperBound)
 	if spec.cursor.IsZero() {
@@ -103,6 +124,7 @@ SELECT FIRST ? ` + selectVentaCols + ventaFromClause + `
 WHERE s.ZONA_CLIENTE_ID = ?
   AND s.UPDATED_AT <= ?
   AND s.DOCTO_CC_ID > ?
+  AND ` + ventaSyncStatusFilter + `
 ORDER BY s.UPDATED_AT, s.DOCTO_CC_ID`
 		rows, err := q.QueryContext(ctx, query, spec.limit, spec.zonaID, upper, spec.afterID)
 		if err != nil {
@@ -111,12 +133,16 @@ ORDER BY s.UPDATED_AT, s.DOCTO_CC_ID`
 		return rows, nil
 	}
 	cur := firebird.ToWallClock(spec.cursor)
+	// UPDATED_AT >= cursor (no estricto) habilita el tie-break por
+	// DOCTO_CC_ID. Ver page_helpers.queryVentaSyncPage para el detalle del
+	// caso que motiva esta forma.
 	query := `
 SELECT FIRST ? ` + selectVentaCols + ventaFromClause + `
 WHERE s.ZONA_CLIENTE_ID = ?
-  AND s.UPDATED_AT > ?
+  AND s.UPDATED_AT >= ?
   AND s.UPDATED_AT <= ?
   AND (s.UPDATED_AT > ? OR (s.UPDATED_AT = ? AND s.DOCTO_CC_ID > ?))
+  AND ` + ventaSyncStatusFilter + `
 ORDER BY s.UPDATED_AT, s.DOCTO_CC_ID`
 	rows, err := q.QueryContext(ctx, query, spec.limit, spec.zonaID, cur, upper, cur, cur, spec.afterID)
 	if err != nil {
@@ -174,9 +200,10 @@ type ventaRowScan struct {
 	montoCortoPlazoRaw       any
 	precioDeContadoRaw       any
 	avalOResponsableRaw      sql.NullString
-	vendedor1IDRaw           sql.NullInt64
-	vendedor2IDRaw           sql.NullInt64
-	vendedor3IDRaw           sql.NullInt64
+	vendedor1Raw             sql.NullString
+	vendedor2Raw             sql.NullString
+	vendedor3Raw             sql.NullString
+	frecPagoRaw              sql.NullString
 }
 
 func (s *ventaRowScan) scanFrom(r scannable) error {
@@ -191,7 +218,8 @@ func (s *ventaRowScan) scanFrom(r scannable) error {
 		&s.calleRaw, &s.ciudadRaw, &s.estadoRaw, &s.telefonoRaw,
 		&s.parcialidadRaw, &s.engancheRaw, &s.tiempoCortoPlazoMesesRaw,
 		&s.montoCortoPlazoRaw, &s.precioDeContadoRaw, &s.avalOResponsableRaw,
-		&s.vendedor1IDRaw, &s.vendedor2IDRaw, &s.vendedor3IDRaw,
+		&s.vendedor1Raw, &s.vendedor2Raw, &s.vendedor3Raw,
+		&s.frecPagoRaw,
 	)
 }
 
@@ -246,9 +274,10 @@ func (s *ventaRowScan) hydrate() (domain.Venta, error) {
 		MontoCortoPlazo:       contract.montoCortoPlazo,
 		PrecioDeContado:       contract.precioDeContado,
 		AvalOResponsable:      nullableString(s.avalOResponsableRaw),
-		Vendedor1ID:           nullableInt(s.vendedor1IDRaw),
-		Vendedor2ID:           nullableInt(s.vendedor2IDRaw),
-		Vendedor3ID:           nullableInt(s.vendedor3IDRaw),
+		Vendedor1:             nullableString(s.vendedor1Raw),
+		Vendedor2:             nullableString(s.vendedor2Raw),
+		Vendedor3:             nullableString(s.vendedor3Raw),
+		FrecPago:              nullableString(s.frecPagoRaw),
 	}), nil
 }
 
