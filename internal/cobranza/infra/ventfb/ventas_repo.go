@@ -117,17 +117,26 @@ type ventaSyncSpec struct {
 //     silenciosos no se mandan.
 //
 //   - desde set (sync del cobrador con FECHA_CARGA_INICIAL): activos +
-//     tombstones + saldados con FECHA_ULT_PAGO >= desde. Mismo patrón que
-//     SaldosRepo.EnRutaPorZona — la app conserva la venta saldada mientras
-//     su último pago caiga en la ventana del cobrador, y se propagan
-//     también las ventas que acaban de saldarse cuando el pago final cae
-//     dentro de esa misma ventana.
+//     tombstones + saldadas cuyo último pago de cobranza activa
+//     (CONCEPTO_CC_ID IN 87327 cobranza en ruta, 27969 abono mostrador)
+//     cae dentro de la ventana. NO basta FECHA_ULT_PAGO porque esa
+//     columna avanza con pagos administrativos (anticipos, condonaciones,
+//     ajustes) que /sync/pagos ya filtra fuera — incluirlas aquí
+//     desperdiciaba bandwidth porque el cliente terminaba borrándolas en
+//     mergeVentas. El filtro replica exacto el de /sync/pagos
+//     (pagos_repo.pagoConceptoFilter) vía EXISTS sobre MSP_PAGOS_VENTAS,
+//     que se apoya en IDX_MSP_PAGOS_CARGO para resolver el lookup.
 func queryVentaSyncPage(ctx context.Context, q firebird.Querier, spec ventaSyncSpec) (*sql.Rows, error) {
 	upper := firebird.ToWallClock(spec.upperBound)
 	statusFilter := `(s.SALDO > 0 OR s.CARGO_CANCELADO = 'S')`
 	var statusArgs []any
 	if !spec.desde.IsZero() {
-		statusFilter = `(s.SALDO > 0 OR s.CARGO_CANCELADO = 'S' OR s.FECHA_ULT_PAGO >= ?)`
+		statusFilter = `(s.SALDO > 0 OR s.CARGO_CANCELADO = 'S' OR EXISTS (
+		SELECT 1 FROM MSP_PAGOS_VENTAS p
+		WHERE p.DOCTO_CC_ACR_ID = s.DOCTO_CC_ID
+		  AND p.FECHA          >= ?
+		  AND p.CONCEPTO_CC_ID IN (87327, 27969)
+	))`
 		statusArgs = []any{firebird.ToWallClock(spec.desde)}
 	}
 	if spec.cursor.IsZero() {

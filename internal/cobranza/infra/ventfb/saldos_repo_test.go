@@ -170,6 +170,61 @@ func insertPagoImporte(
 	require.NoError(t, err, "insertPagoImporte: INSERT IMPORTES_DOCTOS_CC pago")
 }
 
+// insertPagoNoEnRutaImporte inserts a pago crediting cargoID whose header
+// carries CONCEPTO_CC_ID=155 (condonación). Concepto crítico para reproducir
+// la asimetría que motiva el fix: MSP_RECOMPUTE_SALDO_VENTA (migración
+// 000015) cuenta este concepto dentro de FECHA_ULT_PAGO — por lo que el
+// filtro viejo `s.FECHA_ULT_PAGO >= ?` lo dejaba colarse — pero /sync/pagos
+// lo excluye (filtro (87327, 27969)), de modo que la venta saldada por
+// condonación viajaba sin pago asociado y la app la borraba en
+// mergeVentas. El filtro nuevo basado en EXISTS sobre MSP_PAGOS_VENTAS
+// (mismo concepto que /sync/pagos) debe rechazarla.
+func insertPagoNoEnRutaImporte(
+	t *testing.T,
+	q firebird.Querier,
+	clienteID int,
+	cargoID int,
+	importe decimal.Decimal,
+) {
+	t.Helper()
+	abonoID := nextMicrosipID(t, q)
+	now := time.Now()
+	_, err := q.ExecContext(
+		context.Background(),
+		`INSERT INTO DOCTOS_CC
+		  (DOCTO_CC_ID, CONCEPTO_CC_ID, FOLIO, NATURALEZA_CONCEPTO,
+		   SUCURSAL_ID, FECHA, CLIENTE_ID, CLAVE_CLIENTE,
+		   TIPO_CAMBIO, DESCRIPCION,
+		   SISTEMA_ORIGEN, APLICADO, ESTATUS, ESTATUS_ANT,
+		   CONTABILIZADO_GYP, ES_CFD, TIENE_ANTICIPO, CFDI_CERTIFICADO, ENVIADO,
+		   INTEG_BA, CONTABILIZADO_BA, CANCELADO)
+		VALUES (?, 155, ?, 'R',
+		        225490, ?, ?, '0001',
+		        1, 'Condonacion prueba (fuera filtro cobranza /sync/pagos)',
+		        'CC', 'S', 'N', 'N',
+		        'N', 'N', 'N', 'N', 'N',
+		        'N', 'N', 'N')`,
+		abonoID, "COND-ADM", now, clienteID,
+	)
+	require.NoError(t, err, "insertPagoNoEnRutaImporte: INSERT DOCTOS_CC abono")
+
+	impteID := nextMicrosipID(t, q)
+	_, err = q.ExecContext(
+		context.Background(),
+		`INSERT INTO IMPORTES_DOCTOS_CC
+		  (IMPTE_DOCTO_CC_ID, DOCTO_CC_ID, FECHA,
+		   TIPO_IMPTE, DOCTO_CC_ACR_ID,
+		   IMPORTE, IMPUESTO,
+		   APLICADO, ESTATUS, CANCELADO)
+		VALUES (?, ?, ?,
+		        'R', ?,
+		        ?, 0,
+		        'N', 'N', 'N')`,
+		impteID, abonoID, now, cargoID, importe,
+	)
+	require.NoError(t, err, "insertPagoNoEnRutaImporte: INSERT IMPORTES_DOCTOS_CC")
+}
+
 // buildCobranzaService builds a real Service with Firebird-backed repos.
 func buildCobranzaService(t *testing.T, pool *firebird.Pool) *cobranzaapp.Service {
 	t.Helper()

@@ -114,6 +114,13 @@ func TestE2E_VentasRepo_SyncPorZona_ReturnsEnrichedRow(t *testing.T) {
 //  3. cursor!=zero, desde<FUP  → venta saldada SÍ viaja (paginación/incremental).
 //  4. cursor!=zero, desde=zero → venta saldada NO viaja (paginación legacy:
 //     evita que saldadas históricas se cuelen en páginas 2+).
+//  5. cursor=zero, desde<FUP, pero la venta se saldó con una
+//     condonación (CONCEPTO_CC_ID=155). La condonación SÍ actualiza
+//     FECHA_ULT_PAGO (filtro 87327, 155 en MSP_RECOMPUTE_SALDO_VENTA)
+//     pero NO aparece en /sync/pagos (filtro 87327, 27969). El filtro
+//     viejo (`FECHA_ULT_PAGO >= ?`) la dejaba colarse; el nuevo
+//     (EXISTS sobre MSP_PAGOS_VENTAS con el mismo concepto que pagos)
+//     debe rechazarla.
 //
 //nolint:paralleltest // serial: shares rollback-only tx.
 func TestE2E_VentasRepo_SyncPorZona_SaldadaConDesde(t *testing.T) {
@@ -127,7 +134,8 @@ func TestE2E_VentasRepo_SyncPorZona_SaldadaConDesde(t *testing.T) {
 		clienteID, zonaID := seedZonedCliente(t, q)
 
 		importe := decimal.RequireFromString("1500.00")
-		cargoID := insertCargoDoctosCC(t, q, clienteID, "VENT-SLD-1", importe)
+		// FOLIO en DOCTOS_CC es CHAR(9); "VENT-SLD" cabe exacto.
+		cargoID := insertCargoDoctosCC(t, q, clienteID, "VENT-SLD", importe)
 		// Pago completo: SALDO queda en 0, FECHA_ULT_PAGO ≈ now.
 		insertPagoImporte(t, q, cargoID, importe)
 
@@ -170,6 +178,30 @@ func TestE2E_VentasRepo_SyncPorZona_SaldadaConDesde(t *testing.T) {
 		require.NoError(t, err)
 		assert.Nil(t, findVenta(pageIncrLegacy.Items, cargoID),
 			"sin desde, las saldadas no deben colarse en paginación")
+
+		// Caso 5: venta saldada por una condonación (CONCEPTO_CC_ID=155).
+		// Concepto que SÍ actualiza FECHA_ULT_PAGO (filtro 87327, 155 en
+		// MSP_RECOMPUTE_SALDO_VENTA) pero que NO aparece en /sync/pagos
+		// (filtro 87327, 27969). El filtro viejo `FECHA_ULT_PAGO >= ?`
+		// la dejaba colarse y la app la borraba en mergeVentas — el
+		// EXISTS contra MSP_PAGOS_VENTAS debe rechazarla en el backend.
+		importeAdm := decimal.RequireFromString("750.00")
+		cargoAdm := insertCargoDoctosCC(t, q, clienteID, "VENT-ADM", importeAdm)
+		insertPagoNoEnRutaImporte(t, q, clienteID, cargoAdm, importeAdm)
+
+		saldoAdm, err := saldoRepo.PorCargo(ctx, cargoAdm)
+		require.NoError(t, err)
+		require.True(t, saldoAdm.Saldo().IsZero(),
+			"prerequisito caso 5: saldo debe ser 0 tras la condonación; got=%s", saldoAdm.Saldo())
+		require.NotNil(t, saldoAdm.FechaUltPago(),
+			"prerequisito caso 5: FECHA_ULT_PAGO debe quedar set (la condonación cuenta para FUP)")
+		require.True(t, saldoAdm.FechaUltPago().After(desde),
+			"prerequisito caso 5: FECHA_ULT_PAGO debe caer dentro de la ventana `desde`")
+
+		pageAdm, err := repo.SyncPorZona(ctx, zonaID, time.Time{}, 0, 5000, desde)
+		require.NoError(t, err)
+		assert.Nil(t, findVenta(pageAdm.Items, cargoAdm),
+			"venta saldada por condonación NO debe viajar — el filtro EXISTS exige pago de cobranza activa")
 	})
 }
 
