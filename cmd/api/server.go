@@ -171,7 +171,11 @@ func provideRootHandler(
 			venthttp.MountRouter(r, ventasSvc)
 		})
 
-		// Cobranza read endpoints — authn only; no idempotency (GET routes).
+		// Cobranza endpoints — authn only. Read (saldos, pagos, sync) plus
+		// pago write (CrearPago, imágenes) share one chi router + huma.API.
+		// Idempotency for POST /pagos is enforced end-to-end via body.id as
+		// the canonical key (the repo INSERT trips DUPLICATE_KEY on retry and
+		// the handler falls back to the idempotent fast-path).
 		r.Route("/cobranza", func(r chi.Router) {
 			r.Use(authn.Handler)
 			cobranzahttp.MountReadRouter(r, cobranzaSvc)

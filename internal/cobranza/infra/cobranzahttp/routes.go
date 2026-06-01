@@ -38,14 +38,24 @@ func newHumaConfig(title string) huma.Config {
 	return cfg
 }
 
-// MountReadRouter mounts the read endpoints under the supplied chi router.
-// The router is expected to have authn already applied upstream.
+// MountReadRouter mounts the read + write endpoints (saldos, pagos, sync, plus
+// pago creation/imágenes) under the supplied chi router. The router is
+// expected to have authn already applied upstream.
+//
+// The streaming GET imagen endpoint is wired as a raw chi handler (not Huma)
+// to support binary streaming with ETag caching.
+//
 // Returns the constructed huma.API for testing / introspection.
 func MountReadRouter(r chi.Router, svc *cobranzaapp.Service) huma.API {
 	cfg := newHumaConfig("MSP API · Cobranza")
 	api := humachi.New(r, cfg)
 	h := NewHandlers(svc, nil, nil)
 	registerReadOperations(api, h)
+	registerPagoWriteOperations(api, h)
+	// GET imagen is a raw chi route: Huma's response model assumes structured
+	// payloads; streaming arbitrary-size binary blobs with ETag + Cache-Control
+	// is cleaner via http.ResponseWriter.
+	mountObtenerImagenPago(r, h)
 	return api
 }
 
@@ -135,4 +145,37 @@ func registerAdminOperations(api huma.API, h *Handlers) {
 	huma.Register(api, op(tag, "cobranza-admin-errors", http.MethodGet, "/errors",
 		"Errores del caché de saldos",
 		"Devuelve los errores más recientes registrados en MSP_SALDOS_ERRORS por los triggers y el procedimiento de recompute."), h.Errors)
+
+	huma.Register(api, op(tag, "cobranza-admin-listar-pendientes", http.MethodGet, "/pagos/pendientes",
+		"Listar pagos pendientes",
+		"Lista pagos con ESTADO='P' que el retry worker está drenando."), h.ListarPendientes)
+
+	huma.Register(api, op(tag, "cobranza-admin-aplicar-pago", http.MethodPost, "/pagos/{id}/aplicar",
+		"Forzar aplicación de un pago",
+		"Ejecuta AplicarPago manualmente sobre un pago pendiente."), h.AplicarPagoForzar)
+}
+
+// registerPagoWriteOperations declares the pago write + imagen endpoints.
+func registerPagoWriteOperations(api huma.API, h *Handlers) {
+	const tag = "cobranza"
+
+	huma.Register(api, op(tag, "cobranza-crear-pago", http.MethodPost, "/pagos",
+		"Crear pago de cobranza",
+		"Persiste un pago en el outbox MSP_PAGOS_RECIBIDOS y trata de aplicarlo inmediato a Microsip. ID del cliente es la idempotency key end-to-end."), h.CrearPago)
+
+	huma.Register(api, op(tag, "cobranza-obtener-pago-recibido", http.MethodGet, "/pagos/{id}",
+		"Obtener pago",
+		"Devuelve un pago de la outbox por UUID."), h.ObtenerPagoRecibido)
+
+	huma.Register(api, op(tag, "cobranza-listar-imagenes-pago", http.MethodGet, "/pagos/{id}/imagenes",
+		"Listar comprobantes",
+		"Lista los comprobantes adjuntos al pago."), h.ListarImagenesPago)
+
+	huma.Register(api, op(tag, "cobranza-adjuntar-imagen-pago", http.MethodPost, "/pagos/{id}/imagenes",
+		"Adjuntar comprobante",
+		"Multipart upload de un comprobante (PDF o imagen) al pago."), h.AdjuntarImagenPago)
+
+	huma.Register(api, op(tag, "cobranza-eliminar-imagen-pago", http.MethodDelete, "/pagos/{id}/imagenes/{img_id}",
+		"Eliminar comprobante",
+		"Borra un comprobante del pago."), h.EliminarImagenPago)
 }
