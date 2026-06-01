@@ -1,0 +1,33 @@
+# 2026/06/01 16:20:13.790362 [TestProperty_NewPagoRecibido_AcceptsValidInputs] [rapid] draw cargoID: 1
+# 2026/06/01 16:20:13.790388 [TestProperty_NewPagoRecibido_AcceptsValidInputs] [rapid] draw clienteID: 1
+# 2026/06/01 16:20:13.790403 [TestProperty_NewPagoRecibido_AcceptsValidInputs] [rapid] draw cobradorID: 1
+# 2026/06/01 16:20:13.790415 [TestProperty_NewPagoRecibido_AcceptsValidInputs] [rapid] draw formaCobroID: 1
+# 2026/06/01 16:20:13.790438 [TestProperty_NewPagoRecibido_AcceptsValidInputs] [rapid] draw cobrador: " "
+# 2026/06/01 16:20:13.790454 [TestProperty_NewPagoRecibido_AcceptsValidInputs] [rapid] draw cents: 1
+# 2026/06/01 16:20:13.790463 [TestProperty_NewPagoRecibido_AcceptsValidInputs] [rapid] draw secOffset: 0
+# 2026/06/01 16:20:13.790474 [TestProperty_NewPagoRecibido_AcceptsValidInputs] expected valid inputs to be accepted, got: pago_cobrador_requerido: el nombre del cobrador es obligatorio
+# 
+v0.4.8#18370346691844122163
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
