@@ -26,6 +26,7 @@ type fakePagosRecibidosRepo struct {
 	findErr   error // if set, FindByID returns this error always
 	lockErr   error // if set, LockByID returns this error always
 	updateErr error // if set, Update returns this error always
+	listErr   error // if set, ListPendientes returns this error always
 	updateCnt int   // counts how many times Update has been called
 }
 
@@ -79,6 +80,9 @@ func (f *fakePagosRecibidosRepo) LockByID(_ context.Context, id uuid.UUID) error
 }
 
 func (f *fakePagosRecibidosRepo) ListPendientes(_ context.Context, maxIntentos, limit int) ([]*domain.PagoRecibido, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
 	var out []*domain.PagoRecibido
 	for _, p := range f.rows {
 		if p.IsPendiente() && p.Intentos() < maxIntentos {
