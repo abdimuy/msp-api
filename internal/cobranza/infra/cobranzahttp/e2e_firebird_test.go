@@ -278,7 +278,7 @@ func TestE2E_Cobranza_HTTP_PorVenta_HappyPath(t *testing.T) {
 		// The PorVenta endpoint requires a DOCTO_PV_ID. Since this cargo was
 		// inserted directly (no PV document), use PorCargo path via the Saldo.
 		// For HTTP happy-path we query by cargo directly via the reconcile report.
-		svc := cobranzaapp.NewService(repo, cobranzaventfb.NewPagosRepo(pool), cobranzaventfb.NewVentasRepo(pool), cobranzaoutbound.ProductionClock{})
+		svc := cobranzaapp.NewService(repo, cobranzaventfb.NewPagosRepo(pool), cobranzaventfb.NewVentasRepo(pool), cobranzaoutbound.ProductionClock{}, nil, nil, nil, nil, nil, nil)
 		reconciler := buildReconcilerForCargos(pool, repo, cargoID)
 		errorsRepo := cobranzaventfb.NewErrorsRepo(pool)
 
@@ -309,7 +309,7 @@ func TestE2E_Cobranza_HTTP_PermDenied(t *testing.T) {
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		repo := cobranzaventfb.NewSaldosRepo(pool)
-		svc := cobranzaapp.NewService(repo, cobranzaventfb.NewPagosRepo(pool), cobranzaventfb.NewVentasRepo(pool), cobranzaoutbound.ProductionClock{})
+		svc := cobranzaapp.NewService(repo, cobranzaventfb.NewPagosRepo(pool), cobranzaventfb.NewVentasRepo(pool), cobranzaoutbound.ProductionClock{}, nil, nil, nil, nil, nil, nil)
 
 		// User with NO cobranza permissions.
 		cu := auth.CurrentUser{
@@ -341,7 +341,7 @@ func TestE2E_Cobranza_HTTP_VentanaDias_TooLarge(t *testing.T) {
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		repo := cobranzaventfb.NewSaldosRepo(pool)
-		svc := cobranzaapp.NewService(repo, cobranzaventfb.NewPagosRepo(pool), cobranzaventfb.NewVentasRepo(pool), cobranzaoutbound.ProductionClock{})
+		svc := cobranzaapp.NewService(repo, cobranzaventfb.NewPagosRepo(pool), cobranzaventfb.NewVentasRepo(pool), cobranzaoutbound.ProductionClock{}, nil, nil, nil, nil, nil, nil)
 
 		cu := e2eCobranzaUser()
 		r := buildReadRouter(ctx, svc, cu)
@@ -371,7 +371,7 @@ func TestE2E_Cobranza_HTTP_Reconcile_Admin(t *testing.T) {
 
 		repo := cobranzaventfb.NewSaldosRepo(pool)
 		errorsRepo := cobranzaventfb.NewErrorsRepo(pool)
-		svc := cobranzaapp.NewService(repo, cobranzaventfb.NewPagosRepo(pool), cobranzaventfb.NewVentasRepo(pool), cobranzaoutbound.ProductionClock{})
+		svc := cobranzaapp.NewService(repo, cobranzaventfb.NewPagosRepo(pool), cobranzaventfb.NewVentasRepo(pool), cobranzaoutbound.ProductionClock{}, nil, nil, nil, nil, nil, nil)
 		// Empty cargo list — this test only asserts the endpoint returns 200
 		// with a well-formed report. Scoping the lister keeps the test fast.
 		reconciler := buildReconcilerForCargos(pool, repo)
@@ -406,7 +406,7 @@ func TestE2E_Cobranza_HTTP_ResumenZonas(t *testing.T) {
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		repo := cobranzaventfb.NewSaldosRepo(pool)
-		svc := cobranzaapp.NewService(repo, cobranzaventfb.NewPagosRepo(pool), cobranzaventfb.NewVentasRepo(pool), cobranzaoutbound.ProductionClock{})
+		svc := cobranzaapp.NewService(repo, cobranzaventfb.NewPagosRepo(pool), cobranzaventfb.NewVentasRepo(pool), cobranzaoutbound.ProductionClock{}, nil, nil, nil, nil, nil, nil)
 
 		cu := e2eCobranzaUser()
 		r := buildReadRouter(ctx, svc, cu)

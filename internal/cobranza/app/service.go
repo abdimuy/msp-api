@@ -1,7 +1,9 @@
-// Package app contains the cobranza module's query services. It depends only
-// on the cobranza domain, the module's outbound ports, and the standard
-// library. Wiring (database pool, http handlers) lives in infra; cross-module
-// surfaces live in the cobranza root package.
+// Package app contains the cobranza module's query and command services.
+// It depends only on the cobranza domain, the module's outbound ports, and
+// the standard library. Wiring (database pool, http handlers) lives in infra;
+// cross-module surfaces live in the cobranza root package.
+//
+//nolint:misspell // cobranza vocabulary is Spanish (dependencias, cobrador, etc.) per project convention.
 package app
 
 import (
@@ -10,7 +12,20 @@ import (
 
 	"github.com/abdimuy/msp-api/internal/cobranza/domain"
 	"github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
+	"github.com/abdimuy/msp-api/internal/platform/apperror"
+	"github.com/abdimuy/msp-api/internal/platform/firebird"
 )
+
+// errWriteDepsMissing is returned by write-side methods when the Service was
+// constructed without the necessary infra deps (Firebird txMgr, repo, etc.).
+// Indicates a wiring bug — should never happen in production where the
+// composition root passes real instances.
+func errWriteDepsMissing(dep string) error {
+	return apperror.NewInternal(
+		"cobranza_write_deps_missing",
+		"dependencias de escritura no inicializadas",
+	).WithField("dep", dep)
+}
 
 // DefaultVentanaDias is the value the HTTP handler supplies when neither
 // `desde` nor `ventana_dias` is provided. 7 days matches the cobrador's
@@ -28,26 +43,72 @@ const (
 	MaxSyncLimit     = 5000
 )
 
-// Service is the cobranza module's query surface. Handlers depend on
-// *Service; everything Service depends on goes through the outbound ports.
+// Service is the cobranza module's query and command surface. Handlers depend
+// on *Service; everything Service depends on goes through the outbound ports.
+//
+// Write-side dependencies (pagosRecibidos, pagosImagenes, microsipPago,
+// storage, imageProc, txMgr) may be nil for tests that only exercise the
+// read surface; methods that need them check for nil and return
+// apperror.NewInternal so wiring bugs surface at the boundary instead of
+// nil-deref'ing.
 type Service struct {
 	saldos outbound.SaldosRepo
 	pagos  outbound.PagosRepo
 	ventas outbound.VentasRepo
 	clock  outbound.Clock
+
+	pagosRecibidos outbound.PagosRecibidosRepo
+	pagosImagenes  outbound.PagosImagenesRepo
+	microsipPago   outbound.MicrosipPagoWriter
+	storage        outbound.StorageProvider
+	imageProc      outbound.ImageProcessor
+	txMgr          *firebird.TxManager
 }
 
 // NewService builds a Service wired against the given ports. ventas may be
 // nil for tests that only exercise the saldos/pagos surface; the sync-ventas
 // endpoint will panic if called without a wired VentasRepo (caught by the
 // fx wiring at startup).
+//
+// The write-side ports (pagosRecibidos, pagosImagenes, microsipPago, storage,
+// imageProc, txMgr) may be nil; CrearPago/AplicarPago/imagen handlers will
+// return ErrWriteDepsMissing if invoked without them. Read-only tests can
+// therefore continue to call NewService with the original signature by
+// passing trailing nils.
 func NewService(
 	saldos outbound.SaldosRepo,
 	pagos outbound.PagosRepo,
 	ventas outbound.VentasRepo,
 	clock outbound.Clock,
+	pagosRecibidos outbound.PagosRecibidosRepo,
+	pagosImagenes outbound.PagosImagenesRepo,
+	microsipPago outbound.MicrosipPagoWriter,
+	storage outbound.StorageProvider,
+	imageProc outbound.ImageProcessor,
+	txMgr *firebird.TxManager,
 ) *Service {
-	return &Service{saldos: saldos, pagos: pagos, ventas: ventas, clock: clock}
+	return &Service{
+		saldos:         saldos,
+		pagos:          pagos,
+		ventas:         ventas,
+		clock:          clock,
+		pagosRecibidos: pagosRecibidos,
+		pagosImagenes:  pagosImagenes,
+		microsipPago:   microsipPago,
+		storage:        storage,
+		imageProc:      imageProc,
+		txMgr:          txMgr,
+	}
+}
+
+// runInTx executes fn inside a Firebird transaction. Composes with existing
+// tx via firebird.GetQuerier (re-entrant). Returns ErrWriteDepsMissing if
+// txMgr is nil.
+func (s *Service) runInTx(ctx context.Context, fn func(context.Context) error) error {
+	if s.txMgr == nil {
+		return errWriteDepsMissing("tx_manager")
+	}
+	return s.txMgr.RunInTx(ctx, fn)
 }
 
 // PorVenta returns the cached saldo for the given PV document ID.

@@ -2,6 +2,8 @@
 package main
 
 import (
+	"context"
+	"io"
 	"log/slog"
 	"time"
 
@@ -11,8 +13,10 @@ import (
 	"github.com/abdimuy/msp-api/internal/platform/lifecycle"
 
 	cobranzaapp "github.com/abdimuy/msp-api/internal/cobranza/app"
+	cobranzamicrosip "github.com/abdimuy/msp-api/internal/cobranza/infra/microsip"
 	cobranzaventfb "github.com/abdimuy/msp-api/internal/cobranza/infra/ventfb"
 	cobranzaoutbound "github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
+	ventasoutbound "github.com/abdimuy/msp-api/internal/ventas/ports/outbound"
 )
 
 // provideCobranzaSaldosRepo builds the Firebird-backed SaldosRepo.
@@ -63,14 +67,103 @@ func provideCobranzaClock() cobranzaoutbound.Clock {
 	return cobranzaoutbound.ProductionClock{}
 }
 
-// provideCobranzaService assembles the cobranza query service.
+// provideCobranzaPagosRecibidosRepo builds the Firebird-backed
+// PagosRecibidosRepo (write-side outbox MSP_PAGOS_RECIBIDOS).
+func provideCobranzaPagosRecibidosRepo(p *firebird.Pool) *cobranzaventfb.PagosRecibidosRepo {
+	return cobranzaventfb.NewPagosRecibidosRepo(p)
+}
+
+// provideCobranzaPagosRecibidosPort exposes the concrete repo as the
+// outbound port interface.
+func provideCobranzaPagosRecibidosPort(r *cobranzaventfb.PagosRecibidosRepo) cobranzaoutbound.PagosRecibidosRepo {
+	return r
+}
+
+// provideCobranzaPagosImagenesPort exposes the same concrete repo as the
+// imágenes child-collection port.
+func provideCobranzaPagosImagenesPort(r *cobranzaventfb.PagosRecibidosRepo) cobranzaoutbound.PagosImagenesRepo {
+	return r
+}
+
+// provideCobranzaMicrosipPagoWriter builds the Microsip writer that
+// materializes a pago into DOCTOS_CC / IMPORTES_DOCTOS_CC / FORMAS_COBRO_DOCTOS.
+func provideCobranzaMicrosipPagoWriter(p *firebird.Pool) cobranzaoutbound.MicrosipPagoWriter {
+	return cobranzamicrosip.NewPagoWriter(p)
+}
+
+// provideCobranzaStorage wraps the shared ventas FilesystemProvider in a
+// cobranza-shaped adapter. We share the same on-disk directory (STORAGE_DIR)
+// so cobranza comprobantes and ventas evidencia live under one filesystem
+// tree, but the two modules see their own port interface (vertical-slice).
+func provideCobranzaStorage(ventasStorage ventasoutbound.StorageProvider) cobranzaoutbound.StorageProvider {
+	return &cobranzaStorageAdapter{inner: ventasStorage}
+}
+
+// provideCobranzaImageProcessor returns the platform image processor cast
+// through the cobranza-local port (both modules type-alias the platform
+// processor so no adapter is needed).
+func provideCobranzaImageProcessor(proc ventasoutbound.ImageProcessor) cobranzaoutbound.ImageProcessor {
+	return proc
+}
+
+// provideCobranzaService assembles the cobranza query + command service.
 func provideCobranzaService(
 	saldos cobranzaoutbound.SaldosRepo,
 	pagos cobranzaoutbound.PagosRepo,
 	ventas cobranzaoutbound.VentasRepo,
 	clock cobranzaoutbound.Clock,
+	pagosRecibidos cobranzaoutbound.PagosRecibidosRepo,
+	pagosImagenes cobranzaoutbound.PagosImagenesRepo,
+	microsipPago cobranzaoutbound.MicrosipPagoWriter,
+	storage cobranzaoutbound.StorageProvider,
+	imageProc cobranzaoutbound.ImageProcessor,
+	txMgr *firebird.TxManager,
 ) *cobranzaapp.Service {
-	return cobranzaapp.NewService(saldos, pagos, ventas, clock)
+	return cobranzaapp.NewService(saldos, pagos, ventas, clock, pagosRecibidos, pagosImagenes, microsipPago, storage, imageProc, txMgr)
+}
+
+// provideCobranzaPagoRetryWorker builds the background worker that drains
+// the outbox.
+func provideCobranzaPagoRetryWorker(
+	svc *cobranzaapp.Service,
+	repo cobranzaoutbound.PagosRecibidosRepo,
+	clock cobranzaoutbound.Clock,
+	logger *slog.Logger,
+) *cobranzaapp.PagoRetryWorker {
+	return cobranzaapp.NewPagoRetryWorker(svc, repo, clock, cobranzaapp.PagoRetryWorkerConfig{}, logger)
+}
+
+// registerCobranzaPagoRetryWorkerLifecycle hooks the retry worker into fx.
+func registerCobranzaPagoRetryWorkerLifecycle(lc fx.Lifecycle, w *cobranzaapp.PagoRetryWorker) {
+	lifecycle.Append(lc, "pago-retry-worker", w)
+}
+
+// cobranzaStorageAdapter wraps a ventas StorageProvider to satisfy the
+// cobranza StorageProvider port. Both interfaces have identical method
+// shapes; only the StorageObject return type differs across module
+// boundaries, so we re-pack it.
+type cobranzaStorageAdapter struct {
+	inner ventasoutbound.StorageProvider
+}
+
+func (a *cobranzaStorageAdapter) Store(ctx context.Context, key, contentType string, sizeBytes int64, body io.Reader) error {
+	return a.inner.Store(ctx, key, contentType, sizeBytes, body)
+}
+
+func (a *cobranzaStorageAdapter) Get(ctx context.Context, key string) (cobranzaoutbound.StorageObject, error) {
+	obj, err := a.inner.Get(ctx, key)
+	if err != nil {
+		return cobranzaoutbound.StorageObject{}, err
+	}
+	return cobranzaoutbound.StorageObject{
+		Body:        obj.Body,
+		ContentType: obj.ContentType,
+		SizeBytes:   obj.SizeBytes,
+	}, nil
+}
+
+func (a *cobranzaStorageAdapter) Delete(ctx context.Context, key string) error {
+	return a.inner.Delete(ctx, key)
 }
 
 // provideCobranzaReconcilerConfig returns the reconciler configuration.

@@ -217,6 +217,8 @@ linters:
           alias: cobranzaapp
         - pkg: github.com/abdimuy/msp-api/internal/cobranza/infra/ventfb
           alias: cobranzaventfb
+        - pkg: github.com/abdimuy/msp-api/internal/cobranza/infra/microsip
+          alias: cobranzamicrosip
         - pkg: github.com/abdimuy/msp-api/internal/cobranza/ports/outbound
           alias: cobranzaoutbound
         - pkg: github.com/go-playground/validator/v10
