@@ -244,3 +244,98 @@ func TestE2E_VentasRepo_SyncPorZona_Tombstone(t *testing.T) {
 		assert.True(t, v.CargoCancelado(), "cargo_cancelado debe ser true")
 	})
 }
+
+// TestE2E_VentasRepo_SyncPorZona_TombstonePorFechaCancelacion verifica que,
+// con `desde` set, los tombstones se filtran por la fecha real de
+// cancelación en Microsip (DOCTOS_CC.FECHA_HORA_CANCELACION), no por el
+// UPDATED_AT del cache (que se mueve cada vez que un backfill toca la fila).
+//
+// Sin este filtro, cualquier migración que recompute MSP_SALDOS_VENTAS
+// resucita tombstones de cancelaciones de 2018-2025 cada vez que el
+// cobrador hace pm clear — ruido sin valor porque el cliente borra en
+// no-op silencioso.
+//
+//  1. Tombstone con FECHA_HORA_CANCELACION ANTES de `desde` → NO viaja.
+//  2. Tombstone con FECHA_HORA_CANCELACION DENTRO de `desde` → SÍ viaja.
+//  3. Tombstone con FECHA_HORA_CANCELACION NULL → SÍ viaja (defensivo:
+//     mejor un delete espurio que perder una cancelación legítima).
+//
+//nolint:paralleltest // serial: shares rollback-only tx.
+func TestE2E_VentasRepo_SyncPorZona_TombstonePorFechaCancelacion(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		q := firebird.GetQuerier(ctx, pool.DB)
+		requireMigration000010(t, q)
+
+		clienteID, zonaID := seedZonedCliente(t, q)
+		desde := time.Now().Add(-7 * 24 * time.Hour)
+		fechaVieja := desde.Add(-30 * 24 * time.Hour)
+		fechaReciente := desde.Add(24 * time.Hour)
+
+		cargoViejo := insertCargoDoctosCC(t, q, clienteID, "TOMB-OLD", decimal.RequireFromString("100.00"))
+		cargoReciente := insertCargoDoctosCC(t, q, clienteID, "TOMB-NEW", decimal.RequireFromString("100.00"))
+		cargoNull := insertCargoDoctosCC(t, q, clienteID, "TOMB-NUL", decimal.RequireFromString("100.00"))
+
+		// El trigger BEFORE UPDATE de Microsip (DOCTOS_CC_BEFUPD_0) setea
+		// NEW.FECHA_HORA_CANCELACION = 'NOW' cuando CANCELADO cambia, así
+		// que no podemos pasar la fecha que queremos en el mismo UPDATE.
+		// Workaround: dos UPDATEs — primero CANCELADO (dispara el trigger
+		// con 'NOW'), después FECHA_HORA_CANCELACION (sin tocar CANCELADO,
+		// trigger no se mete).
+		cancelarConFecha := func(t *testing.T, cargoID int, fecha *time.Time) {
+			t.Helper()
+			_, err := q.ExecContext(ctx,
+				`UPDATE DOCTOS_CC SET CANCELADO = 'S' WHERE DOCTO_CC_ID = ?`, cargoID)
+			require.NoError(t, err, "fase 1: SET CANCELADO=S")
+
+			if fecha == nil {
+				_, err = q.ExecContext(ctx,
+					`UPDATE DOCTOS_CC SET FECHA_HORA_CANCELACION = NULL WHERE DOCTO_CC_ID = ?`,
+					cargoID)
+			} else {
+				_, err = q.ExecContext(ctx,
+					`UPDATE DOCTOS_CC SET FECHA_HORA_CANCELACION = ? WHERE DOCTO_CC_ID = ?`,
+					firebird.ToWallClock(*fecha), cargoID)
+			}
+			require.NoError(t, err, "fase 2: SET FECHA_HORA_CANCELACION")
+		}
+
+		cancelarConFecha(t, cargoViejo, &fechaVieja)
+		cancelarConFecha(t, cargoReciente, &fechaReciente)
+		cancelarConFecha(t, cargoNull, nil)
+
+		// Wait out the sync lag window so all UPDATED_AT writes are visible.
+		time.Sleep(6 * time.Second)
+
+		repo := cobranzaventfb.NewVentasRepo(pool)
+
+		// Con desde: el viejo NO debe viajar; el reciente Y el NULL sí.
+		page, err := repo.SyncPorZona(ctx, zonaID, time.Time{}, 0, 5000, desde)
+		require.NoError(t, err)
+
+		assert.Nil(t, findVenta(page.Items, cargoViejo),
+			"tombstone con cancelación anterior a `desde` NO debe propagarse")
+
+		vReciente := findVenta(page.Items, cargoReciente)
+		require.NotNil(t, vReciente,
+			"tombstone con cancelación dentro de `desde` debe propagarse")
+		assert.True(t, vReciente.CargoCancelado())
+
+		vNull := findVenta(page.Items, cargoNull)
+		require.NotNil(t, vNull,
+			"tombstone con FECHA_HORA_CANCELACION NULL debe propagarse (defensivo)")
+		assert.True(t, vNull.CargoCancelado())
+
+		// Sin desde (sync legacy admin): los tres tombstones viajan, sin
+		// filtrar por fecha — preserva el comportamiento histórico para
+		// flujos sin ventana del cobrador.
+		pageLegacy, err := repo.SyncPorZona(ctx, zonaID, time.Time{}, 0, 5000, time.Time{})
+		require.NoError(t, err)
+		assert.NotNil(t, findVenta(pageLegacy.Items, cargoViejo),
+			"sin desde, el tombstone viejo también debe propagarse (rama legacy)")
+		assert.NotNil(t, findVenta(pageLegacy.Items, cargoReciente))
+		assert.NotNil(t, findVenta(pageLegacy.Items, cargoNull))
+	})
+}

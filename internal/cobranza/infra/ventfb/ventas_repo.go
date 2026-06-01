@@ -116,28 +116,53 @@ type ventaSyncSpec struct {
 //     (SALDO > 0) + tombstones (CARGO_CANCELADO = 'S'). Saldados
 //     silenciosos no se mandan.
 //
-//   - desde set (sync del cobrador con FECHA_CARGA_INICIAL): activos +
-//     tombstones + saldadas cuyo último pago de cobranza activa
-//     (CONCEPTO_CC_ID IN 87327 cobranza en ruta, 27969 abono mostrador)
-//     cae dentro de la ventana. NO basta FECHA_ULT_PAGO porque esa
-//     columna avanza con pagos administrativos (anticipos, condonaciones,
-//     ajustes) que /sync/pagos ya filtra fuera — incluirlas aquí
-//     desperdiciaba bandwidth porque el cliente terminaba borrándolas en
+//   - desde set (sync del cobrador con FECHA_CARGA_INICIAL): tres ramas
+//     deben cumplirse, cada una alineada con la semántica del cliente:
+//
+//     1. Activos (SALDO > 0): siempre viajan — el cobrador los necesita
+//     para cobrar.
+//
+//     2. Tombstones (CARGO_CANCELADO='S') cuya cancelación real en
+//     Microsip cae dentro de la ventana (FECHA_HORA_CANCELACION >=
+//     desde). Sin este sub-filtro, cualquier backfill del cache que
+//     toque UPDATED_AT (típico en migraciones que llaman
+//     MSP_RECOMPUTE_SALDO_VENTA en bucle) "resucita" tombstones de
+//     cancelaciones de 2018-2025 que ya nadie tiene en local. El
+//     cliente las recibiría solo para borrarlas en no-op silencioso
+//     — bandwidth desperdiciado más ruido en logs de sync. NULL en
+//     FECHA_HORA_CANCELACION se trata como "fecha desconocida" y se
+//     propaga (defensivo: mejor mandar un delete de más que perder
+//     una cancelación legítima).
+//
+//     3. Saldadas con pago de cobranza activa (CONCEPTO_CC_ID IN 87327
+//     cobranza en ruta, 27969 abono mostrador) en ventana. NO basta
+//     FECHA_ULT_PAGO porque esa columna avanza con pagos
+//     administrativos (anticipos, condonaciones, ajustes) que
+//     /sync/pagos ya filtra fuera — incluirlas aquí desperdiciaba
+//     bandwidth porque el cliente terminaba borrándolas en
 //     mergeVentas. El filtro replica exacto el de /sync/pagos
-//     (pagos_repo.pagoConceptoFilter) vía EXISTS sobre MSP_PAGOS_VENTAS,
-//     que se apoya en IDX_MSP_PAGOS_CARGO para resolver el lookup.
+//     (pagos_repo.pagoConceptoFilter) vía EXISTS sobre
+//     MSP_PAGOS_VENTAS (índice IDX_MSP_PAGOS_CARGO).
 func queryVentaSyncPage(ctx context.Context, q firebird.Querier, spec ventaSyncSpec) (*sql.Rows, error) {
 	upper := firebird.ToWallClock(spec.upperBound)
 	statusFilter := `(s.SALDO > 0 OR s.CARGO_CANCELADO = 'S')`
 	var statusArgs []any
 	if !spec.desde.IsZero() {
-		statusFilter = `(s.SALDO > 0 OR s.CARGO_CANCELADO = 'S' OR EXISTS (
-		SELECT 1 FROM MSP_PAGOS_VENTAS p
-		WHERE p.DOCTO_CC_ACR_ID = s.DOCTO_CC_ID
-		  AND p.FECHA          >= ?
-		  AND p.CONCEPTO_CC_ID IN (87327, 27969)
-	))`
-		statusArgs = []any{firebird.ToWallClock(spec.desde)}
+		desde := firebird.ToWallClock(spec.desde)
+		statusFilter = `(s.SALDO > 0
+		OR (s.CARGO_CANCELADO = 'S' AND EXISTS (
+			SELECT 1 FROM DOCTOS_CC dc
+			WHERE dc.DOCTO_CC_ID = s.DOCTO_CC_ID
+			  AND (dc.FECHA_HORA_CANCELACION IS NULL
+			       OR dc.FECHA_HORA_CANCELACION >= ?)
+		))
+		OR EXISTS (
+			SELECT 1 FROM MSP_PAGOS_VENTAS p
+			WHERE p.DOCTO_CC_ACR_ID = s.DOCTO_CC_ID
+			  AND p.FECHA          >= ?
+			  AND p.CONCEPTO_CC_ID IN (87327, 27969)
+		))`
+		statusArgs = []any{desde, desde}
 	}
 	if spec.cursor.IsZero() {
 		args := append([]any{spec.limit, spec.zonaID, upper, spec.afterID}, statusArgs...)
