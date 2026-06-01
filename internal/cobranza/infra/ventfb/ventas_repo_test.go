@@ -107,12 +107,13 @@ func TestE2E_VentasRepo_SyncPorZona_ReturnsEnrichedRow(t *testing.T) {
 }
 
 // TestE2E_VentasRepo_SyncPorZona_SaldadaConDesde verifica el contrato del
-// nuevo parámetro `desde` en sync inicial (cursor zero):
+// parámetro `desde` (filtro depende SOLO de desde, no del cursor):
 //
-//  1. cursor=zero, desde=zero → venta saldada NO viaja (legacy admin).
-//  2. cursor=zero, desde<fechaUltPago → venta saldada SÍ viaja.
-//  3. cursor!=zero → venta saldada SÍ viaja (filtro de saldo removido en
-//     incremental para propagar el pago final).
+//  1. cursor=zero, desde=zero  → venta saldada NO viaja (legacy admin).
+//  2. cursor=zero, desde<FUP   → venta saldada SÍ viaja (sync inicial).
+//  3. cursor!=zero, desde<FUP  → venta saldada SÍ viaja (paginación/incremental).
+//  4. cursor!=zero, desde=zero → venta saldada NO viaja (paginación legacy:
+//     evita que saldadas históricas se cuelen en páginas 2+).
 //
 //nolint:paralleltest // serial: shares rollback-only tx.
 func TestE2E_VentasRepo_SyncPorZona_SaldadaConDesde(t *testing.T) {
@@ -140,6 +141,8 @@ func TestE2E_VentasRepo_SyncPorZona_SaldadaConDesde(t *testing.T) {
 		time.Sleep(6 * time.Second)
 
 		repo := cobranzaventfb.NewVentasRepo(pool)
+		cursor := saldo.UpdatedAt().Add(-time.Second)
+		desde := time.Now().Add(-24 * time.Hour)
 
 		// Caso 1: sync inicial legacy (sin desde) — saldada no debe aparecer.
 		pageLegacy, err := repo.SyncPorZona(ctx, zonaID, time.Time{}, 0, 5000, time.Time{})
@@ -148,20 +151,25 @@ func TestE2E_VentasRepo_SyncPorZona_SaldadaConDesde(t *testing.T) {
 			"sin desde, la venta saldada no debería aparecer en sync inicial")
 
 		// Caso 2: sync inicial con desde anterior al pago — saldada SÍ viaja.
-		desde := time.Now().Add(-24 * time.Hour)
 		pageConDesde, err := repo.SyncPorZona(ctx, zonaID, time.Time{}, 0, 5000, desde)
 		require.NoError(t, err)
 		v := findVenta(pageConDesde.Items, cargoID)
 		require.NotNil(t, v, "con desde<fechaUltPago, la venta saldada debe aparecer")
 		assert.True(t, v.Saldo().IsZero(), "venta debe traer saldo=0")
 
-		// Caso 3: sync incremental (cursor antes del UPDATED_AT del saldo) —
-		// el filtro de saldo está removido y la venta saldada debe propagarse.
-		cursor := saldo.UpdatedAt().Add(-time.Second)
-		pageIncr, err := repo.SyncPorZona(ctx, zonaID, cursor, 0, 5000, time.Time{})
+		// Caso 3: paginación/incremental CON desde — saldada SÍ viaja
+		// (el cliente debe mandar desde en TODAS las páginas).
+		pageIncrConDesde, err := repo.SyncPorZona(ctx, zonaID, cursor, 0, 5000, desde)
 		require.NoError(t, err)
-		assert.NotNil(t, findVenta(pageIncr.Items, cargoID),
-			"en incremental, la venta recién saldada debe viajar al cliente")
+		assert.NotNil(t, findVenta(pageIncrConDesde.Items, cargoID),
+			"con desde, la venta saldada debe seguir viajando al paginar")
+
+		// Caso 4: paginación legacy sin desde — saldada NO viaja
+		// (protege que las saldadas históricas no se cuelen en páginas 2+).
+		pageIncrLegacy, err := repo.SyncPorZona(ctx, zonaID, cursor, 0, 5000, time.Time{})
+		require.NoError(t, err)
+		assert.Nil(t, findVenta(pageIncrLegacy.Items, cargoID),
+			"sin desde, las saldadas no deben colarse en paginación")
 	})
 }
 

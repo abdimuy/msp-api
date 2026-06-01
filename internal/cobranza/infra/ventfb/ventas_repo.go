@@ -107,31 +107,31 @@ type ventaSyncSpec struct {
 // cursor-and-tie-break semantics as querySyncPage in page_helpers.go but with
 // the JOIN baked in.
 //
-// Filtro de saldo dinámico según cursor + desde:
+// Filtro de saldo dinámico según `desde` (independiente del cursor — el
+// cliente debe mandar el mismo `desde` en TODAS las páginas, no solo en la
+// primera, para que la paginación no se cuele saldados que no caben en la
+// ventana del cobrador):
 //
-//   - cursor zero + desde zero (legacy admin/full sync sin ventana):
-//     activos (SALDO > 0) + tombstones (CARGO_CANCELADO = 'S'). Saldados
+//   - desde zero (legacy admin/full sync sin ventana): solo activos
+//     (SALDO > 0) + tombstones (CARGO_CANCELADO = 'S'). Saldados
 //     silenciosos no se mandan.
 //
-//   - cursor zero + desde set (sync inicial del cobrador con
-//     FECHA_CARGA_INICIAL): activos + tombstones + saldados con
-//     FECHA_ULT_PAGO >= desde. Mismo patrón que SaldosRepo.EnRutaPorZona —
-//     la app conserva la venta saldada mientras su último pago caiga en
-//     la ventana del cobrador.
-//
-//   - cursor set (sync incremental): sin filtro de saldo. Cualquier row con
-//     UPDATED_AT > cursor entra — incluyendo la venta que acaba de saldarse
-//     por el pago final y el tombstone si fue cancelada. El cliente decide
-//     cómo tratar cada caso según su propia ventana.
+//   - desde set (sync del cobrador con FECHA_CARGA_INICIAL): activos +
+//     tombstones + saldados con FECHA_ULT_PAGO >= desde. Mismo patrón que
+//     SaldosRepo.EnRutaPorZona — la app conserva la venta saldada mientras
+//     su último pago caiga en la ventana del cobrador, y se propagan
+//     también las ventas que acaban de saldarse cuando el pago final cae
+//     dentro de esa misma ventana.
 func queryVentaSyncPage(ctx context.Context, q firebird.Querier, spec ventaSyncSpec) (*sql.Rows, error) {
 	upper := firebird.ToWallClock(spec.upperBound)
+	statusFilter := `(s.SALDO > 0 OR s.CARGO_CANCELADO = 'S')`
+	var statusArgs []any
+	if !spec.desde.IsZero() {
+		statusFilter = `(s.SALDO > 0 OR s.CARGO_CANCELADO = 'S' OR s.FECHA_ULT_PAGO >= ?)`
+		statusArgs = []any{firebird.ToWallClock(spec.desde)}
+	}
 	if spec.cursor.IsZero() {
-		statusFilter := `(s.SALDO > 0 OR s.CARGO_CANCELADO = 'S')`
-		args := []any{spec.limit, spec.zonaID, upper, spec.afterID}
-		if !spec.desde.IsZero() {
-			statusFilter = `(s.SALDO > 0 OR s.CARGO_CANCELADO = 'S' OR s.FECHA_ULT_PAGO >= ?)`
-			args = append(args, firebird.ToWallClock(spec.desde))
-		}
+		args := append([]any{spec.limit, spec.zonaID, upper, spec.afterID}, statusArgs...)
 		query := `
 SELECT FIRST ? ` + selectVentaCols + ventaFromClause + `
 WHERE s.ZONA_CLIENTE_ID = ?
@@ -149,18 +149,16 @@ ORDER BY s.UPDATED_AT, s.DOCTO_CC_ID`
 	// UPDATED_AT >= cursor (no estricto) habilita el tie-break por
 	// DOCTO_CC_ID. Ver page_helpers.queryVentaSyncPage para el detalle del
 	// caso que motiva esta forma.
-	//
-	// Sin filtro de saldo aquí: en incremental queremos propagar ventas
-	// recién saldadas y tombstones por igual; el filtro de saldo en el
-	// sync inicial es solo para limitar el peso del primer page.
+	args := append([]any{spec.limit, spec.zonaID, cur, upper, cur, cur, spec.afterID}, statusArgs...)
 	query := `
 SELECT FIRST ? ` + selectVentaCols + ventaFromClause + `
 WHERE s.ZONA_CLIENTE_ID = ?
   AND s.UPDATED_AT >= ?
   AND s.UPDATED_AT <= ?
   AND (s.UPDATED_AT > ? OR (s.UPDATED_AT = ? AND s.DOCTO_CC_ID > ?))
+  AND ` + statusFilter + `
 ORDER BY s.UPDATED_AT, s.DOCTO_CC_ID`
-	rows, err := q.QueryContext(ctx, query, spec.limit, spec.zonaID, cur, upper, cur, cur, spec.afterID)
+	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, firebird.MapError(err)
 	}
