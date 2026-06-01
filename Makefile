@@ -1,4 +1,4 @@
-.PHONY: help setup build run dev test test-unit test-integration test-all test-mutation test-mutation-domain test-mutation-app test-mutation-ventas test-mutation-ventas-domain test-mutation-ventas-app test-mutation-httpdispatch lint lint-fix fmt generate migrate-up migrate-down migrate-create migrate-version clean db-test-up db-test-down db-test-reset db-test-prune db-test-url test-firebird test-firebird-all test-firebird-ventas coverage-auth coverage-auth-full coverage-ventas coverage-ventas-full precommit-strict fb-migrate-up fb-migrate-down fb-migrate-status fb-seed-admin fb-snapshot fb-snapshot-list fb-restore fb-snapshot-delete fb-emu-up fb-emu-down fb-emu-logs
+.PHONY: help setup build run dev test test-unit test-integration test-all test-mutation test-mutation-domain test-mutation-app test-mutation-ventas test-mutation-ventas-domain test-mutation-ventas-app test-mutation-cobranza test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-httpdispatch lint lint-fix fmt generate migrate-up migrate-down migrate-create migrate-version clean db-test-up db-test-down db-test-reset db-test-prune db-test-url test-firebird test-firebird-all test-firebird-ventas coverage-auth coverage-auth-full coverage-ventas coverage-ventas-full precommit-strict fb-migrate-up fb-migrate-down fb-migrate-status fb-seed-admin fb-snapshot fb-snapshot-list fb-restore fb-snapshot-delete fb-emu-up fb-emu-down fb-emu-logs
 
 # ── Config ───────────────────────────────────────────────────────────
 APP_NAME      := msp-api
@@ -318,7 +318,7 @@ precommit-strict: ## Full local quality gate before opening a PR — equivalent 
 # high business value (domain, app) where false negatives in tests are
 # most costly. Config in .gremlins.yaml. Install with:
 #   go install github.com/go-gremlins/gremlins/cmd/gremlins@latest
-test-mutation: test-mutation-domain test-mutation-app test-mutation-ventas-domain test-mutation-ventas-app test-mutation-httpdispatch ## Run mutation testing on critical packages
+test-mutation: test-mutation-domain test-mutation-app test-mutation-ventas-domain test-mutation-ventas-app test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-httpdispatch ## Run mutation testing on critical packages
 
 test-mutation-domain: ## Run mutation testing on auth/domain only
 	gremlins unleash ./internal/auth/domain
@@ -333,6 +333,16 @@ test-mutation-ventas-domain: ## Run mutation testing on ventas/domain only
 
 test-mutation-ventas-app: ## Run mutation testing on ventas/app only
 	gremlins unleash ./internal/ventas/app
+
+test-mutation-cobranza: test-mutation-cobranza-domain test-mutation-cobranza-app ## Run mutation testing on the cobranza module (domain + app) with 80% kill-ratio gate
+
+# Cobranza maneja pagos a Microsip: kill-ratio 80% (vs default 75%) porque
+# un mutante sobreviviente acá podría persistir dinero incorrectamente.
+test-mutation-cobranza-domain: ## Run mutation testing on cobranza/domain only (gate 80%)
+	gremlins unleash --threshold-efficacy 80 ./internal/cobranza/domain
+
+test-mutation-cobranza-app: ## Run mutation testing on cobranza/app only (gate 80%)
+	gremlins unleash --threshold-efficacy 80 ./internal/cobranza/app
 
 test-mutation-httpdispatch: ## Run mutation testing on platform/httpdispatch
 	gremlins unleash ./internal/platform/httpdispatch
