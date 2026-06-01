@@ -24,6 +24,9 @@ type fakePagosRecibidosRepo struct {
 	rows      map[uuid.UUID]*domain.PagoRecibido
 	insertErr error // if set, Insert returns this error always
 	findErr   error // if set, FindByID returns this error always
+	lockErr   error // if set, LockByID returns this error always
+	updateErr error // if set, Update returns this error always
+	updateCnt int   // counts how many times Update has been called
 }
 
 func newFakePagosRecibidosRepo() *fakePagosRecibidosRepo {
@@ -43,6 +46,10 @@ func (f *fakePagosRecibidosRepo) Insert(_ context.Context, p *domain.PagoRecibid
 }
 
 func (f *fakePagosRecibidosRepo) Update(_ context.Context, p *domain.PagoRecibido) error {
+	f.updateCnt++
+	if f.updateErr != nil {
+		return f.updateErr
+	}
 	if _, exists := f.rows[p.ID()]; !exists {
 		return domain.ErrPagoNoEncontrado
 	}
@@ -62,6 +69,9 @@ func (f *fakePagosRecibidosRepo) FindByID(_ context.Context, id uuid.UUID) (*dom
 }
 
 func (f *fakePagosRecibidosRepo) LockByID(_ context.Context, id uuid.UUID) error {
+	if f.lockErr != nil {
+		return f.lockErr
+	}
 	if _, ok := f.rows[id]; !ok {
 		return domain.ErrPagoNoEncontrado
 	}
@@ -95,6 +105,48 @@ func (f *fakeMicrosipPagoWriter) Aplicar(_ context.Context, in outbound.Microsip
 	f.callCount++
 	f.lastInput = in
 	return f.result, f.err
+}
+
+// ─── fakeTxRunner ─────────────────────────────────────────────────────────────
+
+// fakeTxRunner satisfies app.TxRunner for unit tests. When err is nil it
+// executes fn synchronously without any real Firebird connection. When err is
+// set, it returns that error immediately without calling fn.
+type fakeTxRunner struct {
+	err error // if set, returned without calling fn
+}
+
+func (f fakeTxRunner) RunInTx(ctx context.Context, fn func(context.Context) error) error {
+	if f.err != nil {
+		return f.err
+	}
+	return fn(ctx)
+}
+
+// newAplicarSvc wires a Service with the given fakes specifically for
+// AplicarPago unit tests. saldos and pagos repos are set to no-op fakes
+// (AplicarPago does not use them). The caller supplies the TxRunner, the
+// pagosRecibidos repo, the writer, and the clock.
+func newAplicarSvc(
+	t *testing.T,
+	txRunner app.TxRunner,
+	pagosRecibidos *fakePagosRecibidosRepo,
+	writer *fakeMicrosipPagoWriter,
+	now time.Time,
+) *app.Service {
+	t.Helper()
+	return app.NewService(
+		newFakeSaldosRepo(),
+		newFakePagosRepo(),
+		nil, // ventas — not needed
+		fixedClock{T: now},
+		pagosRecibidos,
+		nil, // pagosImagenes — not needed
+		writer,
+		nil, // storage
+		nil, // imageProc
+		txRunner,
+	)
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────

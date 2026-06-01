@@ -13,7 +13,6 @@ import (
 	"github.com/abdimuy/msp-api/internal/cobranza/domain"
 	"github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/apperror"
-	"github.com/abdimuy/msp-api/internal/platform/firebird"
 )
 
 // errWriteDepsMissing is returned by write-side methods when the Service was
@@ -43,6 +42,13 @@ const (
 	MaxSyncLimit     = 5000
 )
 
+// TxRunner abstracts the Firebird transaction manager so tests can inject a
+// no-op runner that executes fn synchronously without a real DB connection.
+// *firebird.TxManager satisfies this interface implicitly.
+type TxRunner interface {
+	RunInTx(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
 // Service is the cobranza module's query and command surface. Handlers depend
 // on *Service; everything Service depends on goes through the outbound ports.
 //
@@ -62,7 +68,7 @@ type Service struct {
 	microsipPago   outbound.MicrosipPagoWriter
 	storage        outbound.StorageProvider
 	imageProc      outbound.ImageProcessor
-	txMgr          *firebird.TxManager
+	txMgr          TxRunner
 }
 
 // NewService builds a Service wired against the given ports. ventas may be
@@ -75,6 +81,10 @@ type Service struct {
 // return ErrWriteDepsMissing if invoked without them. Read-only tests can
 // therefore continue to call NewService with the original signature by
 // passing trailing nils.
+//
+// txMgr accepts any TxRunner; in production this is *firebird.TxManager
+// (satisfies implicitly). Tests inject a fakeTxRunner that runs fn in-process
+// without a real Firebird connection.
 func NewService(
 	saldos outbound.SaldosRepo,
 	pagos outbound.PagosRepo,
@@ -85,7 +95,7 @@ func NewService(
 	microsipPago outbound.MicrosipPagoWriter,
 	storage outbound.StorageProvider,
 	imageProc outbound.ImageProcessor,
-	txMgr *firebird.TxManager,
+	txMgr TxRunner,
 ) *Service {
 	return &Service{
 		saldos:         saldos,
