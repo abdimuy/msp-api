@@ -338,11 +338,16 @@ test-mutation-cobranza: test-mutation-cobranza-domain test-mutation-cobranza-app
 
 # Cobranza maneja pagos a Microsip: kill-ratio 80% (vs default 75%) porque
 # un mutante sobreviviente acá podría persistir dinero incorrectamente.
+#
+# TMPDIR redirige los workdirs de gremlins (que copia el módulo completo
+# para cada mutante) al SSD externo. Gremlins usa os.TempDir() — respeta
+# TMPDIR, no GOTMPDIR. Sin esto, una corrida de cobranza/app llena ~24 GB
+# de /private/tmp y puede explotar el disco interno (jun 2026 incidente).
 test-mutation-cobranza-domain: ## Run mutation testing on cobranza/domain only (gate 80%)
-	gremlins unleash --threshold-efficacy 80 ./internal/cobranza/domain
+	TMPDIR=/Volumes/M2-1TB/.go-cache/tmp gremlins unleash --threshold-efficacy 80 ./internal/cobranza/domain
 
 test-mutation-cobranza-app: ## Run mutation testing on cobranza/app only (gate 80%)
-	gremlins unleash --threshold-efficacy 80 ./internal/cobranza/app
+	TMPDIR=/Volumes/M2-1TB/.go-cache/tmp gremlins unleash --threshold-efficacy 80 ./internal/cobranza/app
 
 test-mutation-httpdispatch: ## Run mutation testing on platform/httpdispatch
 	gremlins unleash ./internal/platform/httpdispatch
