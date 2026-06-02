@@ -113,10 +113,35 @@ func buildAplicarContadoConArticulo(t *testing.T, userID uuid.UUID, articuloID i
 		Now:       time.Now().UTC(),
 	})
 	require.NoError(t, err)
+	attachAplicarEvidencia(t, v, userID)
 	// Advance to aprobada.
 	require.NoError(t, v.EnviarARevision(userID, time.Now().UTC()))
 	require.NoError(t, v.Aprobar(userID, time.Now().UTC()))
 	return v
+}
+
+// attachAplicarEvidencia adds a minimal evidencia imagen to the venta so the
+// AplicarVenta defense-in-depth guard (ErrVentaEvidenciaRequerida) passes.
+// The blob is not actually written to storage here — these tests don't
+// exercise the storage path; only the row goes into MSP_VENTAS_IMAGENES via
+// repo.Save.
+func attachAplicarEvidencia(t *testing.T, v *domain.Venta, userID uuid.UUID) {
+	t.Helper()
+	imgID := uuid.New()
+	storage, err := domain.NewImagenStorage(
+		domain.StorageKindFilesystem,
+		"ventas/"+v.ID().String()+"/"+imgID.String()+".jpg",
+	)
+	require.NoError(t, err)
+	_, err = v.AdjuntarImagen(domain.AdjuntarImagenParams{
+		ID:        imgID,
+		Storage:   storage,
+		Mime:      domain.MimeJPEG,
+		SizeBytes: 8,
+		By:        userID,
+		Now:       time.Now().UTC(),
+	})
+	require.NoError(t, err)
 }
 
 // buildAplicarCredito builds a CREDITO venta in situación APROBADA.
@@ -195,6 +220,7 @@ func buildAplicarCredito(t *testing.T, userID uuid.UUID) *domain.Venta {
 		Now:       time.Now().UTC(),
 	})
 	require.NoError(t, err)
+	attachAplicarEvidencia(t, v, userID)
 	require.NoError(t, v.EnviarARevision(userID, time.Now().UTC()))
 	require.NoError(t, v.Aprobar(userID, time.Now().UTC()))
 	return v
