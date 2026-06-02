@@ -127,7 +127,7 @@ func TestCrearVentaConImagenes_StorageStoreFails_NoSave(t *testing.T) {
 	// on the 2nd call (1st succeeded, so cleanup must fire for it).
 	flaky := &flakyVentasStorage{fakeStorage: h.storage, failOnCall: 2, failErr: errors.New("disk_full")}
 	// Swap in the flaky storage by rebuilding the service.
-	svc := app.NewService(h.ventas, nil, nil, flaky, h.clock, h.outbox, h.imageProc, nil, nil, nil)
+	svc := app.NewService(h.ventas, nil, nil, flaky, h.clock, h.outbox, h.imageProc, nil, nil, nil, nil)
 
 	in := validContadoInput()
 	imgs := []app.ImagenUploadInput{

@@ -59,7 +59,7 @@ func TestProperty_CrearVentaConImagenes_AtomicityInvariant(t *testing.T) {
 					failOnCall:  tc.failAt,
 					failErr:     errors.New("induced_store_failure"),
 				}
-				h.svc = app.NewService(h.ventas, nil, nil, storeWrap, h.clock, h.outbox, h.imageProc, nil, nil, nil)
+				h.svc = app.NewService(h.ventas, nil, nil, storeWrap, h.clock, h.outbox, h.imageProc, nil, nil, nil, nil)
 			}
 			if tc.faultKind == faultSave {
 				h.ventas.SaveErr = errors.New("induced_save_failure")

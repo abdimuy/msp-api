@@ -1,7 +1,9 @@
+//nolint:misspell // ventas vocabulary is Spanish (CLIENTES, LIBRES_CLIENTES, etc.) per project convention.
 package app
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/google/uuid"
 
@@ -43,6 +45,13 @@ func (s *Service) AplicarVenta(ctx context.Context, ventaID, by uuid.UUID) (*dom
 			return nil
 		}
 
+		// Auto-create cliente in Microsip when the venta has no ClienteID yet
+		// but carries enough snapshot data (nombre + dirección postal). The
+		// new CLIENTE_ID is linked back to the venta within the same tx.
+		if err := s.autoCrearClienteSiNecesario(ctx, v, by); err != nil {
+			return err
+		}
+
 		writerIn, err := s.buildWriterInput(ctx, v)
 		if err != nil {
 			return err
@@ -79,11 +88,16 @@ func checkPreconditions(v *domain.Venta) error {
 	if v.Situacion() != domain.SituacionAprobada {
 		return domain.ErrVentaNoAplicable
 	}
-	if v.ClienteID() == nil {
-		return domain.ErrVentaSinClienteMicrosip
-	}
+	// Zona must be set before checking ClienteID: if both are missing, the
+	// caller sees ErrVentaSinZona first (the more actionable error).
 	if v.Direccion().ZonaClienteID() == nil {
 		return domain.ErrVentaSinZona
+	}
+	// ClienteID is nil only when the auto-create branch will run inside the
+	// tx. If the venta lacks enough snapshot data to auto-create, reject now
+	// rather than failing mid-transaction.
+	if v.ClienteID() == nil && !puedeAutoCrearCliente(v) {
+		return domain.ErrVentaSinClienteMicrosip
 	}
 	// Defense in depth: every venta in production must carry evidencia
 	// (firma / ID del cliente) before it can hit Microsip. The atomic
@@ -95,6 +109,21 @@ func checkPreconditions(v *domain.Venta) error {
 		return domain.ErrVentaEvidenciaRequerida
 	}
 	return nil
+}
+
+// puedeAutoCrearCliente reports whether the venta carries enough snapshot
+// data to auto-create the cliente in Microsip during AplicarVenta. Required:
+// nombre cliente (always set at CrearVenta time), and a non-empty postal
+// dirección (calle + colonia + poblacion). Zona is checked separately above.
+func puedeAutoCrearCliente(v *domain.Venta) bool {
+	if v.Cliente().Nombre().IsZero() {
+		return false
+	}
+	d := v.Direccion()
+	if d.Calle() == "" || d.Colonia() == "" || d.Poblacion() == "" {
+		return false
+	}
+	return true
 }
 
 // buildWriterInput resolves all Microsip config IDs needed by the writer.
@@ -155,4 +184,79 @@ func (s *Service) resolveCreditoIDs(ctx context.Context, v *domain.Venta) (forma
 		return nil, nil, cmErr
 	}
 	return &fpID, &cmID, nil
+}
+
+// autoCrearClienteSiNecesario runs the auto-create-cliente branch when the
+// venta has no ClienteID. It is a no-op when ClienteID is already set.
+func (s *Service) autoCrearClienteSiNecesario(ctx context.Context, v *domain.Venta, by uuid.UUID) error {
+	if v.ClienteID() != nil {
+		return nil
+	}
+	if s.microsipCliente == nil {
+		return domain.ErrVentaSinClienteMicrosip
+	}
+	zona := *v.Direccion().ZonaClienteID()
+	cc, err := s.aplicarCfg.CajaCajero(ctx, zona)
+	if err != nil {
+		return err
+	}
+	in := buildAutoCreateClienteInput(v, cc)
+	res, err := s.microsipCliente.Crear(ctx, in)
+	if err != nil {
+		return err
+	}
+	if err := v.AsignarClienteMicrosip(res.ClienteID, by); err != nil {
+		return err
+	}
+	return s.ventas.UpdateCliente(ctx, v)
+}
+
+// buildAutoCreateClienteInput materializes a MicrosipClienteInput from the venta's
+// snapshot + the zona's caja config + the hardcoded catálogo defaults from
+// the outbound package. This is only called inside AplicarVenta's auto-create
+// branch (when v.ClienteID() is nil).
+func buildAutoCreateClienteInput(v *domain.Venta, cc outbound.CajaCajero) outbound.MicrosipClienteInput {
+	dir := v.Direccion()
+	gps := v.GPS()
+
+	in := outbound.MicrosipClienteInput{
+		Nombre:                  v.Cliente().Nombre().Value(),
+		Calle:                   dir.Calle(),
+		NumeroExterior:          dir.NumeroExterior(),
+		Colonia:                 dir.Colonia(),
+		Poblacion:               dir.Poblacion(),
+		ZonaClienteID:           *dir.ZonaClienteID(),
+		CobradorID:              cc.CobradorID,
+		VendedorID:              cc.VendedorID,
+		CiudadID:                outbound.DefaultCiudadID,
+		EstadoID:                outbound.DefaultEstadoID,
+		PaisID:                  outbound.DefaultPaisID,
+		CondPagoID:              outbound.DefaultCondPagoID,
+		TipoClienteID:           outbound.DefaultTipoClienteID,
+		MonedaID:                outbound.DefaultMonedaID,
+		ViaEmbarqueID:           outbound.DefaultViaEmbarqueID,
+		ComprobanteDomicilioID:  outbound.DefaultComprobanteDomicilioID,
+		IdentificacionOficialID: outbound.DefaultIdentificacionOficialID,
+	}
+
+	if tel := v.Cliente().Telefono(); tel != nil {
+		s := tel.Value()
+		in.Telefono = &s
+	}
+
+	// GPS as string lat/lng for LIBRES_CLIENTES.U_LATITUD / U_LONGITUD.
+	// GPSCoords zero-value is (0,0); treat that as "not set" — both lat and
+	// lng must be exactly zero. (Sales near the equator/Greenwich are not
+	// a realistic risk in Tehuacán.)
+	if gps.Latitud() != 0 || gps.Longitud() != 0 {
+		lat := strconv.FormatFloat(gps.Latitud(), 'f', -1, 64)
+		lng := strconv.FormatFloat(gps.Longitud(), 'f', -1, 64)
+		in.Latitud = &lat
+		in.Longitud = &lng
+	}
+
+	// Cliente snapshot also exposes a Referencia field once commit 5 lands;
+	// for now the snapshot doesn't carry it, so Referencia stays nil here.
+
+	return in
 }

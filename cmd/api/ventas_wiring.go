@@ -69,6 +69,13 @@ func provideVentasMicrosipWriter(p *firebird.Pool) ventasoutbound.MicrosipVentaW
 	return microsip.NewVentaWriter(p)
 }
 
+// provideVentasMicrosipClienteWriter builds the Firebird-backed
+// MicrosipClienteWriter that auto-creates a Microsip cliente when AplicarVenta
+// runs on a venta whose ClienteID is nil.
+func provideVentasMicrosipClienteWriter(p *firebird.Pool) ventasoutbound.MicrosipClienteWriter {
+	return microsip.NewClienteWriter(p)
+}
+
 // provideVentasService assembles the ventas application service. Multi-step
 // writes are coordinated through the supplied Firebird transaction manager.
 func provideVentasService(
@@ -82,6 +89,7 @@ func provideVentasService(
 	fbTxMgr *firebird.TxManager,
 	aplicarCfg ventasoutbound.AplicarConfig,
 	microsipWriter ventasoutbound.MicrosipVentaWriter,
+	microsipCliente ventasoutbound.MicrosipClienteWriter,
 ) *ventasapp.Service {
-	return ventasapp.NewService(repo, clientes, usuarios, store, clock, outbox, imageProc, fbTxMgr, aplicarCfg, microsipWriter)
+	return ventasapp.NewService(repo, clientes, usuarios, store, clock, outbox, imageProc, fbTxMgr, aplicarCfg, microsipWriter, microsipCliente)
 }

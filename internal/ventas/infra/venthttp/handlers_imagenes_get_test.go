@@ -423,7 +423,7 @@ func TestObtenerImagen_BodyClosedOnSuccess(t *testing.T) {
 	tracker := &closeTrackingReader{}
 	wrappedStore := &fakeStorageReturningTracker{fakeStorage: fakeStore, tracker: tracker}
 	clock := fixedClock{T: time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC)}
-	svc := ventasapp.NewService(fakeRepo, nil, nil, wrappedStore, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil, nil, nil)
+	svc := ventasapp.NewService(fakeRepo, nil, nil, wrappedStore, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil, nil, nil, nil)
 
 	cu := fullPerms(uuid.New())
 	chiR := chi.NewRouter()
@@ -452,7 +452,7 @@ func TestObtenerImagen_BodyClosedOnEncodingFailure(t *testing.T) {
 	tracker := &closeTrackingReader{readErr: io.ErrUnexpectedEOF}
 	wrappedStore := &fakeStorageReturningTracker{fakeStorage: fakeStore, tracker: tracker}
 	clock := fixedClock{T: time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC)}
-	svc := ventasapp.NewService(fakeRepo, nil, nil, wrappedStore, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil, nil, nil)
+	svc := ventasapp.NewService(fakeRepo, nil, nil, wrappedStore, clock, noopOutbox{}, imageprocessor.NoOpProcessor{}, nil, nil, nil, nil)
 
 	cu := fullPerms(uuid.New())
 	chiR := chi.NewRouter()

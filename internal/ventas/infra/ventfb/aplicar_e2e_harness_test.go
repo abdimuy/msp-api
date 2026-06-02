@@ -133,6 +133,7 @@ func newAplicarE2EHarness(ctx context.Context, t *testing.T, pool *firebird.Pool
 		nil, // txMgr nil — ambient WithTestTransaction tx is used
 		cfg,
 		writer,
+		nil, // microsipCliente nil — AplicarVenta E2E tests use ventas with known ClienteID
 	)
 	return &aplicarE2EHarness{
 		svc:    svc,

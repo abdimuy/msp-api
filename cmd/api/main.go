@@ -96,6 +96,7 @@ func appOptions() []fx.Option {
 			provideVentasImageProcessor,
 			provideVentasAplicarConfig,
 			provideVentasMicrosipWriter,
+			provideVentasMicrosipClienteWriter,
 			provideVentasService,
 			provideCobranzaSaldosRepo,
 			provideCobranzaPagosRepo,

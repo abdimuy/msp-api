@@ -185,7 +185,7 @@ func (w *ClienteWriter) execInsertCliente(ctx context.Context, q firebird.Querie
 // execInsertClaveCliente runs the CLAVES_CLIENTES INSERT.
 func (w *ClienteWriter) execInsertClaveCliente(ctx context.Context, q firebird.Querier, clave string, clienteID int) error {
 	_, err := q.ExecContext(ctx, insertClaveCliente,
-		clave, clienteID, DefaultRolClaveClientePrincipal,
+		clave, clienteID, outbound.DefaultRolClaveClientePrincipal,
 	)
 	if err != nil {
 		return fmt.Errorf("microsip crear cliente: insert claves_clientes: %w", firebird.MapError(err))
@@ -224,7 +224,7 @@ func (w *ClienteWriter) execInsertDirCliente(ctx context.Context, q firebird.Que
 func (w *ClienteWriter) execInsertLibresCliente(ctx context.Context, q firebird.Querier, clienteID int, in outbound.MicrosipClienteInput) error {
 	if in.Referencia == nil && in.Latitud == nil && in.Longitud == nil {
 		_, err := q.ExecContext(ctx, insertLibresClienteBase,
-			clienteID, in.ComprobanteDomicilioID, in.IdentificacionOficialID, DefaultLocalidad,
+			clienteID, in.ComprobanteDomicilioID, in.IdentificacionOficialID, outbound.DefaultLocalidad,
 		)
 		if err != nil {
 			return fmt.Errorf("microsip crear cliente: insert libres_clientes: %w", firebird.MapError(err))
@@ -244,7 +244,7 @@ func (w *ClienteWriter) execInsertLibresCliente(ctx context.Context, q firebird.
 	}
 
 	_, err := q.ExecContext(ctx, insertLibresClienteConOpcionales,
-		clienteID, in.ComprobanteDomicilioID, in.IdentificacionOficialID, DefaultLocalidad,
+		clienteID, in.ComprobanteDomicilioID, in.IdentificacionOficialID, outbound.DefaultLocalidad,
 		referencia, latitud, longitud,
 	)
 	if err != nil {
@@ -260,7 +260,7 @@ func (w *ClienteWriter) execInsertLibresCliente(ctx context.Context, q firebird.
 // zero-padded 7-digit string.
 func nextClaveCliente(ctx context.Context, q firebird.Querier) (string, error) {
 	var maxInt int
-	if err := q.QueryRowContext(ctx, selectMaxClaveCliente, DefaultRolClaveClientePrincipal).Scan(&maxInt); err != nil {
+	if err := q.QueryRowContext(ctx, selectMaxClaveCliente, outbound.DefaultRolClaveClientePrincipal).Scan(&maxInt); err != nil {
 		return "", fmt.Errorf("GEN clave_cliente: %w", firebird.MapError(err))
 	}
 	return fmt.Sprintf("%07d", maxInt+1), nil

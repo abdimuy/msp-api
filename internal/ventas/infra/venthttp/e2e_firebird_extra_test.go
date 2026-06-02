@@ -1001,7 +1001,7 @@ func buildE2EAplicarService(pool *firebird.Pool, outbox ventasoutbound.OutboxEnq
 	txMgr := firebird.NewTxManager(pool.DB)
 	return ventasapp.NewService(
 		repo, nil, nil, store, clock, outbox, imageprocessor.NoOpProcessor{},
-		txMgr, cfg, writer,
+		txMgr, cfg, writer, nil,
 	)
 }
 

@@ -27,7 +27,7 @@ func TestCrearVenta_VendedorUsuario_HappyPath(t *testing.T) {
 	knownID := in.Vendedores[0].UsuarioID
 
 	checker := newFakeUsuarioChecker(knownID)
-	h.svc = ventasapp.NewService(h.ventas, nil, checker, h.storage, h.clock, h.outbox, h.imageProc, nil, nil, nil)
+	h.svc = ventasapp.NewService(h.ventas, nil, checker, h.storage, h.clock, h.outbox, h.imageProc, nil, nil, nil, nil)
 
 	_, err := h.svc.CrearVenta(t.Context(), in, uuid.New())
 	require.NoError(t, err)
@@ -46,7 +46,7 @@ func TestCrearVenta_VendedorUsuario_Missing(t *testing.T) {
 	// known set is empty → the vendedor's usuario_id will be reported missing.
 
 	checker := newFakeUsuarioChecker()
-	h.svc = ventasapp.NewService(h.ventas, nil, checker, h.storage, h.clock, h.outbox, h.imageProc, nil, nil, nil)
+	h.svc = ventasapp.NewService(h.ventas, nil, checker, h.storage, h.clock, h.outbox, h.imageProc, nil, nil, nil, nil)
 
 	_, err := h.svc.CrearVenta(t.Context(), in, uuid.New())
 	require.ErrorIs(t, err, domain.ErrVendedorUsuarioNoEncontrado)
@@ -66,7 +66,7 @@ func TestCrearVenta_VendedorUsuario_CheckerError(t *testing.T) {
 
 	dbDown := errors.New("msp_usuarios unreachable")
 	checker := &fakeUsuarioChecker{err: dbDown}
-	h.svc = ventasapp.NewService(h.ventas, nil, checker, h.storage, h.clock, h.outbox, h.imageProc, nil, nil, nil)
+	h.svc = ventasapp.NewService(h.ventas, nil, checker, h.storage, h.clock, h.outbox, h.imageProc, nil, nil, nil, nil)
 
 	_, err := h.svc.CrearVenta(t.Context(), in, uuid.New())
 	require.ErrorIs(t, err, dbDown,
