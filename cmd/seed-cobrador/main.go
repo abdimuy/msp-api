@@ -13,6 +13,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -28,7 +29,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: seed-cobrador <email>")
+		_, _ = fmt.Fprintln(os.Stderr, "usage: seed-cobrador <email>")
 		os.Exit(2)
 	}
 	email := os.Args[1]
@@ -46,7 +47,7 @@ func main() {
 
 	user, err := auth.GetUserByEmail(ctx, email)
 	must(err)
-	fmt.Printf("firebase: email=%s uid=%s name=%q\n", email, user.UID, user.DisplayName)
+	_, _ = fmt.Printf("firebase: email=%s uid=%s name=%q\n", email, user.UID, user.DisplayName)
 
 	pool, err := firebird.New(cfg.Firebird)
 	must(err)
@@ -54,7 +55,7 @@ func main() {
 	defer func() { _ = pool.Stop(ctx) }()
 
 	must(seed(ctx, pool, email, user.UID, user.DisplayName))
-	fmt.Println("done.")
+	_, _ = fmt.Println("done.")
 }
 
 func seed(ctx context.Context, pool *firebird.Pool, email, uid, nombre string) error {
@@ -64,7 +65,7 @@ func seed(ctx context.Context, pool *firebird.Pool, email, uid, nombre string) e
 	now := time.Now()
 
 	var existingID string
-	err := pool.DB.QueryRowContext(ctx,
+	err := pool.QueryRowContext(ctx,
 		`SELECT ID FROM MSP_USUARIOS WHERE FIREBASE_UID = ?`, uid,
 	).Scan(&existingID)
 
@@ -72,10 +73,10 @@ func seed(ctx context.Context, pool *firebird.Pool, email, uid, nombre string) e
 	switch {
 	case err == nil:
 		usuarioID = existingID
-		fmt.Printf("usuario ya existe: id=%s\n", usuarioID)
-	case err == sql.ErrNoRows:
+		_, _ = fmt.Printf("usuario ya existe: id=%s\n", usuarioID)
+	case errors.Is(err, sql.ErrNoRows):
 		usuarioID = uuid.New().String()
-		_, err := pool.DB.ExecContext(ctx,
+		_, err := pool.ExecContext(ctx,
 			`INSERT INTO MSP_USUARIOS (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO,
 			   CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY)
 			 VALUES (?, ?, ?, ?, TRUE, ?, ?, ?, ?)`,
@@ -84,37 +85,37 @@ func seed(ctx context.Context, pool *firebird.Pool, email, uid, nombre string) e
 		if err != nil {
 			return fmt.Errorf("insert MSP_USUARIOS: %w", err)
 		}
-		fmt.Printf("usuario insertado: id=%s\n", usuarioID)
+		_, _ = fmt.Printf("usuario insertado: id=%s\n", usuarioID)
 	default:
 		return fmt.Errorf("lookup MSP_USUARIOS: %w", err)
 	}
 
 	var rolID string
-	if err := pool.DB.QueryRowContext(ctx,
+	if err := pool.QueryRowContext(ctx,
 		`SELECT ID FROM MSP_ROLES WHERE NOMBRE = 'super_admin'`,
 	).Scan(&rolID); err != nil {
 		return fmt.Errorf("lookup super_admin: %w", err)
 	}
 
 	var count int
-	if err := pool.DB.QueryRowContext(ctx,
+	if err := pool.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM MSP_USUARIOS_ROLES WHERE USUARIO_ID = ? AND ROL_ID = ?`,
 		usuarioID, rolID,
 	).Scan(&count); err != nil {
 		return fmt.Errorf("lookup MSP_USUARIOS_ROLES: %w", err)
 	}
 	if count > 0 {
-		fmt.Println("rol super_admin ya asignado")
+		_, _ = fmt.Println("rol super_admin ya asignado")
 		return nil
 	}
 
-	if _, err := pool.DB.ExecContext(ctx,
+	if _, err := pool.ExecContext(ctx,
 		`INSERT INTO MSP_USUARIOS_ROLES (USUARIO_ID, ROL_ID, CREATED_AT, CREATED_BY)
 		 VALUES (?, ?, ?, ?)`,
 		usuarioID, rolID, firebird.ToWallClock(now), usuarioID); err != nil {
 		return fmt.Errorf("insert MSP_USUARIOS_ROLES: %w", err)
 	}
-	fmt.Println("rol super_admin asignado")
+	_, _ = fmt.Println("rol super_admin asignado")
 	return nil
 }
 
