@@ -13,20 +13,24 @@ import (
 
 // ─── SQL constants ────────────────────────────────────────────────────────────
 
-// selectMaxClaveCliente reads the largest numeric CLAVE_CLIENTE under the
-// principal rol. Returns a single integer value (0 when the table is empty).
+// selectNextClaveCliente claims the next CLAVE_CLIENTE value from the
+// Firebird generator ID_CATALOGOS. The generator is monotonic, race-safe by
+// construction, and avoids any table scan of CLAVES_CLIENTES.
 //
-// Concurrency note: Firebird 4.0 triggers an internal bugcheck when
-// WITH LOCK is combined with CAST expressions in ORDER BY (vio.cpp:1448),
-// so we use aggregate MAX without a row lock. In the msp-api deployment
-// (single Windows Service process) AplicarVenta calls are serialized by the
-// application layer, making a concurrent race on CLAVE_CLIENTE assignment
-// extremely unlikely. If the scenario ever changes, the fix is a dedicated
-// Firebird SEQUENCE (generator) for CLAVE_CLIENTE.
-const selectMaxClaveCliente = `
-SELECT COALESCE(MAX(CAST(CLAVE_CLIENTE AS INTEGER)), 0)
-FROM CLAVES_CLIENTES
-WHERE ROL_CLAVE_CLI_ID = ?`
+// Why not MAX(CAST(CLAVE_CLIENTE AS INTEGER))+1: the dev DB MUEBLERA.FDB has
+// at least one corrupt data page in CLAVES_CLIENTES that triggers the engine
+// bugcheck `internal Firebird consistency check (wrong record length, file:
+// vio.cpp line: 1448)` on any full-table scan (CLAVES_CLIENTES has no index
+// on ROL_CLAVE_CLI_ID, so every filtered query scans all pages). Using the
+// generator sidesteps the table entirely.
+//
+// Consequence vs Microsip GUI: the GUI assigns claves like "0044523" by
+// scanning MAX+1. The generator currently sits in the millions, so claves we
+// create here will be 7-digit strings like "3075474". Functionally
+// equivalent — Microsip stores CLAVE_CLIENTE as VARCHAR(20), uniqueness is
+// guarded by CLAVES_CLIENTES_AK1, and downstream reads (e.g. lookupClaveCliente
+// in venta_writer.go) treat it as an opaque string.
+const selectNextClaveCliente = `SELECT GEN_ID(ID_CATALOGOS, 1) FROM RDB$DATABASE`
 
 // insertCliente inserts the CLIENTES header row (16 columns, verified SQL).
 //
@@ -255,15 +259,14 @@ func (w *ClienteWriter) execInsertLibresCliente(ctx context.Context, q firebird.
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
 
-// nextClaveCliente reads MAX(CAST(CLAVE_CLIENTE AS INTEGER)) for the principal
-// rol (COALESCE returns 0 when the table is empty), adds 1, and returns a
-// zero-padded 7-digit string.
+// nextClaveCliente claims the next CLAVE_CLIENTE value from the
+// ID_CATALOGOS generator and returns it zero-padded to 7 digits.
 func nextClaveCliente(ctx context.Context, q firebird.Querier) (string, error) {
-	var maxInt int
-	if err := q.QueryRowContext(ctx, selectMaxClaveCliente, outbound.DefaultRolClaveClientePrincipal).Scan(&maxInt); err != nil {
+	var nextID int
+	if err := q.QueryRowContext(ctx, selectNextClaveCliente).Scan(&nextID); err != nil {
 		return "", fmt.Errorf("GEN clave_cliente: %w", firebird.MapError(err))
 	}
-	return fmt.Sprintf("%07d", maxInt+1), nil
+	return fmt.Sprintf("%07d", nextID), nil
 }
 
 // buildCalle composes the CALLE field for DIRS_CLIENTES:

@@ -4,7 +4,6 @@ package microsip_test
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"os"
 	"strconv"
 	"testing"
@@ -189,15 +188,18 @@ func TestClienteWriter_NextClaveCliente_Incremental(t *testing.T) { //nolint:par
 		result2, err := writer.Crear(ctx, in2)
 		require.NoError(t, err)
 
-		// Parse both clave values and verify result2 == result1 + 1.
+		// Parse both clave values and verify result2 > result1. Strict +1 is
+		// not guaranteed because nextClaveCliente shares the ID_CATALOGOS
+		// generator with Microsip triggers (CLAVES_CLIENTES_BEFINS assigns
+		// CLAVE_CLIENTE_ID via the same generator on each INSERT), so gaps
+		// of >=2 between two Crear() calls are expected.
 		n1, err := strconv.Atoi(result1.ClaveCliente)
 		require.NoError(t, err, "result1.ClaveCliente debe ser numérico")
 
 		n2, err := strconv.Atoi(result2.ClaveCliente)
 		require.NoError(t, err, "result2.ClaveCliente debe ser numérico")
-		require.Equal(t, n1+1, n2, "segunda clave debe ser primera + 1 (numérico)")
+		require.Greater(t, n2, n1, "segunda clave debe ser estrictamente mayor que la primera")
 
-		expected := fmt.Sprintf("%07d", n1+1)
-		require.Equal(t, expected, result2.ClaveCliente, "segunda clave debe tener padding 7 dígitos")
+		require.Len(t, result2.ClaveCliente, 7, "segunda clave debe tener padding 7 dígitos")
 	})
 }
