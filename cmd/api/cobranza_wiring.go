@@ -99,12 +99,11 @@ func provideCobranzaStorage(ventasStorage ventasoutbound.StorageProvider) cobran
 	return &cobranzaStorageAdapter{inner: ventasStorage}
 }
 
-// provideCobranzaImageProcessor returns the platform image processor cast
-// through the cobranza-local port (both modules type-alias the platform
-// processor so no adapter is needed).
-func provideCobranzaImageProcessor(proc ventasoutbound.ImageProcessor) cobranzaoutbound.ImageProcessor {
-	return proc
-}
+// (No provideCobranzaImageProcessor: cobranzaoutbound.ImageProcessor is a
+// type alias to imageprocessor.Processor — the same type ventas already
+// provides via provideVentasImageProcessor — so fx resolves the cobranza
+// consumer transparently. Adding a second provider would duplicate the
+// type registration and fx aborts on startup.)
 
 // provideCobranzaService assembles the cobranza query + command service.
 func provideCobranzaService(

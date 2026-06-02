@@ -113,7 +113,6 @@ func appOptions() []fx.Option {
 			provideCobranzaPagosImagenesPort,
 			provideCobranzaMicrosipPagoWriter,
 			provideCobranzaStorage,
-			provideCobranzaImageProcessor,
 			provideCobranzaService,
 			provideCobranzaReconciler,
 			provideCobranzaPagoRetryWorker,
