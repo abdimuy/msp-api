@@ -59,6 +59,7 @@ func (r *PagosRepo) PorVenta(ctx context.Context, doctoCCID int) ([]domain.Pago,
 SELECT `+selectPagoCols+`
 FROM MSP_PAGOS_VENTAS
 WHERE DOCTO_CC_ACR_ID = ?
+  AND CANCELADO = 'N'
 ORDER BY FECHA`, doctoCCID)
 	if err != nil {
 		return nil, firebird.MapError(err)
@@ -75,6 +76,7 @@ func (r *PagosRepo) PorCliente(ctx context.Context, clienteID int) ([]domain.Pag
 SELECT `+selectPagoCols+`
 FROM MSP_PAGOS_VENTAS
 WHERE CLIENTE_ID = ?
+  AND CANCELADO = 'N'
 ORDER BY FECHA DESC`, clienteID)
 	if err != nil {
 		return nil, firebird.MapError(err)
@@ -98,12 +100,14 @@ func (r *PagosRepo) EnRutaPorZona(ctx context.Context, zonaID int, desde time.Ti
 SELECT `+selectPagoCols+`
 FROM MSP_PAGOS_VENTAS
 WHERE ZONA_CLIENTE_ID = ?
+  AND CANCELADO = 'N'
 ORDER BY FECHA DESC`, zonaID)
 	} else {
 		rows, err = q.QueryContext(ctx, `
 SELECT `+selectPagoCols+`
 FROM MSP_PAGOS_VENTAS
 WHERE ZONA_CLIENTE_ID = ? AND FECHA >= ?
+  AND CANCELADO = 'N'
 ORDER BY FECHA DESC`, zonaID, firebird.ToWallClock(desde))
 	}
 	if err != nil {
@@ -125,6 +129,10 @@ ORDER BY FECHA DESC`, zonaID, firebird.ToWallClock(desde))
 // El filtro de concepto IN (87327, 27969) — cobranza en ruta y abono
 // mostrador — se mantiene en todos los modos para excluir conceptos
 // internos del cache (155, 11, ...) que confundirían al cobrador.
+//
+// Nota: tombstones (CANCELADO='S') NO se filtran en el sync — se incluyen
+// intencionalmente para que el cliente móvil reciba la señal de borrado y
+// elimine la fila de su caché local.
 func (r *PagosRepo) SyncPorZona(
 	ctx context.Context, zonaID int, cursor time.Time, afterID, limit int, desde time.Time,
 ) (outbound.SyncPage[domain.Pago], error) {
@@ -252,6 +260,28 @@ ORDER BY p.UPDATED_AT, p.IMPTE_DOCTO_CC_ID`
 		return nil, firebird.MapError(err)
 	}
 	return rows, nil
+}
+
+// DeleteTombstonesOlderThan deletes tombstones whose UPDATED_AT < cutoff and
+// returns how many rows were removed. Mirrors
+// SaldosRepo.DeleteTombstonesOlderThan: implements the cleanup half of the
+// tombstone protocol introduced by migration 000019. The reconciler calls
+// this on its weekly pass to keep the cache bounded.
+func (r *PagosRepo) DeleteTombstonesOlderThan(ctx context.Context, cutoff time.Time) (int, error) {
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	res, err := q.ExecContext(ctx, `
+DELETE FROM MSP_PAGOS_VENTAS
+WHERE CANCELADO = 'S' AND UPDATED_AT < ?`,
+		firebird.ToWallClock(cutoff),
+	)
+	if err != nil {
+		return 0, firebird.MapError(err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, firebird.MapError(err)
+	}
+	return int(n), nil
 }
 
 // ─── scan helpers ─────────────────────────────────────────────────────────────
