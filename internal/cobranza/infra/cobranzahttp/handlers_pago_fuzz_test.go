@@ -101,55 +101,84 @@ func buildSeedMultipart(mimeType string, content []byte, filename string) []byte
 	return buf.Bytes()
 }
 
-// FuzzCrearPagoJSON fuzzes the CrearPago handler with arbitrary JSON bodies.
-// It must never panic; for 2xx responses the body must decode as PagoRecibidoDTO.
-func FuzzCrearPagoJSON(f *testing.F) {
-	// Corpus seeds — valid and invalid examples.
-	f.Add([]byte(`{"id":"550e8400-e29b-41d4-a716-446655440000","cargo_docto_cc_id":5000,"cliente_id":11486,"cobrador_id":200,"cobrador":"Mendoza Torres, Ana","importe":"1500.00","forma_cobro_id":1,"fecha_hora_pago":"2026-06-01T09:30:00Z"}`))
-	f.Add([]byte(`{}`))
+// FuzzCrearPagoMultipart fuzzes the (now multipart) CrearPago handler with
+// arbitrary multipart bodies — corrupted boundaries, malformed datos, broken
+// imagen parts. Must never panic; 2xx responses must decode as
+// PagoRecibidoDTO with a non-empty ID.
+//
+// Seeds are constructed with a stable boundary (fuzzSeedBoundary) so the
+// initial corpus is parseable; the fuzzer mutates them freely from there.
+func FuzzCrearPagoMultipart(f *testing.F) {
+	const validDatos = `{"id":"550e8400-e29b-41d4-a716-446655440000",` +
+		`"cargo_docto_cc_id":5000,"cliente_id":11486,"cobrador_id":200,` +
+		`"cobrador":"Mendoza Torres, Ana","importe":"1500.00",` +
+		`"forma_cobro_id":1,"fecha_hora_pago":"2026-06-01T09:30:00Z"}`
+
+	// Seeds — happy multiparts and known-broken ones.
+	f.Add(buildSeedCrearPagoMultipart(validDatos, nil, nil))
+	f.Add(buildSeedCrearPagoMultipart(validDatos,
+		[][]byte{[]byte("%PDF-1.4 seed")}, []string{"application/pdf"}))
+	f.Add(buildSeedCrearPagoMultipart(validDatos,
+		[][]byte{[]byte("\xFF\xD8\xFF fake jpeg")}, []string{"image/jpeg"}))
+	f.Add(buildSeedCrearPagoMultipart(`{}`, nil, nil))
+	f.Add(buildSeedCrearPagoMultipart(`{not json`, nil, nil))
+	f.Add(buildSeedCrearPagoMultipart(``, nil, nil))
+	f.Add(buildSeedCrearPagoMultipart(`null`, nil, nil))
 	f.Add([]byte(``))
-	f.Add([]byte(`{"id":"not-a-uuid"}`))
-	f.Add([]byte(`{"id":" "}`))
-	f.Add([]byte(`{`))
-	f.Add([]byte(`{"id":"550e8400-e29b-41d4-a716-446655440000","cargo_docto_cc_id":5000,"cliente_id":11486,"cobrador_id":200,"cobrador":"Test","importe":"not-a-decimal","forma_cobro_id":1,"fecha_hora_pago":"2026-06-01T09:30:00Z"}`))
-	f.Add([]byte(`{"id":"550e8400-e29b-41d4-a716-446655440000","cargo_docto_cc_id":5000,"cliente_id":11486,"cobrador_id":200,"cobrador":"Test","importe":"1.00","forma_cobro_id":1,"fecha_hora_pago":"not-a-date"}`))
-	f.Add([]byte(`null`))
-	f.Add([]byte(`[]`))
+	f.Add([]byte("--fuzzSeedBoundary--\r\n"))
 
 	f.Fuzz(func(t *testing.T, body []byte) {
-		// Build a fresh router for each fuzz iteration — no shared state.
 		router := buildFuzzRouter(t)
 
 		req := httptest.NewRequest(http.MethodPost, "/pagos", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", "multipart/form-data; boundary=fuzzSeedBoundary")
 		rec := httptest.NewRecorder()
 
-		// Catch any panics — they indicate a real bug in the handler.
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					t.Fatalf("handler panicked on body=%q: %v", string(body), r)
+					t.Fatalf("handler panicked on multipart body=%q: %v", string(body), r)
 				}
 			}()
 			router.ServeHTTP(rec, req)
 		}()
 
-		// The status code must always be set (never zero).
 		if rec.Code == 0 {
 			t.Fatalf("handler returned zero status code for body=%q", string(body))
 		}
-
-		// For 2xx responses the body must decode as a valid PagoRecibidoDTO.
 		if rec.Code >= 200 && rec.Code < 300 {
 			var dto cobranzahttp.PagoRecibidoDTO
 			if err := json.NewDecoder(rec.Body).Decode(&dto); err != nil {
-				t.Fatalf("2xx response body is not valid PagoRecibidoDTO: %v; body=%q", err, rec.Body.String())
+				t.Fatalf("2xx response is not PagoRecibidoDTO: %v; body=%q", err, rec.Body.String())
 			}
 			if dto.ID == "" {
 				t.Fatalf("2xx response DTO has empty ID; body=%q", string(body))
 			}
 		}
 	})
+}
+
+// buildSeedCrearPagoMultipart serializes a multipart body with a fixed
+// boundary for fuzz seed reproducibility. imagens[i] / mimes[i] pair the
+// i-th file part; both slices must be the same length.
+//
+//nolint:revive // writing to bytes.Buffer always succeeds.
+func buildSeedCrearPagoMultipart(datos string, imagens [][]byte, mimes []string) []byte {
+	const boundary = "fuzzSeedBoundary"
+	buf := &bytes.Buffer{}
+	_, _ = fmt.Fprintf(buf, "--%s\r\n", boundary)
+	_, _ = fmt.Fprintf(buf, "Content-Disposition: form-data; name=\"datos\"\r\n\r\n")
+	_, _ = buf.WriteString(datos)
+	_, _ = fmt.Fprintf(buf, "\r\n")
+	for i, img := range imagens {
+		_, _ = fmt.Fprintf(buf, "--%s\r\n", boundary)
+		_, _ = fmt.Fprintf(buf, "Content-Disposition: form-data; name=\"imagen\"; filename=\"img%d.bin\"\r\n", i)
+		_, _ = fmt.Fprintf(buf, "Content-Type: %s\r\n\r\n", mimes[i])
+		_, _ = buf.Write(img)
+		_, _ = fmt.Fprintf(buf, "\r\n")
+	}
+	_, _ = fmt.Fprintf(buf, "--%s--\r\n", boundary)
+	return buf.Bytes()
 }
 
 // FuzzAdjuntarImagenPagoMultipart fuzzes the AdjuntarImagenPago handler with
