@@ -463,6 +463,22 @@ var (
 		"imagen_decode_failed",
 		"no se pudo procesar la imagen",
 	)
+
+	// ErrVentaEvidenciaRequerida is returned when CrearVentaConImagenes or
+	// AplicarVenta receives a venta without at least one comprobante. Every
+	// venta del showroom debe llevar firma o ID del cliente; no hay excepción.
+	ErrVentaEvidenciaRequerida = apperror.NewValidation(
+		"venta_evidencia_requerida",
+		"la venta requiere al menos una imagen de evidencia",
+	)
+
+	// ErrImagenIDDuplicado is returned when CrearVentaConImagenes receives
+	// the same imagen UUID twice in the same request. Client must deduplicate
+	// before retrying.
+	ErrImagenIDDuplicado = apperror.NewValidation(
+		"imagen_id_duplicado",
+		"el id de imagen aparece más de una vez en la solicitud",
+	)
 	// ErrReasonCancelacionRequerida is returned when cancel reason is empty.
 	ErrReasonCancelacionRequerida = apperror.NewValidation(
 		"reason_cancelacion_required",
