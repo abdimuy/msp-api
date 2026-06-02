@@ -58,26 +58,31 @@ type ReconcileReport struct {
 	PagosChecked int
 	// PagosErrors counts pago IDs whose recompute call failed.
 	PagosErrors int
-	// TombstonesDeleted is how many CARGO_CANCELADO='S' rows the reconciler
-	// hard-deleted in this pass.
-	TombstonesDeleted int
-	StartedAt         time.Time
-	FinishedAt        time.Time
+	// SaldosTombstonesDeleted is how many CARGO_CANCELADO='S' rows the
+	// reconciler hard-deleted from MSP_SALDOS_VENTAS in this pass.
+	SaldosTombstonesDeleted int
+	// PagosTombstonesDeleted is how many CANCELADO='S' rows the reconciler
+	// hard-deleted from MSP_PAGOS_VENTAS in this pass.
+	PagosTombstonesDeleted int
+	StartedAt              time.Time
+	FinishedAt             time.Time
 }
 
 // ReconcilerDeps groups the Reconciler's collaborators. Required: SaldosLister,
 // SaldosRepo, Recomputer, Clock, Logger. Optional (pagos reconciliation):
-// PagosLister + PagosRecomputer. Optional (tombstone cleanup): TombstoneCleaner.
+// PagosLister + PagosRecomputer. Optional (tombstone cleanup): SaldosTombstone
+// and/or PagosTombstone.
 type ReconcilerDeps struct {
-	SaldosLister     outbound.SaldosLister
-	SaldosRepo       outbound.SaldosRepo
-	Recomputer       outbound.SaldosRecomputer
-	PagosLister      outbound.PagosLister
-	PagosRecomputer  outbound.PagosRecomputer
-	TombstoneCleaner outbound.SaldosTombstoneCleaner
-	Clock            outbound.Clock
-	Config           ReconcilerConfig
-	Logger           *slog.Logger
+	SaldosLister    outbound.SaldosLister
+	SaldosRepo      outbound.SaldosRepo
+	Recomputer      outbound.SaldosRecomputer
+	PagosLister     outbound.PagosLister
+	PagosRecomputer outbound.PagosRecomputer
+	SaldosTombstone outbound.SaldosTombstoneCleaner
+	PagosTombstone  outbound.PagosTombstoneCleaner
+	Clock           outbound.Clock
+	Config          ReconcilerConfig
+	Logger          *slog.Logger
 }
 
 // Reconciler walks every row in MSP_SALDOS_VENTAS (and optionally
@@ -164,7 +169,8 @@ func (r *Reconciler) loop(ctx context.Context) {
 				"errors", report.Errors,
 				"pagos_checked", report.PagosChecked,
 				"pagos_errors", report.PagosErrors,
-				"tombstones_deleted", report.TombstonesDeleted,
+				"saldos_tombstones_deleted", report.SaldosTombstonesDeleted,
+				"pagos_tombstones_deleted", report.PagosTombstonesDeleted,
 				"duration_ms", report.FinishedAt.Sub(report.StartedAt).Milliseconds(),
 			)
 		}
@@ -187,19 +193,37 @@ func (r *Reconciler) Run(ctx context.Context) (ReconcileReport, error) {
 		}
 	}
 
-	if r.deps.TombstoneCleaner != nil && r.deps.Config.TombstoneRetentionDays > 0 {
+	if r.deps.Config.TombstoneRetentionDays > 0 {
 		cutoff := r.deps.Clock.Now().AddDate(0, 0, -r.deps.Config.TombstoneRetentionDays)
-		n, err := r.deps.TombstoneCleaner.DeleteTombstonesOlderThan(ctx, cutoff)
-		if err != nil {
-			r.deps.Logger.WarnContext(ctx, "cobranza.reconciler: tombstone cleanup failed",
-				"error", err, "cutoff", cutoff)
-		} else {
-			report.TombstonesDeleted = n
-		}
+		r.runTombstoneCleanup(ctx, cutoff, &report)
 	}
 
 	report.FinishedAt = r.deps.Clock.Now()
 	return report, nil
+}
+
+// runTombstoneCleanup hard-deletes expired tombstone rows from both caches.
+// Both cleaners share the same cutoff (TombstoneRetentionDays). Errors are
+// logged and counted; they do not abort the pass.
+func (r *Reconciler) runTombstoneCleanup(ctx context.Context, cutoff time.Time, report *ReconcileReport) {
+	if r.deps.SaldosTombstone != nil {
+		n, err := r.deps.SaldosTombstone.DeleteTombstonesOlderThan(ctx, cutoff)
+		if err != nil {
+			r.deps.Logger.WarnContext(ctx, "cobranza.reconciler: saldos tombstone cleanup failed",
+				"error", err, "cutoff", cutoff)
+		} else {
+			report.SaldosTombstonesDeleted = n
+		}
+	}
+	if r.deps.PagosTombstone != nil {
+		n, err := r.deps.PagosTombstone.DeleteTombstonesOlderThan(ctx, cutoff)
+		if err != nil {
+			r.deps.Logger.WarnContext(ctx, "cobranza.reconciler: pagos tombstone cleanup failed",
+				"error", err, "cutoff", cutoff)
+		} else {
+			report.PagosTombstonesDeleted = n
+		}
+	}
 }
 
 // runSaldosPass pages through saldos and recomputes each cargo.

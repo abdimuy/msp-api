@@ -72,3 +72,14 @@ type PagosLister interface {
 	// than limit rows remain.
 	Page(ctx context.Context, cursorAfter, limit int) (ids []int, nextCursor int, err error)
 }
+
+// PagosTombstoneCleaner physically deletes pago rows marked as cancelled
+// (CANCELADO='S') whose UPDATED_AT is older than the cutoff. Mirrors
+// SaldosTombstoneCleaner. Used by the reconciler to keep
+// MSP_PAGOS_VENTAS bounded — any mobile client that hasn't synced for
+// >cutoff has already lost its session and will resync from scratch.
+type PagosTombstoneCleaner interface {
+	// DeleteTombstonesOlderThan deletes tombstones whose UPDATED_AT < cutoff
+	// and returns how many rows were removed.
+	DeleteTombstonesOlderThan(ctx context.Context, cutoff time.Time) (int, error)
+}

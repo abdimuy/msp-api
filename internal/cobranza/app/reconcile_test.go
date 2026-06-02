@@ -91,15 +91,32 @@ func (f *fakePagosRecomputer) Recompute(_ context.Context, impteID int) error {
 	return nil
 }
 
-// fakeTombstoneCleaner implements outbound.SaldosTombstoneCleaner.
-type fakeTombstoneCleaner struct {
+// fakeSaldosTombstoneCleaner implements outbound.SaldosTombstoneCleaner.
+type fakeSaldosTombstoneCleaner struct {
 	deleted   int
 	err       error
 	lastUsed  time.Time
 	callCount int
 }
 
-func (f *fakeTombstoneCleaner) DeleteTombstonesOlderThan(_ context.Context, cutoff time.Time) (int, error) {
+func (f *fakeSaldosTombstoneCleaner) DeleteTombstonesOlderThan(_ context.Context, cutoff time.Time) (int, error) {
+	f.callCount++
+	f.lastUsed = cutoff
+	if f.err != nil {
+		return 0, f.err
+	}
+	return f.deleted, nil
+}
+
+// fakePagosTombstoneCleaner implements outbound.PagosTombstoneCleaner.
+type fakePagosTombstoneCleaner struct {
+	deleted   int
+	err       error
+	lastUsed  time.Time
+	callCount int
+}
+
+func (f *fakePagosTombstoneCleaner) DeleteTombstonesOlderThan(_ context.Context, cutoff time.Time) (int, error) {
 	f.callCount++
 	f.lastUsed = cutoff
 	if f.err != nil {
@@ -341,45 +358,88 @@ func TestReconciler_Run_PagosPassRecomputesEachImpteID(t *testing.T) {
 	assert.Equal(t, 1, report.PagosErrors)
 }
 
-func TestReconciler_Run_TombstoneCleanup(t *testing.T) {
+func TestReconciler_Run_SaldosTombstoneCleanup(t *testing.T) {
 	t.Parallel()
 
-	cleaner := &fakeTombstoneCleaner{deleted: 42}
+	cleaner := &fakeSaldosTombstoneCleaner{deleted: 42}
 	now := time.Date(2026, 5, 30, 0, 0, 0, 0, time.UTC)
 
 	r := newReconciler(t, app.ReconcilerDeps{
-		SaldosLister:     &fakeLister{pages: [][]int{{}}},
-		Recomputer:       &fakeRecomputer{},
-		SaldosRepo:       newFakeSaldosRepo(),
-		TombstoneCleaner: cleaner,
-		Clock:            fixedClock{T: now},
-		Config:           app.ReconcilerConfig{Interval: time.Hour, PageSize: 100, TombstoneRetentionDays: 30},
+		SaldosLister:    &fakeLister{pages: [][]int{{}}},
+		Recomputer:      &fakeRecomputer{},
+		SaldosRepo:      newFakeSaldosRepo(),
+		SaldosTombstone: cleaner,
+		Clock:           fixedClock{T: now},
+		Config:          app.ReconcilerConfig{Interval: time.Hour, PageSize: 100, TombstoneRetentionDays: 30},
 	})
 
 	report, err := r.Run(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, 42, report.TombstonesDeleted)
+	assert.Equal(t, 42, report.SaldosTombstonesDeleted)
 	assert.Equal(t, 1, cleaner.callCount)
 	expectedCutoff := now.AddDate(0, 0, -30)
 	assert.Equal(t, expectedCutoff, cleaner.lastUsed)
 }
 
-func TestReconciler_Run_TombstoneCleanup_DisabledWhenRetentionZero(t *testing.T) {
+func TestReconciler_Run_SaldosTombstoneCleanup_DisabledWhenRetentionZero(t *testing.T) {
 	t.Parallel()
 
-	cleaner := &fakeTombstoneCleaner{deleted: 99}
+	cleaner := &fakeSaldosTombstoneCleaner{deleted: 99}
 
 	r := newReconciler(t, app.ReconcilerDeps{
-		SaldosLister:     &fakeLister{pages: [][]int{{}}},
-		Recomputer:       &fakeRecomputer{},
-		SaldosRepo:       newFakeSaldosRepo(),
-		TombstoneCleaner: cleaner,
-		Clock:            fixedClock{T: time.Now()},
-		Config:           app.ReconcilerConfig{Interval: time.Hour, PageSize: 100, TombstoneRetentionDays: 0},
+		SaldosLister:    &fakeLister{pages: [][]int{{}}},
+		Recomputer:      &fakeRecomputer{},
+		SaldosRepo:      newFakeSaldosRepo(),
+		SaldosTombstone: cleaner,
+		Clock:           fixedClock{T: time.Now()},
+		Config:          app.ReconcilerConfig{Interval: time.Hour, PageSize: 100, TombstoneRetentionDays: 0},
 	})
 
 	report, err := r.Run(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, 0, report.TombstonesDeleted)
+	assert.Equal(t, 0, report.SaldosTombstonesDeleted)
+	assert.Equal(t, 0, cleaner.callCount)
+}
+
+func TestReconciler_Run_PagosTombstoneCleanup(t *testing.T) {
+	t.Parallel()
+
+	cleaner := &fakePagosTombstoneCleaner{deleted: 17}
+	now := time.Date(2026, 5, 30, 0, 0, 0, 0, time.UTC)
+
+	r := newReconciler(t, app.ReconcilerDeps{
+		SaldosLister:   &fakeLister{pages: [][]int{{}}},
+		Recomputer:     &fakeRecomputer{},
+		SaldosRepo:     newFakeSaldosRepo(),
+		PagosTombstone: cleaner,
+		Clock:          fixedClock{T: now},
+		Config:         app.ReconcilerConfig{Interval: time.Hour, PageSize: 100, TombstoneRetentionDays: 30},
+	})
+
+	report, err := r.Run(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 17, report.PagosTombstonesDeleted)
+	assert.Equal(t, 1, cleaner.callCount)
+	expectedCutoff := now.AddDate(0, 0, -30)
+	assert.Equal(t, expectedCutoff, cleaner.lastUsed)
+}
+
+func TestReconciler_Run_PagosTombstoneCleanup_DisabledWhenRetentionZero(t *testing.T) {
+	t.Parallel()
+
+	cleaner := &fakePagosTombstoneCleaner{deleted: 99}
+
+	r := newReconciler(t, app.ReconcilerDeps{
+		SaldosLister:   &fakeLister{pages: [][]int{{}}},
+		Recomputer:     &fakeRecomputer{},
+		SaldosRepo:     newFakeSaldosRepo(),
+		PagosTombstone: cleaner,
+		Clock:          fixedClock{T: time.Now()},
+		Config:         app.ReconcilerConfig{Interval: time.Hour, PageSize: 100, TombstoneRetentionDays: 0},
+	})
+
+	report, err := r.Run(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 0, report.PagosTombstonesDeleted)
 	assert.Equal(t, 0, cleaner.callCount)
 }

@@ -178,10 +178,16 @@ func provideCobranzaReconcilerConfig() cobranzaapp.ReconcilerConfig {
 	}
 }
 
-// provideCobranzaTombstoneCleaner exposes the SaldosRepo as a
+// provideCobranzaSaldosTombstoneCleaner exposes the SaldosRepo as a
 // SaldosTombstoneCleaner port (the concrete *SaldosRepo satisfies both).
-func provideCobranzaTombstoneCleaner(p *firebird.Pool) cobranzaoutbound.SaldosTombstoneCleaner {
+func provideCobranzaSaldosTombstoneCleaner(p *firebird.Pool) cobranzaoutbound.SaldosTombstoneCleaner {
 	return cobranzaventfb.NewSaldosRepo(p)
+}
+
+// provideCobranzaPagosTombstoneCleaner exposes the PagosRepo as a
+// PagosTombstoneCleaner port (the concrete *PagosRepo satisfies both).
+func provideCobranzaPagosTombstoneCleaner(p *firebird.Pool) cobranzaoutbound.PagosTombstoneCleaner {
+	return cobranzaventfb.NewPagosRepo(p)
 }
 
 // provideCobranzaReconciler assembles the cobranza reconciler.
@@ -191,21 +197,23 @@ func provideCobranzaReconciler(
 	saldosRepo cobranzaoutbound.SaldosRepo,
 	pagosLister cobranzaoutbound.PagosLister,
 	pagosRecomputer cobranzaoutbound.PagosRecomputer,
-	cleaner cobranzaoutbound.SaldosTombstoneCleaner,
+	saldosCleaner cobranzaoutbound.SaldosTombstoneCleaner,
+	pagosCleaner cobranzaoutbound.PagosTombstoneCleaner,
 	clock cobranzaoutbound.Clock,
 	cfg cobranzaapp.ReconcilerConfig,
 	logger *slog.Logger,
 ) *cobranzaapp.Reconciler {
 	return cobranzaapp.NewReconciler(cobranzaapp.ReconcilerDeps{
-		SaldosLister:     saldosLister,
-		SaldosRepo:       saldosRepo,
-		Recomputer:       recomputer,
-		PagosLister:      pagosLister,
-		PagosRecomputer:  pagosRecomputer,
-		TombstoneCleaner: cleaner,
-		Clock:            clock,
-		Config:           cfg,
-		Logger:           logger,
+		SaldosLister:    saldosLister,
+		SaldosRepo:      saldosRepo,
+		Recomputer:      recomputer,
+		PagosLister:     pagosLister,
+		PagosRecomputer: pagosRecomputer,
+		SaldosTombstone: saldosCleaner,
+		PagosTombstone:  pagosCleaner,
+		Clock:           clock,
+		Config:          cfg,
+		Logger:          logger,
 	})
 }
 

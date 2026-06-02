@@ -17,8 +17,11 @@ import (
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 )
 
-// Compile-time assertion: PagosRepo satisfies the outbound port.
-var _ outbound.PagosRepo = (*PagosRepo)(nil)
+// Compile-time assertions: PagosRepo satisfies both ports.
+var (
+	_ outbound.PagosRepo             = (*PagosRepo)(nil)
+	_ outbound.PagosTombstoneCleaner = (*PagosRepo)(nil)
+)
 
 // PagosRepo implements outbound.PagosRepo backed by the MSP_PAGOS_VENTAS
 // materialized cache in Firebird. Reads hit covering indexes for sub-30ms
