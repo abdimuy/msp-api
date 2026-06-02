@@ -683,6 +683,26 @@ func (v *Venta) MarcarAplicada(doctoID int, folio string, at time.Time, by uuid.
 	return nil
 }
 
+// AsignarClienteMicrosip links the venta to the Microsip CLIENTE_ID that was
+// just created for it. Only valid when ClienteID is nil — re-assignment is not
+// permitted. Unlike ActualizarCliente this mutator does NOT require
+// SituacionBorrador; it is called during AplicarVenta while the venta is
+// already SituacionAprobada.
+//
+// Returns ErrClienteIDInvalido if id <= 0.
+// Returns ErrClienteYaAsignado if a cliente_id is already set.
+func (v *Venta) AsignarClienteMicrosip(id int, by uuid.UUID) error {
+	if id <= 0 {
+		return ErrClienteIDInvalido
+	}
+	if v.clienteID != nil {
+		return ErrClienteYaAsignado
+	}
+	v.clienteID = &id
+	v.audit.MarkUpdated(by)
+	return nil
+}
+
 // ─── Edit methods (only valid in StatusBorrador) ───────────────────────────
 
 // ActualizarHeaderParams carries the editable header fields. TipoVenta is

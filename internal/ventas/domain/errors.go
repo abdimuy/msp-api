@@ -44,6 +44,13 @@ var (
 		"cliente_id_invalido",
 		"el cliente_id no es válido",
 	)
+	// ErrClienteYaAsignado is returned when AsignarClienteMicrosip is called on a
+	// venta that already has a Microsip cliente_id linked. Re-assignment is not
+	// allowed — the venta's link to Microsip is set exactly once at apply time.
+	ErrClienteYaAsignado = apperror.NewConflict(
+		"cliente_ya_asignado",
+		"la venta ya tiene cliente_id asignado",
+	)
 	// ErrVendedorUsuarioNoEncontrado is returned when one or more vendedor
 	// usuario_ids on a CrearVenta request do not resolve to a row in
 	// MSP_USUARIOS. The Details payload carries the offending ids so the

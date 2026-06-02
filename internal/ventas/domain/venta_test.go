@@ -549,3 +549,86 @@ func TestVenta_AccessorsRoundtrip(t *testing.T) {
 	require.NotNil(t, v.Nota())
 	assert.Equal(t, "una nota", *v.Nota())
 }
+
+// ─── AsignarClienteMicrosip ────────────────────────────────────────────────
+
+// buildAprobadaVentaSinCliente returns a Venta in SituacionAprobada with no
+// clienteID set — the precondition for AsignarClienteMicrosip.
+func buildAprobadaVentaSinCliente(t *testing.T) *domain.Venta {
+	t.Helper()
+	now := time.Now().Add(-time.Hour)
+	return domain.HydrateVenta(domain.HydrateVentaParams{
+		ID:             uuid.New(),
+		TipoVenta:      domain.TipoVentaContado,
+		Estado:         domain.EstadoActive,
+		Situacion:      domain.SituacionAprobada,
+		Sincronizacion: domain.SincronizacionPendiente,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		CreatedBy:      uuid.New(),
+		UpdatedBy:      uuid.New(),
+	})
+}
+
+func TestAsignarClienteMicrosip_HappyPath(t *testing.T) {
+	t.Parallel()
+	v := buildAprobadaVentaSinCliente(t)
+	require.Nil(t, v.ClienteID(), "fixture must have no clienteID")
+
+	auditBefore := v.Audit()
+	before := auditBefore.UpdatedAt()
+	by := uuid.New()
+	err := v.AsignarClienteMicrosip(123, by)
+	require.NoError(t, err)
+
+	require.NotNil(t, v.ClienteID())
+	assert.Equal(t, 123, *v.ClienteID())
+	auditAfter := v.Audit()
+	assert.Equal(t, by, auditAfter.UpdatedBy())
+	assert.True(t, auditAfter.UpdatedAt().After(before), "UpdatedAt should have advanced")
+}
+
+func TestAsignarClienteMicrosip_YaAsignado_Rechazado(t *testing.T) {
+	t.Parallel()
+	existing := 42
+	now := time.Now().Add(-time.Hour)
+	v := domain.HydrateVenta(domain.HydrateVentaParams{
+		ID:             uuid.New(),
+		ClienteID:      &existing,
+		TipoVenta:      domain.TipoVentaContado,
+		Estado:         domain.EstadoActive,
+		Situacion:      domain.SituacionAprobada,
+		Sincronizacion: domain.SincronizacionPendiente,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		CreatedBy:      uuid.New(),
+		UpdatedBy:      uuid.New(),
+	})
+	require.NotNil(t, v.ClienteID())
+
+	err := v.AsignarClienteMicrosip(99, uuid.New())
+	require.Error(t, err)
+	require.ErrorIs(t, err, domain.ErrClienteYaAsignado)
+	// original value must remain unchanged
+	assert.Equal(t, 42, *v.ClienteID())
+}
+
+func TestAsignarClienteMicrosip_IDInvalido(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		id   int
+	}{
+		{"zero", 0},
+		{"negative", -1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			v := buildAprobadaVentaSinCliente(t)
+			err := v.AsignarClienteMicrosip(tc.id, uuid.New())
+			require.Error(t, err)
+			assert.ErrorIs(t, err, domain.ErrClienteIDInvalido)
+		})
+	}
+}
