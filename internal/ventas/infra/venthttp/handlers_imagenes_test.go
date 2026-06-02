@@ -55,7 +55,7 @@ func TestAdjuntarImagen_OK(t *testing.T) {
 
 	// Seed a venta.
 	body := validCreateBody()
-	createReq := jsonRequest(t, http.MethodPost, "/ventas", body)
+	createReq := crearVentaMultipartRequest(t, body)
 	createRec := httptest.NewRecorder()
 	r.ServeHTTP(createRec, createReq)
 	require.Equal(t, http.StatusCreated, createRec.Code, createRec.Body.String())
@@ -83,7 +83,7 @@ func TestEliminarImagen_OK(t *testing.T) {
 	r := buildRouter(t, svc, cu)
 
 	body := validCreateBody()
-	createReq := jsonRequest(t, http.MethodPost, "/ventas", body)
+	createReq := crearVentaMultipartRequest(t, body)
 	createRec := httptest.NewRecorder()
 	r.ServeHTTP(createRec, createReq)
 	require.Equal(t, http.StatusCreated, createRec.Code)

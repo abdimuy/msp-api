@@ -31,7 +31,7 @@ import (
 func uploadAndGetImagenID(t *testing.T, r http.Handler) (string, venthttp.ImagenDTO) {
 	t.Helper()
 	body := validCreateBody()
-	createReq := jsonRequest(t, http.MethodPost, "/ventas", body)
+	createReq := crearVentaMultipartRequest(t, body)
 	createRec := httptest.NewRecorder()
 	r.ServeHTTP(createRec, createReq)
 	require.Equal(t, http.StatusCreated, createRec.Code, createRec.Body.String())
@@ -178,7 +178,7 @@ func TestObtenerImagen_ImagenNotFoundInVenta_Returns404(t *testing.T) {
 	r := buildRouter(t, svc, cu)
 
 	body := validCreateBody()
-	createReq := jsonRequest(t, http.MethodPost, "/ventas", body)
+	createReq := crearVentaMultipartRequest(t, body)
 	createRec := httptest.NewRecorder()
 	r.ServeHTTP(createRec, createReq)
 	require.Equal(t, http.StatusCreated, createRec.Code)
@@ -231,7 +231,7 @@ func TestObtenerImagen_MultipleImagenes_ReturnsCorrectOne(t *testing.T) {
 	r := buildRouter(t, svc, cu)
 
 	body := validCreateBody()
-	createReq := jsonRequest(t, http.MethodPost, "/ventas", body)
+	createReq := crearVentaMultipartRequest(t, body)
 	createRec := httptest.NewRecorder()
 	r.ServeHTTP(createRec, createReq)
 	require.Equal(t, http.StatusCreated, createRec.Code)

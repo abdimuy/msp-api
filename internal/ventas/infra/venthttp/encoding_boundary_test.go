@@ -128,7 +128,7 @@ func TestE2E_Encoding_UTF8_RoundTrip(t *testing.T) {
 				body.Direccion.Poblacion = tc.poblacion
 				body.Nota = &tc.nota
 
-				req := jsonRequest(t, http.MethodPost, "/ventas", body)
+				req := crearVentaMultipartRequest(t, body)
 				rec := httptest.NewRecorder()
 				r.ServeHTTP(rec, req)
 				require.Equal(t, http.StatusCreated, rec.Code,
@@ -175,7 +175,7 @@ func TestE2E_Encoding_NUL_Rejected(t *testing.T) {
 		body.Vendedores[0].UsuarioID = usuarioID.String()
 		body.Cliente.Nombre = "Cliente\x00Roto"
 
-		req := jsonRequest(t, http.MethodPost, "/ventas", body)
+		req := crearVentaMultipartRequest(t, body)
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 
@@ -205,7 +205,7 @@ func TestE2E_Encoding_ControlChar_Rejected(t *testing.T) {
 		body.Vendedores[0].UsuarioID = usuarioID.String()
 		body.Cliente.Nombre = "Cliente\x01Roto"
 
-		req := jsonRequest(t, http.MethodPost, "/ventas", body)
+		req := crearVentaMultipartRequest(t, body)
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 
@@ -242,7 +242,7 @@ func TestE2E_Encoding_LongUTF8MultibyteString(t *testing.T) {
 		body.Vendedores[0].UsuarioID = usuarioID.String()
 		body.Nota = &longNota
 
-		req := jsonRequest(t, http.MethodPost, "/ventas", body)
+		req := crearVentaMultipartRequest(t, body)
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusCreated, rec.Code,
@@ -278,7 +278,7 @@ func TestE2E_Encoding_PATCH_OnUnicodeFields(t *testing.T) {
 		body := validCreateBody()
 		body.Vendedores[0].UsuarioID = usuarioID.String()
 		body.Direccion.Poblacion = "Mérida"
-		req := jsonRequest(t, http.MethodPost, "/ventas", body)
+		req := crearVentaMultipartRequest(t, body)
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusCreated, rec.Code, "create: %s", rec.Body.String())

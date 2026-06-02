@@ -86,7 +86,7 @@ func TestE2E_Firebird_Bulk_ManyProductos(t *testing.T) {
 				AlmacenOrigenID: intPtr(1), AlmacenDestinoID: intPtr(2),
 			})
 		}
-		req := jsonRequest(t, http.MethodPost, "/ventas", body)
+		req := crearVentaMultipartRequest(t, body)
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
@@ -127,7 +127,7 @@ func TestE2E_Firebird_PlanCredito_FrecuenciaCambio_Happy(t *testing.T) {
 		}
 		lunes := "LUNES"
 		body.DiaCobranza = &venthttp.DiaCobranzaDTO{Semana: &lunes}
-		req := jsonRequest(t, http.MethodPost, "/ventas", body)
+		req := crearVentaMultipartRequest(t, body)
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
@@ -177,7 +177,7 @@ func TestE2E_Firebird_PlanCredito_FrecuenciaIncoherente_Rejected(t *testing.T) {
 		}
 		lunes := "LUNES"
 		body.DiaCobranza = &venthttp.DiaCobranzaDTO{Semana: &lunes}
-		req := jsonRequest(t, http.MethodPost, "/ventas", body)
+		req := crearVentaMultipartRequest(t, body)
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
@@ -411,7 +411,7 @@ func TestE2E_Firebird_ReemplazarCombos_EmptyOK(t *testing.T) {
 			Cantidad: "1", AlmacenOrigenID: 1, AlmacenDestinoID: 2,
 		}}
 		// Productos remain stand-alone (carry their own almacenes, no combo_id).
-		req := jsonRequest(t, http.MethodPost, "/ventas", body)
+		req := crearVentaMultipartRequest(t, body)
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
@@ -465,7 +465,7 @@ func TestE2E_Firebird_NullableFields_RoundTrip(t *testing.T) {
 		body.Direccion.ZonaClienteID = &zona
 		body.Cliente.Telefono = &tel
 		body.Cliente.Aval = &aval
-		req := jsonRequest(t, http.MethodPost, "/ventas", body)
+		req := crearVentaMultipartRequest(t, body)
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
@@ -533,7 +533,7 @@ func TestE2E_Firebird_FullLifecycle(t *testing.T) {
 		}
 		lunes := "LUNES"
 		body.DiaCobranza = &venthttp.DiaCobranzaDTO{Semana: &lunes}
-		req := jsonRequest(t, http.MethodPost, "/ventas", body)
+		req := crearVentaMultipartRequest(t, body)
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusCreated, rec.Code, "create: %s", rec.Body.String())
@@ -660,7 +660,9 @@ func TestE2E_Firebird_FullLifecycle(t *testing.T) {
 		assert.Len(t, mid.Productos, 3)
 		assert.Len(t, mid.Combos, 1)
 		assert.Len(t, mid.Vendedores, 1)
-		assert.Empty(t, mid.Imagenes, "imagen must be deleted")
+		// The creation-time evidencia imagen (from multipart CrearVenta) still
+		// remains; only the explicitly-attached imagen from step 8 was deleted.
+		assert.Len(t, mid.Imagenes, 1, "only the explicit upload was deleted; evidencia remains")
 		assert.Equal(t, "borrador", mid.Situacion)
 
 		// 12. PATCH cancel.
@@ -731,7 +733,7 @@ func TestE2E_Firebird_ExtremeDates(t *testing.T) {
 				body.Vendedores[0].UsuarioID = usuarioID.String()
 				body.FechaVenta = tc.fechaVenta
 
-				req := jsonRequest(t, http.MethodPost, "/ventas", body)
+				req := crearVentaMultipartRequest(t, body)
 				rec := httptest.NewRecorder()
 				r.ServeHTTP(rec, req)
 				t.Logf("%s POST status=%d body=%s", tc.name, rec.Code, rec.Body.String())
@@ -782,7 +784,7 @@ func TestE2E_Firebird_Combo_FractionalCantidad(t *testing.T) {
 				PrecioAnual: "100", PrecioCorto: "90", PrecioContado: "80",
 				Cantidad: cantidad, AlmacenOrigenID: 1, AlmacenDestinoID: 2,
 			}}
-			req := jsonRequest(t, http.MethodPost, "/ventas", body)
+			req := crearVentaMultipartRequest(t, body)
 			rec := httptest.NewRecorder()
 			r.ServeHTTP(rec, req)
 			return rec
@@ -907,21 +909,26 @@ func TestE2E_Firebird_IdempotencyKey_POST_Replays(t *testing.T) {
 
 		body := validCreateBody()
 		body.Vendedores[0].UsuarioID = usuarioID.String()
-		bodyBytes, err := json.Marshal(body)
-		require.NoError(t, err)
 
 		key := "test-idem-post-" + uuid.NewString()
 
-		req1 := httptest.NewRequest(http.MethodPost, "/ventas", bytes.NewReader(bodyBytes))
-		req1.Header.Set("Content-Type", "application/json")
+		// Build the multipart body ONCE and reuse its bytes verbatim across
+		// both requests — the idempotency middleware hashes the request body,
+		// and a freshly-generated boundary on the second call would otherwise
+		// look like a different payload and trigger 409.
+		req1 := crearVentaMultipartRequest(t, body)
+		multipartBody, multipartCT := drainBody(t, req1)
+
+		req1 = httptest.NewRequest(http.MethodPost, "/ventas", bytes.NewReader(multipartBody))
+		req1.Header.Set("Content-Type", multipartCT)
 		req1.Header.Set(idempotency.HeaderKey, key)
 		rec1 := httptest.NewRecorder()
 		r.ServeHTTP(rec1, req1)
 		require.Equal(t, http.StatusCreated, rec1.Code, "first POST: %s", rec1.Body.String())
 		afterFirst := len(recorder.snapshot())
 
-		req2 := httptest.NewRequest(http.MethodPost, "/ventas", bytes.NewReader(bodyBytes))
-		req2.Header.Set("Content-Type", "application/json")
+		req2 := httptest.NewRequest(http.MethodPost, "/ventas", bytes.NewReader(multipartBody))
+		req2.Header.Set("Content-Type", multipartCT)
 		req2.Header.Set(idempotency.HeaderKey, key)
 		rec2 := httptest.NewRecorder()
 		r.ServeHTTP(rec2, req2)
@@ -1050,7 +1057,7 @@ func TestE2E_Firebird_IdempotencyKey_Aplicar_Replays(t *testing.T) {
 		body.Productos[0].ArticuloID = aplicarArticuloID
 		body.Productos[0].AlmacenOrigenID = intPtr(aplicarAlmacenID)
 		body.Productos[0].AlmacenDestinoID = intPtr(aplicarAlmDestID)
-		req := jsonRequest(t, http.MethodPost, "/ventas", body)
+		req := crearVentaMultipartRequest(t, body)
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusCreated, rec.Code, "seed venta: %s", rec.Body.String())
@@ -1150,7 +1157,7 @@ func TestE2E_Firebird_UnicodeEdgeCases(t *testing.T) {
 			body := validCreateBody()
 			body.Vendedores[0].UsuarioID = usuarioID.String()
 			body.Cliente.Nombre = nombre
-			req := jsonRequest(t, http.MethodPost, "/ventas", body)
+			req := crearVentaMultipartRequest(t, body)
 			rec := httptest.NewRecorder()
 			r.ServeHTTP(rec, req)
 			return rec

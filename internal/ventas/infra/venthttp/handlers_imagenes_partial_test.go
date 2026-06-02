@@ -59,10 +59,16 @@ func TestAdjuntarImagen_PartialUpload_NoOrphanInStorage(t *testing.T) {
 	r := buildRouter(t, svc, cu)
 
 	body := validCreateBody()
-	createReq := jsonRequest(t, http.MethodPost, "/ventas", body)
+	createReq := crearVentaMultipartRequest(t, body)
 	createRec := httptest.NewRecorder()
 	r.ServeHTTP(createRec, createReq)
 	require.Equal(t, http.StatusCreated, createRec.Code)
+
+	// Snapshot blob count after creation — crearVentaMultipartRequest includes
+	// a stub imagen that gets persisted as part of the atomic create.
+	store.mu.Lock()
+	blobsAfterCreate := len(store.blobs)
+	store.mu.Unlock()
 
 	// Build a complete multipart envelope, then truncate the underlying
 	// reader so the request body is cut off mid-payload. Huma's parser
@@ -91,8 +97,11 @@ func TestAdjuntarImagen_PartialUpload_NoOrphanInStorage(t *testing.T) {
 	assert.GreaterOrEqual(t, rec.Code, 400, "partial body must surface as a 4xx")
 	assert.Less(t, rec.Code, 500, "partial body is a client problem, not a server one")
 
+	// No NEW blob may have been persisted from the truncated upload — only
+	// the blob stored during creation (part of the atomic create) may exist.
 	store.mu.Lock()
-	defer store.mu.Unlock()
-	assert.Empty(t, store.blobs,
-		"no blob may be persisted from a truncated multipart upload — the partial bytes are not a valid image")
+	blobsAfterPartial := len(store.blobs)
+	store.mu.Unlock()
+	assert.Equal(t, blobsAfterCreate, blobsAfterPartial,
+		"no blob may be added to storage from a truncated multipart upload")
 }

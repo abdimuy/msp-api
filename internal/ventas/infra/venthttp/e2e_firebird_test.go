@@ -172,7 +172,7 @@ func TestE2E_Firebird_CrearVenta(t *testing.T) { //nolint:paralleltest // see co
 		// 1. POST /ventas — create.
 		body := validCreateBody()
 		body.Vendedores[0].UsuarioID = usuarioID.String() // FK target inside the tx
-		req := jsonRequest(t, http.MethodPost, "/ventas", body)
+		req := crearVentaMultipartRequest(t, body)
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
@@ -290,7 +290,7 @@ func TestE2E_Firebird_StandardProcessor_ResizesAndShrinks(t *testing.T) {
 
 		body := validCreateBody()
 		body.Vendedores[0].UsuarioID = usuarioID.String()
-		req := jsonRequest(t, http.MethodPost, "/ventas", body)
+		req := crearVentaMultipartRequest(t, body)
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
@@ -359,7 +359,7 @@ func TestE2E_Firebird_Credito_RoundTrip(t *testing.T) {
 		body := validCreditoCreateBody()
 		body.Vendedores[0].UsuarioID = usuarioID.String()
 
-		req := jsonRequest(t, http.MethodPost, "/ventas", body)
+		req := crearVentaMultipartRequest(t, body)
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
@@ -421,7 +421,7 @@ func TestE2E_Firebird_Credito_DiaCobranzaMes(t *testing.T) {
 		dia := 15
 		body.DiaCobranza = &venthttp.DiaCobranzaDTO{Mes: &dia}
 
-		req := jsonRequest(t, http.MethodPost, "/ventas", body)
+		req := crearVentaMultipartRequest(t, body)
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
@@ -460,7 +460,7 @@ func TestE2E_Firebird_MultiplesImagenes(t *testing.T) {
 
 		body := validCreateBody()
 		body.Vendedores[0].UsuarioID = usuarioID.String()
-		req := jsonRequest(t, http.MethodPost, "/ventas", body)
+		req := crearVentaMultipartRequest(t, body)
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
@@ -479,16 +479,17 @@ func TestE2E_Firebird_MultiplesImagenes(t *testing.T) {
 			imagenIDs = append(imagenIDs, imgDTO.ID)
 		}
 
-		// Verify GET shows all three.
+		// Verify GET shows all four (one created with the venta via the new
+		// multipart CrearVenta + three attached above).
 		req = httptest.NewRequest(http.MethodGet, "/ventas/"+body.ID, nil)
 		rec = httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code, "get-before body=%s", rec.Body.String())
 		var beforeDTO venthttp.VentaDTO
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &beforeDTO))
-		assert.Len(t, beforeDTO.Imagenes, 3, "venta must have 3 imagenes before delete")
+		assert.Len(t, beforeDTO.Imagenes, 4, "venta must have 4 imagenes before delete (1 evidencia + 3 attached)")
 
-		// Delete the middle one.
+		// Delete the middle one (of the 3 we explicitly attached).
 		middle := imagenIDs[1]
 		req = httptest.NewRequest(http.MethodDelete,
 			"/ventas/"+body.ID+"/imagenes/"+middle, nil)
@@ -496,14 +497,14 @@ func TestE2E_Firebird_MultiplesImagenes(t *testing.T) {
 		r.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusNoContent, rec.Code, "delete body=%s", rec.Body.String())
 
-		// Verify GET shows the remaining two with stable ids.
+		// Verify GET shows the remaining three (1 evidencia + 2 attached).
 		req = httptest.NewRequest(http.MethodGet, "/ventas/"+body.ID, nil)
 		rec = httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code, "get-after body=%s", rec.Body.String())
 		var afterDTO venthttp.VentaDTO
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &afterDTO))
-		require.Len(t, afterDTO.Imagenes, 2, "venta must have 2 imagenes after deleting one")
+		require.Len(t, afterDTO.Imagenes, 3, "venta must have 3 imagenes after deleting one (1 evidencia + 2 attached)")
 		gotIDs := map[string]bool{}
 		for _, im := range afterDTO.Imagenes {
 			gotIDs[im.ID] = true
@@ -542,7 +543,7 @@ func TestE2E_Firebird_ObtenerImagen(t *testing.T) {
 
 		body := validCreateBody()
 		body.Vendedores[0].UsuarioID = usuarioID.String()
-		req := jsonRequest(t, http.MethodPost, "/ventas", body)
+		req := crearVentaMultipartRequest(t, body)
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
@@ -600,7 +601,7 @@ func TestE2E_Firebird_ObtenerImagen_MultiplesImagenes(t *testing.T) {
 
 		body := validCreateBody()
 		body.Vendedores[0].UsuarioID = usuarioID.String()
-		req := jsonRequest(t, http.MethodPost, "/ventas", body)
+		req := crearVentaMultipartRequest(t, body)
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusCreated, rec.Code)
@@ -660,14 +661,14 @@ func TestE2E_Firebird_ListFilters(t *testing.T) {
 		// one CREDITO/today vendor=otherVendedor.
 		contadoBody := validCreateBody()
 		contadoBody.Vendedores[0].UsuarioID = usuarioID.String()
-		req := jsonRequest(t, http.MethodPost, "/ventas", contadoBody)
+		req := crearVentaMultipartRequest(t, contadoBody)
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusCreated, rec.Code, "contado body=%s", rec.Body.String())
 
 		creditoBody := validCreditoCreateBody()
 		creditoBody.Vendedores[0].UsuarioID = otherVendedor.String()
-		req = jsonRequest(t, http.MethodPost, "/ventas", creditoBody)
+		req = crearVentaMultipartRequest(t, creditoBody)
 		rec = httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusCreated, rec.Code, "credito body=%s", rec.Body.String())

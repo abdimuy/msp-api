@@ -47,7 +47,7 @@ func TestAuthz_VentasEditar_IsGlobalNotPerOwnership(t *testing.T) {
 	require.Len(t, createBody.Vendedores, 1)
 	assignedVendedorUsuarioID := createBody.Vendedores[0].UsuarioID
 
-	createReq := jsonRequest(t, http.MethodPost, "/ventas", createBody)
+	createReq := crearVentaMultipartRequest(t, createBody)
 	createRec := httptest.NewRecorder()
 	r.ServeHTTP(createRec, createReq)
 	require.Equal(t, http.StatusCreated, createRec.Code, "body=%s", createRec.Body.String())
@@ -100,7 +100,7 @@ func TestAuthz_VentasEditar_WithoutPermission_Rejects(t *testing.T) {
 	// Create as full-perms.
 	createBody := validCreateBody()
 	r := buildRouter(t, svc, fullPerms(uuid.New()))
-	createReq := jsonRequest(t, http.MethodPost, "/ventas", createBody)
+	createReq := crearVentaMultipartRequest(t, createBody)
 	createRec := httptest.NewRecorder()
 	r.ServeHTTP(createRec, createReq)
 	require.Equal(t, http.StatusCreated, createRec.Code)

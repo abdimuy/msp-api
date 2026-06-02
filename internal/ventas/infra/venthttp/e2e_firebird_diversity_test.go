@@ -49,7 +49,7 @@ func TestE2E_Firebird_Diversity(t *testing.T) {
 
 		postAndGet := func(t *testing.T, body venthttp.CrearVentaBody) venthttp.VentaDTO {
 			t.Helper()
-			req := jsonRequest(t, http.MethodPost, "/ventas", body)
+			req := crearVentaMultipartRequest(t, body)
 			rec := httptest.NewRecorder()
 			r.ServeHTTP(rec, req)
 			require.Equal(t, http.StatusCreated, rec.Code, "POST body=%s", rec.Body.String())

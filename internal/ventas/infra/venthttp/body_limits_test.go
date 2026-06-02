@@ -136,18 +136,21 @@ func TestVentas_BodyLimits_DeeplyNestedJSON(t *testing.T) {
 }
 
 // TestVentas_BodyLimits_HugeProductosList verifies that a POST /ventas with
-// 10 000 minimal productos is rejected cleanly (≤ 422 or 413), not 500.
-// Either the BodyLimit middleware fires, Huma's per-field validation triggers,
-// or the app layer returns a validation error — none of those paths should
-// produce an unhandled 500.
+// an oversize multipart payload (60 000 productos ≈ 12 MB in the datos JSON
+// field, well above the 10 MB BodyLimit cap) is rejected cleanly with a 4xx.
+// With the multipart contract the domain has no upper bound on products count
+// so the BodyLimit middleware is the sole gate here — the test uses
+// buildRouterWithBodyLimit to mirror production topology.
 func TestVentas_BodyLimits_HugeProductosList(t *testing.T) {
 	t.Parallel()
 
 	r := buildRouterWithBodyLimit(t)
 
 	body := validCreateBody()
-	body.Productos = make([]venthttp.ProductoDTO, 0, 10_000)
-	for i := range 10_000 {
+	// 60 000 productos × ~200 bytes each ≈ 12 MB in the datos JSON field —
+	// the full multipart body exceeds the 10 MB BodyLimit cap.
+	body.Productos = make([]venthttp.ProductoDTO, 0, 60_000)
+	for i := range 60_000 {
 		body.Productos = append(body.Productos, venthttp.ProductoDTO{
 			ID:               uuid.NewString(),
 			ArticuloID:       i + 1,
@@ -161,16 +164,16 @@ func TestVentas_BodyLimits_HugeProductosList(t *testing.T) {
 		})
 	}
 
-	req := jsonRequest(t, http.MethodPost, "/ventas", body)
+	req := crearVentaMultipartRequest(t, body)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
-	assertNotInternalServerError(t, rec, "10 000-item productos list")
+	assertNotInternalServerError(t, rec, "60 000-item productos list")
 	assert.GreaterOrEqual(t, rec.Code, 400,
-		"10 000-item list must be 4xx: got %d body=%s", rec.Code, rec.Body.String())
+		"60 000-item list must be 4xx: got %d body=%s", rec.Code, rec.Body.String())
 	assert.Less(t, rec.Code, 500,
-		"10 000-item list must NOT be 5xx: got %d body=%s", rec.Code, rec.Body.String())
-	t.Logf("10 000-item productos → HTTP %d", rec.Code)
+		"60 000-item list must NOT be 5xx: got %d body=%s", rec.Code, rec.Body.String())
+	t.Logf("60 000-item productos → HTTP %d", rec.Code)
 }
 
 // TestVentas_BodyLimits_HugeNotaField verifies that a POST /ventas with a
@@ -190,7 +193,7 @@ func TestVentas_BodyLimits_HugeNotaField(t *testing.T) {
 	body := validCreateBody()
 	body.Nota = &hugeNota
 
-	req := jsonRequest(t, http.MethodPost, "/ventas", body)
+	req := crearVentaMultipartRequest(t, body)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -213,7 +216,7 @@ func TestVentas_BodyLimits_HugeNombreClienteField(t *testing.T) {
 	body := validCreateBody()
 	body.Cliente.Nombre = strings.Repeat("N", 10_000) // domain max is 200
 
-	req := jsonRequest(t, http.MethodPost, "/ventas", body)
+	req := crearVentaMultipartRequest(t, body)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -234,10 +237,7 @@ func TestVentas_BodyLimits_PATCH_Header_OversizedBody(t *testing.T) {
 	// First seed a venta through the same router (which has BodyLimit).
 	// The seed body is small enough to pass.
 	seedBody := validCreateBody()
-	seedBytes, err := json.Marshal(seedBody)
-	require.NoError(t, err)
-	seedReq := httptest.NewRequest(http.MethodPost, "/ventas", bytes.NewReader(seedBytes))
-	seedReq.Header.Set("Content-Type", "application/json")
+	seedReq := crearVentaMultipartRequest(t, seedBody)
 	seedRec := httptest.NewRecorder()
 	r.ServeHTTP(seedRec, seedReq)
 	require.Equal(t, http.StatusCreated, seedRec.Code, "seed venta: %s", seedRec.Body.String())

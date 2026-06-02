@@ -3,7 +3,9 @@ package venthttp
 
 import (
 	"context"
+	"encoding/json"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,6 +28,15 @@ func NewHandlers(svc *ventasapp.Service) *Handlers {
 }
 
 // CrearVenta is the handler for POST /v2/ventas.
+//
+// Acepta multipart/form-data: campo `datos` (JSON con la venta) + uno o
+// más campos `imagen` (archivos). Persiste venta + evidencias en una sola
+// tx Firebird vía [ventasapp.Service.CrearVentaConImagenes]; al menos una
+// imagen es OBLIGATORIA — toda venta del showroom lleva firma o ID del
+// cliente.
+//
+// El endpoint legacy POST /v2/ventas/{id}/imagenes se mantiene para
+// adjuntar evidencia adicional después del POST inicial atómico.
 func (h *Handlers) CrearVenta(ctx context.Context, in *CrearVentaInput) (*CrearVentaOutput, error) {
 	cu, err := currentUserOrError(ctx)
 	if err != nil {
@@ -34,15 +45,63 @@ func (h *Handlers) CrearVenta(ctx context.Context, in *CrearVentaInput) (*CrearV
 	if err := requirePerm(cu, auth.PermVentasCrear); err != nil {
 		return nil, err
 	}
-	input, err := crearVentaBodyToAppInput(in.Body)
+
+	fields := in.RawBody.Data()
+	body, err := decodeCrearVentaDatos(fields.Datos)
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	v, err := h.svc.CrearVenta(ctx, input, cu.ID)
+	// Idempotency-Key (if present) is a free-form cache key consumed by the
+	// platform idempotency middleware before the request reaches this
+	// handler — we do NOT cross-check it against datos.id (unlike cobranza,
+	// which uses datos.id as the canonical end-to-end dedupe key).
+
+	input, err := crearVentaBodyToAppInput(body)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+
+	ventaID, err := uuid.Parse(body.ID)
+	if err != nil {
+		return nil, mapAppError(
+			apperror.NewValidation("venta_id_invalido", "el id de la venta no es un UUID válido").WithError(err),
+		)
+	}
+
+	imgUploads, openedFiles, err := parseImagenesFromMultipart(ventaID, fields.Imagen, in.RawBody.Form)
+	defer func() {
+		for _, f := range openedFiles {
+			_ = f.Close()
+		}
+	}()
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+
+	v, err := h.svc.CrearVentaConImagenes(ctx, input, imgUploads, cu.ID)
 	if err != nil {
 		return nil, mapAppError(err)
 	}
 	return &CrearVentaOutput{Body: toVentaDTO(v)}, nil
+}
+
+// decodeCrearVentaDatos validates that `datos` was supplied and parses it
+// as JSON into CrearVentaBody. Returns stable apperror codes so the client
+// knows whether the field was missing vs. malformed.
+func decodeCrearVentaDatos(raw string) (CrearVentaBody, error) {
+	if raw == "" {
+		return CrearVentaBody{}, apperror.NewValidation(
+			"datos_requerido", "el campo multipart 'datos' es obligatorio",
+		)
+	}
+	var body CrearVentaBody
+	dec := json.NewDecoder(strings.NewReader(raw))
+	if err := dec.Decode(&body); err != nil {
+		return CrearVentaBody{}, apperror.NewValidation(
+			"datos_json_invalido", "el campo 'datos' no es un JSON válido",
+		).WithError(err)
+	}
+	return body, nil
 }
 
 // ObtenerVenta is the handler for GET /v2/ventas/{id}.

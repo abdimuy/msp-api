@@ -22,7 +22,7 @@ import (
 func seedVentaViaHTTP(t *testing.T, r http.Handler) string {
 	t.Helper()
 	body := validCreateBody()
-	req := jsonRequest(t, http.MethodPost, "/ventas", body)
+	req := crearVentaMultipartRequest(t, body)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusCreated, rec.Code, "seed venta: %s", rec.Body.String())

@@ -41,7 +41,7 @@ func e2eSeedVenta(t *testing.T, r http.Handler, usuarioID uuid.UUID) string {
 	t.Helper()
 	body := validCreateBody()
 	body.Vendedores[0].UsuarioID = usuarioID.String()
-	req := jsonRequest(t, http.MethodPost, "/ventas", body)
+	req := crearVentaMultipartRequest(t, body)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusCreated, rec.Code, "seed body=%s", rec.Body.String())
@@ -177,7 +177,7 @@ func TestE2E_Firebird_Combo_ConCantidad(t *testing.T) {
 			Cantidad: "1", PrecioAnual: "1000", PrecioCorto: "900", PrecioContado: "800",
 			ComboID: &comboID, // combo-child: no almacenes
 		}}
-		req := jsonRequest(t, http.MethodPost, "/ventas", body)
+		req := crearVentaMultipartRequest(t, body)
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
@@ -279,7 +279,7 @@ func TestE2E_Firebird_Cliente_FK_Invalida(t *testing.T) {
 		body := validCreateBody()
 		body.Cliente.ClienteID = &probe
 		body.Vendedores[0].UsuarioID = usuarioID.String()
-		req := jsonRequest(t, http.MethodPost, "/ventas", body)
+		req := crearVentaMultipartRequest(t, body)
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code,

@@ -208,10 +208,34 @@ type CancelarVentaBody struct {
 
 // ─── Input wrappers (Huma reads tags off these) ────────────────────────────
 
-// CrearVentaInput wraps the request body and idempotency header.
+// CrearVentaMultipartFields is the typed projection of the multipart body
+// Huma parses for [Handlers.CrearVenta]. Per-image `id_<n>` /
+// `descripcion_<n>` metadata fields are read separately from the raw form
+// via [parseImagenesFromMultipart] because Huma's struct decoder does not
+// support dynamic field names.
+//
+// Imagen contentType whitelist matches the legacy POST /ventas/{id}/imagenes
+// endpoint: JPEG, PNG, GIF, WebP. Ventas does NOT accept PDFs.
+type CrearVentaMultipartFields struct {
+	Datos  string          `form:"datos"  required:"true"  doc:"JSON con la venta (mismos campos que el legacy CrearVentaBody)"`
+	Imagen []huma.FormFile `form:"imagen" contentType:"image/jpeg,image/png,image/gif,image/webp" required:"true" doc:"1..N evidencias (firma / ID / fotos); cada una opcionalmente pareada con id_<n> y descripcion_<n>"`
+}
+
+// CrearVentaInput is the multipart body for POST /v2/ventas.
+//
+// El nuevo contrato atómico: una sola request multipart carga la venta JSON
+// (`datos`) más una o más evidencias (`imagen` repetido). El servidor
+// persiste venta + comprobantes en una sola tx Firebird; cualquier fallo
+// deja al sistema sin estado parcial. Ventas exige al menos una imagen —
+// toda venta del showroom lleva firma o ID del cliente.
+//
+// La metadata por imagen (`id_<n>`, `descripcion_<n>`) se lee
+// posicionalmente del raw form: `id_0` se pareja con la primera `imagen`,
+// `id_1` con la segunda, etc. El cliente DEBE mandar un UUID estable por
+// imagen para garantizar idempotencia en reintents.
 type CrearVentaInput struct {
-	IdempotencyKey string `header:"Idempotency-Key" doc:"Idempotency key opcional"`
-	Body           CrearVentaBody
+	IdempotencyKey string                                             `header:"Idempotency-Key" doc:"Idempotency key opcional"`
+	RawBody        huma.MultipartFormFiles[CrearVentaMultipartFields] `doc:"multipart/form-data: datos (JSON) + N imagen (archivos) + opcionales id_<n>/descripcion_<n>"`
 }
 
 // CrearVentaOutput is the response wrapper.

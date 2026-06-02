@@ -92,7 +92,7 @@ func TestAdjuntarImagen_WithStandardProcessor_ResizesAndShrinks(t *testing.T) {
 
 	// Seed a venta.
 	body := validCreateBody()
-	createReq := jsonRequest(t, http.MethodPost, "/ventas", body)
+	createReq := crearVentaMultipartRequest(t, body)
 	createRec := httptest.NewRecorder()
 	r.ServeHTTP(createRec, createReq)
 	require.Equal(t, http.StatusCreated, createRec.Code, createRec.Body.String())
@@ -147,10 +147,16 @@ func TestAdjuntarImagen_WithStandardProcessor_OversizeReturns422(t *testing.T) {
 	r := buildRouter(t, svc, cu)
 
 	body := validCreateBody()
-	createReq := jsonRequest(t, http.MethodPost, "/ventas", body)
+	createReq := crearVentaMultipartRequest(t, body)
 	createRec := httptest.NewRecorder()
 	r.ServeHTTP(createRec, createReq)
 	require.Equal(t, http.StatusCreated, createRec.Code)
+
+	// Snapshot blob count after creation (the stub imagen from
+	// crearVentaMultipartRequest is stored as part of the atomic create).
+	storage.mu.Lock()
+	blobsAfterCreate := len(storage.blobs)
+	storage.mu.Unlock()
 
 	// 600x600 JPEG at quality 95 ≈ 60 KB — well over the 4 KB cap.
 	srcBytes := makeJPEGBody(t, 600, 600, 95)
@@ -162,10 +168,12 @@ func TestAdjuntarImagen_WithStandardProcessor_OversizeReturns422(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, uploadRec.Code, uploadRec.Body.String())
 	assert.Contains(t, uploadRec.Body.String(), "imagen_too_large",
 		"response body must carry the stable error code so clients can branch")
-	// Nothing must reach storage when the processor rejects.
+	// No NEW blob may reach storage when the processor rejects — only the
+	// creation-time blob from crearVentaMultipartRequest may be present.
 	storage.mu.Lock()
 	defer storage.mu.Unlock()
-	assert.Empty(t, storage.blobs, "no blob may be written when the processor rejects an upload")
+	assert.Len(t, storage.blobs, blobsAfterCreate,
+		"no blob may be added to storage when the processor rejects an upload")
 }
 
 // TestAdjuntarImagen_HumaRejectsUnsupportedMIME confirms Huma's own
@@ -181,10 +189,16 @@ func TestAdjuntarImagen_HumaRejectsUnsupportedMIME(t *testing.T) {
 	r := buildRouter(t, svc, cu)
 
 	body := validCreateBody()
-	createReq := jsonRequest(t, http.MethodPost, "/ventas", body)
+	createReq := crearVentaMultipartRequest(t, body)
 	createRec := httptest.NewRecorder()
 	r.ServeHTTP(createRec, createReq)
 	require.Equal(t, http.StatusCreated, createRec.Code)
+
+	// Snapshot blob count after creation (the stub imagen from
+	// crearVentaMultipartRequest is stored as part of the atomic create).
+	storage.mu.Lock()
+	blobsAfterCreate := len(storage.blobs)
+	storage.mu.Unlock()
 
 	heicLike := append([]byte{0, 0, 0, 0x20, 'f', 't', 'y', 'p', 'h', 'e', 'i', 'c'}, bytes.Repeat([]byte{0}, 256)...)
 	uploadReq := buildMultipartRequestWithBody(t, "/ventas/"+body.ID+"/imagenes",
@@ -195,9 +209,12 @@ func TestAdjuntarImagen_HumaRejectsUnsupportedMIME(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, uploadRec.Code, uploadRec.Body.String())
 	assert.Contains(t, uploadRec.Body.String(), "Invalid mime type",
 		"Huma's accept-list validation rejects HEIC at the boundary")
+	// No NEW blob may reach storage when Huma rejects — only the
+	// creation-time blob from crearVentaMultipartRequest may be present.
 	storage.mu.Lock()
 	defer storage.mu.Unlock()
-	assert.Empty(t, storage.blobs, "Huma rejection short-circuits before storage")
+	assert.Len(t, storage.blobs, blobsAfterCreate,
+		"Huma rejection short-circuits before adding any blob to storage")
 }
 
 // TestAdjuntarImagen_ProcessorCatchesSpoofedMIME exercises the processor's
@@ -214,10 +231,16 @@ func TestAdjuntarImagen_ProcessorCatchesSpoofedMIME(t *testing.T) {
 	r := buildRouter(t, svc, cu)
 
 	body := validCreateBody()
-	createReq := jsonRequest(t, http.MethodPost, "/ventas", body)
+	createReq := crearVentaMultipartRequest(t, body)
 	createRec := httptest.NewRecorder()
 	r.ServeHTTP(createRec, createReq)
 	require.Equal(t, http.StatusCreated, createRec.Code)
+
+	// Snapshot blob count after creation (the stub imagen from
+	// crearVentaMultipartRequest is stored as part of the atomic create).
+	storage.mu.Lock()
+	blobsAfterCreate := len(storage.blobs)
+	storage.mu.Unlock()
 
 	// Plain text body labeled as image/jpeg in the multipart header.
 	textBody := bytes.Repeat([]byte("plain text not an image "), 8)
@@ -229,9 +252,12 @@ func TestAdjuntarImagen_ProcessorCatchesSpoofedMIME(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, uploadRec.Code, uploadRec.Body.String())
 	assert.Contains(t, uploadRec.Body.String(), "mime_no_permitido",
 		"processor must reject content whose sniffed MIME differs from any allowed image MIME")
+	// No NEW blob may reach storage when the processor rejects — only the
+	// creation-time blob from crearVentaMultipartRequest may be present.
 	storage.mu.Lock()
 	defer storage.mu.Unlock()
-	assert.Empty(t, storage.blobs)
+	assert.Len(t, storage.blobs, blobsAfterCreate,
+		"processor rejection must not add a new blob to storage")
 }
 
 // TestAdjuntarImagen_WithStandardProcessor_CorruptJPEGReturns422 verifies
@@ -248,7 +274,7 @@ func TestAdjuntarImagen_WithStandardProcessor_CorruptJPEGReturns422(t *testing.T
 	r := buildRouter(t, svc, cu)
 
 	body := validCreateBody()
-	createReq := jsonRequest(t, http.MethodPost, "/ventas", body)
+	createReq := crearVentaMultipartRequest(t, body)
 	createRec := httptest.NewRecorder()
 	r.ServeHTTP(createRec, createReq)
 	require.Equal(t, http.StatusCreated, createRec.Code)
@@ -280,7 +306,7 @@ func TestAdjuntarImagen_WithStandardProcessor_PNGStaysPNG(t *testing.T) {
 	r := buildRouter(t, svc, cu)
 
 	body := validCreateBody()
-	createReq := jsonRequest(t, http.MethodPost, "/ventas", body)
+	createReq := crearVentaMultipartRequest(t, body)
 	createRec := httptest.NewRecorder()
 	r.ServeHTTP(createRec, createReq)
 	require.Equal(t, http.StatusCreated, createRec.Code)
@@ -309,7 +335,7 @@ func TestAdjuntarImagen_NoOpProcessor_PassthroughBitIdentical(t *testing.T) {
 	r := buildRouter(t, svc, cu)
 
 	body := validCreateBody()
-	createReq := jsonRequest(t, http.MethodPost, "/ventas", body)
+	createReq := crearVentaMultipartRequest(t, body)
 	createRec := httptest.NewRecorder()
 	r.ServeHTTP(createRec, createReq)
 	require.Equal(t, http.StatusCreated, createRec.Code)

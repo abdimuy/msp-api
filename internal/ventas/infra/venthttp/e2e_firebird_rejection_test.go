@@ -50,7 +50,7 @@ func TestE2E_Firebird_Rejection(t *testing.T) {
 
 		post := func(t *testing.T, body venthttp.CrearVentaBody) *httptest.ResponseRecorder {
 			t.Helper()
-			req := jsonRequest(t, http.MethodPost, "/ventas", body)
+			req := crearVentaMultipartRequest(t, body)
 			rec := httptest.NewRecorder()
 			r.ServeHTTP(rec, req)
 			return rec

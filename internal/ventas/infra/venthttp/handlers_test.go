@@ -295,7 +295,7 @@ func TestCrearVenta_OK(t *testing.T) {
 	r := buildRouter(t, svc, cu)
 
 	body := validCreateBody()
-	req := jsonRequest(t, http.MethodPost, "/ventas", body)
+	req := crearVentaMultipartRequest(t, body)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -320,7 +320,7 @@ func TestCrearVenta_PermissionDenied(t *testing.T) {
 	cu := auth.CurrentUser{ID: uuid.New(), Permisos: []string{string(authdomain.PermVentasListar)}}
 	r := buildRouter(t, svc, cu)
 
-	req := jsonRequest(t, http.MethodPost, "/ventas", validCreateBody())
+	req := crearVentaMultipartRequest(t, validCreateBody())
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -334,7 +334,7 @@ func TestCrearVenta_Unauthenticated(t *testing.T) {
 	r := chi.NewRouter()
 	venthttp.MountRouter(r, svc) // no planter — no CurrentUser
 
-	req := jsonRequest(t, http.MethodPost, "/ventas", validCreateBody())
+	req := crearVentaMultipartRequest(t, validCreateBody())
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -363,7 +363,7 @@ func TestListarVentas_ReturnsItems(t *testing.T) {
 	r := buildRouter(t, svc, cu)
 
 	// Seed one venta via the create endpoint.
-	createReq := jsonRequest(t, http.MethodPost, "/ventas", validCreateBody())
+	createReq := crearVentaMultipartRequest(t, validCreateBody())
 	createRec := httptest.NewRecorder()
 	r.ServeHTTP(createRec, createReq)
 	require.Equal(t, http.StatusCreated, createRec.Code, createRec.Body.String())
@@ -386,7 +386,7 @@ func TestCancelarVenta_OK(t *testing.T) {
 	r := buildRouter(t, svc, cu)
 
 	body := validCreateBody()
-	createReq := jsonRequest(t, http.MethodPost, "/ventas", body)
+	createReq := crearVentaMultipartRequest(t, body)
 	createRec := httptest.NewRecorder()
 	r.ServeHTTP(createRec, createReq)
 	require.Equal(t, http.StatusCreated, createRec.Code)
@@ -409,7 +409,7 @@ func TestCrearVenta_InvalidBody_Returns422(t *testing.T) {
 	// productos is empty — minItems:"1" should trip Huma validation.
 	body := validCreateBody()
 	body.Productos = nil
-	req := jsonRequest(t, http.MethodPost, "/ventas", body)
+	req := crearVentaMultipartRequest(t, body)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -428,7 +428,7 @@ func TestCancelarVenta_AlreadyCanceled_Returns409(t *testing.T) {
 	r := buildRouter(t, svc, cu)
 
 	body := validCreateBody()
-	createReq := jsonRequest(t, http.MethodPost, "/ventas", body)
+	createReq := crearVentaMultipartRequest(t, body)
 	createRec := httptest.NewRecorder()
 	r.ServeHTTP(createRec, createReq)
 	require.Equal(t, http.StatusCreated, createRec.Code)
@@ -472,7 +472,7 @@ func TestEliminarImagen_NotFound_Returns404(t *testing.T) {
 	r := buildRouter(t, svc, cu)
 
 	body := validCreateBody()
-	createReq := jsonRequest(t, http.MethodPost, "/ventas", body)
+	createReq := crearVentaMultipartRequest(t, body)
 	createRec := httptest.NewRecorder()
 	r.ServeHTTP(createRec, createReq)
 	require.Equal(t, http.StatusCreated, createRec.Code)
@@ -527,10 +527,17 @@ func TestAdjuntarImagen_OnCanceledVenta_Returns409(t *testing.T) {
 	r := buildRouter(t, svc, cu)
 
 	body := validCreateBody()
-	createReq := jsonRequest(t, http.MethodPost, "/ventas", body)
+	createReq := crearVentaMultipartRequest(t, body)
 	createRec := httptest.NewRecorder()
 	r.ServeHTTP(createRec, createReq)
 	require.Equal(t, http.StatusCreated, createRec.Code)
+
+	// Snapshot blob count after creation — the creation stores the evidencia
+	// imagen that crearVentaMultipartRequest includes. Any blob added by a
+	// refused late upload would increment this count.
+	store.mu.Lock()
+	blobsAfterCreate := len(store.blobs)
+	store.mu.Unlock()
 
 	cancelReq := jsonRequest(t, http.MethodPatch, "/ventas/"+body.ID+"/cancel",
 		venthttp.CancelarVentaBody{Reason: "cancel-for-immutability-test"})
@@ -554,8 +561,13 @@ func TestAdjuntarImagen_OnCanceledVenta_Returns409(t *testing.T) {
 	r.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
-	// Storage must NOT contain the late blob (best-effort rollback ran).
-	assert.Empty(t, store.blobs, "no blob should persist for a refused upload")
+	// Storage must NOT have grown — the late blob (best-effort rollback ran)
+	// must not have been persisted; only the creation-time blob remains.
+	store.mu.Lock()
+	blobsAfterRefusal := len(store.blobs)
+	store.mu.Unlock()
+	assert.Equal(t, blobsAfterCreate, blobsAfterRefusal,
+		"no blob should be added to storage for a refused upload")
 }
 
 // TestObtenerVenta_AfterCancel_PreservesAudit verifies the cancellation
@@ -570,7 +582,7 @@ func TestObtenerVenta_AfterCancel_PreservesAudit(t *testing.T) {
 	r := buildRouter(t, svc, cu)
 
 	body := validCreateBody()
-	createReq := jsonRequest(t, http.MethodPost, "/ventas", body)
+	createReq := crearVentaMultipartRequest(t, body)
 	createRec := httptest.NewRecorder()
 	r.ServeHTTP(createRec, createReq)
 	require.Equal(t, http.StatusCreated, createRec.Code)
@@ -623,7 +635,7 @@ func TestCrearVenta_WithCombo_RoundTrip(t *testing.T) {
 	body.Productos[0].AlmacenOrigenID = nil
 	body.Productos[0].AlmacenDestinoID = nil
 
-	req := jsonRequest(t, http.MethodPost, "/ventas", body)
+	req := crearVentaMultipartRequest(t, body)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
@@ -654,7 +666,7 @@ func TestCrearVenta_OptionalClienteFields_RoundTrip(t *testing.T) {
 	body.Cliente.Telefono = &tel
 	body.Cliente.Aval = &aval
 
-	req := jsonRequest(t, http.MethodPost, "/ventas", body)
+	req := crearVentaMultipartRequest(t, body)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
@@ -767,7 +779,7 @@ func TestCrearVenta_InvalidCombo_UUID_Returns422(t *testing.T) {
 		PrecioCorto:   "90.00",
 		PrecioContado: "80.00",
 	}}
-	req := jsonRequest(t, http.MethodPost, "/ventas", body)
+	req := crearVentaMultipartRequest(t, body)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
@@ -791,7 +803,7 @@ func TestCrearVenta_InvalidCombo_Decimal_Returns422(t *testing.T) {
 		PrecioCorto:   "90.00",
 		PrecioContado: "80.00",
 	}}
-	req := jsonRequest(t, http.MethodPost, "/ventas", body)
+	req := crearVentaMultipartRequest(t, body)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
@@ -846,7 +858,7 @@ func TestRouter_MethodNotAllowed(t *testing.T) {
 
 	// Seed a venta so the id-bearing paths have a real target.
 	body := validCreateBody()
-	createReq := jsonRequest(t, http.MethodPost, "/ventas", body)
+	createReq := crearVentaMultipartRequest(t, body)
 	createRec := httptest.NewRecorder()
 	r.ServeHTTP(createRec, createReq)
 	require.Equal(t, http.StatusCreated, createRec.Code, createRec.Body.String())
@@ -914,27 +926,28 @@ func TestCrearVenta_MalformedJSON_Returns422(t *testing.T) {
 }
 
 // TestCrearVenta_EnormousBody_Rejected verifies the handler rejects a body
-// that is large but still structurally valid (10MB of productos). The
-// rejection should be a clean 4xx (likely 413 or 422), never a 5xx or a
-// hang.
+// that is large but still structurally valid (10MB+ of productos). The
+// rejection should be a clean 4xx (likely 413), never a 5xx or a hang.
+// Requires the BodyLimit middleware (10 MB cap) to be wired — without it the
+// domain has no upper bound on productos count and would return 201.
 func TestCrearVenta_EnormousBody_Rejected(t *testing.T) {
 	t.Parallel()
 
-	svc, _, _ := testService()
-	cu := fullPerms(uuid.New())
-	r := buildRouter(t, svc, cu)
+	// Use bodyLimitRouter so the 10 MB middleware is active.
+	r := buildRouterWithBodyLimit(t)
 
 	body := validCreateBody()
-	// ~50k productos × ~200 bytes per producto ≈ 10MB of JSON.
-	body.Productos = make([]venthttp.ProductoDTO, 0, 50000)
-	for i := range 50000 {
+	// ~70k productos × ~200 bytes per producto ≈ 14MB of JSON in the datos
+	// field — the full multipart body clearly exceeds the 10 MB cap.
+	body.Productos = make([]venthttp.ProductoDTO, 0, 70000)
+	for i := range 70000 {
 		body.Productos = append(body.Productos, venthttp.ProductoDTO{
 			ID: uuid.NewString(), ArticuloID: i + 1, Articulo: "Articulo",
 			Cantidad: "1", PrecioAnual: "1", PrecioCorto: "1", PrecioContado: "1",
 			AlmacenOrigenID: intPtr(1), AlmacenDestinoID: intPtr(2),
 		})
 	}
-	req := jsonRequest(t, http.MethodPost, "/ventas", body)
+	req := crearVentaMultipartRequest(t, body)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	assert.GreaterOrEqual(t, rec.Code, 400, "enormous body must be 4xx: %d", rec.Code)

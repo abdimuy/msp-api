@@ -82,12 +82,13 @@ func jsonVendedoresEditBody(t *testing.T) (io.Reader, string) {
 	return bytes.NewReader(b), "application/json"
 }
 
-// jsonCreateBody is a valid CrearVenta body.
-func jsonCreateBody(t *testing.T) (io.Reader, string) {
+// multipartCreateBody returns a valid CrearVenta multipart body for the
+// POST /ventas endpoint. The security sweep uses this to satisfy Huma's
+// Content-Type check while still exercising the authn/authz gate.
+func multipartCreateBody(t *testing.T) (io.Reader, string) {
 	t.Helper()
-	b, err := json.Marshal(validCreateBody())
-	require.NoError(t, err)
-	return bytes.NewReader(b), "application/json"
+	req := crearVentaMultipartRequest(t, validCreateBody())
+	return req.Body, req.Header.Get("Content-Type")
 }
 
 // multipartImageBody is a valid AdjuntarImagen multipart body.
@@ -111,7 +112,7 @@ func multipartImageBody(t *testing.T) (io.Reader, string) {
 var secProtectedRoutes = []secProtectedRoute{
 	{http.MethodGet, "/ventas", authdomain.PermVentasListar, nil},
 	{http.MethodGet, "/ventas/00000000-0000-0000-0000-000000000001", authdomain.PermVentasVer, nil},
-	{http.MethodPost, "/ventas", authdomain.PermVentasCrear, jsonCreateBody},
+	{http.MethodPost, "/ventas", authdomain.PermVentasCrear, multipartCreateBody},
 	{http.MethodPatch, "/ventas/00000000-0000-0000-0000-000000000001/cancel", authdomain.PermVentasCancelar, jsonCancelBody},
 	{http.MethodPatch, "/ventas/00000000-0000-0000-0000-000000000001", authdomain.PermVentasEditar, jsonHeaderEditBody},
 	{http.MethodPatch, "/ventas/00000000-0000-0000-0000-000000000001/cliente", authdomain.PermVentasEditar, jsonClienteEditBody},
@@ -277,7 +278,7 @@ func TestSecurity_JSONInjection_NombreInResponse(t *testing.T) {
 
 	body := validCreateBody()
 	body.Cliente.Nombre = "<script>alert('xss')</script>"
-	req := jsonRequest(t, http.MethodPost, "/ventas", body)
+	req := crearVentaMultipartRequest(t, body)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
@@ -316,7 +317,7 @@ func TestSecurity_SQLInjection_InNotaField(t *testing.T) {
 		body.Vendedores[0].UsuarioID = usuarioID.String()
 		injection := "'; DROP TABLE MSP_VENTAS; --"
 		body.Nota = &injection
-		req := jsonRequest(t, http.MethodPost, "/ventas", body)
+		req := crearVentaMultipartRequest(t, body)
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
