@@ -12,9 +12,12 @@
 -- POSITION 100, WHEN ANY DO defensivo, errores a MSP_SALDOS_ERRORS (la misma
 -- tabla ya existente). El caché es un read-model derivado.
 --
--- A diferencia de saldos, los pagos cancelados NO usan tombstone: se borran
--- de la tabla. El cliente nota la ausencia porque el saldo del cargo (en
--- MSP_SALDOS_VENTAS) sí se actualiza con CARGO_CANCELADO o nuevo TOTAL_IMPORTE.
+-- Histórico: esta migración decidió que los pagos cancelados se borraran
+-- de la tabla (a diferencia de saldos). Esa decisión fue revertida por la
+-- migración 000019: hoy las cancelaciones de pagos también escriben un
+-- tombstone (CANCELADO='S', IMPORTE=0, IMPUESTO=0, UPDATED_AT refrescado)
+-- para que el sync incremental por UPDATED_AT pueda propagar la
+-- cancelación al cliente móvil. Ver 000019_tombstone_pagos.up.sql.
 -- ============================================================================
 
 -- ─── Tabla principal ─────────────────────────────────────────────────────────
