@@ -3,6 +3,7 @@ package app
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -68,30 +69,31 @@ type CrearVentaDiaCobranzaInput struct {
 // VOs are constructed by intoDomain so handlers stay decoupled from the
 // domain VO constructors.
 type CrearVentaInput struct {
-	ID             uuid.UUID
-	ClienteID      *int
-	ClienteNombre  string
-	ClienteTel     *string
-	ClienteAval    *string
-	Calle          string
-	NumeroExterior *string
-	Colonia        string
-	Poblacion      string
-	Ciudad         string
-	ZonaClienteID  *int
-	Latitud        float64
-	Longitud       float64
-	FechaVenta     time.Time
-	TipoVenta      string
-	PrecioAnual    decimal.Decimal
-	PrecioCorto    decimal.Decimal
-	PrecioContado  decimal.Decimal
-	PlanCredito    *CrearVentaPlanCreditoInput
-	DiaCobranza    *CrearVentaDiaCobranzaInput
-	Nota           *string
-	Combos         []CrearVentaComboInput
-	Productos      []CrearVentaProductoInput
-	Vendedores     []CrearVentaVendedorInput
+	ID                uuid.UUID
+	ClienteID         *int
+	ClienteNombre     string
+	ClienteTel        *string
+	ClienteAval       *string
+	ClienteReferencia *string
+	Calle             string
+	NumeroExterior    *string
+	Colonia           string
+	Poblacion         string
+	Ciudad            string
+	ZonaClienteID     *int
+	Latitud           float64
+	Longitud          float64
+	FechaVenta        time.Time
+	TipoVenta         string
+	PrecioAnual       decimal.Decimal
+	PrecioCorto       decimal.Decimal
+	PrecioContado     decimal.Decimal
+	PlanCredito       *CrearVentaPlanCreditoInput
+	DiaCobranza       *CrearVentaDiaCobranzaInput
+	Nota              *string
+	Combos            []CrearVentaComboInput
+	Productos         []CrearVentaProductoInput
+	Vendedores        []CrearVentaVendedorInput
 }
 
 // CrearVenta validates the input, builds the aggregate, persists it inside
@@ -202,10 +204,26 @@ func buildClienteSnapshot(in CrearVentaInput) (domain.ClienteSnapshot, error) {
 		return domain.ClienteSnapshot{}, err
 	}
 	return domain.NewClienteSnapshot(domain.NewClienteSnapshotParams{
-		Nombre:   nombre,
-		Telefono: tel,
-		Aval:     aval,
+		Nombre:     nombre,
+		Telefono:   tel,
+		Aval:       aval,
+		Referencia: trimOptionalString(in.ClienteReferencia),
 	})
+}
+
+// trimOptionalString trims whitespace from an optional string pointer. nil or
+// all-whitespace inputs return nil; any other value is returned trimmed. Full
+// NFC normalization and length validation happen inside domain constructors
+// (NewClienteSnapshot → trimOptionalBounded).
+func trimOptionalString(s *string) *string {
+	if s == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*s)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
 
 // optionalTelefono parses an optional telefono string. nil/blank → nil; any

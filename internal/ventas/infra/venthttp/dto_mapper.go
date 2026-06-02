@@ -68,10 +68,11 @@ func toClienteSnapshotDTO(clienteID *int, c domain.ClienteSnapshot) ClienteSnaps
 		aval = &v
 	}
 	return ClienteSnapshotDTO{
-		ClienteID: clienteID,
-		Nombre:    c.Nombre().Value(),
-		Telefono:  tel,
-		Aval:      aval,
+		ClienteID:  clienteID,
+		Nombre:     c.Nombre().Value(),
+		Telefono:   tel,
+		Aval:       aval,
+		Referencia: c.Referencia(),
 	}
 }
 

@@ -188,6 +188,7 @@ func headerInsertArgs(v *domain.Venta) []any {
 		nullableIntArg(v.MicrosipDoctoPVID()),
 		nullableStringArg(v.MicrosipFolio()),
 		nullableWallClockArg(v.MicrosipAplicadaAt()),
+		nullableStringArg(v.Cliente().Referencia()),
 	}
 }
 
@@ -376,6 +377,7 @@ func (r *VentaRepo) UpdateCliente(ctx context.Context, v *domain.Venta) error {
 		nullableIntArg(v.ClienteID()),
 		v.Cliente().Nombre().Value(),
 		nullableTelefonoArg(v), nullableAvalArg(v),
+		nullableStringArg(v.Cliente().Referencia()),
 		firebird.ToWallClock(a.UpdatedAt()), a.UpdatedBy().String(),
 		v.ID().String(),
 	)

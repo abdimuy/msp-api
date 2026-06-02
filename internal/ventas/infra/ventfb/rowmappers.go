@@ -69,9 +69,10 @@ type ventaRowRaw struct {
 	idRaw string
 
 	// Cliente snapshot
-	nombreCliente    string
-	telefono         sql.NullString
-	avalOResponsable sql.NullString
+	nombreCliente     string
+	telefono          sql.NullString
+	avalOResponsable  sql.NullString
+	clienteReferencia sql.NullString
 
 	// Dirección
 	calle          string
@@ -142,6 +143,7 @@ func scanVentaRowRaw(s rowScanner) (*ventaRowRaw, error) {
 		&r.clienteID, &r.status, &r.approvedAtRaw, &r.approvedByRaw,
 		&r.situacion, &r.sincronizacion,
 		&r.microsipDoctoPVID, &r.microsipFolio, &r.microsipAplicadaAtRaw,
+		&r.clienteReferencia,
 	); err != nil {
 		return nil, err
 	}
@@ -353,10 +355,16 @@ func buildClienteSnapshot(r *ventaRowRaw) domain.ClienteSnapshot {
 		a := domain.HydrateNombreCliente(r.avalOResponsable.String)
 		avalOpt = &a
 	}
+	var refOpt *string
+	if r.clienteReferencia.Valid {
+		s := r.clienteReferencia.String
+		refOpt = &s
+	}
 	return domain.HydrateClienteSnapshot(domain.NewClienteSnapshotParams{
-		Nombre:   domain.HydrateNombreCliente(r.nombreCliente),
-		Telefono: telOpt,
-		Aval:     avalOpt,
+		Nombre:     domain.HydrateNombreCliente(r.nombreCliente),
+		Telefono:   telOpt,
+		Aval:       avalOpt,
+		Referencia: refOpt,
 	})
 }
 

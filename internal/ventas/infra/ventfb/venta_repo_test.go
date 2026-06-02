@@ -853,3 +853,109 @@ func containsVentaID(items []*domain.Venta, id uuid.UUID) bool {
 // maxPageSize exposes the repo's pagination ceiling for the no-filter list
 // assertion (which can otherwise over-shoot when prior dev rows exist).
 func maxPageSize() int { return 100 }
+
+// TestVentaRepo_Save_RoundTrip_ClienteReferencia verifies that a venta saved
+// with a cliente referencia string persists and reloads it unchanged.
+func TestVentaRepo_Save_RoundTrip_ClienteReferencia(t *testing.T) {
+	requireFBEnv(t)
+	t.Parallel()
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := ventfb.NewVentaRepo(pool)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		root := seedUsuarioRow(ctx, t, pool)
+		base := buildVenta(t, newVentaInput{createdBy: root, vendedor: root})
+		// Inject referencia via HydrateClienteSnapshot — domain does not expose
+		// a mutator; all optional fields are wired at construction time.
+		ref := "casa azul esquina"
+		nombre := base.Cliente().Nombre()
+		newCliente := domain.HydrateClienteSnapshot(domain.NewClienteSnapshotParams{
+			Nombre:     nombre,
+			Referencia: &ref,
+		})
+		a := base.Audit()
+		v := domain.HydrateVenta(domain.HydrateVentaParams{
+			ID:             base.ID(),
+			ClienteID:      base.ClienteID(),
+			Cliente:        newCliente,
+			Direccion:      base.Direccion(),
+			GPS:            base.GPS(),
+			FechaVenta:     base.FechaVenta(),
+			TipoVenta:      base.TipoVenta(),
+			Montos:         base.Montos(),
+			PlanCredito:    base.PlanCredito(),
+			DiaCobranza:    base.DiaCobranza(),
+			Nota:           base.Nota(),
+			Estado:         base.Estado(),
+			Situacion:      base.Situacion(),
+			Sincronizacion: base.Sincronizacion(),
+			Combos:         base.CombosForRepo(),
+			Productos:      base.ProductosForRepo(),
+			Vendedores:     base.VendedoresForRepo(),
+			Imagenes:       base.ImagenesForRepo(),
+			Cancelacion:    base.Cancelacion(),
+			Aprobacion:     base.Aprobacion(),
+			CreatedAt:      a.CreatedAt(),
+			UpdatedAt:      a.UpdatedAt(),
+			CreatedBy:      a.CreatedBy(),
+			UpdatedBy:      a.UpdatedBy(),
+		})
+		require.NoError(t, repo.Save(ctx, v))
+		got, err := repo.FindByID(ctx, v.ID())
+		require.NoError(t, err)
+		require.NotNil(t, got.Cliente().Referencia(), "referencia must survive round-trip")
+		assert.Equal(t, ref, *got.Cliente().Referencia())
+	})
+}
+
+// TestVentaRepo_UpdateCliente_PreservesReferencia verifies that UpdateCliente
+// persists the referencia field when the snapshot carries one.
+func TestVentaRepo_UpdateCliente_PreservesReferencia(t *testing.T) {
+	requireFBEnv(t)
+	t.Parallel()
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := ventfb.NewVentaRepo(pool)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		root := seedUsuarioRow(ctx, t, pool)
+		v := buildVenta(t, newVentaInput{createdBy: root, vendedor: root})
+		require.NoError(t, repo.Save(ctx, v))
+		// Rebuild the venta with a referencia via HydrateVenta.
+		ref := "detrás del árbol grande"
+		nombre := v.Cliente().Nombre()
+		newCliente := domain.HydrateClienteSnapshot(domain.NewClienteSnapshotParams{
+			Nombre:     nombre,
+			Referencia: &ref,
+		})
+		a := v.Audit()
+		updated := domain.HydrateVenta(domain.HydrateVentaParams{
+			ID:             v.ID(),
+			ClienteID:      v.ClienteID(),
+			Cliente:        newCliente,
+			Direccion:      v.Direccion(),
+			GPS:            v.GPS(),
+			FechaVenta:     v.FechaVenta(),
+			TipoVenta:      v.TipoVenta(),
+			Montos:         v.Montos(),
+			PlanCredito:    v.PlanCredito(),
+			DiaCobranza:    v.DiaCobranza(),
+			Nota:           v.Nota(),
+			Estado:         v.Estado(),
+			Situacion:      v.Situacion(),
+			Sincronizacion: v.Sincronizacion(),
+			Combos:         v.CombosForRepo(),
+			Productos:      v.ProductosForRepo(),
+			Vendedores:     v.VendedoresForRepo(),
+			Imagenes:       v.ImagenesForRepo(),
+			Cancelacion:    v.Cancelacion(),
+			Aprobacion:     v.Aprobacion(),
+			CreatedAt:      a.CreatedAt(),
+			UpdatedAt:      a.UpdatedAt(),
+			CreatedBy:      a.CreatedBy(),
+			UpdatedBy:      a.UpdatedBy(),
+		})
+		require.NoError(t, repo.UpdateCliente(ctx, updated))
+		got, err := repo.FindByID(ctx, v.ID())
+		require.NoError(t, err)
+		require.NotNil(t, got.Cliente().Referencia())
+		assert.Equal(t, ref, *got.Cliente().Referencia())
+	})
+}

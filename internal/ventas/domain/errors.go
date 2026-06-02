@@ -334,6 +334,13 @@ var (
 		"aval_too_long",
 		"el aval o responsable excede 200 caracteres",
 	)
+	// ErrClienteReferenciaDemasiadoLarga is returned when referencia exceeds
+	// 99 chars (the width of MSP_VENTAS.CLIENTE_REFERENCIA and
+	// LIBRES_CLIENTES.REFERENCIA).
+	ErrClienteReferenciaDemasiadoLarga = apperror.NewValidation(
+		"cliente_referencia_demasiado_larga",
+		"la referencia del cliente excede los 99 caracteres",
+	)
 
 	// ErrComboNombreRequerido is returned when a combo nombre is empty.
 	ErrComboNombreRequerido = apperror.NewValidation(

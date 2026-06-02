@@ -9,6 +9,7 @@ import (
 const (
 	maxNombreClienteLength = 200
 	maxAvalLength          = 200
+	maxReferenciaLength    = 99
 )
 
 // NombreCliente is a length-bounded, trimmed person name used in the cliente
@@ -45,22 +46,26 @@ func (n NombreCliente) Equals(other NombreCliente) bool { return n.value == othe
 func (n NombreCliente) IsZero() bool { return n.value == "" }
 
 // ClienteSnapshot is the immutable snapshot of the cliente embedded in every
-// venta. The aval and telefono are optional; the nombre is required.
+// venta. The aval, telefono, and referencia are optional; the nombre is
+// required.
 type ClienteSnapshot struct {
-	nombre   NombreCliente
-	telefono *platform.Telefono
-	aval     *NombreCliente
+	nombre     NombreCliente
+	telefono   *platform.Telefono
+	aval       *NombreCliente
+	referencia *string
 }
 
 // NewClienteSnapshotParams carries the inputs to NewClienteSnapshot.
 type NewClienteSnapshotParams struct {
-	Nombre   NombreCliente
-	Telefono *platform.Telefono
-	Aval     *NombreCliente
+	Nombre     NombreCliente
+	Telefono   *platform.Telefono
+	Aval       *NombreCliente
+	Referencia *string
 }
 
 // NewClienteSnapshot validates and constructs a ClienteSnapshot. Required
 // VOs must already be valid; the aval is accepted as-is when non-nil.
+// Referencia is trimmed, NFC-normalized, and length-checked (max 99 runes).
 func NewClienteSnapshot(p NewClienteSnapshotParams) (ClienteSnapshot, error) {
 	if p.Nombre.IsZero() {
 		return ClienteSnapshot{}, ErrNombreClienteRequerido
@@ -68,17 +73,22 @@ func NewClienteSnapshot(p NewClienteSnapshotParams) (ClienteSnapshot, error) {
 	if p.Aval != nil && len(p.Aval.Value()) > maxAvalLength {
 		return ClienteSnapshot{}, ErrAvalDemasiadoLargo
 	}
+	ref, err := trimOptionalBounded(p.Referencia, maxReferenciaLength, ErrClienteReferenciaDemasiadoLarga)
+	if err != nil {
+		return ClienteSnapshot{}, err
+	}
 	return ClienteSnapshot{
-		nombre:   p.Nombre,
-		telefono: p.Telefono,
-		aval:     p.Aval,
+		nombre:     p.Nombre,
+		telefono:   p.Telefono,
+		aval:       p.Aval,
+		referencia: ref,
 	}, nil
 }
 
 // HydrateClienteSnapshot rebuilds a ClienteSnapshot from persistence without
 // validation.
 func HydrateClienteSnapshot(p NewClienteSnapshotParams) ClienteSnapshot {
-	return ClienteSnapshot{nombre: p.Nombre, telefono: p.Telefono, aval: p.Aval}
+	return ClienteSnapshot{nombre: p.Nombre, telefono: p.Telefono, aval: p.Aval, referencia: p.Referencia}
 }
 
 // Nombre returns the cliente's name snapshot.
@@ -89,3 +99,8 @@ func (c ClienteSnapshot) Telefono() *platform.Telefono { return c.telefono }
 
 // Aval returns the optional aval/responsable name snapshot.
 func (c ClienteSnapshot) Aval() *NombreCliente { return c.aval }
+
+// Referencia returns the optional location reference for the cliente (e.g.
+// "casa azul esquina"). Persisted in the venta snapshot and copied to
+// LIBRES_CLIENTES.REFERENCIA when the auto-create branch fires.
+func (c ClienteSnapshot) Referencia() *string { return c.referencia }

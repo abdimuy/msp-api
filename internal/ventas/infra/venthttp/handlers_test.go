@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -952,6 +953,64 @@ func TestCrearVenta_EnormousBody_Rejected(t *testing.T) {
 	r.ServeHTTP(rec, req)
 	assert.GreaterOrEqual(t, rec.Code, 400, "enormous body must be 4xx: %d", rec.Code)
 	assert.Less(t, rec.Code, 500, "enormous body must NOT 5xx: %d body=%s", rec.Code, rec.Body.String())
+}
+
+// TestCrearVenta_ClienteReferencia_RoundTrip verifies that a venta created with
+// cliente.referencia echoes the value back in the POST response and then again
+// in the subsequent GET. This exercises the full HTTP → app → domain → (fake)
+// repo → DTO mapper round-trip without touching Firebird.
+func TestCrearVenta_ClienteReferencia_RoundTrip(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _ := testService()
+	cu := fullPerms(uuid.New())
+	r := buildRouter(t, svc, cu)
+
+	body := validCreateBody()
+	ref := "CASA AZUL ESQUINA"
+	body.Cliente.Referencia = &ref
+
+	req := crearVentaMultipartRequest(t, body)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
+
+	var created venthttp.VentaDTO
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+	require.NotNil(t, created.Cliente.Referencia, "referencia must be present in POST response")
+	assert.Equal(t, ref, *created.Cliente.Referencia)
+
+	// GET the same venta — referencia must survive the repo round-trip.
+	getReq := httptest.NewRequest(http.MethodGet, "/ventas/"+body.ID, nil)
+	getRec := httptest.NewRecorder()
+	r.ServeHTTP(getRec, getReq)
+	require.Equal(t, http.StatusOK, getRec.Code, "get body=%s", getRec.Body.String())
+
+	var got venthttp.VentaDTO
+	require.NoError(t, json.Unmarshal(getRec.Body.Bytes(), &got))
+	require.NotNil(t, got.Cliente.Referencia)
+	assert.Equal(t, ref, *got.Cliente.Referencia)
+}
+
+// TestCrearVenta_ClienteReferencia_TooLong_Returns422 verifies that a
+// referencia exceeding 99 characters is rejected with 422 before it reaches
+// persistence. The domain validates length via trimOptionalBounded.
+func TestCrearVenta_ClienteReferencia_TooLong_Returns422(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _ := testService()
+	cu := fullPerms(uuid.New())
+	r := buildRouter(t, svc, cu)
+
+	body := validCreateBody()
+	// 100 ASCII chars — one over the 99-rune limit.
+	s := strings.Repeat("A", 100)
+	body.Cliente.Referencia = &s
+
+	req := crearVentaMultipartRequest(t, body)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body=%s", rec.Body.String())
 }
 
 // TestOpenAPI_PathsRegistered verifies that the Huma API publishes the six

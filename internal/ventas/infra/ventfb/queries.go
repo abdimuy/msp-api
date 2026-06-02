@@ -15,7 +15,8 @@ const ventaColumns = `ID, NOMBRE_CLIENTE, TELEFONO, AVAL_O_RESPONSABLE,
     CANCELED_AT, CANCELED_BY, CANCEL_REASON,
     CLIENTE_ID, STATUS, APPROVED_AT, APPROVED_BY,
     SITUACION, SINCRONIZACION,
-    MICROSIP_DOCTO_PV_ID, MICROSIP_FOLIO, MICROSIP_APLICADA_AT`
+    MICROSIP_DOCTO_PV_ID, MICROSIP_FOLIO, MICROSIP_APLICADA_AT,
+    CLIENTE_REFERENCIA`
 
 const insertVenta = `
 INSERT INTO MSP_VENTAS
@@ -31,9 +32,10 @@ INSERT INTO MSP_VENTAS
      CANCELED_AT, CANCELED_BY, CANCEL_REASON,
      CLIENTE_ID, STATUS, APPROVED_AT, APPROVED_BY,
      SITUACION, SINCRONIZACION,
-     MICROSIP_DOCTO_PV_ID, MICROSIP_FOLIO, MICROSIP_APLICADA_AT)
+     MICROSIP_DOCTO_PV_ID, MICROSIP_FOLIO, MICROSIP_APLICADA_AT,
+     CLIENTE_REFERENCIA)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 // updateVentaHeader writes back the full state-machine surface of a venta:
 // the three lifecycle dimensions (STATUS/SITUACION/SINCRONIZACION), the
@@ -88,12 +90,13 @@ WHERE ID = ?`
 // updateVentaCliente updates the cliente snapshot + cliente_id link.
 const updateVentaCliente = `
 UPDATE MSP_VENTAS
-SET CLIENTE_ID         = ?,
-    NOMBRE_CLIENTE     = ?,
-    TELEFONO           = ?,
-    AVAL_O_RESPONSABLE = ?,
-    UPDATED_AT         = ?,
-    UPDATED_BY         = ?
+SET CLIENTE_ID          = ?,
+    NOMBRE_CLIENTE      = ?,
+    TELEFONO            = ?,
+    AVAL_O_RESPONSABLE  = ?,
+    CLIENTE_REFERENCIA  = ?,
+    UPDATED_AT          = ?,
+    UPDATED_BY          = ?
 WHERE ID = ?`
 
 const selectVentaByID = `

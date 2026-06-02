@@ -255,8 +255,9 @@ func buildAutoCreateClienteInput(v *domain.Venta, cc outbound.CajaCajero) outbou
 		in.Longitud = &lng
 	}
 
-	// Cliente snapshot also exposes a Referencia field once commit 5 lands;
-	// for now the snapshot doesn't carry it, so Referencia stays nil here.
+	if ref := v.Cliente().Referencia(); ref != nil {
+		in.Referencia = ref
+	}
 
 	return in
 }
