@@ -478,6 +478,292 @@ func TestPagoRetryWorker_Elegible_NeedsBackoff(t *testing.T) {
 
 // ─── helper: satisfy outbound.PagosRecibidosRepo for internalFakeRepo ────────
 
+// ─── applyDefaults() boundary tests ──────────────────────────────────────────
+
+// TestPagoRetryWorkerConfig_ApplyDefaults_Boundaries exercises every `<= 0`
+// guard in applyDefaults. A CONDITIONALS_BOUNDARY mutation changing `<=` to `<`
+// would allow zero values to pass through uncorrected — caught by the zero cases.
+// A mutation changing `<=` to `!=` or negation would also be caught by the
+// non-zero "must keep" cases.
+func TestPagoRetryWorkerConfig_ApplyDefaults_Boundaries(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   PagoRetryWorkerConfig
+		want PagoRetryWorkerConfig
+	}{
+		{
+			name: "all_zero_gets_defaults",
+			in:   PagoRetryWorkerConfig{},
+			want: PagoRetryWorkerConfig{
+				Interval:    60 * time.Second,
+				MaxIntentos: 10,
+				BackoffBase: 30 * time.Second,
+				BackoffCap:  30 * time.Minute,
+				BatchLimit:  100,
+			},
+		},
+		{
+			name: "negative_gets_defaults",
+			in: PagoRetryWorkerConfig{
+				Interval:    -1,
+				MaxIntentos: -5,
+				BackoffBase: -time.Second,
+				BackoffCap:  -time.Minute,
+				BatchLimit:  -3,
+			},
+			want: PagoRetryWorkerConfig{
+				Interval:    60 * time.Second,
+				MaxIntentos: 10,
+				BackoffBase: 30 * time.Second,
+				BackoffCap:  30 * time.Minute,
+				BatchLimit:  100,
+			},
+		},
+		{
+			// Positive values (1, etc.) must NOT be replaced with the default.
+			// Kills the `<=` → `<` boundary mutation because zero would be left
+			// unchanged, but we test zero separately above.
+			name: "positive_values_unchanged",
+			in: PagoRetryWorkerConfig{
+				Interval:    1 * time.Second,
+				MaxIntentos: 1,
+				BackoffBase: 1 * time.Second,
+				BackoffCap:  1 * time.Minute,
+				BatchLimit:  1,
+			},
+			want: PagoRetryWorkerConfig{
+				Interval:    1 * time.Second,
+				MaxIntentos: 1,
+				BackoffBase: 1 * time.Second,
+				BackoffCap:  1 * time.Minute,
+				BatchLimit:  1,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := tc.in
+			cfg.applyDefaults()
+			assert.Equal(t, tc.want.Interval, cfg.Interval, "Interval mismatch")
+			assert.Equal(t, tc.want.MaxIntentos, cfg.MaxIntentos, "MaxIntentos mismatch")
+			assert.Equal(t, tc.want.BackoffBase, cfg.BackoffBase, "BackoffBase mismatch")
+			assert.Equal(t, tc.want.BackoffCap, cfg.BackoffCap, "BackoffCap mismatch")
+			assert.Equal(t, tc.want.BatchLimit, cfg.BatchLimit, "BatchLimit mismatch")
+		})
+	}
+}
+
+// TestPagoRetryWorkerConfig_ApplyDefaults_ZeroInterval kills the specific
+// boundary case where Interval==0 must produce the default. The `<=` → `<`
+// mutation would leave zero unchanged.
+func TestPagoRetryWorkerConfig_ApplyDefaults_ZeroInterval(t *testing.T) {
+	t.Parallel()
+	cfg := PagoRetryWorkerConfig{Interval: 0, MaxIntentos: 1, BackoffBase: 1, BackoffCap: 1, BatchLimit: 1}
+	cfg.applyDefaults()
+	assert.Equal(t, 60*time.Second, cfg.Interval, "zero Interval must be replaced with 60s default")
+}
+
+func TestPagoRetryWorkerConfig_ApplyDefaults_ZeroMaxIntentos(t *testing.T) {
+	t.Parallel()
+	cfg := PagoRetryWorkerConfig{Interval: 1, MaxIntentos: 0, BackoffBase: 1, BackoffCap: 1, BatchLimit: 1}
+	cfg.applyDefaults()
+	assert.Equal(t, 10, cfg.MaxIntentos, "zero MaxIntentos must be replaced with 10 default")
+}
+
+func TestPagoRetryWorkerConfig_ApplyDefaults_ZeroBackoffBase(t *testing.T) {
+	t.Parallel()
+	cfg := PagoRetryWorkerConfig{Interval: 1, MaxIntentos: 1, BackoffBase: 0, BackoffCap: 1, BatchLimit: 1}
+	cfg.applyDefaults()
+	assert.Equal(t, 30*time.Second, cfg.BackoffBase, "zero BackoffBase must be replaced with 30s default")
+}
+
+func TestPagoRetryWorkerConfig_ApplyDefaults_ZeroBackoffCap(t *testing.T) {
+	t.Parallel()
+	cfg := PagoRetryWorkerConfig{Interval: 1, MaxIntentos: 1, BackoffBase: 1, BackoffCap: 0, BatchLimit: 1}
+	cfg.applyDefaults()
+	assert.Equal(t, 30*time.Minute, cfg.BackoffCap, "zero BackoffCap must be replaced with 30min default")
+}
+
+func TestPagoRetryWorkerConfig_ApplyDefaults_ZeroBatchLimit(t *testing.T) {
+	t.Parallel()
+	cfg := PagoRetryWorkerConfig{Interval: 1, MaxIntentos: 1, BackoffBase: 1, BackoffCap: 1, BatchLimit: 0}
+	cfg.applyDefaults()
+	assert.Equal(t, 100, cfg.BatchLimit, "zero BatchLimit must be replaced with 100 default")
+}
+
+// ─── logger nil guard test ────────────────────────────────────────────────────
+
+// TestNewPagoRetryWorker_NilLogger verifies that passing nil logger falls back
+// to slog.Default() (non-nil). The CONDITIONALS_NEGATION mutant would make a
+// non-nil logger get replaced with slog.Default(), so we also verify that
+// passing a real logger preserves it.
+func TestNewPagoRetryWorker_NilLogger(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	repo := newInternalFakeRepo()
+	writer := &internalFakeWriter{}
+	svc := newInternalAplicarSvc(repo, writer, now)
+	cfg := PagoRetryWorkerConfig{
+		Interval: time.Minute, MaxIntentos: 10,
+		BackoffBase: 30 * time.Second, BackoffCap: 30 * time.Minute, BatchLimit: 100,
+	}
+
+	// Passing nil logger must produce a non-nil logger (slog.Default()).
+	w := NewPagoRetryWorker(svc, repo, internalFixedClock{T: now}, cfg, nil)
+	assert.NotNil(t, w.logger, "nil logger must fall back to slog.Default(), which is non-nil")
+}
+
+func TestNewPagoRetryWorker_NonNilLoggerPreserved(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	repo := newInternalFakeRepo()
+	writer := &internalFakeWriter{}
+	svc := newInternalAplicarSvc(repo, writer, now)
+	cfg := PagoRetryWorkerConfig{
+		Interval: time.Minute, MaxIntentos: 10,
+		BackoffBase: 30 * time.Second, BackoffCap: 30 * time.Minute, BatchLimit: 100,
+	}
+
+	customLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	w := NewPagoRetryWorker(svc, repo, internalFixedClock{T: now}, cfg, customLogger)
+	assert.Equal(t, customLogger, w.logger, "non-nil logger must be preserved as-is")
+}
+
+// ─── tick() counter tests via slog capture ───────────────────────────────────
+
+// internalRecordingHandler captures slog records within the app package tests.
+type internalRecordingHandler struct {
+	records []slog.Record
+}
+
+func (h *internalRecordingHandler) Enabled(_ context.Context, _ slog.Level) bool { return true }
+func (h *internalRecordingHandler) Handle(_ context.Context, r slog.Record) error {
+	h.records = append(h.records, r.Clone())
+	return nil
+}
+func (h *internalRecordingHandler) WithAttrs(_ []slog.Attr) slog.Handler { return h }
+func (h *internalRecordingHandler) WithGroup(_ string) slog.Handler      { return h }
+
+func (h *internalRecordingHandler) findAttrInt(msg, key string) (int64, bool) {
+	for _, r := range h.records {
+		if r.Message != msg {
+			continue
+		}
+		var found int64
+		var ok bool
+		r.Attrs(func(a slog.Attr) bool {
+			if a.Key == key {
+				found = a.Value.Int64()
+				ok = true
+				return false
+			}
+			return true
+		})
+		if ok {
+			return found, true
+		}
+	}
+	return 0, false
+}
+
+// TestPagoRetryWorker_Tick_SkippedCounter verifies that tick() logs the correct
+// `skipped` count. The INCREMENT_DECREMENT mutation would change `skipped++` to
+// `skipped--`, producing -3 instead of 3.
+func TestPagoRetryWorker_Tick_SkippedCounter(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	repo := newInternalFakeRepo()
+	writer := &internalFakeWriter{}
+
+	// Seed 3 pagos that are all skipped by backoff (Intentos=2, UpdatedAt=now,
+	// large base so backoff has not elapsed).
+	for range 3 {
+		p := pagoWithIntentos(2, now, now)
+		require.NoError(t, repo.Insert(context.Background(), p))
+	}
+
+	cfg := PagoRetryWorkerConfig{
+		Interval:    time.Minute,
+		MaxIntentos: 10,
+		BackoffBase: time.Hour,
+		BackoffCap:  time.Hour,
+		BatchLimit:  100,
+	}
+
+	h := &internalRecordingHandler{}
+	logger := slog.New(h)
+	svc := newInternalAplicarSvc(repo, writer, now)
+	w := NewPagoRetryWorker(svc, repo, internalFixedClock{T: now}, cfg, logger)
+	t.Cleanup(func() { _ = w.Stop(context.Background()) })
+
+	w.tick(context.Background())
+
+	skipped, ok := h.findAttrInt("pago_retry.tick", "skipped")
+	require.True(t, ok, "pago_retry.tick log entry must be present with 'skipped' attr")
+	assert.Equal(t, int64(3), skipped, "skipped must be 3 when all rows are in backoff")
+}
+
+// TestPagoRetryWorker_Tick_AppliedCounter verifies that tick() logs the correct
+// `applied` count. The INCREMENT_DECREMENT mutation changes `applied++` to
+// `applied--`, producing -3 instead of 3.
+func TestPagoRetryWorker_Tick_AppliedCounter(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	repo := newInternalFakeRepo()
+	writer := &internalFakeWriter{
+		result: outbound.MicrosipPagoResult{
+			DoctoCCID:      9001,
+			ImpteDoctoCCID: 9002,
+			Folio:          "AB-2026-042",
+		},
+	}
+
+	// Seed 3 Intentos=0 pagos — all immediately eligible.
+	pendingPago(t, repo, now)
+	pendingPago(t, repo, now)
+	pendingPago(t, repo, now)
+
+	cfg := PagoRetryWorkerConfig{
+		Interval:    time.Minute,
+		MaxIntentos: 10,
+		BackoffBase: 30 * time.Second,
+		BackoffCap:  30 * time.Minute,
+		BatchLimit:  100,
+	}
+
+	h := &internalRecordingHandler{}
+	logger := slog.New(h)
+	svc := newInternalAplicarSvc(repo, writer, now)
+	w := NewPagoRetryWorker(svc, repo, internalFixedClock{T: now}, cfg, logger)
+	t.Cleanup(func() { _ = w.Stop(context.Background()) })
+
+	w.tick(context.Background())
+
+	applied, ok := h.findAttrInt("pago_retry.tick", "applied")
+	require.True(t, ok, "pago_retry.tick log entry must be present with 'applied' attr")
+	assert.Equal(t, int64(3), applied, "applied must be 3 when all rows are eligible and writer succeeds")
+}
+
+// ─── backoffDelay() equivalent-mutant comments ───────────────────────────────
+
+// The following mutants in backoffDelay() are considered equivalent and cannot
+// be killed by tests without changing observable behavior:
+//
+//   - L218 `if exp > maxExp` with `>=`: when exp == maxExp == 30, both `>` and
+//     `>=` clamp exp to 30, so the result is identical. Equivalent mutant.
+//   - L223 `if d > maxDelay` with `>=`: when d == maxDelay exactly, both paths
+//     return maxDelay. Equivalent mutant.
+//   - L226 `if d < 0` safety net: Pow overflow only occurs beyond exp=63 which
+//     is unreachable (maxExp=30 guard). Equivalent: the net never fires.
+
 // Ensure internalFakeRepo satisfies outbound.PagosRecibidosRepo at compile
 // time. This prevents silent drift if the interface changes.
 var _ outbound.PagosRecibidosRepo = (*internalFakeRepo)(nil)

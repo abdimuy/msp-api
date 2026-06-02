@@ -3,6 +3,7 @@ package app_test
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -439,6 +440,250 @@ func TestCrearPago_ConceptoDerivation(t *testing.T) {
 
 	assert.Equal(t, 27969, pago.ConceptoCCID(),
 		"formaCobroID 137026 debe derivar conceptoCCID 27969 (abono mostrador)")
+}
+
+// ─── TestCrearPago_ReloadAfterApplyFailed_FindError ──────────────────────────
+
+// TestCrearPago_ReloadAfterApplyFailed_FindError verifies the nilerr path at
+// L114 of crear_pago.go: after Insert succeeds and AplicarPago fails (txMgr
+// is nil → errWriteDepsMissing), the code tries to reload the pago via
+// FindByID. When FindByID also fails, the function must return the
+// freshly-built pago (non-nil) with NO error.
+//
+// The CONDITIONALS_NEGATION mutant (`if findErr != nil` → `if findErr == nil`)
+// would swap the paths and return (nil, findErr) instead.
+func TestCrearPago_ReloadAfterApplyFailed_FindError(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	by := uuid.New()
+	pagoID := uuid.New()
+
+	saldos := newFakeSaldosRepo()
+	s := makeSaldoForCargo(5000, decimal.NewFromInt(5000), false)
+	saldos.byCargo[5000] = &s
+
+	pagosRepo := newFakePagosRecibidosRepo()
+	// Set findErr so FindByID always fails. Insert still works normally
+	// (checks the map key existence, not findErr).
+	pagosRepo.findErr = domain.ErrPagoNoEncontrado
+
+	svc := newWriteSvc(t, now, saldos, pagosRepo, nil)
+
+	in := baseInput(t, now)
+	in.ID = pagoID
+
+	// AplicarPago will fail (txMgr=nil → errWriteDepsMissing).
+	// Then FindByID fails (findErr is set).
+	// Expect: freshly-built pago returned, no error.
+	pago, err := svc.CrearPago(context.Background(), in, by)
+	require.NoError(t, err, "nilerr path: FindByID failure must NOT surface as error")
+	require.NotNil(t, pago, "freshly-built pago must be returned when reload fails")
+	assert.Equal(t, pagoID, pago.ID(),
+		"returned pago must carry the requested UUID (freshly-built, not reloaded)")
+}
+
+// TestCrearPago_ReloadAfterApplyFailed_FindSuccess verifies the happy path of
+// the reload block: after AplicarPago fails, FindByID succeeds and returns the
+// (potentially updated) pago from the repo.
+func TestCrearPago_ReloadAfterApplyFailed_FindSuccess(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	by := uuid.New()
+
+	saldos := newFakeSaldosRepo()
+	s := makeSaldoForCargo(5000, decimal.NewFromInt(5000), false)
+	saldos.byCargo[5000] = &s
+
+	pagosRepo := newFakePagosRecibidosRepo()
+	// findErr is nil — FindByID will succeed (reads from the in-memory map).
+
+	svc := newWriteSvc(t, now, saldos, pagosRepo, nil)
+
+	in := baseInput(t, now)
+	pago, err := svc.CrearPago(context.Background(), in, by)
+	require.NoError(t, err)
+	require.NotNil(t, pago)
+	assert.Equal(t, in.ID, pago.ID())
+}
+
+// TestCrearPago_IdempotencyFindSuccess verifies the happy-path of the
+// idempotency fast-path: Insert returns ErrPagoYaExiste, FindByID succeeds,
+// and the EXISTING pago (from the repo) is returned.
+func TestCrearPago_IdempotencyFindSuccess(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	by := uuid.New()
+
+	saldos := newFakeSaldosRepo()
+	s := makeSaldoForCargo(5000, decimal.NewFromInt(5000), false)
+	saldos.byCargo[5000] = &s
+
+	pagosRepo := newFakePagosRecibidosRepo()
+	svc := newWriteSvc(t, now, saldos, pagosRepo, nil)
+
+	in := baseInput(t, now)
+
+	// First call: persists the pago.
+	pago1, err := svc.CrearPago(context.Background(), in, by)
+	require.NoError(t, err)
+	require.NotNil(t, pago1)
+
+	// Second call: Insert returns ErrPagoYaExiste → FindByID returns existing.
+	pago2, err := svc.CrearPago(context.Background(), in, by)
+	require.NoError(t, err)
+	require.NotNil(t, pago2)
+	assert.Equal(t, pago1.ID(), pago2.ID(), "idempotency: must return the same UUID")
+}
+
+// ─── TestCrearPago_MaxAtrasoAceptable_Boundary ───────────────────────────────
+
+// TestCrearPago_MaxAtrasoAceptable_Boundary covers the exact boundary at
+// maxAtrasoAceptable (30*24*time.Hour). The operator is `>` so:
+//   - exactly at boundary → NOT rejected (≡ "equal is fine")
+//   - one nanosecond past → rejected with ErrPagoFechaMuyAntigua
+//
+// A CONDITIONALS_BOUNDARY mutation (`>` → `>=`) would break the "exactly at
+// boundary" case.
+func TestCrearPago_MaxAtrasoAceptable_Boundary(t *testing.T) {
+	t.Parallel()
+
+	const maxAtrasoAceptable = 30 * 24 * time.Hour
+
+	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	by := uuid.New()
+
+	tests := []struct {
+		name          string
+		fechaHoraPago time.Time
+		wantErr       error // nil means no error expected
+	}{
+		{
+			name:          "exactly_at_boundary_accepted",
+			fechaHoraPago: now.Add(-maxAtrasoAceptable),
+			wantErr:       nil,
+		},
+		{
+			name:          "one_nanosecond_past_boundary_rejected",
+			fechaHoraPago: now.Add(-maxAtrasoAceptable - time.Nanosecond),
+			wantErr:       domain.ErrPagoFechaMuyAntigua,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			saldos := newFakeSaldosRepo()
+			s := makeSaldoForCargo(5000, decimal.NewFromInt(5000), false)
+			saldos.byCargo[5000] = &s
+
+			pagosRepo := newFakePagosRecibidosRepo()
+			svc := newWriteSvc(t, now, saldos, pagosRepo, nil)
+
+			in := baseInput(t, now)
+			in.FechaHoraPago = tc.fechaHoraPago
+
+			_, err := svc.CrearPago(context.Background(), in, by)
+			if tc.wantErr == nil {
+				// The row will be inserted (AplicarPago will fail because txMgr=nil).
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// ─── TestCrearPago_UmbralLateUpload_Boundary ─────────────────────────────────
+
+// recordingHandler captures slog records for inspection in tests.
+type recordingHandler struct {
+	records []slog.Record
+}
+
+func (h *recordingHandler) Enabled(_ context.Context, _ slog.Level) bool { return true }
+func (h *recordingHandler) Handle(_ context.Context, r slog.Record) error {
+	h.records = append(h.records, r.Clone())
+	return nil
+}
+func (h *recordingHandler) WithAttrs(_ []slog.Attr) slog.Handler { return h }
+func (h *recordingHandler) WithGroup(_ string) slog.Handler      { return h }
+
+func (h *recordingHandler) hasMessage(msg string) bool {
+	for _, r := range h.records {
+		if r.Message == msg {
+			return true
+		}
+	}
+	return false
+}
+
+// TestCrearPago_UmbralLateUpload_Boundary verifies the late-upload slog warning
+// is emitted when delay > umbralLateUpload (24h) and NOT emitted when delay
+// equals the threshold exactly.
+//
+// A CONDITIONALS_BOUNDARY mutation (`>` → `>=`) would change the behavior at
+// the exact boundary and is caught by the "exactly_at_threshold_no_warn" case.
+// A CONDITIONALS_NEGATION mutation (`>` → `<=`) would break the "past" case.
+//
+// NOTE: does NOT use t.Parallel() — slog.SetDefault is process-global.
+func TestCrearPago_UmbralLateUpload_Boundary(t *testing.T) { //nolint:paralleltest // mutates slog.Default
+	const umbralLateUpload = 24 * time.Hour
+
+	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	by := uuid.New()
+
+	tests := []struct {
+		name          string
+		fechaHoraPago time.Time
+		wantWarn      bool
+	}{
+		{
+			name:          "exactly_at_threshold_no_warn",
+			fechaHoraPago: now.Add(-umbralLateUpload),
+			wantWarn:      false,
+		},
+		{
+			name:          "one_nanosecond_past_threshold_warns",
+			fechaHoraPago: now.Add(-umbralLateUpload - time.Nanosecond),
+			wantWarn:      true,
+		},
+	}
+
+	for _, tc := range tests { //nolint:paralleltest // sub-tests mutate slog.Default
+		t.Run(tc.name, func(t *testing.T) {
+			// NOT t.Parallel() — mutates process-global slog.
+			h := &recordingHandler{}
+			oldDefault := slog.Default()
+			slog.SetDefault(slog.New(h))
+			t.Cleanup(func() { slog.SetDefault(oldDefault) })
+
+			saldos := newFakeSaldosRepo()
+			s := makeSaldoForCargo(5000, decimal.NewFromInt(5000), false)
+			saldos.byCargo[5000] = &s
+
+			pagosRepo := newFakePagosRecibidosRepo()
+			svc := newWriteSvc(t, now, saldos, pagosRepo, nil)
+
+			in := baseInput(t, now)
+			in.FechaHoraPago = tc.fechaHoraPago
+
+			_, err := svc.CrearPago(context.Background(), in, by)
+			// Both cases succeed (no validation error for late upload).
+			require.NoError(t, err)
+
+			if tc.wantWarn {
+				assert.True(t, h.hasMessage("pago.late_upload"),
+					"expected pago.late_upload log entry for delay > 24h")
+			} else {
+				assert.False(t, h.hasMessage("pago.late_upload"),
+					"expected NO pago.late_upload log entry for delay <= 24h")
+			}
+		})
+	}
 }
 
 // ─── TestCrearPago_NilRepoDependency ─────────────────────────────────────────
