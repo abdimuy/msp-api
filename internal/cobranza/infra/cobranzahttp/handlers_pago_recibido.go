@@ -3,6 +3,7 @@ package cobranzahttp
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,14 +16,23 @@ import (
 
 // CrearPago handles POST /cobranza/pagos.
 //
-// Persists a PagoRecibido into the MSP_PAGOS_RECIBIDOS outbox and
-// best-effort-applies it to Microsip in the same request. If the Microsip
-// writer fails the row stays ESTADO='P' for the retry worker; the HTTP
-// response always returns 201 with whatever state the pago ended up in.
+// Accepts a multipart/form-data body that carries both the pago JSON
+// (`datos` field) and zero or more comprobantes (`imagen` repeated). Server
+// persists pago + imagenes atómicamente inside one Firebird tx via
+// [cobranzaapp.Service.CrearPagoConImagenes]; any failure rolls back the
+// whole write and best-effort-cleans the blobs already on disk.
 //
-// The client-generated UUID (Body.ID) is the idempotency key end-to-end: a
-// second request with the same UUID returns the existing row without a second
-// INSERT.
+// After the atomic write commits, the legacy best-effort fast-path
+// AplicarPago runs unchanged — if the Microsip writer fails the pago stays
+// ESTADO='P' for the retry worker and the HTTP response still returns 201.
+//
+// Idempotency: the client-generated UUID in `datos.id` is the idempotency
+// key end-to-end. A second request with the same UUID returns the existing
+// pago without rewriting anything (its already-stored imagenes are kept;
+// any new blobs in the replay request are cleaned up).
+//
+// The legacy POST /pagos/{id}/imagenes endpoint is retained for adding
+// comprobantes after this initial atomic write.
 func (h *Handlers) CrearPago(ctx context.Context, in *CrearPagoInput) (*CrearPagoOutput, error) {
 	cu, err := currentUserOrError(ctx)
 	if err != nil {
@@ -32,51 +42,86 @@ func (h *Handlers) CrearPago(ctx context.Context, in *CrearPagoInput) (*CrearPag
 		return nil, err
 	}
 
-	pagoID, err := uuid.Parse(in.Body.ID)
+	fields := in.RawBody.Data()
+	body, err := decodeCrearPagoDatos(fields.Datos)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+
+	pagoID, err := uuid.Parse(body.ID)
 	if err != nil {
 		return nil, mapAppError(
 			apperror.NewValidation("pago_id_invalido", "el id del pago no es un UUID válido").WithError(err),
 		)
 	}
 
-	// Idempotency-Key header must match body.id when present.
-	if in.IdempotencyKey != "" && in.IdempotencyKey != in.Body.ID {
+	if in.IdempotencyKey != "" && in.IdempotencyKey != body.ID {
 		return nil, mapAppError(
-			apperror.NewValidation("idempotency_key_mismatch", "Idempotency-Key debe coincidir con body.id"),
+			apperror.NewValidation("idempotency_key_mismatch", "Idempotency-Key debe coincidir con datos.id"),
 		)
 	}
 
-	fecha, err := time.Parse(time.RFC3339, in.Body.FechaHoraPago)
+	fecha, err := time.Parse(time.RFC3339, body.FechaHoraPago)
 	if err != nil {
 		return nil, mapAppError(
 			apperror.NewValidation("fecha_hora_pago_invalida", "fecha_hora_pago no es una fecha-hora RFC3339 válida").WithError(err),
 		)
 	}
 
-	importe, err := decimal.NewFromString(in.Body.Importe)
+	importe, err := decimal.NewFromString(body.Importe)
 	if err != nil {
 		return nil, mapAppError(
 			apperror.NewValidation("importe_invalido", "importe no es un decimal válido").WithError(err),
 		)
 	}
 
+	imgUploads, openedFiles, err := parseImagenesFromMultipart(pagoID, fields.Imagen, in.RawBody.Form)
+	defer func() {
+		for _, f := range openedFiles {
+			_ = f.Close()
+		}
+	}()
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+
 	appIn := cobranzaapp.CrearPagoInput{
 		ID:             pagoID,
-		CargoDoctoCCID: in.Body.CargoDoctoCCID,
-		ClienteID:      in.Body.ClienteID,
-		CobradorID:     in.Body.CobradorID,
-		Cobrador:       in.Body.Cobrador,
+		CargoDoctoCCID: body.CargoDoctoCCID,
+		ClienteID:      body.ClienteID,
+		CobradorID:     body.CobradorID,
+		Cobrador:       body.Cobrador,
 		Importe:        importe,
-		FormaCobroID:   in.Body.FormaCobroID,
+		FormaCobroID:   body.FormaCobroID,
 		FechaHoraPago:  fecha.UTC(),
-		Lat:            stringToOptional(in.Body.Lat),
-		Lon:            stringToOptional(in.Body.Lon),
+		Lat:            stringToOptional(body.Lat),
+		Lon:            stringToOptional(body.Lon),
 	}
-	pago, err := h.svc.CrearPago(ctx, appIn, cu.ID)
+	pago, err := h.svc.CrearPagoConImagenes(ctx, appIn, imgUploads, cu.ID)
 	if err != nil {
 		return nil, mapAppError(err)
 	}
 	return &CrearPagoOutput{Body: toPagoRecibidoDTO(pago)}, nil
+}
+
+// decodeCrearPagoDatos validates that `datos` was supplied and parses it as
+// JSON into CrearPagoBody. Returns stable apperror codes so the client knows
+// whether the field was missing vs. malformed.
+func decodeCrearPagoDatos(raw string) (CrearPagoBody, error) {
+	if raw == "" {
+		return CrearPagoBody{}, apperror.NewValidation(
+			"datos_requerido", "el campo multipart 'datos' es obligatorio",
+		)
+	}
+	var body CrearPagoBody
+	dec := json.NewDecoder(jsonStringReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		return CrearPagoBody{}, apperror.NewValidation(
+			"datos_json_invalido", "el campo 'datos' no es un JSON válido",
+		).WithError(err)
+	}
+	return body, nil
 }
 
 // ObtenerPagoRecibido handles GET /cobranza/pagos/{id}.

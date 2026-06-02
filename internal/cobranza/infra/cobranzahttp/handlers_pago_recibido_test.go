@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -448,105 +449,180 @@ func humaErrorCode(t *testing.T, body *bytes.Buffer) string {
 	return envelope.Errors[0].Message
 }
 
-// ─── CrearPago ────────────────────────────────────────────────────────────────
+// ─── CrearPago (multipart) ───────────────────────────────────────────────────
 
-func TestHTTP_CrearPago_HappyPath(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+// happyPathSvc wires the standard happy-path Service for CrearPago: saldo 2000
+// in cargo 5000, working microsip writer, in-memory repos + storage.
+func happyPathSvc(t *testing.T, now time.Time) (
+	*cobranzaapp.Service, *fakePagosRecibidosRepo, *fakePagosImagenesRepo, *fakeStorageProvider,
+) {
+	t.Helper()
 	saldos := newFakeSaldosRepoHTTP()
 	s := makeSaldoHTTP(5000, decimal.NewFromInt(2000))
 	saldos.byCargo[5000] = &s
-
 	pagosRepo := newFakePagosRecibidosRepo()
+	imagenes := newFakePagosImagenesRepo()
+	store := newFakeStorageProvider()
 	writer := &fakeMicrosipPagoWriter{
 		result: outbound.MicrosipPagoResult{DoctoCCID: 1, ImpteDoctoCCID: 2, Folio: "Z001"},
 	}
-	svc := buildTestService(now, saldos, pagosRepo, newFakePagosImagenesRepo(), writer, newFakeStorageProvider(), nil, fakeTxRunner{})
+	svc := buildTestService(now, saldos, pagosRepo, imagenes, writer, store, nil, fakeTxRunner{})
+	return svc, pagosRepo, imagenes, store
+}
+
+func TestHTTP_CrearPago_Multipart_HappyPath_SinImagenes(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	svc, pagosRepo, imagenes, store := happyPathSvc(t, now)
 
 	pagoID := uuid.New()
-	body := fmt.Sprintf(`{
-		"id": %q,
-		"cargo_docto_cc_id": 5000,
-		"cliente_id": 11486,
-		"cobrador_id": 200,
-		"cobrador": "Mendoza Torres, Ana",
-		"importe": "1500.00",
-		"forma_cobro_id": 1,
-		"fecha_hora_pago": %q
-	}`, pagoID.String(), now.Add(-30*time.Minute).Format(time.RFC3339))
+	datos := crearPagoDatosJSON(pagoID.String(), now.Add(-30*time.Minute).Format(time.RFC3339))
+	body, ct := buildCrearPagoMultipart(t, datos, nil)
 
-	req := httptest.NewRequest(http.MethodPost, "/pagos", bytes.NewBufferString(body))
-	req.Header.Set("Content-Type", "application/json")
+	req := httptest.NewRequest(http.MethodPost, "/pagos", body)
+	req.Header.Set("Content-Type", ct)
 	rec := httptest.NewRecorder()
-
 	mountReadWithUser(pagoUser(), svc).ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
-
 	var dto cobranzahttp.PagoRecibidoDTO
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dto))
 	assert.Equal(t, pagoID.String(), dto.ID)
-	assert.Equal(t, 5000, dto.CargoDoctoCCID)
-	assert.Equal(t, "1500.00", dto.Importe)
+	assert.Len(t, pagosRepo.rows, 1)
+	assert.Empty(t, imagenes.images)
+	assert.Equal(t, 0, store.storeCalls)
 }
 
-func TestHTTP_CrearPago_InvalidUUID(t *testing.T) {
+func TestHTTP_CrearPago_Multipart_HappyPath_1Imagen(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
-	svc := buildTestService(now, newFakeSaldosRepoHTTP(), newFakePagosRecibidosRepo(), newFakePagosImagenesRepo(), nil, newFakeStorageProvider(), nil, fakeTxRunner{})
-
-	body := fmt.Sprintf(`{
-		"id": "not-a-uuid",
-		"cargo_docto_cc_id": 5000,
-		"cliente_id": 11486,
-		"cobrador_id": 200,
-		"cobrador": "Mendoza Torres, Ana",
-		"importe": "1500.00",
-		"forma_cobro_id": 1,
-		"fecha_hora_pago": %q
-	}`, now.Add(-30*time.Minute).Format(time.RFC3339))
-
-	req := httptest.NewRequest(http.MethodPost, "/pagos", bytes.NewBufferString(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-
-	mountReadWithUser(pagoUser(), svc).ServeHTTP(rec, req)
-
-	// Huma may reject at schema validation (422) or handler (422) — either is correct.
-	assert.GreaterOrEqual(t, rec.Code, 400, "expected 4xx for invalid UUID")
-	assert.Less(t, rec.Code, 500)
-	// When our handler runs, the code is pago_id_invalido; Huma schema error has a different shape.
-	bodyStr := rec.Body.String()
-	assert.NotEmpty(t, bodyStr)
-}
-
-func TestHTTP_CrearPago_IdempotencyKeyMismatch(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
-	svc := buildTestService(now, newFakeSaldosRepoHTTP(), newFakePagosRecibidosRepo(), newFakePagosImagenesRepo(), nil, newFakeStorageProvider(), nil, fakeTxRunner{})
+	svc, pagosRepo, imagenes, store := happyPathSvc(t, now)
 
 	pagoID := uuid.New()
-	otherID := uuid.New()
+	datos := crearPagoDatosJSON(pagoID.String(), now.Add(-30*time.Minute).Format(time.RFC3339))
+	imgID := uuid.New().String()
+	body, ct := buildCrearPagoMultipart(t, datos, []crearPagoImagen{
+		{
+			Filename:    "recibo.pdf",
+			Mime:        "application/pdf",
+			Body:        bytes.Repeat([]byte("P"), 512),
+			ID:          imgID,
+			Descripcion: "Recibo de transferencia",
+		},
+	})
 
-	body := fmt.Sprintf(`{
-		"id": %q,
-		"cargo_docto_cc_id": 5000,
-		"cliente_id": 11486,
-		"cobrador_id": 200,
-		"cobrador": "Mendoza Torres, Ana",
-		"importe": "1500.00",
-		"forma_cobro_id": 1,
-		"fecha_hora_pago": %q
-	}`, pagoID.String(), now.Add(-30*time.Minute).Format(time.RFC3339))
-
-	req := httptest.NewRequest(http.MethodPost, "/pagos", bytes.NewBufferString(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Idempotency-Key", otherID.String()) // mismatch!
+	req := httptest.NewRequest(http.MethodPost, "/pagos", body)
+	req.Header.Set("Content-Type", ct)
 	rec := httptest.NewRecorder()
+	mountReadWithUser(pagoUser(), svc).ServeHTTP(rec, req)
 
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	assert.Len(t, pagosRepo.rows, 1)
+	assert.Len(t, imagenes.images, 1)
+	assert.Equal(t, 1, store.storeCalls)
+	assert.Equal(t, 0, store.deleteCalls)
+}
+
+func TestHTTP_CrearPago_Multipart_HappyPath_3Imagenes(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	svc, pagosRepo, imagenes, store := happyPathSvc(t, now)
+
+	pagoID := uuid.New()
+	datos := crearPagoDatosJSON(pagoID.String(), now.Add(-30*time.Minute).Format(time.RFC3339))
+	body, ct := buildCrearPagoMultipart(t, datos, []crearPagoImagen{
+		{Filename: "a.pdf", Mime: "application/pdf", Body: []byte("AAA"), ID: uuid.New().String(), Descripcion: "uno"},
+		{Filename: "b.pdf", Mime: "application/pdf", Body: []byte("BBB"), ID: uuid.New().String(), Descripcion: "dos"},
+		{Filename: "c.pdf", Mime: "application/pdf", Body: []byte("CCC"), ID: uuid.New().String(), Descripcion: "tres"},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/pagos", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mountReadWithUser(pagoUser(), svc).ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	assert.Len(t, pagosRepo.rows, 1)
+	assert.Len(t, imagenes.images, 3)
+	assert.Equal(t, 3, store.storeCalls)
+	assert.Equal(t, 0, store.deleteCalls)
+}
+
+func TestHTTP_CrearPago_Multipart_DatosMissing(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	svc, _, _, _ := happyPathSvc(t, now)
+
+	// Build a multipart body with NO `datos` part.
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	require.NoError(t, mw.Close())
+
+	req := httptest.NewRequest(http.MethodPost, "/pagos", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	rec := httptest.NewRecorder()
+	mountReadWithUser(pagoUser(), svc).ServeHTTP(rec, req)
+
+	assert.GreaterOrEqual(t, rec.Code, 400)
+	assert.Less(t, rec.Code, 500)
+	assert.Contains(t, rec.Body.String(), "datos")
+}
+
+func TestHTTP_CrearPago_Multipart_DatosNoEsJSON(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	svc, _, _, store := happyPathSvc(t, now)
+
+	body, ct := buildCrearPagoMultipart(t, "not-a-json-blob{{{", nil)
+	req := httptest.NewRequest(http.MethodPost, "/pagos", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mountReadWithUser(pagoUser(), svc).ServeHTTP(rec, req)
+
+	assert.GreaterOrEqual(t, rec.Code, 400)
+	assert.Less(t, rec.Code, 500)
+	assert.Contains(t, rec.Body.String(), "datos_json_invalido")
+	assert.Equal(t, 0, store.storeCalls)
+}
+
+func TestHTTP_CrearPago_Multipart_InvalidUUIDInDatos(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	svc, _, _, _ := happyPathSvc(t, now)
+
+	datos := crearPagoDatosJSON("not-a-uuid", now.Add(-30*time.Minute).Format(time.RFC3339))
+	body, ct := buildCrearPagoMultipart(t, datos, nil)
+	req := httptest.NewRequest(http.MethodPost, "/pagos", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mountReadWithUser(pagoUser(), svc).ServeHTTP(rec, req)
+
+	assert.GreaterOrEqual(t, rec.Code, 400)
+	assert.Less(t, rec.Code, 500)
+	assert.Contains(t, rec.Body.String(), "pago_id_invalido")
+}
+
+func TestHTTP_CrearPago_Multipart_IdempotencyKeyMismatch(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	svc, _, _, _ := happyPathSvc(t, now)
+
+	pagoID := uuid.New()
+	other := uuid.New()
+	datos := crearPagoDatosJSON(pagoID.String(), now.Add(-30*time.Minute).Format(time.RFC3339))
+	body, ct := buildCrearPagoMultipart(t, datos, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/pagos", body)
+	req.Header.Set("Content-Type", ct)
+	req.Header.Set("Idempotency-Key", other.String())
+	rec := httptest.NewRecorder()
 	mountReadWithUser(pagoUser(), svc).ServeHTTP(rec, req)
 
 	assert.GreaterOrEqual(t, rec.Code, 400)
@@ -554,58 +630,44 @@ func TestHTTP_CrearPago_IdempotencyKeyMismatch(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "idempotency_key_mismatch")
 }
 
-func TestHTTP_CrearPago_InvalidFecha(t *testing.T) {
+func TestHTTP_CrearPago_Multipart_InvalidFecha(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
-	svc := buildTestService(now, newFakeSaldosRepoHTTP(), newFakePagosRecibidosRepo(), newFakePagosImagenesRepo(), nil, newFakeStorageProvider(), nil, fakeTxRunner{})
+	svc, _, _, _ := happyPathSvc(t, now)
 
 	pagoID := uuid.New()
-	body := fmt.Sprintf(`{
-		"id": %q,
-		"cargo_docto_cc_id": 5000,
-		"cliente_id": 11486,
-		"cobrador_id": 200,
-		"cobrador": "Mendoza Torres, Ana",
-		"importe": "1500.00",
-		"forma_cobro_id": 1,
-		"fecha_hora_pago": "not a date"
-	}`, pagoID.String())
+	datos := crearPagoDatosJSON(pagoID.String(), "not a date")
+	body, ct := buildCrearPagoMultipart(t, datos, nil)
 
-	req := httptest.NewRequest(http.MethodPost, "/pagos", bytes.NewBufferString(body))
-	req.Header.Set("Content-Type", "application/json")
+	req := httptest.NewRequest(http.MethodPost, "/pagos", body)
+	req.Header.Set("Content-Type", ct)
 	rec := httptest.NewRecorder()
-
 	mountReadWithUser(pagoUser(), svc).ServeHTTP(rec, req)
 
 	assert.GreaterOrEqual(t, rec.Code, 400)
 	assert.Less(t, rec.Code, 500)
-	// Huma schema validation or handler validation — either surfaces an error.
-	assert.NotEmpty(t, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "fecha_hora_pago_invalida")
 }
 
-func TestHTTP_CrearPago_InvalidImporte(t *testing.T) {
+func TestHTTP_CrearPago_Multipart_InvalidImporte(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
-	svc := buildTestService(now, newFakeSaldosRepoHTTP(), newFakePagosRecibidosRepo(), newFakePagosImagenesRepo(), nil, newFakeStorageProvider(), nil, fakeTxRunner{})
+	svc, _, _, _ := happyPathSvc(t, now)
 
 	pagoID := uuid.New()
-	body := fmt.Sprintf(`{
-		"id": %q,
-		"cargo_docto_cc_id": 5000,
-		"cliente_id": 11486,
-		"cobrador_id": 200,
-		"cobrador": "Mendoza Torres, Ana",
-		"importe": "not a decimal",
-		"forma_cobro_id": 1,
-		"fecha_hora_pago": %q
-	}`, pagoID.String(), now.Add(-30*time.Minute).Format(time.RFC3339))
+	datos := `{"id":"` + pagoID.String() + `",` +
+		`"cargo_docto_cc_id":5000,"cliente_id":11486,"cobrador_id":200,` +
+		`"cobrador":"Mendoza Torres, Ana",` +
+		`"importe":"not a decimal",` +
+		`"forma_cobro_id":1,"fecha_hora_pago":"` +
+		now.Add(-30*time.Minute).Format(time.RFC3339) + `"}`
+	body, ct := buildCrearPagoMultipart(t, datos, nil)
 
-	req := httptest.NewRequest(http.MethodPost, "/pagos", bytes.NewBufferString(body))
-	req.Header.Set("Content-Type", "application/json")
+	req := httptest.NewRequest(http.MethodPost, "/pagos", body)
+	req.Header.Set("Content-Type", ct)
 	rec := httptest.NewRecorder()
-
 	mountReadWithUser(pagoUser(), svc).ServeHTTP(rec, req)
 
 	assert.GreaterOrEqual(t, rec.Code, 400)
@@ -613,84 +675,154 @@ func TestHTTP_CrearPago_InvalidImporte(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "importe_invalido")
 }
 
-func TestHTTP_CrearPago_PermDenied(t *testing.T) {
+func TestHTTP_CrearPago_Multipart_PermDenied(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
-	svc := buildTestService(now, newFakeSaldosRepoHTTP(), newFakePagosRecibidosRepo(), newFakePagosImagenesRepo(), nil, newFakeStorageProvider(), nil, fakeTxRunner{})
+	svc, _, _, _ := happyPathSvc(t, now)
 
 	pagoID := uuid.New()
-	body := fmt.Sprintf(`{
-		"id": %q,
-		"cargo_docto_cc_id": 5000,
-		"cliente_id": 11486,
-		"cobrador_id": 200,
-		"cobrador": "Mendoza Torres, Ana",
-		"importe": "1500.00",
-		"forma_cobro_id": 1,
-		"fecha_hora_pago": %q
-	}`, pagoID.String(), now.Add(-30*time.Minute).Format(time.RFC3339))
+	datos := crearPagoDatosJSON(pagoID.String(), now.Add(-30*time.Minute).Format(time.RFC3339))
+	body, ct := buildCrearPagoMultipart(t, datos, nil)
 
-	req := httptest.NewRequest(http.MethodPost, "/pagos", bytes.NewBufferString(body))
-	req.Header.Set("Content-Type", "application/json")
+	req := httptest.NewRequest(http.MethodPost, "/pagos", body)
+	req.Header.Set("Content-Type", ct)
 	rec := httptest.NewRecorder()
-
 	mountReadWithUser(noPermUser(), svc).ServeHTTP(rec, req)
 
-	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Equal(t, http.StatusForbidden, rec.Code, "body: %s", rec.Body.String())
 }
 
-func TestHTTP_CrearPago_Idempotent_RepeatedRequest(t *testing.T) {
+func TestHTTP_CrearPago_Multipart_Idempotent_RepeatedRequest(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
-	saldos := newFakeSaldosRepoHTTP()
-	s := makeSaldoHTTP(5000, decimal.NewFromInt(2000))
-	saldos.byCargo[5000] = &s
-
-	pagosRepo := newFakePagosRecibidosRepo()
-	writer := &fakeMicrosipPagoWriter{
-		result: outbound.MicrosipPagoResult{DoctoCCID: 1, ImpteDoctoCCID: 2, Folio: "Z001"},
-	}
-	svc := buildTestService(now, saldos, pagosRepo, newFakePagosImagenesRepo(), writer, newFakeStorageProvider(), nil, fakeTxRunner{})
+	svc, pagosRepo, _, _ := happyPathSvc(t, now)
 
 	pagoID := uuid.New()
-	bodyStr := fmt.Sprintf(`{
-		"id": %q,
-		"cargo_docto_cc_id": 5000,
-		"cliente_id": 11486,
-		"cobrador_id": 200,
-		"cobrador": "Mendoza Torres, Ana",
-		"importe": "1500.00",
-		"forma_cobro_id": 1,
-		"fecha_hora_pago": %q
-	}`, pagoID.String(), now.Add(-30*time.Minute).Format(time.RFC3339))
+	datos := crearPagoDatosJSON(pagoID.String(), now.Add(-30*time.Minute).Format(time.RFC3339))
+	router := mountReadWithUser(pagoUser(), svc)
 
-	cu := pagoUser()
-	router := mountReadWithUser(cu, svc)
-
-	// First request.
-	req1 := httptest.NewRequest(http.MethodPost, "/pagos", bytes.NewBufferString(bodyStr))
-	req1.Header.Set("Content-Type", "application/json")
+	// First.
+	body1, ct1 := buildCrearPagoMultipart(t, datos, nil)
+	req1 := httptest.NewRequest(http.MethodPost, "/pagos", body1)
+	req1.Header.Set("Content-Type", ct1)
 	rec1 := httptest.NewRecorder()
 	router.ServeHTTP(rec1, req1)
 	require.Equal(t, http.StatusOK, rec1.Code, "first: %s", rec1.Body.String())
-
 	var dto1 cobranzahttp.PagoRecibidoDTO
 	require.NoError(t, json.Unmarshal(rec1.Body.Bytes(), &dto1))
 
-	// Second request with same body.
-	req2 := httptest.NewRequest(http.MethodPost, "/pagos", bytes.NewBufferString(bodyStr))
-	req2.Header.Set("Content-Type", "application/json")
+	// Second.
+	body2, ct2 := buildCrearPagoMultipart(t, datos, nil)
+	req2 := httptest.NewRequest(http.MethodPost, "/pagos", body2)
+	req2.Header.Set("Content-Type", ct2)
 	rec2 := httptest.NewRecorder()
 	router.ServeHTTP(rec2, req2)
 	require.Equal(t, http.StatusOK, rec2.Code, "second: %s", rec2.Body.String())
-
 	var dto2 cobranzahttp.PagoRecibidoDTO
 	require.NoError(t, json.Unmarshal(rec2.Body.Bytes(), &dto2))
 
-	assert.Equal(t, dto1.ID, dto2.ID, "idempotent: both must return same pago ID")
-	assert.Len(t, pagosRepo.rows, 1, "exactly one row must be stored")
+	assert.Equal(t, dto1.ID, dto2.ID, "idempotent: same pago returned")
+	assert.Len(t, pagosRepo.rows, 1, "exactly one row stored")
+}
+
+func TestHTTP_CrearPago_Multipart_RejectsBMP_NoSideEffects(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	svc, pagosRepo, imagenes, store := happyPathSvc(t, now)
+
+	pagoID := uuid.New()
+	datos := crearPagoDatosJSON(pagoID.String(), now.Add(-30*time.Minute).Format(time.RFC3339))
+	body, ct := buildCrearPagoMultipart(t, datos, []crearPagoImagen{
+		{Filename: "bad.bmp", Mime: "image/bmp", Body: []byte("BM data"), ID: uuid.New().String()},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/pagos", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mountReadWithUser(pagoUser(), svc).ServeHTTP(rec, req)
+
+	// Huma rejects the part on contentType validation — 422.
+	assert.GreaterOrEqual(t, rec.Code, 400)
+	assert.Less(t, rec.Code, 500)
+	// Nothing persisted.
+	assert.Empty(t, pagosRepo.rows)
+	assert.Empty(t, imagenes.images)
+	assert.Equal(t, 0, store.storeCalls)
+}
+
+func TestHTTP_CrearPago_Multipart_OneBadMime_NadaPersiste(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	svc, pagosRepo, imagenes, store := happyPathSvc(t, now)
+
+	pagoID := uuid.New()
+	datos := crearPagoDatosJSON(pagoID.String(), now.Add(-30*time.Minute).Format(time.RFC3339))
+	body, ct := buildCrearPagoMultipart(t, datos, []crearPagoImagen{
+		{Filename: "a.pdf", Mime: "application/pdf", Body: []byte("AAA"), ID: uuid.New().String()},
+		{Filename: "b.pdf", Mime: "application/pdf", Body: []byte("BBB"), ID: uuid.New().String()},
+		{Filename: "bad.bmp", Mime: "image/bmp", Body: []byte("BM data"), ID: uuid.New().String()},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/pagos", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mountReadWithUser(pagoUser(), svc).ServeHTTP(rec, req)
+
+	assert.GreaterOrEqual(t, rec.Code, 400)
+	assert.Less(t, rec.Code, 500)
+	// Tx never opens — nothing in the repos or storage.
+	assert.Empty(t, pagosRepo.rows)
+	assert.Empty(t, imagenes.images)
+	assert.Equal(t, 0, store.storeCalls)
+}
+
+func TestHTTP_CrearPago_Multipart_ImagenIDInvalid_Rejected(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	svc, pagosRepo, _, store := happyPathSvc(t, now)
+
+	pagoID := uuid.New()
+	datos := crearPagoDatosJSON(pagoID.String(), now.Add(-30*time.Minute).Format(time.RFC3339))
+	body, ct := buildCrearPagoMultipart(t, datos, []crearPagoImagen{
+		{Filename: "x.pdf", Mime: "application/pdf", Body: []byte("X"), ID: "not-a-uuid"},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/pagos", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mountReadWithUser(pagoUser(), svc).ServeHTTP(rec, req)
+
+	assert.GreaterOrEqual(t, rec.Code, 400)
+	assert.Less(t, rec.Code, 500)
+	assert.Contains(t, rec.Body.String(), "imagen_id_invalido")
+	assert.Empty(t, pagosRepo.rows)
+	assert.Equal(t, 0, store.storeCalls)
+}
+
+func TestHTTP_CrearPago_Multipart_RejectsJSONContentType(t *testing.T) {
+	t.Parallel()
+
+	// Legacy JSON-only callers must migrate. Sending Content-Type: application/json
+	// to the new endpoint is rejected — no graceful fallback.
+	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	svc, _, _, store := happyPathSvc(t, now)
+
+	pagoID := uuid.New()
+	datos := crearPagoDatosJSON(pagoID.String(), now.Add(-30*time.Minute).Format(time.RFC3339))
+
+	req := httptest.NewRequest(http.MethodPost, "/pagos", bytes.NewBufferString(datos))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mountReadWithUser(pagoUser(), svc).ServeHTTP(rec, req)
+
+	assert.GreaterOrEqual(t, rec.Code, 400, "JSON-only requests must fail")
+	assert.Less(t, rec.Code, 500)
+	assert.Equal(t, 0, store.storeCalls)
 }
 
 // ─── ObtenerPagoRecibido ──────────────────────────────────────────────────────

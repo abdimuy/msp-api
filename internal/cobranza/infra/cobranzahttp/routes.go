@@ -161,7 +161,10 @@ func registerPagoWriteOperations(api huma.API, h *Handlers) {
 
 	huma.Register(api, op(tag, "cobranza-crear-pago", http.MethodPost, "/pagos",
 		"Crear pago de cobranza",
-		"Persiste un pago en el outbox MSP_PAGOS_RECIBIDOS y trata de aplicarlo inmediato a Microsip. ID del cliente es la idempotency key end-to-end."), h.CrearPago)
+		"multipart/form-data: campo `datos` (JSON con el pago) + N campos `imagen` (archivos) "+
+			"+ opcionales `id_<n>` / `descripcion_<n>` por imagen. Persiste pago + comprobantes "+
+			"en una sola tx Firebird; aplica a Microsip best-effort después del commit. ID del "+
+			"cliente (datos.id) es la idempotency key end-to-end."), h.CrearPago)
 
 	huma.Register(api, op(tag, "cobranza-obtener-pago-recibido", http.MethodGet, "/pagos/{id}",
 		"Obtener pago",

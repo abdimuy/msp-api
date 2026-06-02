@@ -4,6 +4,8 @@ package cobranzahttp
 import (
 	"time"
 
+	"github.com/danielgtaylor/huma/v2"
+
 	"github.com/abdimuy/msp-api/internal/cobranza/domain"
 )
 
@@ -70,23 +72,55 @@ func toPagoRecibidoDTO(p *domain.PagoRecibido) PagoRecibidoDTO {
 
 // ─── Input / Output DTOs ──────────────────────────────────────────────────────
 
-// CrearPagoInput is the JSON body for POST /cobranza/pagos.
+// CrearPagoBody is the JSON document carried inside the multipart `datos`
+// field. Decoded server-side from a raw string — Huma does not validate the
+// inner JSON schema; the handler does ID / fecha / importe parsing itself
+// and surfaces apperror codes per field.
+//
+// The wire format is unchanged from the legacy JSON-only endpoint, so a
+// client that already builds CrearPagoBody as a JSON body just needs to
+// switch transport: send the same JSON as the `datos` part of a multipart
+// request, plus 0..N `imagen` files.
+type CrearPagoBody struct {
+	ID             string `json:"id"`
+	CargoDoctoCCID int    `json:"cargo_docto_cc_id"`
+	ClienteID      int    `json:"cliente_id"`
+	CobradorID     int    `json:"cobrador_id"`
+	Cobrador       string `json:"cobrador"`
+	Importe        string `json:"importe"`
+	FormaCobroID   int    `json:"forma_cobro_id"`
+	FechaHoraPago  string `json:"fecha_hora_pago"`
+	Lat            string `json:"lat,omitempty"`
+	Lon            string `json:"lon,omitempty"`
+}
+
+// CrearPagoMultipartFields is the typed projection of the multipart body Huma
+// parses for [Handlers.CrearPago]. The per-image `id_N` / `descripcion_N`
+// metadata fields are read separately from the raw form via
+// [parseImagenesFromMultipart] because Huma's struct decoder does not support
+// dynamic field names.
+//
+// Imagen contentType whitelist matches the legacy POST /pagos/{id}/imagenes
+// endpoint: JPEG, PNG, GIF, WebP, PDF. Cobranza accepts PDFs (recibos SAT).
+type CrearPagoMultipartFields struct {
+	Datos  string          `form:"datos"  required:"true"  doc:"JSON con el pago (mismos campos que el legacy CrearPagoBody)"`
+	Imagen []huma.FormFile `form:"imagen" contentType:"image/jpeg,image/png,image/gif,image/webp,application/pdf" required:"false" doc:"0..N comprobantes; cada uno opcionalmente pareado con id_<n> y descripcion_<n>"`
+}
+
+// CrearPagoInput is the multipart body for POST /cobranza/pagos.
+//
+// The new atomic contract: a single multipart request carries the pago JSON
+// (`datos`) plus zero or more comprobantes (`imagen` repeated). Server
+// persists pago + imagenes en una sola tx Firebird; cualquier fallo deja el
+// sistema sin estado parcial.
+//
+// Per-image metadata (`id_<n>`, `descripcion_<n>`) is read positionally from
+// the raw form — `id_0` pairs with the first `imagen`, `id_1` with the
+// second, and so on. Client SHOULD send a stable UUID per image for replay
+// safety; absent IDs are server-generated and reintents will duplicate.
 type CrearPagoInput struct {
-	// IdempotencyKey is the optional Idempotency-Key header. When present it
-	// MUST equal Body.ID (the client-generated UUID is the canonical key).
-	IdempotencyKey string `header:"Idempotency-Key" doc:"Opcional. Si presente, debe coincidir con body.id"`
-	Body           struct {
-		ID             string `json:"id"               format:"uuid"      doc:"UUID generado por el cliente (idempotency key end-to-end)"`
-		CargoDoctoCCID int    `json:"cargo_docto_cc_id"                  doc:"DOCTOS_CC.DOCTO_CC_ID del cargo a abonar" minimum:"1"`
-		ClienteID      int    `json:"cliente_id"       minimum:"1"`
-		CobradorID     int    `json:"cobrador_id"      minimum:"1"`
-		Cobrador       string `json:"cobrador"         minLength:"1"      maxLength:"100"`
-		Importe        string `json:"importe"                            doc:"Importe en MXN como string decimal, p.ej. \"100.00\""`
-		FormaCobroID   int    `json:"forma_cobro_id"   minimum:"1"`
-		FechaHoraPago  string `json:"fecha_hora_pago"  format:"date-time" doc:"RFC3339 — captura del cliente"`
-		Lat            string `json:"lat,omitempty"    maxLength:"20"`
-		Lon            string `json:"lon,omitempty"    maxLength:"20"`
-	}
+	IdempotencyKey string                                            `header:"Idempotency-Key" doc:"Opcional. Si presente, debe coincidir con datos.id"`
+	RawBody        huma.MultipartFormFiles[CrearPagoMultipartFields] `doc:"multipart/form-data: datos (JSON) + N imagen (archivos) + opcionales id_<n>/descripcion_<n>"`
 }
 
 // CrearPagoOutput wraps a 201 Created response.
