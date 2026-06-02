@@ -25,13 +25,13 @@ import (
 // full AplicarVenta stack including the real MicrosipClienteWriter, needed for
 // the auto-create-cliente branch.
 //
-// A real TxManager is required (not nil) because AplicarVenta calls runInTx
-// internally and must open a real Firebird transaction to acquire the
-// SELECT ... WITH LOCK on the venta row. The TxManager.RunInTx re-entrant
-// guard detects the ambient test tx injected by txInjector and delegates fn
-// directly, so all writes participate in the ambient rollback-only test
-// transaction. Data committed by microsip writes (DOCTOS_PV, CLIENTES, etc.)
-// runs outside the test tx and must be cleaned up explicitly via t.Cleanup.
+// TxManager is required (non-nil) because AplicarVenta calls runInTx
+// internally. The TxManager.RunInTx re-entrant guard (transaction.go:49-51)
+// detects the ambient test tx injected by txInjector and delegates fn
+// directly to it, so every Microsip write — DOCTOS_PV cascade, CLIENTES,
+// DIRS_CLIENTES, CLAVES_CLIENTES, LIBRES_CLIENTES — joins the rollback-only
+// test transaction. No manual t.Cleanup needed: the ambient rollback at the
+// end of WithTestTransaction undoes everything atomically.
 func buildE2EAutoCrearClienteService(pool *firebird.Pool) *ventasapp.Service {
 	repo := ventfb.NewVentaRepo(pool)
 	cfg := ventfb.NewAplicarConfigRepo(pool)
@@ -49,71 +49,13 @@ func buildE2EAutoCrearClienteService(pool *firebird.Pool) *ventasapp.Service {
 // TestE2E_AplicarVenta_AutoCreaCliente_FullCycle exercises the full HTTP
 // lifecycle: POST /ventas without cliente_id → EnviarARevision → Aprobar →
 // POST /aplicar. Verifies the auto-create-cliente flow writes to all four
-// Microsip tables and links the venta to the new CLIENTE_ID.
+// Microsip tables and links the venta to the new CLIENTE_ID. The ambient
+// WithTestTransaction rollback undoes every write at the end — no t.Cleanup
+// needed (see buildE2EAutoCrearClienteService doc).
 //
-// The ambient fbtestutil.WithTestTransaction rolls back MSP_VENTAS and related
-// rows at the end. Rows committed by the real Microsip writers (DOCTOS_PV,
-// CLIENTES, DIRS_CLIENTES, CLAVES_CLIENTES, LIBRES_CLIENTES and any cascade
-// documents) are removed by a t.Cleanup that deletes in FK-safe order using
-// pool.DB directly (outside the test tx).
-//
-//nolint:paralleltest,funlen // shared rollback tx; multi-phase E2E; cleanup spans scopes.
+//nolint:paralleltest,funlen // shared rollback tx; multi-phase E2E.
 func TestE2E_AplicarVenta_AutoCreaCliente_FullCycle(t *testing.T) {
 	pool := e2eTestPool(t)
-
-	// Capture IDs committed by the real Microsip writers so t.Cleanup can
-	// remove them after the test. Variables are zero-valued; Cleanup checks
-	// before deleting so a test that fails early leaves no stray rows.
-	var cleanupClienteID int
-	var cleanupDoctoPVID int
-	var cleanupVentaID string
-
-	t.Cleanup(func() {
-		bgCtx := context.Background()
-		if cleanupClienteID > 0 {
-			for _, q := range []string{
-				`DELETE FROM LIBRES_CLIENTES WHERE CLIENTE_ID = ?`,
-				`DELETE FROM DIRS_CLIENTES   WHERE CLIENTE_ID = ?`,
-				`DELETE FROM CLAVES_CLIENTES WHERE CLIENTE_ID = ?`,
-				`DELETE FROM CLIENTES        WHERE CLIENTE_ID = ?`,
-			} {
-				_, _ = pool.ExecContext(bgCtx, q, cleanupClienteID)
-			}
-		}
-		if cleanupVentaID != "" {
-			_, _ = pool.ExecContext(bgCtx,
-				`DELETE FROM MSP_VENTAS WHERE ID = ?`, cleanupVentaID)
-		}
-		if cleanupDoctoPVID > 0 {
-			// Clean up cascade documents that the Microsip trigger may have
-			// created (DOCTOS_CC, IMPORTES_DOCTOS_CC, DOCTOS_ENTRE_SIS) for
-			// CONTADO ventas — the PV side only, no CC cargo expected.
-			_, _ = pool.ExecContext(bgCtx,
-				`DELETE FROM IMPORTES_DOCTOS_CC WHERE DOCTO_CC_ID IN (
-					SELECT DOCTO_DEST_ID FROM DOCTOS_ENTRE_SIS
-					WHERE CLAVE_SIS_FTE = 'PV' AND CLAVE_SIS_DEST = 'CC'
-					  AND DOCTO_FTE_ID = ?
-				)`, cleanupDoctoPVID)
-			_, _ = pool.ExecContext(bgCtx,
-				`DELETE FROM DOCTOS_CC WHERE DOCTO_CC_ID IN (
-					SELECT DOCTO_DEST_ID FROM DOCTOS_ENTRE_SIS
-					WHERE CLAVE_SIS_FTE = 'PV' AND CLAVE_SIS_DEST = 'CC'
-					  AND DOCTO_FTE_ID = ?
-				)`, cleanupDoctoPVID)
-			_, _ = pool.ExecContext(bgCtx,
-				`DELETE FROM DOCTOS_ENTRE_SIS
-				 WHERE CLAVE_SIS_FTE = 'PV' AND DOCTO_FTE_ID = ?`,
-				cleanupDoctoPVID)
-			for _, q := range []string{
-				`DELETE FROM DOCTOS_PV_COBROS WHERE DOCTO_PV_ID = ?`,
-				`DELETE FROM LIBRES_VTA_PV    WHERE DOCTO_PV_ID = ?`,
-				`DELETE FROM DOCTOS_PV_DET    WHERE DOCTO_PV_ID = ?`,
-				`DELETE FROM DOCTOS_PV        WHERE DOCTO_PV_ID = ?`,
-			} {
-				_, _ = pool.ExecContext(bgCtx, q, cleanupDoctoPVID)
-			}
-		}
-	})
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		// 1. Build full ventasapp.Service with REAL Microsip writers.
@@ -168,7 +110,6 @@ func TestE2E_AplicarVenta_AutoCreaCliente_FullCycle(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
 		ventaID := created.ID
 		require.NotEmpty(t, ventaID)
-		cleanupVentaID = ventaID
 
 		// Confirm the venta was created without a cliente_id (auto-create branch).
 		assert.Nil(t, created.Cliente.ClienteID,
@@ -204,11 +145,9 @@ func TestE2E_AplicarVenta_AutoCreaCliente_FullCycle(t *testing.T) {
 		require.NotNil(t, applied.Cliente.ClienteID,
 			"auto-create branch must link the new CLIENTE_ID back to the venta")
 		newClienteID := *applied.Cliente.ClienteID
-		cleanupClienteID = newClienteID
-		cleanupDoctoPVID = *applied.MicrosipDoctoPVID
 
 		t.Logf("auto-created: clienteID=%d doctoPVID=%d folio=%s",
-			newClienteID, cleanupDoctoPVID, *applied.MicrosipFolio)
+			newClienteID, *applied.MicrosipDoctoPVID, *applied.MicrosipFolio)
 
 		// 7. Verify via direct SQL inside the ambient ctx (firebird.GetQuerier).
 		q := firebird.GetQuerier(ctx, pool.DB)
