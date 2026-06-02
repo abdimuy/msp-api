@@ -13,6 +13,10 @@ import (
 	"github.com/abdimuy/msp-api/internal/cobranza/domain"
 )
 
+// crear_pago.go is kept as the home for [Service.CrearPago] (now a thin
+// wrapper) plus the timestamp + cargo validation helpers shared with the
+// atomic-multipart sibling in crear_pago_con_imagenes.go.
+
 // CrearPagoInput is the request value object for [Service.CrearPago]. The ID
 // is the client-generated UUID and acts as the idempotency key end-to-end
 // (cliente outbox → server outbox → Microsip).
@@ -47,76 +51,19 @@ const (
 	umbralLateUpload = 24 * time.Hour
 )
 
-// CrearPago persists a new PagoRecibido into the outbox and best-effort
-// attempts immediate application to Microsip. Returns the persisted pago in
-// whatever state it ended up — aplicada on the happy path, pendiente if the
-// writer failed (the retry worker will pick it up later).
+// CrearPago is the legacy single-row entry point: persists a PagoRecibido
+// with no comprobantes attached, then best-effort fast-paths AplicarPago.
+//
+// New callers should prefer [Service.CrearPagoConImagenes], the atomic
+// multipart endpoint that attaches the pago and its imagenes in a single
+// Firebird transaction. CrearPago is now a thin wrapper for backward
+// compatibility — semantics are identical to the prior non-multipart flow.
 //
 // Idempotency: if a pago with the same UUID already exists, returns the
 // existing row instead of an error (fast-path for cliente retries). The
 // client's outbox uses the UUID as the dedupe key end-to-end.
 func (s *Service) CrearPago(ctx context.Context, in CrearPagoInput, by uuid.UUID) (*domain.PagoRecibido, error) {
-	if s.pagosRecibidos == nil {
-		return nil, errWriteDepsMissing("pagos_recibidos_repo")
-	}
-
-	now := s.clock.Now()
-	if err := validateFechaHoraPago(now, in.FechaHoraPago); err != nil {
-		return nil, err
-	}
-
-	if err := s.validateCargo(ctx, in.CargoDoctoCCID, in.Importe); err != nil {
-		return nil, err
-	}
-
-	pago, err := domain.NewPagoRecibido(domain.CrearPagoRecibidoParams{
-		ID:             in.ID,
-		CargoDoctoCCID: in.CargoDoctoCCID,
-		ClienteID:      in.ClienteID,
-		CobradorID:     in.CobradorID,
-		Cobrador:       in.Cobrador,
-		Importe:        in.Importe,
-		FormaCobroID:   in.FormaCobroID,
-		FechaHoraPago:  in.FechaHoraPago,
-		Lat:            in.Lat,
-		Lon:            in.Lon,
-		CreatedBy:      by,
-		Now:            now,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	if err := s.pagosRecibidos.Insert(ctx, pago); err != nil {
-		// Idempotency fast-path: same UUID → return existing row.
-		if errors.Is(err, domain.ErrPagoYaExiste) {
-			existing, findErr := s.pagosRecibidos.FindByID(ctx, in.ID)
-			if findErr != nil {
-				return nil, findErr
-			}
-			return existing, nil
-		}
-		return nil, err
-	}
-
-	// Best-effort fast-path: try to apply immediately. If the writer fails
-	// the row stays ESTADO='P' and the retry worker handles it. We do NOT
-	// surface writer errors to the cliente — the pago is already safely
-	// persisted, and the cliente can confirm via subsequent sync.
-	applied, applyErr := s.AplicarPago(ctx, pago.ID(), by)
-	if applyErr != nil {
-		slog.WarnContext(ctx, "pago.apply_fast_path_failed",
-			slog.String("pago_id", pago.ID().String()),
-			slog.String("error", applyErr.Error()),
-		)
-		// Reload the persisted state — RegistrarFallo updated intentos/error.
-		reloaded, findErr := s.pagosRecibidos.FindByID(ctx, pago.ID())
-		if findErr != nil {
-			return pago, nil //nolint:nilerr // pago was successfully inserted; failure to reload is non-fatal here.
-		}
-		return reloaded, nil
-	}
-	return applied, nil
+	return s.CrearPagoConImagenes(ctx, in, nil, by)
 }
 
 // validateFechaHoraPago applies the three world-class timestamp checks

@@ -113,6 +113,14 @@ var (
 		"imagen no encontrada",
 	)
 
+	// ErrImagenIDDuplicado is returned when CrearPagoConImagenes receives the
+	// same imagen UUID more than once in the same request. Client must
+	// deduplicate before retrying.
+	ErrImagenIDDuplicado = apperror.NewValidation(
+		"pago_imagen_id_duplicado",
+		"el id de imagen aparece más de una vez en la solicitud",
+	)
+
 	// ─── PagoRecibido aggregate ────────────────────────────────────────────.
 
 	// ErrPagoIDRequerido is returned when the client UUID is the zero value.
