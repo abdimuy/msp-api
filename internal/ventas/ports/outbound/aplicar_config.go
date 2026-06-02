@@ -3,14 +3,18 @@ package outbound
 
 import "context"
 
-// CajaCajero is the caja + cajero + vendedor assigned to a cliente zona. The
-// vendedor is the Microsip ruta vendedor (display/quick-reference only — the
-// authoritative seller attribution lives in MSP_VENTAS_VENDEDORES). It is -1
-// when the zona has no matching ruta vendedor.
+// CajaCajero is the caja + cajero + vendedor + cobrador assigned to a cliente
+// zona. The vendedor is the Microsip ruta vendedor (display/quick-reference
+// only — the authoritative seller attribution lives in MSP_VENTAS_VENDEDORES).
+// VendedorID is -1 when the zona has no matching ruta vendedor. CobradorID is
+// the cobrador most frequently assigned to clients in the zona, used by the
+// auto-create cliente flow in AplicarVenta; -1 when the zona has no clients
+// (e.g. MAYOREO).
 type CajaCajero struct {
 	CajaID     int
 	CajeroID   int
-	VendedorID int
+	VendedorID int // -1 cuando no hay (zonas tipo MAYOREO).
+	CobradorID int // -1 cuando no hay (zonas tipo MAYOREO).
 }
 
 // AplicarDefaults is the singleton MSP_CFG_APLICAR configuration row.

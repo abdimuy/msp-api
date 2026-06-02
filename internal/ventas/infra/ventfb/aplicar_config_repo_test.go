@@ -21,7 +21,7 @@ func TestAplicarConfigRepo_CajaCajero_Hit(t *testing.T) {
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		got, err := repo.CajaCajero(ctx, 21563)
 		require.NoError(t, err)
-		require.Equal(t, outbound.CajaCajero{CajaID: 22198, CajeroID: 22392, VendedorID: 88266}, got)
+		require.Equal(t, outbound.CajaCajero{CajaID: 22198, CajeroID: 22392, VendedorID: 88266, CobradorID: 11502}, got)
 	})
 }
 
@@ -33,6 +33,18 @@ func TestAplicarConfigRepo_CajaCajero_Miss(t *testing.T) {
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		_, err := repo.CajaCajero(ctx, 999999)
 		require.ErrorIs(t, err, domain.ErrZonaSinCaja)
+	})
+}
+
+func TestAplicarConfigRepo_CajaCajero_RetornaCobradorID(t *testing.T) {
+	requireFBEnv(t)
+	t.Parallel()
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := ventfb.NewAplicarConfigRepo(pool)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		got, err := repo.CajaCajero(ctx, 21563)
+		require.NoError(t, err)
+		require.NotEqual(t, 0, got.CobradorID, "el backfill debió haber asignado un cobrador (o -1)")
 	})
 }
 

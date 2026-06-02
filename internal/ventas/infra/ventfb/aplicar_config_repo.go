@@ -14,7 +14,7 @@ import (
 // ─── SQL queries ─────────────────────────────────────────────────────────────
 
 const selectCajaCajero = `
-SELECT CAJA_ID, CAJERO_ID, VENDEDOR_ID
+SELECT CAJA_ID, CAJERO_ID, VENDEDOR_ID, COBRADOR_ID
 FROM MSP_CFG_ZONA_CAJA
 WHERE ZONA_CLIENTE_ID = ?`
 
@@ -59,7 +59,9 @@ var _ outbound.AplicarConfig = (*AplicarConfigRepo)(nil)
 func (r *AplicarConfigRepo) CajaCajero(ctx context.Context, zonaClienteID int) (outbound.CajaCajero, error) {
 	q := firebird.GetQuerier(ctx, r.pool.DB)
 	var cc outbound.CajaCajero
-	err := q.QueryRowContext(ctx, selectCajaCajero, zonaClienteID).Scan(&cc.CajaID, &cc.CajeroID, &cc.VendedorID)
+	err := q.QueryRowContext(ctx, selectCajaCajero, zonaClienteID).Scan(
+		&cc.CajaID, &cc.CajeroID, &cc.VendedorID, &cc.CobradorID,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return outbound.CajaCajero{}, domain.ErrZonaSinCaja
 	}
