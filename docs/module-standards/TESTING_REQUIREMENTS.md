@@ -98,6 +98,10 @@ func TestVentaRepo_SaveRoundTrip(t *testing.T) {
 
 Every test rolls back at the end — no state leaks between runs.
 
+This applies to **multi-step flows too**, including ones that internally call `firebird.TxManager.RunInTx` (e.g. `AplicarVenta`, `CrearPagoConImagenes`). The TxManager is re-entrant (`transaction.go:48-69`): if the ctx already carries a tx, it reuses it instead of opening a new one. Result: every write — including Microsip cascades (`DOCTOS_PV` triggers, `DOCTOS_CC`, `CLIENTES`, `LIBRES_*`) — joins the ambient rollback-only tx. **No `t.Cleanup` with manual `DELETE` is needed.** If you're tempted to write one defensively, drop it and verify with a post-test `SELECT COUNT(*)` — the count will be 0.
+
+Real-commit E2E tests (`pago_writer_e2e_test.go`, `pagos_recibidos_concurrency_test.go`, `atomicity_test.go`) are the exception, not the default — see `docs/integration-tests.md` § "When real commits are unavoidable" for when they're justified.
+
 ### HTTP handler tests (`{module}http/*_test.go`)
 
 Use the chi router directly with the planter middleware (plants a `CurrentUser` on the context):

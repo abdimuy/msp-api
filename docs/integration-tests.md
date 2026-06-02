@@ -229,6 +229,29 @@ Firebird tests run against the **real Microsip dev database** (`mueblera-firebir
 3. **Self-contained writes.** Tests insert sentinel rows with fresh UUIDs (no FIREBASE_UID / EMAIL collisions) and verify behavior; rollback at end. See `internal/platform/firebird/transaction_test.go` for the pattern (`insertSentinelUser`).
 4. **No commit helper.** `fbtestutil.WithTestCommit` was intentionally removed — there's no safe path to commit against a shared production-like DB.
 
+### Re-entrant `TxManager` — no `t.Cleanup` for committed rows
+
+`firebird.TxManager.RunInTx` is re-entrant: if `ctx` already carries an active tx (planted by `WithTestTransaction` via `txInjector`), `RunInTx` reuses that tx and skips `BeginTx`/`Commit`. See `internal/platform/firebird/transaction.go:48-69`.
+
+Practical consequence for E2E: when a service method calls `s.runInTx(ctx, fn)` internally (`AplicarVenta`, `CrearPagoConImagenes`, etc.) inside a `WithTestTransaction` wrapper, every write — including the Microsip cascade (`DOCTOS_PV` triggers, `DOCTOS_CC` cargo, `LIBRES_*`, etc.) — joins the ambient rollback-only tx. **No `t.Cleanup` is needed**: the ambient rollback undoes everything atomically.
+
+If you find yourself writing a manual `t.Cleanup` that calls `pool.DB.ExecContext("DELETE FROM …")` from an E2E test wrapped in `WithTestTransaction`, it's almost certainly redundant. Drop the cleanup and verify with a post-test count query (`SELECT COUNT(*) FROM <table> WHERE <sentinel>`) — if the count is 0, the rollback already did its job. The exceptions live in the next subsection.
+
+Example of the correct pattern: `internal/cobranza/infra/cobranzahttp/handlers_pago_multipart_e2e_test.go` (`TestE2E_CrearPagoConImagenes_FullCycle`) — wraps the full apply flow in `WithTestTransaction`, no `t.Cleanup`, leaves zero residue.
+
+### When real commits are unavoidable
+
+Three legitimate cases need real top-level transactions (no `WithTestTransaction`), so they ship explicit cleanup:
+
+| Why | Example file | Cleanup strategy |
+|---|---|---|
+| Verifying `TxManager.RunInTx` rollback semantics itself — Firebird doesn't nest, so a real BEGIN/COMMIT/ROLLBACK cannot be observed from inside an outer test tx | `internal/ventas/infra/ventfb/atomicity_test.go` | startup scrub + `t.Cleanup` safety net keyed by a sentinel `EMAIL` pattern |
+| Smoke-testing real Microsip persistence (writer integration against the live DB) | `internal/cobranza/infra/microsip/pago_writer_e2e_test.go` | per-row `t.Cleanup` registered immediately after each `INSERT` (FK-safe order: children → parents) |
+| Concurrency tests where multiple goroutines must see each other's writes — sharing one tx serializes them artificially | `internal/cobranza/infra/ventfb/pagos_recibidos_concurrency_test.go` | shared `cleanup(ctx)` helper invoked via `t.Cleanup` |
+| Smoke tests intentionally meant to **persist** to the dev DB so QA can inspect afterwards | `internal/ventas/infra/ventfb/e2e_firebird_aplicar_persist_test.go` | build-tag gated (`-tags aplicar_persist`); recovery via `make fb-restore` |
+
+For everything else: `WithTestTransaction` + re-entrant `TxManager` is the default and requires no cleanup.
+
 ### Gating
 
 `fbtestutil.NewTestFirebirdPool(t)` skips the test when `FB_DATABASE` is unset. The standard `FB_HOST / FB_PORT / FB_USER / FB_PASSWORD / FB_CHARSET` env vars are read straight from the process environment (loaded from `.env` by the Makefile).
