@@ -1,8 +1,10 @@
 package app_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +18,8 @@ import (
 	"github.com/abdimuy/msp-api/internal/ventas/domain"
 	"github.com/abdimuy/msp-api/internal/ventas/ports/outbound"
 )
+
+func bytesReader(b []byte) io.Reader { return bytes.NewReader(b) }
 
 // ─── fakes ───────────────────────────────────────────────────────────────────
 
@@ -145,7 +149,9 @@ func newAplicarHarness(t *testing.T) (*testHarness, *fakeAplicarConfig, *fakeMic
 }
 
 // seedAprobadaContado creates and seeds a CONTADO venta in situación APROBADA
-// with a Microsip cliente_id and zona_cliente_id. Returns the venta ID.
+// with a Microsip cliente_id, zona_cliente_id, AND one evidencia imagen so
+// AplicarVenta's defense-in-depth evidencia guard is satisfied. Returns the
+// venta ID.
 func seedAprobadaContado(t *testing.T, h *testHarness) uuid.UUID {
 	t.Helper()
 	in := validContadoInput()
@@ -155,11 +161,10 @@ func seedAprobadaContado(t *testing.T, h *testHarness) uuid.UUID {
 	in.ZonaClienteID = &zona
 	by := uuid.New()
 
-	// Create in borrador.
 	v, err := h.svc.CrearVenta(t.Context(), in, by)
 	require.NoError(t, err)
+	seedOneEvidencia(t, h, v.ID(), by)
 
-	// Advance to revisada → aprobada.
 	_, err = h.svc.EnviarARevision(t.Context(), v.ID(), by)
 	require.NoError(t, err)
 	_, err = h.svc.Aprobar(t.Context(), v.ID(), by)
@@ -171,7 +176,8 @@ func seedAprobadaContado(t *testing.T, h *testHarness) uuid.UUID {
 	return v.ID()
 }
 
-// seedAprobadaCredito creates a CREDITO venta in situación APROBADA.
+// seedAprobadaCredito creates a CREDITO venta in situación APROBADA with one
+// evidencia imagen attached.
 func seedAprobadaCredito(t *testing.T, h *testHarness) uuid.UUID {
 	t.Helper()
 	in := validCreditoInput()
@@ -183,6 +189,8 @@ func seedAprobadaCredito(t *testing.T, h *testHarness) uuid.UUID {
 
 	v, err := h.svc.CrearVenta(t.Context(), in, by)
 	require.NoError(t, err)
+	seedOneEvidencia(t, h, v.ID(), by)
+
 	_, err = h.svc.EnviarARevision(t.Context(), v.ID(), by)
 	require.NoError(t, err)
 	_, err = h.svc.Aprobar(t.Context(), v.ID(), by)
@@ -194,7 +202,56 @@ func seedAprobadaCredito(t *testing.T, h *testHarness) uuid.UUID {
 	return v.ID()
 }
 
+// seedOneEvidencia attaches a minimal imagen to the given venta so the
+// AplicarVenta evidencia guard passes. Uses the existing AdjuntarImagen
+// service method (the legacy single-image upload path).
+func seedOneEvidencia(t *testing.T, h *testHarness, ventaID, by uuid.UUID) {
+	t.Helper()
+	imgID := uuid.New()
+	_, err := h.svc.AdjuntarImagen(t.Context(), ventasapp.AdjuntarImagenInput{
+		VentaID:     ventaID,
+		ImagenID:    imgID,
+		StorageKind: string(domain.StorageKindFilesystem),
+		StorageKey:  "ventas/" + ventaID.String() + "/" + imgID.String() + ".jpg",
+		Mime:        domain.MimeJPEG,
+		SizeBytes:   8,
+		Body:        bytesReader([]byte{0xFF, 0xD8, 0xFF, 0xE0, 0, 0, 0, 0}),
+	}, by)
+	require.NoError(t, err)
+}
+
 // ─── tests ───────────────────────────────────────────────────────────────────
+
+// TestAplicarVenta_EvidenciaGuard_RejectsVentaSinImagen verifies the
+// defense-in-depth: AplicarVenta refuses to materialize a venta that has no
+// imagen, even if every other precondition is satisfied. This catches ventas
+// created via legacy paths (admin tool, raw SQL, the non-multipart CrearVenta)
+// before they hit Microsip.
+func TestAplicarVenta_EvidenciaGuard_RejectsVentaSinImagen(t *testing.T) {
+	t.Parallel()
+	h, _, writer := newAplicarHarness(t)
+
+	// Seed an aprobada venta WITHOUT calling seedOneEvidencia — bypassing
+	// CrearVentaConImagenes intentionally.
+	in := validContadoInput()
+	cid := 47913
+	in.ClienteID = &cid
+	zona := 21563
+	in.ZonaClienteID = &zona
+	by := uuid.New()
+
+	v, err := h.svc.CrearVenta(t.Context(), in, by)
+	require.NoError(t, err)
+	_, err = h.svc.EnviarARevision(t.Context(), v.ID(), by)
+	require.NoError(t, err)
+	_, err = h.svc.Aprobar(t.Context(), v.ID(), by)
+	require.NoError(t, err)
+
+	_, err = h.svc.AplicarVenta(t.Context(), v.ID(), uuid.New())
+
+	require.ErrorIs(t, err, domain.ErrVentaEvidenciaRequerida)
+	assert.Zero(t, writer.callsCount(), "writer must NOT be called when evidencia missing")
+}
 
 // TestAplicarVenta_HappyPath_Contado verifies the full happy path for a CONTADO
 // venta: writer is called, MarcarAplicada is applied, sincronizacion=aplicada.

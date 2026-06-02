@@ -85,6 +85,15 @@ func checkPreconditions(v *domain.Venta) error {
 	if v.Direccion().ZonaClienteID() == nil {
 		return domain.ErrVentaSinZona
 	}
+	// Defense in depth: every venta in production must carry evidencia
+	// (firma / ID del cliente) before it can hit Microsip. The atomic
+	// multipart CrearVentaConImagenes already enforces ≥1 imagen at
+	// creation, but a venta created through any other path (admin tool,
+	// legacy CrearVenta, manual SQL fixup) would otherwise slip through.
+	// We reject here so the auditoría invariant holds end-to-end.
+	if v.ImagenesCount() == 0 {
+		return domain.ErrVentaEvidenciaRequerida
+	}
 	return nil
 }
 
