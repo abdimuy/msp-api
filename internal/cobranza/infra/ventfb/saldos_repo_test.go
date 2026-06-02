@@ -145,12 +145,17 @@ func insertCargoDoctosCC(
 // DOCTOS_CC row (CONCEPTO_CC_ID=87327, set above), so the recompute procedure
 // counts it as cobranza-en-ruta TOTAL_IMPORTE. This is a fixture simplification
 // — in real Microsip the pago would live on a separate DOCTOS_CC abono row.
+//
+// Returns the IMPTE_DOCTO_CC_ID of the new row so callers can use (impteID-1)
+// as afterID in SyncPorZona calls. This scopes the sync query past the bulk
+// of historical pagos already present in the zone and avoids a spurious
+// "pago not found" failure when the new row falls off a fixed-size page.
 func insertPagoImporte(
 	t *testing.T,
 	q firebird.Querier,
 	cargoID int,
 	importe decimal.Decimal,
-) {
+) int {
 	t.Helper()
 	impteID := nextMicrosipID(t, q)
 	now := time.Now()
@@ -168,6 +173,7 @@ func insertPagoImporte(
 		impteID, cargoID, now, cargoID, importe,
 	)
 	require.NoError(t, err, "insertPagoImporte: INSERT IMPORTES_DOCTOS_CC pago")
+	return impteID
 }
 
 // insertPagoNoEnRutaImporte inserts a pago crediting cargoID whose header
@@ -375,7 +381,36 @@ func TestE2E_Cobranza_Cancelacion_Tombstone(t *testing.T) {
 		requireMigration000010(t, q)
 
 		clienteID, _ := seedClienteID(t, q)
-		cargoID := insertCargoDoctosCC(t, q, clienteID, "TEST-003", decimal.RequireFromString("2000.00"))
+		cargoImporte := decimal.RequireFromString("2000.00")
+
+		// Pre-seed SALDOS_CC for the current month so the cancel trigger can
+		// subtract the cargo importe without violating the CARGOS_CXC >= 0
+		// CHECK constraint.
+		//
+		// Root-cause analysis (2026-06): SALDOS_CC is a monthly summary table
+		// keyed by (CLIENTE_ID, ANO, MES). Inserting a synthetic DOCTOS_CC
+		// cargo does NOT increment SALDOS_CC.CARGOS_CXC (the Microsip INSERT
+		// trigger path for SALDOS_CC is asymmetric with the cancel/UPDATE path
+		// for synthetic data that bypasses some preconditions). The cancel
+		// trigger (DOCTOS_CC_BEFUPD_0 → IMPTES_DOCTOS_CC_BEFUPD_0 →
+		// AFECTA_SALDOS_CC) DOES subtract from CARGOS_CXC, so if the current
+		// month row shows 0, the subtraction underflows and the constraint
+		// fires. We pre-add the importe directly (inside the rollback-only tx)
+		// so the math is symmetric for the test; the tx rolls back at the end
+		// and SALDOS_CC is restored to its original state.
+		ano := time.Now().Year()
+		mes := int(time.Now().Month())
+		seedRes, seedErr := q.ExecContext(context.Background(),
+			`UPDATE SALDOS_CC SET CARGOS_CXC = CARGOS_CXC + ?
+			  WHERE CLIENTE_ID = ? AND ANO = ? AND MES = ?`,
+			cargoImporte, clienteID, ano, mes)
+		require.NoError(t, seedErr, "pre-seed SALDOS_CC CARGOS_CXC")
+		if n, _ := seedRes.RowsAffected(); n == 0 {
+			t.Skipf("no SALDOS_CC row for cliente %d ano=%d mes=%d — pre-seed skipped; "+
+				"re-run after Microsip creates this month's saldo row", clienteID, ano, mes)
+		}
+
+		cargoID := insertCargoDoctosCC(t, q, clienteID, "TEST-003", cargoImporte)
 
 		repo := cobranzaventfb.NewSaldosRepo(pool)
 
