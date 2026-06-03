@@ -139,11 +139,12 @@ ORDER BY FECHA DESC`, zonaID, firebird.ToWallClock(desde))
 func (r *PagosRepo) SyncPorZona(
 	ctx context.Context, zonaID int, cursor time.Time, afterID, limit int, desde time.Time,
 ) (outbound.SyncPage[domain.Pago], error) {
-	pageQuery := func(ctx context.Context, q firebird.Querier, upper time.Time) (*sql.Rows, error) {
+	pageQuery := func(ctx context.Context, q firebird.Querier, upper time.Time, watermark int64) (*sql.Rows, error) {
 		return queryPagoSyncPage(ctx, q, pagoSyncSpec{
 			zonaID:     zonaID,
 			cursor:     cursor,
 			upperBound: upper,
+			watermark:  watermark,
 			afterID:    afterID,
 			limit:      limit,
 			desde:      desde,
@@ -210,13 +211,21 @@ const pagoConceptoFilter = `p.CONCEPTO_CC_ID IN (87327, 27969)`
 // de saldo en TODAS las páginas (no solo la primera): el cliente debe
 // mandar el mismo `desde` en cada request para que las páginas 2+ no se
 // cuelen pagos viejos de ventas saldadas históricas.
+//
+// watermark excluye filas escritas por transacciones aún en vuelo.
+// Solo se devuelven filas con p.TX_ID < watermark (strict less-than; ver
+// comment en syncPageSpec sobre el off-by-one crítico).
 type pagoSyncSpec struct {
 	zonaID     int
 	cursor     time.Time
 	upperBound time.Time
-	afterID    int
-	limit      int
-	desde      time.Time
+	// watermark: MinActiveTransactionID; solo filas con p.TX_ID < watermark
+	// se incluyen en la respuesta.  SentinelNoActiveTx (math.MaxInt64) cuando
+	// no hay transacciones activas — todas las filas committed pasan el filtro.
+	watermark int64
+	afterID   int
+	limit     int
+	desde     time.Time
 }
 
 func queryPagoSyncPage(ctx context.Context, q firebird.Querier, spec pagoSyncSpec) (*sql.Rows, error) {
@@ -232,11 +241,13 @@ func queryPagoSyncPage(ctx context.Context, q firebird.Querier, spec pagoSyncSpe
 		statusArgs = []any{firebird.ToWallClock(spec.desde)}
 	}
 	if spec.cursor.IsZero() {
-		args := append([]any{spec.limit, spec.zonaID, upper, spec.afterID}, statusArgs...)
+		// Positional order: limit, zonaID, upper, watermark, afterID, [desde?]
+		args := append([]any{spec.limit, spec.zonaID, upper, spec.watermark, spec.afterID}, statusArgs...)
 		query := `
 SELECT FIRST ? ` + selectPagoColsP + pagoFromClause + `
 WHERE p.ZONA_CLIENTE_ID = ?
   AND p.UPDATED_AT <= ?
+  AND p.TX_ID < ?
   AND p.IMPTE_DOCTO_CC_ID > ?
   AND ` + saldoFilter + `
   AND ` + pagoConceptoFilter + `
@@ -248,12 +259,14 @@ ORDER BY p.UPDATED_AT, p.IMPTE_DOCTO_CC_ID`
 		return rows, nil
 	}
 	cur := firebird.ToWallClock(spec.cursor)
-	args := append([]any{spec.limit, spec.zonaID, cur, upper, cur, cur, spec.afterID}, statusArgs...)
+	// Positional order: limit, zonaID, cur, upper, watermark, cur(x2), afterID, [desde?]
+	args := append([]any{spec.limit, spec.zonaID, cur, upper, spec.watermark, cur, cur, spec.afterID}, statusArgs...)
 	query := `
 SELECT FIRST ? ` + selectPagoColsP + pagoFromClause + `
 WHERE p.ZONA_CLIENTE_ID = ?
   AND p.UPDATED_AT >= ?
   AND p.UPDATED_AT <= ?
+  AND p.TX_ID < ?
   AND (p.UPDATED_AT > ? OR (p.UPDATED_AT = ? AND p.IMPTE_DOCTO_CC_ID > ?))
   AND ` + saldoFilter + `
   AND ` + pagoConceptoFilter + `

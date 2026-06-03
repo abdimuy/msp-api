@@ -62,14 +62,23 @@ func TestE2E_PagosRepo_SyncPorZona_SaldadaConDesde(t *testing.T) {
 		impteID := insertPagoImporte(t, q, cargoID, importe)
 		afterID := impteID - 1
 
+		// Force TX_ID to 1 on both the pago and saldo cache rows so they appear
+		// below the watermark (MinActiveTransactionID). Without this, the test
+		// transaction's own TX_ID is the watermark, and rows written inside this
+		// rollback-only tx are excluded by the `AND TX_ID < watermark` predicate
+		// introduced in commit 7 — correctly simulating in-flight row behavior.
+		forcePagoTxID(t, q, impteID, 1)
+		forceSaldoTxID(t, q, cargoID, 1)
+
 		saldoRepo := cobranzaventfb.NewSaldosRepo(pool)
 		saldo, err := saldoRepo.PorCargo(ctx, cargoID)
 		require.NoError(t, err)
 		require.True(t, saldo.Saldo().IsZero(),
 			"prerequisito: saldo debe quedar en 0 tras el pago completo; got=%s", saldo.Saldo())
 
-		// Wait out the sync lag window.
-		time.Sleep(6 * time.Second)
+		// Wait out the clock-skew margin (syncClockSkewSeconds = 1 s).
+		// 2 s is enough; the old 5 s wait covered the prior syncLagSeconds window.
+		time.Sleep(2 * time.Second)
 
 		repo := cobranzaventfb.NewPagosRepo(pool)
 		desde := time.Now().Add(-24 * time.Hour)

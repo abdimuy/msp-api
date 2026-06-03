@@ -74,9 +74,9 @@ func TestE2E_VentasRepo_SyncPorZona_ReturnsEnrichedRow(t *testing.T) {
 
 		repo := cobranzaventfb.NewVentasRepo(pool)
 
-		// The sync query excludes rows within a 5-second lag window so
-		// in-flight commits don't disappear between queries. Wait it out.
-		time.Sleep(6 * time.Second)
+		// Wait out the clock-skew margin (syncClockSkewSeconds = 1 s).
+		// 2 s is sufficient; the old 5 s wait covered the prior syncLagSeconds window.
+		time.Sleep(2 * time.Second)
 
 		// Read the saldo to learn the cargo's UPDATED_AT; use it minus 1s
 		// as cursor so the page contains the new cargo without paginating
@@ -145,8 +145,8 @@ func TestE2E_VentasRepo_SyncPorZona_SaldadaConDesde(t *testing.T) {
 		require.True(t, saldo.Saldo().IsZero(),
 			"prerequisito: saldo debe quedar en 0 tras el pago completo; got=%s", saldo.Saldo())
 
-		// Wait out the sync lag window so the row is visible.
-		time.Sleep(6 * time.Second)
+		// Wait out the clock-skew margin (syncClockSkewSeconds = 1 s).
+		time.Sleep(2 * time.Second)
 
 		repo := cobranzaventfb.NewVentasRepo(pool)
 		cursor := saldo.UpdatedAt().Add(-time.Second)
@@ -227,8 +227,8 @@ func TestE2E_VentasRepo_SyncPorZona_Tombstone(t *testing.T) {
 			`UPDATE DOCTOS_CC SET CANCELADO = 'S' WHERE DOCTO_CC_ID = ?`, cargoID)
 		require.NoError(t, err)
 
-		// Wait out the sync lag window so the tombstone is visible.
-		time.Sleep(6 * time.Second)
+		// Wait out the clock-skew margin (syncClockSkewSeconds = 1 s).
+		time.Sleep(2 * time.Second)
 
 		saldoRepo := cobranzaventfb.NewSaldosRepo(pool)
 		saldo, err := saldoRepo.PorCargo(ctx, cargoID)
@@ -306,8 +306,8 @@ func TestE2E_VentasRepo_SyncPorZona_TombstonePorFechaCancelacion(t *testing.T) {
 		cancelarConFecha(t, cargoReciente, &fechaReciente)
 		cancelarConFecha(t, cargoNull, nil)
 
-		// Wait out the sync lag window so all UPDATED_AT writes are visible.
-		time.Sleep(6 * time.Second)
+		// Wait out the clock-skew margin (syncClockSkewSeconds = 1 s).
+		time.Sleep(2 * time.Second)
 
 		repo := cobranzaventfb.NewVentasRepo(pool)
 

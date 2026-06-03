@@ -196,7 +196,7 @@ ORDER BY ZONA_CLIENTE_ID`)
 func (r *SaldosRepo) SyncPorZona(
 	ctx context.Context, zonaID int, cursor time.Time, afterID, limit int,
 ) (outbound.SyncPage[domain.Saldo], error) {
-	pageQuery := func(ctx context.Context, q firebird.Querier, upper time.Time) (*sql.Rows, error) {
+	pageQuery := func(ctx context.Context, q firebird.Querier, upper time.Time, watermark int64) (*sql.Rows, error) {
 		return querySyncPage(ctx, q, syncPageSpec{
 			columns:    selectSaldoCols,
 			table:      "MSP_SALDOS_VENTAS",
@@ -204,6 +204,7 @@ func (r *SaldosRepo) SyncPorZona(
 			zonaID:     zonaID,
 			cursor:     cursor,
 			upperBound: upper,
+			watermark:  watermark,
 			afterID:    afterID,
 			limit:      limit,
 		})

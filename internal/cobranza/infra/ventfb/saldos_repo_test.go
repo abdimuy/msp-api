@@ -694,18 +694,23 @@ func TestE2E_Saldos_SyncPorZona_SameMillisecond_NoSkip(t *testing.T) {
 			t.Skipf("trigger did not create cache row for cargo %d — verify migration 000010", cargo2)
 		}
 
-		// Force both rows to the same UPDATED_AT millisecond. Use a timestamp
-		// safely in the past (> syncLagSeconds=5 s) so neither row falls inside
-		// the lag exclusion window.
+		// Force both rows to the same UPDATED_AT millisecond and TX_ID=1.
+		// UPDATED_AT: safely in the past (> syncClockSkewSeconds=1 s) so neither
+		// row falls inside the clock-skew exclusion window.
+		// TX_ID=1: forces both rows below the watermark (MinActiveTransactionID).
+		// Without this, rows written inside this rollback-only tx have TX_ID equal
+		// to the test transaction's own TX_ID, which is excluded by
+		// `AND TX_ID < watermark` — the correct behavior for in-flight rows, but
+		// not what we want here (we want to test the tie-break logic).
 		forcedTS := time.Now().UTC().Add(-time.Minute).Truncate(time.Millisecond)
 		_, err := q.ExecContext(
 			context.Background(),
 			`UPDATE MSP_SALDOS_VENTAS
-			    SET UPDATED_AT = ?
+			    SET UPDATED_AT = ?, TX_ID = 1
 			  WHERE DOCTO_CC_ID IN (?, ?)`,
 			firebird.ToWallClock(forcedTS), cargo1, cargo2,
 		)
-		require.NoError(t, err, "force UPDATED_AT to same millisecond")
+		require.NoError(t, err, "force UPDATED_AT to same millisecond and TX_ID to 1")
 
 		// Determine the lower of the two PKs so page 1 starts right before it.
 		minPK := min(cargo1, cargo2)

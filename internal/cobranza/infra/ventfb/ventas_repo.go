@@ -73,10 +73,19 @@ LEFT JOIN LISTAS_ATRIBUTOS lfp ON lfp.LISTA_ATRIB_ID = l.FORMA_DE_PAGO
 LEFT JOIN DOCTOS_PV dc         ON dc.DOCTO_PV_ID     = s.DOCTO_PV_ID`
 
 // SyncPorZona returns a page of enriched ventas for incremental sync.
+//
+// Note on watermark: the watermark parameter (TX_ID < watermark) is NOT
+// applied to the ventas query. MSP_SALDOS_VENTAS does have a TX_ID column
+// (added by mig 22), but the ventas sync is out of scope for the cobranza
+// push-channel sprint (commit 7). The watermark is accepted from runSyncPage
+// and discarded here. This is intentional and correct — ventas correctness
+// relies on the UPDATED_AT cursor, and the clock-skew margin (1 s) is
+// sufficient for the ventas use-case. If ventas ever needs watermark
+// filtering, add it to queryVentaSyncPage and ventaSyncSpec.
 func (r *VentasRepo) SyncPorZona(
 	ctx context.Context, zonaID int, cursor time.Time, afterID, limit int, desde time.Time,
 ) (outbound.SyncPage[domain.Venta], error) {
-	pageQuery := func(ctx context.Context, q firebird.Querier, upper time.Time) (*sql.Rows, error) {
+	pageQuery := func(ctx context.Context, q firebird.Querier, upper time.Time, _ int64) (*sql.Rows, error) {
 		return queryVentaSyncPage(ctx, q, ventaSyncSpec{
 			zonaID:     zonaID,
 			cursor:     cursor,

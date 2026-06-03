@@ -165,12 +165,19 @@ func TestMig22_TxIdColumnOnCacheTables(t *testing.T) {
 	}
 }
 
-// TestMig22_TxIdBackfillZero verifica que todas las filas existentes en los
-// cachés tengan TX_ID = 0 tras aplicar la migración (backfill automático de
-// Firebird al agregar la columna con DEFAULT 0).
+// TestMig22_TxIdColumnIsNonNegative verifica que la columna TX_ID exista en
+// los cachés y que todas las filas tengan TX_ID >= 0.
+//
+// Reemplaza la aserción original (TX_ID == 0 para todas las filas) que era
+// válida inmediatamente después de aplicar mig 22, antes de que mig 23/24
+// empezaran a escribir TX_IDs reales mediante RDB$GET_CONTEXT en los
+// procedimientos de recompute y tombstone. Con el DB de desarrollo activo,
+// los triggers ya han llenado TX_ID con valores positivos en muchas filas.
+// El invariante correcto es: TX_ID >= 0 (DEFAULT 0 para filas pre-mig22;
+// TX_ID positivo para filas escritas desde mig 23 en adelante).
 //
 //nolint:paralleltest
-func TestMig22_TxIdBackfillZero(t *testing.T) {
+func TestMig22_TxIdColumnIsNonNegative(t *testing.T) {
 	requireFBEnv(t)
 	requireMigration000022(t)
 	pool := fbtestutil.NewTestFirebirdPool(t)
@@ -178,24 +185,26 @@ func TestMig22_TxIdBackfillZero(t *testing.T) {
 
 	for _, tbl := range []string{"MSP_PAGOS_VENTAS", "MSP_SALDOS_VENTAS"} {
 		t.Run(tbl, func(t *testing.T) {
-			var nonZero int
+			var negative int
 			err := pool.QueryRowContext(ctx,
-				`SELECT COUNT(*) FROM `+tbl+` WHERE TX_ID <> 0`,
-			).Scan(&nonZero)
-			require.NoErrorf(t, err, "querying %s.TX_ID backfill", tbl)
-			assert.Zerof(t, nonZero,
-				"%s: %d rows have TX_ID <> 0; all pre-existing rows must be backfilled to 0",
-				tbl, nonZero)
+				`SELECT COUNT(*) FROM `+tbl+` WHERE TX_ID < 0`,
+			).Scan(&negative)
+			require.NoErrorf(t, err, "querying %s.TX_ID for negative values", tbl)
+			assert.Zerof(t, negative,
+				"%s: %d rows have TX_ID < 0; TX_ID must always be >= 0 (DEFAULT 0 or committed TX_ID)",
+				tbl, negative)
 		})
 	}
 }
 
-// TestMig22_TxIdIndexNotPresentOnCacheTables verifica que NO existan índices
-// sobre TX_ID en las tablas caché — esos índices se agregan en el commit 7 del
-// sprint, cuando se introduce la query que los necesita.
+// TestMig25_TxIdIndicesOnCacheTables verifica que existan los índices sobre
+// TX_ID en las tablas caché — agregados por la migración 000025 (commit 7
+// del sprint). El test anterior (TestMig22_TxIdIndexNotPresentOnCacheTables)
+// afirmaba que NO existían; ahora que mig 25 está aplicada, afirmamos
+// que SÍ existen.
 //
 //nolint:paralleltest
-func TestMig22_TxIdIndexNotPresentOnCacheTables(t *testing.T) {
+func TestMig25_TxIdIndicesOnCacheTables(t *testing.T) {
 	requireFBEnv(t)
 	requireMigration000022(t)
 	pool := fbtestutil.NewTestFirebirdPool(t)
@@ -208,6 +217,6 @@ func TestMig22_TxIdIndexNotPresentOnCacheTables(t *testing.T) {
 		    AND RDB$RELATION_NAME IN ('MSP_PAGOS_VENTAS', 'MSP_SALDOS_VENTAS')`,
 	).Scan(&n)
 	require.NoError(t, err)
-	assert.Zero(t, n,
-		"no TX_ID index must exist on cache tables yet; deferred to commit 7")
+	assert.Equal(t, 2, n,
+		"IDX_MSP_PAGOS_VENTAS_TX_ID and IDX_MSP_SALDOS_VENTAS_TX_ID must exist (mig 25)")
 }
