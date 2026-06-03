@@ -103,13 +103,20 @@ func NewFbEventListener(
 
 // Start spins up the listener goroutine. Idempotent: a second Start while
 // already running is a no-op.
-func (l *FbEventListener) Start(ctx context.Context) error {
+//
+// NOTA: el ctx que pasa fx a OnStart tiene un timeout (default 15s) y se
+// cancela cuando la fase de startup termina, no cuando la app baja. Si
+// derivamos `loopCtx` de él, el loop muere exactamente a los 15s y deja
+// de recibir POST_EVENT sin loggear nada (drain regresa por ctx.Done y
+// el chequeo `if ctx.Err() != nil { return }` sale silencioso). El loop
+// se ata a context.Background() y solo se cancela por l.cancel() en Stop().
+func (l *FbEventListener) Start(_ context.Context) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.running {
 		return nil
 	}
-	loopCtx, cancel := context.WithCancel(ctx)
+	loopCtx, cancel := context.WithCancel(context.Background())
 	l.cancel = cancel
 	l.done = make(chan struct{})
 	l.running = true
