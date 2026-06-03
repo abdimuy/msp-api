@@ -43,19 +43,23 @@ func requireMigration000019(t *testing.T, q firebird.Querier) {
 	}
 }
 
-// preseedSaldosCC adds `importe` to SALDOS_CC.CARGOS_CXC for the current
-// month so that cancel triggers can subtract without violating the >= 0
-// constraint. The UPDATE is inside the rollback-only tx and is reverted at
-// the end of the test. If no SALDOS_CC row exists for the cliente this month,
+// preseedSaldosCC adds `importe` to both SALDOS_CC.CARGOS_CXC and
+// SALDOS_CC.CREDITOS_CXC for the current month so that cancel triggers can
+// subtract without violating the >= 0 CHECK constraints. Cancelling a cargo
+// (TIPO_IMPTE='C') decrements CARGOS_CXC; cancelling a pago (TIPO_IMPTE='R')
+// decrements CREDITOS_CXC. Seeding both keeps the helper safe for either
+// case. The UPDATE is inside the rollback-only tx and is reverted at the
+// end of the test. If no SALDOS_CC row exists for the cliente this month,
 // the test is skipped.
 func preseedSaldosCC(t *testing.T, q firebird.Querier, clienteID int, importe decimal.Decimal) {
 	t.Helper()
 	ano := time.Now().Year()
 	mes := int(time.Now().Month())
 	res, err := q.ExecContext(context.Background(),
-		`UPDATE SALDOS_CC SET CARGOS_CXC = CARGOS_CXC + ?
+		`UPDATE SALDOS_CC SET CARGOS_CXC   = CARGOS_CXC   + ?,
+		                       CREDITOS_CXC = CREDITOS_CXC + ?
 		  WHERE CLIENTE_ID = ? AND ANO = ? AND MES = ?`,
-		importe, clienteID, ano, mes)
+		importe, importe, clienteID, ano, mes)
 	require.NoError(t, err, "preseedSaldosCC")
 	if n, _ := res.RowsAffected(); n == 0 {
 		t.Skipf("no SALDOS_CC row for cliente %d ano=%d mes=%d — re-run after Microsip creates this month's row",
