@@ -107,6 +107,8 @@ func appOptions() []fx.Option {
 			provideCobranzaPagosLister,
 			provideCobranzaSaldosTombstoneCleaner,
 			provideCobranzaPagosTombstoneCleaner,
+			provideCobranzaPagosReconcileRepo,
+			provideCobranzaSaldosReconcileRepo,
 			provideCobranzaErrorsRepo,
 			provideCobranzaClock,
 			provideCobranzaReconcilerConfig,

@@ -69,6 +69,10 @@ type Service struct {
 	storage        outbound.StorageProvider
 	imageProc      outbound.ImageProcessor
 	txMgr          TxRunner
+
+	// Reconcile ports for the digest/ids endpoints.
+	pagosReconcile  outbound.PagosReconcileRepo
+	saldosReconcile outbound.SaldosReconcileRepo
 }
 
 // NewService builds a Service wired against the given ports. ventas may be
@@ -109,6 +113,14 @@ func NewService(
 		imageProc:      imageProc,
 		txMgr:          txMgr,
 	}
+}
+
+// WithReconcilePorts attaches the digest/ids ports used by the reconcile
+// HTTP endpoints. Called at wiring time after NewService to keep the
+// constructor signature stable.
+func (s *Service) WithReconcilePorts(pagosR outbound.PagosReconcileRepo, saldosR outbound.SaldosReconcileRepo) {
+	s.pagosReconcile = pagosR
+	s.saldosReconcile = saldosR
 }
 
 // runInTx executes fn inside a Firebird transaction. Composes with existing
@@ -281,4 +293,59 @@ func clampSyncLimit(limit int) (int, error) {
 	default:
 		return limit, nil
 	}
+}
+
+// Reconcile limit constants for the digest/ids endpoints.
+const (
+	DefaultReconcileLimit = 5000
+	MaxReconcileLimit     = 10000
+)
+
+// clampReconcileLimit clamps the limit for the digest/ids reconcile endpoints.
+// Zero maps to the default; values above max are clamped to max.
+func clampReconcileLimit(limit int) int {
+	switch {
+	case limit <= 0:
+		return DefaultReconcileLimit
+	case limit > MaxReconcileLimit:
+		return MaxReconcileLimit
+	default:
+		return limit
+	}
+}
+
+// DigestPagosPorZona returns the point-in-time digest for active pagos in
+// zonaID, computed under a single snapshot transaction.
+func (s *Service) DigestPagosPorZona(ctx context.Context, zonaID int) (outbound.DigestResult, error) {
+	if s.pagosReconcile == nil {
+		return outbound.DigestResult{}, errWriteDepsMissing("pagos_reconcile")
+	}
+	return s.pagosReconcile.Digest(ctx, zonaID)
+}
+
+// ListIDsPagosPorZona returns active pago IDs for zonaID, paginated by after.
+// limit is clamped to [1, MaxReconcileLimit].
+func (s *Service) ListIDsPagosPorZona(ctx context.Context, zonaID, after, limit int) ([]int, bool, error) {
+	if s.pagosReconcile == nil {
+		return nil, false, errWriteDepsMissing("pagos_reconcile")
+	}
+	return s.pagosReconcile.ListIDs(ctx, zonaID, after, clampReconcileLimit(limit))
+}
+
+// DigestSaldosPorZona returns the point-in-time digest for active saldos in
+// zonaID, computed under a single snapshot transaction.
+func (s *Service) DigestSaldosPorZona(ctx context.Context, zonaID int) (outbound.DigestResult, error) {
+	if s.saldosReconcile == nil {
+		return outbound.DigestResult{}, errWriteDepsMissing("saldos_reconcile")
+	}
+	return s.saldosReconcile.Digest(ctx, zonaID)
+}
+
+// ListIDsSaldosPorZona returns active saldo IDs for zonaID, paginated by after.
+// limit is clamped to [1, MaxReconcileLimit].
+func (s *Service) ListIDsSaldosPorZona(ctx context.Context, zonaID, after, limit int) ([]int, bool, error) {
+	if s.saldosReconcile == nil {
+		return nil, false, errWriteDepsMissing("saldos_reconcile")
+	}
+	return s.saldosReconcile.ListIDs(ctx, zonaID, after, clampReconcileLimit(limit))
 }

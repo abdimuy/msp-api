@@ -128,6 +128,25 @@ func registerReadOperations(api huma.API, h *Handlers) {
 	huma.Register(api, op(tag, "cobranza-sync-ventas-por-zona", http.MethodGet, "/sync/ventas/zona/{zona_id}",
 		"Sync incremental de ventas enriquecidas por zona",
 		"Devuelve un page de ventas (saldo + cliente + dirección + contrato) modificadas desde el cursor server_ts. Pensado para alimentar la app móvil de cobranza en una sola request por zona."), h.SyncVentasPorZona)
+
+	// Reconcile digest + IDs endpoints — point-in-time correctness contract for
+	// the mobile app cache. SSE (commit 7) is latency-only; these are the source
+	// of truth for drift detection.
+	huma.Register(api, op(tag, "cobranza-sync-pagos-digest", http.MethodGet, "/sync/pagos/zona/{zona_id}/digest",
+		"Digest de pagos activos por zona",
+		"Devuelve la huella digital (count, xor, sum, max_updated_at) de los pagos activos de la zona, calculada dentro de una transacción snapshot para garantizar consistencia punto-en-tiempo."), h.SyncPagosDigest)
+
+	huma.Register(api, op(tag, "cobranza-sync-pagos-ids", http.MethodGet, "/sync/pagos/zona/{zona_id}/ids",
+		"IDs de pagos activos por zona",
+		"Devuelve la lista de IDs de pagos activos, paginada por after. Usar para reconciliar la caché local del cliente contra el servidor."), h.SyncPagosIDs)
+
+	huma.Register(api, op(tag, "cobranza-sync-saldos-digest", http.MethodGet, "/sync/saldos/zona/{zona_id}/digest",
+		"Digest de saldos activos por zona",
+		"Devuelve la huella digital (count, xor, sum, max_updated_at) de los saldos activos de la zona, calculada dentro de una transacción snapshot."), h.SyncSaldosDigest)
+
+	huma.Register(api, op(tag, "cobranza-sync-saldos-ids", http.MethodGet, "/sync/saldos/zona/{zona_id}/ids",
+		"IDs de saldos activos por zona",
+		"Devuelve la lista de IDs de saldos activos, paginada por after."), h.SyncSaldosIDs)
 }
 
 // registerAdminOperations declares the cobranza admin endpoints.

@@ -117,8 +117,12 @@ func provideCobranzaService(
 	storage cobranzaoutbound.StorageProvider,
 	imageProc cobranzaoutbound.ImageProcessor,
 	txMgr *firebird.TxManager,
+	pagosReconcile cobranzaoutbound.PagosReconcileRepo,
+	saldosReconcile cobranzaoutbound.SaldosReconcileRepo,
 ) *cobranzaapp.Service {
-	return cobranzaapp.NewService(saldos, pagos, ventas, clock, pagosRecibidos, pagosImagenes, microsipPago, storage, imageProc, txMgr)
+	svc := cobranzaapp.NewService(saldos, pagos, ventas, clock, pagosRecibidos, pagosImagenes, microsipPago, storage, imageProc, txMgr)
+	svc.WithReconcilePorts(pagosReconcile, saldosReconcile)
+	return svc
 }
 
 // provideCobranzaPagoRetryWorker builds the background worker that drains
@@ -163,6 +167,18 @@ func (a *cobranzaStorageAdapter) Get(ctx context.Context, key string) (cobranzao
 
 func (a *cobranzaStorageAdapter) Delete(ctx context.Context, key string) error {
 	return a.inner.Delete(ctx, key)
+}
+
+// provideCobranzaPagosReconcileRepo exposes *PagosRepo as a PagosReconcileRepo.
+// The same concrete instance that satisfies PagosRepo also satisfies the
+// reconcile interface — no extra pool connection needed.
+func provideCobranzaPagosReconcileRepo(p *firebird.Pool) cobranzaoutbound.PagosReconcileRepo {
+	return cobranzaventfb.NewPagosRepo(p)
+}
+
+// provideCobranzaSaldosReconcileRepo exposes *SaldosRepo as a SaldosReconcileRepo.
+func provideCobranzaSaldosReconcileRepo(p *firebird.Pool) cobranzaoutbound.SaldosReconcileRepo {
+	return cobranzaventfb.NewSaldosRepo(p)
 }
 
 // provideCobranzaReconcilerConfig returns the reconciler configuration.
