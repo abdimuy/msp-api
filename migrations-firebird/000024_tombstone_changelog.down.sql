@@ -1,0 +1,73 @@
+-- ============================================================================
+-- Migración 000024 DOWN: restaura MSP_PAGOS_IMPORTES_AIUD y
+--                        MSP_SALDOS_DOCTOS_CC_AD a su forma de mig 21
+--                        (sin TX_ID en los cachés, sin INSERTs al changelog)
+-- ============================================================================
+
+SET TERM ^ ;
+
+-- ─── Restaurar Trigger 1: MSP_PAGOS_IMPORTES_AIUD ────────────────────────────
+
+ALTER TRIGGER MSP_PAGOS_IMPORTES_AIUD
+AS
+BEGIN
+  IF (INSERTING OR UPDATING) THEN
+    EXECUTE PROCEDURE MSP_RECOMPUTE_PAGO(NEW.IMPTE_DOCTO_CC_ID);
+
+  IF (DELETING) THEN
+  BEGIN
+    UPDATE MSP_PAGOS_VENTAS
+       SET CANCELADO = 'S', IMPORTE = 0, IMPUESTO = 0,
+           UPDATED_AT = CURRENT_TIMESTAMP
+     WHERE IMPTE_DOCTO_CC_ID = OLD.IMPTE_DOCTO_CC_ID;
+    POST_EVENT 'pagos_changed';
+  END
+
+WHEN ANY DO
+BEGIN
+  INSERT INTO MSP_SALDOS_ERRORS (ERROR_ID, CARGO_ID, ERROR_MSG, ERROR_AT)
+  VALUES (
+    GEN_ID(GEN_MSP_SALDOS_ERRORS_ID, 1),
+    CASE WHEN DELETING THEN OLD.IMPTE_DOCTO_CC_ID ELSE NEW.IMPTE_DOCTO_CC_ID END,
+    SUBSTRING('TRG MSP_PAGOS_IMPORTES_AIUD SQLCODE=' || SQLCODE FROM 1 FOR 500),
+    CURRENT_TIMESTAMP
+  );
+END
+END^
+
+COMMIT^
+
+-- ─── Restaurar Trigger 2: MSP_SALDOS_DOCTOS_CC_AD ────────────────────────────
+
+ALTER TRIGGER MSP_SALDOS_DOCTOS_CC_AD
+AS
+BEGIN
+  IF (OLD.NATURALEZA_CONCEPTO = 'C') THEN
+  BEGIN
+    UPDATE MSP_SALDOS_VENTAS
+       SET CARGO_CANCELADO = 'S', SALDO = 0, TOTAL_IMPORTE = 0, IMPTE_REST = 0,
+           NUM_PAGOS = 0, PRECIO_TOTAL = 0, FECHA_ULT_PAGO = NULL,
+           UPDATED_AT = CURRENT_TIMESTAMP
+     WHERE DOCTO_CC_ID = OLD.DOCTO_CC_ID;
+    POST_EVENT 'saldos_changed';
+  END
+
+WHEN ANY DO
+BEGIN
+  INSERT INTO MSP_SALDOS_ERRORS (ERROR_ID, CARGO_ID, ERROR_MSG, ERROR_AT)
+  VALUES (
+    GEN_ID(GEN_MSP_SALDOS_ERRORS_ID, 1),
+    OLD.DOCTO_CC_ID,
+    SUBSTRING('TRG MSP_SALDOS_DOCTOS_CC_AD SQLCODE=' || SQLCODE FROM 1 FOR 500),
+    CURRENT_TIMESTAMP
+  );
+END
+END^
+
+COMMIT^
+
+SET TERM ; ^
+
+-- ─── Eliminar registro ───────────────────────────────────────────────────────
+DELETE FROM MSP_MIGRATIONS WHERE ID = 24;
+COMMIT;
