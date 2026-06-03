@@ -578,3 +578,87 @@ func TestE2E_Cobranza_Reconcile_DetectaDrift(t *testing.T) {
 		t.Logf("drift detected and fixed: cargoID=%d drift=%d", cargoID, report.Drift)
 	})
 }
+
+// TestE2E_Saldos_DeleteCargo_GeneraTombstone verifies that physically deleting
+// a DOCTOS_CC cargo row (NATURALEZA_CONCEPTO='C') causes the trigger
+// MSP_SALDOS_DOCTOS_CC_AD (migration 000020) to write a tombstone in
+// MSP_SALDOS_VENTAS (CARGO_CANCELADO='S', SALDO=0, TOTAL_IMPORTE=0,
+// IMPTE_REST=0, NUM_PAGOS=0) instead of deleting the cache row.
+//
+//nolint:paralleltest // serial: shares rollback-only tx.
+func TestE2E_Saldos_DeleteCargo_GeneraTombstone(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		q := firebird.GetQuerier(ctx, pool.DB)
+		requireMigration000010(t, q)
+		requireMigration000020(t, q)
+
+		clienteID, _ := seedClienteID(t, q)
+		cargoImporte := decimal.RequireFromString("3000.00")
+
+		buffer := decimal.RequireFromString("4000.00")
+		preseedSaldosCC(t, q, clienteID, buffer)
+
+		cargoID := insertCargoDoctosCC(t, q, clienteID, "SDL-TMB-1", cargoImporte)
+
+		repo := cobranzaventfb.NewSaldosRepo(pool)
+
+		// Verify the cache row was created by the INSERT trigger.
+		saldoAntes, err := repo.PorCargo(ctx, cargoID)
+		if err != nil {
+			t.Skipf("trigger did not create cache row for cargo %d — verify migration 000010", cargoID)
+		}
+		require.NotNil(t, saldoAntes)
+
+		// Delete all IMPORTES_DOCTOS_CC rows referencing this DOCTOS_CC row first
+		// (FK DOCTO_PADRE_CC is RESTRICT). The insertCargoDoctosCC helper inserts
+		// one IMPORTES_DOCTOS_CC cargo importe; delete it explicitly before the
+		// parent DOCTOS_CC DELETE.
+		_, err = q.ExecContext(context.Background(),
+			`DELETE FROM IMPORTES_DOCTOS_CC WHERE DOCTO_CC_ID = ?`,
+			cargoID)
+		require.NoError(t, err, "DELETE IMPORTES_DOCTOS_CC children")
+
+		// Now delete the DOCTOS_CC cargo row — mig 20 AFTER DELETE trigger fires.
+		_, err = q.ExecContext(context.Background(),
+			`DELETE FROM DOCTOS_CC WHERE DOCTO_CC_ID = ?`,
+			cargoID)
+		require.NoError(t, err, "DELETE DOCTOS_CC cargo")
+
+		// Assert the cache row still exists as a tombstone.
+		var (
+			cargoCancelado string
+			saldoRaw       any
+			totalImpteRaw  any
+			impteRestRaw   any
+			numPagos       int
+		)
+		err = q.QueryRowContext(context.Background(),
+			`SELECT CARGO_CANCELADO, SALDO, TOTAL_IMPORTE, IMPTE_REST, NUM_PAGOS
+			   FROM MSP_SALDOS_VENTAS
+			  WHERE DOCTO_CC_ID = ?`,
+			cargoID).Scan(&cargoCancelado, &saldoRaw, &totalImpteRaw, &impteRestRaw, &numPagos)
+		require.NoError(t, err, "tombstone row must exist in MSP_SALDOS_VENTAS after DELETE")
+
+		assert.Equal(t, "S", cargoCancelado, "tombstone must have CARGO_CANCELADO='S'")
+
+		saldo, err := firebird.ScanDecimal(saldoRaw, 2)
+		require.NoError(t, err)
+		assert.True(t, saldo.IsZero(), "tombstone SALDO must be zero, got %s", saldo)
+
+		totalImporte, err := firebird.ScanDecimal(totalImpteRaw, 2)
+		require.NoError(t, err)
+		assert.True(t, totalImporte.IsZero(), "tombstone TOTAL_IMPORTE must be zero, got %s", totalImporte)
+
+		impteRest, err := firebird.ScanDecimal(impteRestRaw, 2)
+		require.NoError(t, err)
+		assert.True(t, impteRest.IsZero(), "tombstone IMPTE_REST must be zero, got %s", impteRest)
+
+		assert.Equal(t, 0, numPagos, "tombstone NUM_PAGOS must be zero")
+
+		t.Logf("cargo %d: tombstone created in MSP_SALDOS_VENTAS after DELETE (cargo_cancelado=%s, saldo=%s)",
+			cargoID, cargoCancelado, saldo)
+	})
+}
