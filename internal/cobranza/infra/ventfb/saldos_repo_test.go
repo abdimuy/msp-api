@@ -662,3 +662,78 @@ func TestE2E_Saldos_DeleteCargo_GeneraTombstone(t *testing.T) {
 			cargoID, cargoCancelado, saldo)
 	})
 }
+
+// TestE2E_Saldos_SyncPorZona_SameMillisecond_NoSkip verifies that SyncPorZona
+// does NOT silently skip rows when two rows share the exact same UPDATED_AT
+// millisecond value. The production code already implements the tie-break via
+// querySyncPage (which adds `AND (UPDATED_AT > ? OR (UPDATED_AT = ? AND
+// DOCTO_CC_ID > ?))` when cursor is non-zero); this test guards against future
+// regression by exercising that path end-to-end against a real Firebird DB.
+//
+//nolint:paralleltest // serial: shares rollback-only tx.
+func TestE2E_Saldos_SyncPorZona_SameMillisecond_NoSkip(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		q := firebird.GetQuerier(ctx, pool.DB)
+		requireMigration000010(t, q)
+
+		clienteID, zonaID := seedZonedCliente(t, q)
+
+		// Insert two cargo rows — the trigger creates MSP_SALDOS_VENTAS rows.
+		cargo1 := insertCargoDoctosCC(t, q, clienteID, "SMMS-001A", decimal.RequireFromString("1000.00"))
+		cargo2 := insertCargoDoctosCC(t, q, clienteID, "SMMS-001B", decimal.RequireFromString("1500.00"))
+
+		// Verify both cache rows were created by the trigger before forcing UPDATED_AT.
+		repo := cobranzaventfb.NewSaldosRepo(pool)
+		if _, err := repo.PorCargo(ctx, cargo1); err != nil {
+			t.Skipf("trigger did not create cache row for cargo %d — verify migration 000010", cargo1)
+		}
+		if _, err := repo.PorCargo(ctx, cargo2); err != nil {
+			t.Skipf("trigger did not create cache row for cargo %d — verify migration 000010", cargo2)
+		}
+
+		// Force both rows to the same UPDATED_AT millisecond. Use a timestamp
+		// safely in the past (> syncLagSeconds=5 s) so neither row falls inside
+		// the lag exclusion window.
+		forcedTS := time.Now().UTC().Add(-time.Minute).Truncate(time.Millisecond)
+		_, err := q.ExecContext(
+			context.Background(),
+			`UPDATE MSP_SALDOS_VENTAS
+			    SET UPDATED_AT = ?
+			  WHERE DOCTO_CC_ID IN (?, ?)`,
+			firebird.ToWallClock(forcedTS), cargo1, cargo2,
+		)
+		require.NoError(t, err, "force UPDATED_AT to same millisecond")
+
+		// Determine the lower of the two PKs so page 1 starts right before it.
+		minPK := min(cargo1, cargo2)
+
+		// cursor just before forcedTS so the >= lower-bound passes both rows.
+		cursorBefore := forcedTS.Add(-time.Second)
+		afterID0 := minPK - 1
+
+		page1, err := repo.SyncPorZona(ctx, zonaID, cursorBefore, afterID0, 1)
+		require.NoError(t, err)
+		require.Len(t, page1.Items, 1, "page 1 should return exactly one row when limit=1")
+
+		// Page 2: cursor = forcedTS, afterID = PK returned by page 1.
+		pk1 := page1.Items[0].DoctoCCID()
+		page2, err := repo.SyncPorZona(ctx, zonaID, forcedTS, pk1, 1)
+		require.NoError(t, err)
+		require.Len(t, page2.Items, 1, "page 2 must return the second same-ms row via PK tie-break")
+		pk2 := page2.Items[0].DoctoCCID()
+
+		assert.NotEqual(t, pk1, pk2, "page 2 must return the OTHER row, not the same one")
+
+		// Both inserted PKs must be covered across the two pages.
+		got := map[int]bool{pk1: true, pk2: true}
+		want := map[int]bool{cargo1: true, cargo2: true}
+		assert.Equal(t, want, got,
+			"the two pages together must cover exactly the two inserted cargo IDs")
+
+		t.Logf("same-ms tie-break ok: forcedTS=%s page1PK=%d page2PK=%d",
+			forcedTS.Format(time.RFC3339Nano), pk1, pk2)
+	})
+}
