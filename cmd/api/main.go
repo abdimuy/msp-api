@@ -122,6 +122,8 @@ func appOptions() []fx.Option {
 			provideCobranzaPagoRetryWorker,
 			provideCobranzaEventBus,
 			provideFbEventSource,
+			provideCobranzaPagosChangelogRepo,
+			provideCobranzaSaldosChangelogRepo,
 			provideFbEventListener,
 			provideFailedIntentStore,
 			provideFailedIntentCaptureConfig,

@@ -220,13 +220,26 @@ func provideFbEventSource(cfg *config.Config) (cobranzaoutbound.FbEventSource, e
 	return cobranzaventfb.NewFbEventSource(cfg.Firebird.DSN())
 }
 
+// provideCobranzaPagosChangelogRepo builds the Firebird-backed PagosChangelogRepo.
+func provideCobranzaPagosChangelogRepo(p *firebird.Pool) cobranzaoutbound.PagosChangelogRepo {
+	return cobranzaventfb.NewPagosChangelogRepo(p)
+}
+
+// provideCobranzaSaldosChangelogRepo builds the Firebird-backed SaldosChangelogRepo.
+func provideCobranzaSaldosChangelogRepo(p *firebird.Pool) cobranzaoutbound.SaldosChangelogRepo {
+	return cobranzaventfb.NewSaldosChangelogRepo(p)
+}
+
 // provideFbEventListener wires the Firebird event source to the in-process bus.
 func provideFbEventListener(
 	src cobranzaoutbound.FbEventSource,
 	bus *eventbus.Bus,
+	pool *firebird.Pool,
+	pagosChangelog cobranzaoutbound.PagosChangelogRepo,
+	saldosChangelog cobranzaoutbound.SaldosChangelogRepo,
 	logger *slog.Logger,
 ) *cobranzaventfb.FbEventListener {
-	return cobranzaventfb.NewFbEventListener(src, bus, logger)
+	return cobranzaventfb.NewFbEventListener(src, bus, pool, pagosChangelog, saldosChangelog, logger)
 }
 
 // registerCobranzaFbEventListenerLifecycle hooks the listener into the fx lifecycle.

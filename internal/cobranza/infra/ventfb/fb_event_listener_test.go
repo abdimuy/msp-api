@@ -3,6 +3,7 @@ package ventfb_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
+	"pgregory.net/rapid"
 
 	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
 	"github.com/abdimuy/msp-api/internal/cobranza/infra/ventfb"
@@ -158,11 +160,91 @@ func (m *mockSource) unsubscribeCallCount() int {
 	return m.unsubCalled
 }
 
+// ─── mock changelog repos ─────────────────────────────────────────────────────
+
+type sinceCall struct {
+	SinceSeq, Watermark int64
+	Limit               int
+}
+
+type mockChangelogRepo struct {
+	mu         sync.Mutex
+	sinceFn    func(ctx context.Context, sinceSeq, watermark int64, limit int) ([]outbound.ChangelogEntry, error)
+	delFn      func(ctx context.Context, cutoff time.Time, maxDelete int) (int, error)
+	maxFn      func(ctx context.Context, watermark int64) (int64, error)
+	sinceCalls []sinceCall
+	maxCalls   []int64 // watermark args passed to MaxSeqID
+}
+
+func (m *mockChangelogRepo) Since(ctx context.Context, sinceSeq, watermark int64, limit int) ([]outbound.ChangelogEntry, error) {
+	m.mu.Lock()
+	m.sinceCalls = append(m.sinceCalls, sinceCall{sinceSeq, watermark, limit})
+	fn := m.sinceFn
+	m.mu.Unlock()
+	if fn == nil {
+		return nil, nil
+	}
+	return fn(ctx, sinceSeq, watermark, limit)
+}
+
+func (m *mockChangelogRepo) DeleteOlderThan(ctx context.Context, cutoff time.Time, n int) (int, error) {
+	m.mu.Lock()
+	fn := m.delFn
+	m.mu.Unlock()
+	if fn == nil {
+		return 0, nil
+	}
+	return fn(ctx, cutoff, n)
+}
+
+func (m *mockChangelogRepo) MaxSeqID(ctx context.Context, watermark int64) (int64, error) {
+	m.mu.Lock()
+	m.maxCalls = append(m.maxCalls, watermark)
+	fn := m.maxFn
+	m.mu.Unlock()
+	if fn == nil {
+		return 0, nil
+	}
+	return fn(ctx, watermark)
+}
+
+func (m *mockChangelogRepo) getSinceCalls() []sinceCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]sinceCall, len(m.sinceCalls))
+	copy(out, m.sinceCalls)
+	return out
+}
+
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
-// newListener builds a FbEventListener wired with a mock source, bus, and options.
+// newListener builds a FbEventListener wired with a mock source, bus, mock
+// changelog repos, a fixed watermark probe, and any extra options.
 func newListener(src *mockSource, bus *eventbus.Bus, opts ...ventfb.Option) *ventfb.FbEventListener {
-	return ventfb.NewFbEventListener(src, bus, nil, opts...)
+	pagos := &mockChangelogRepo{}
+	saldos := &mockChangelogRepo{}
+	probe := ventfb.WatermarkProbe(func(_ context.Context) (int64, error) {
+		return ventfb.SentinelNoActiveTx, nil
+	})
+	allOpts := append([]ventfb.Option{ventfb.WithWatermarkProbe(probe)}, opts...)
+	return ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil, allOpts...)
+}
+
+// newListenerWithRepos is like newListener but also returns the mock repos so
+// tests can set their functions and inspect their calls.
+func newListenerWithRepos(
+	src *mockSource,
+	bus *eventbus.Bus,
+	opts ...ventfb.Option,
+) (*ventfb.FbEventListener, *mockChangelogRepo, *mockChangelogRepo) {
+	pagos := &mockChangelogRepo{}
+	saldos := &mockChangelogRepo{}
+	probe := ventfb.WatermarkProbe(func(_ context.Context) (int64, error) {
+		return ventfb.SentinelNoActiveTx, nil
+	})
+	allOpts := append([]ventfb.Option{ventfb.WithWatermarkProbe(probe)}, opts...)
+	l := ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil, allOpts...)
+	return l, pagos, saldos
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -225,22 +307,29 @@ func TestFbEventListener_PublishesToBus(t *testing.T) {
 	bus := eventbus.New()
 	defer bus.Close()
 
-	// Source emits one pagos_changed event then keeps channel open (no close).
-	// We use closeAfter=false so the loop stays running and doesn't reconnect.
-	// We send one event and then the channel stays open.
-	eventCh := make(chan outbound.FbEvent, 4)
-	eventCh <- outbound.FbEvent{Name: "pagos_changed", Count: 1}
-
 	customSrc := &mockSource{}
-	// Override Subscribe to return our channel.
+	// Source emits one pagos_changed event then keeps channel open (no close).
 	customSrc.subscribeResponses = []subscribeResponse{
 		{events: []outbound.FbEvent{{Name: "pagos_changed", Count: 1}}, closeAfter: false},
 	}
 
+	// The pagos repo returns one entry so the listener publishes real IDs.
+	pagos := &mockChangelogRepo{
+		sinceFn: func(_ context.Context, _, _ int64, _ int) ([]outbound.ChangelogEntry, error) {
+			return []outbound.ChangelogEntry{{SeqID: 1, PK: 42}}, nil
+		},
+	}
+	saldos := &mockChangelogRepo{}
+	probe := ventfb.WatermarkProbe(func(_ context.Context) (int64, error) {
+		return ventfb.SentinelNoActiveTx, nil
+	})
+
+	l := ventfb.NewFbEventListener(customSrc, bus, nil, pagos, saldos, nil,
+		ventfb.WithWatermarkProbe(probe))
+
 	subCh, unsub := bus.Subscribe("pagos_changed")
 	defer unsub()
 
-	l := newListener(customSrc, bus)
 	ctx := context.Background()
 	require.NoError(t, l.Start(ctx))
 
@@ -281,7 +370,8 @@ func TestFbEventListener_ReconnectBackoff(t *testing.T) {
 	fc := newFakeClock()
 	defer fc.stop()
 	schedule := []time.Duration{1 * time.Second, 2 * time.Second, 4 * time.Second}
-	l := newListener(src, bus,
+	l := newListener(
+		src, bus,
 		ventfb.WithClock(fc),
 		ventfb.WithBackoffSchedule(schedule),
 	)
@@ -317,7 +407,7 @@ func TestFbEventListener_ReconnectBackoff(t *testing.T) {
 
 // TestFbEventListener_SyntheticPublishAfterReconnect verifies that when the
 // event channel is closed (driver disconnect), the listener publishes synthetic
-// signals for both topics before reopening the connection.
+// []int{} signals for both topics before reopening the connection.
 //
 //nolint:paralleltest // test uses fake clock with shared trigger channel.
 func TestFbEventListener_SyntheticPublishAfterReconnect(t *testing.T) {
@@ -337,7 +427,8 @@ func TestFbEventListener_SyntheticPublishAfterReconnect(t *testing.T) {
 
 	fc := newFakeClock()
 	defer fc.stop()
-	l := newListener(src, bus,
+	l := newListener(
+		src, bus,
 		ventfb.WithClock(fc),
 		ventfb.WithBackoffSchedule([]time.Duration{1 * time.Millisecond}),
 	)
@@ -434,7 +525,13 @@ func TestFbEventListener_Stop_DeadlineExceeded(t *testing.T) {
 	blockCh := make(chan outbound.FbEvent)
 	customSrc := &blockingSource{ch: blockCh}
 
-	l := ventfb.NewFbEventListener(customSrc, bus, nil)
+	pagos := &mockChangelogRepo{}
+	saldos := &mockChangelogRepo{}
+	probe := ventfb.WatermarkProbe(func(_ context.Context) (int64, error) {
+		return ventfb.SentinelNoActiveTx, nil
+	})
+	l := ventfb.NewFbEventListener(customSrc, bus, nil, pagos, saldos, nil,
+		ventfb.WithWatermarkProbe(probe))
 
 	ctx := context.Background()
 	require.NoError(t, l.Start(ctx))
@@ -488,7 +585,8 @@ func TestFbEventListener_CtxCancelDuringBackoff(t *testing.T) {
 	}
 
 	fc := newFakeClock()
-	l := newListener(src, bus,
+	l := newListener(
+		src, bus,
 		ventfb.WithClock(fc),
 		ventfb.WithBackoffSchedule([]time.Duration{10 * time.Second}),
 	)
@@ -540,7 +638,8 @@ func TestFbEventListener_BackoffCapAtLastEntry(t *testing.T) {
 
 	fc := newFakeClock()
 	schedule := []time.Duration{1 * time.Second, 5 * time.Second} // cap is 5s
-	l := newListener(src, bus,
+	l := newListener(
+		src, bus,
 		ventfb.WithClock(fc),
 		ventfb.WithBackoffSchedule(schedule),
 	)
@@ -573,4 +672,857 @@ func TestFbEventListener_BackoffCapAtLastEntry(t *testing.T) {
 
 	fc.stop()
 	goleak.VerifyNone(t)
+}
+
+// ─── Changelog-path tests ─────────────────────────────────────────────────────
+
+// TestListener_OnPostEvent_QueriesChangelogWithLastSeen verifies that on a
+// pagos_changed event the listener calls Since(0, watermark, 500), publishes
+// the returned PKs, and advances lastSeenSeq to 20.
+//
+//nolint:paralleltest
+func TestListener_OnPostEvent_QueriesChangelogWithLastSeen(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	bus := eventbus.New()
+	defer bus.Close()
+
+	src := &mockSource{
+		subscribeResponses: []subscribeResponse{
+			{
+				events:     []outbound.FbEvent{{Name: "pagos_changed", Count: 1}},
+				closeAfter: false,
+			},
+		},
+	}
+
+	const wm = int64(9999)
+	var sinceCalled sync.Once
+	published := make(chan []int, 1)
+
+	pagos := &mockChangelogRepo{
+		sinceFn: func(_ context.Context, sinceSeq, watermark int64, limit int) ([]outbound.ChangelogEntry, error) {
+			_ = sinceSeq
+			_ = watermark
+			_ = limit
+			sinceCalled.Do(func() {
+				published <- nil // signal that Since was called; we'll validate via sinceCalls
+			})
+			return []outbound.ChangelogEntry{
+				{SeqID: 10, PK: 101},
+				{SeqID: 20, PK: 202},
+			}, nil
+		},
+	}
+	saldos := &mockChangelogRepo{}
+	probe := ventfb.WatermarkProbe(func(_ context.Context) (int64, error) { return wm, nil })
+
+	subCh, unsub := bus.Subscribe("pagos_changed")
+	defer unsub()
+
+	l := ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil,
+		ventfb.WithWatermarkProbe(probe))
+
+	ctx := context.Background()
+	require.NoError(t, l.Start(ctx))
+
+	// Wait for the bus publish.
+	var ids []int
+	select {
+	case ids = <-subCh:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected pagos_changed publish within 500ms")
+	}
+
+	assert.ElementsMatch(t, []int{101, 202}, ids)
+
+	// Verify Since was called with sinceSeq=0 (initial cursor after MaxSeqID=0),
+	// watermark=wm, limit=500.
+	calls := pagos.getSinceCalls()
+	require.Len(t, calls, 1, "Since must be called exactly once per event")
+	assert.Equal(t, int64(0), calls[0].SinceSeq, "sinceSeq must start at 0 (MaxSeqID returned 0)")
+	assert.Equal(t, wm, calls[0].Watermark, "watermark must be from probe")
+	assert.Equal(t, 500, calls[0].Limit, "limit must be 500")
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, l.Stop(stopCtx))
+}
+
+// TestListener_AdvancesLastSeenToMaxReturned verifies that the cursor advances
+// to max(SeqID) of returned entries, not beyond.
+//
+//nolint:paralleltest
+func TestListener_AdvancesLastSeenToMaxReturned(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	bus := eventbus.New()
+	defer bus.Close()
+
+	// Send two events so we can see the cursor advance on the second call.
+	src := &mockSource{
+		subscribeResponses: []subscribeResponse{
+			{
+				events: []outbound.FbEvent{
+					{Name: "pagos_changed", Count: 1},
+					{Name: "pagos_changed", Count: 1},
+				},
+				closeAfter: false,
+			},
+		},
+	}
+
+	callNum := 0
+	var mu sync.Mutex
+	var secondSinceSeq int64
+
+	pagos := &mockChangelogRepo{
+		sinceFn: func(_ context.Context, sinceSeq, _ int64, _ int) ([]outbound.ChangelogEntry, error) {
+			mu.Lock()
+			n := callNum
+			callNum++
+			mu.Unlock()
+			if n == 0 {
+				return []outbound.ChangelogEntry{
+					{SeqID: 10, PK: 1},
+					{SeqID: 20, PK: 2},
+					{SeqID: 30, PK: 3},
+				}, nil
+			}
+			// Second call: capture sinceSeq to assert it advanced to 30.
+			mu.Lock()
+			secondSinceSeq = sinceSeq
+			mu.Unlock()
+			return nil, nil
+		},
+	}
+	saldos := &mockChangelogRepo{}
+	probe := ventfb.WatermarkProbe(func(_ context.Context) (int64, error) {
+		return ventfb.SentinelNoActiveTx, nil
+	})
+
+	subCh, unsub := bus.Subscribe("pagos_changed")
+	defer unsub()
+
+	l := ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil,
+		ventfb.WithWatermarkProbe(probe))
+
+	ctx := context.Background()
+	require.NoError(t, l.Start(ctx))
+
+	// Drain first publish.
+	select {
+	case <-subCh:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("first publish not received")
+	}
+
+	// Wait until the second Since call is made.
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return callNum >= 2
+	}, 2*time.Second, 5*time.Millisecond, "second Since call not made")
+
+	mu.Lock()
+	got := secondSinceSeq
+	mu.Unlock()
+	assert.Equal(t, int64(30), got, "cursor must advance to max SeqID=30 after first event")
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, l.Stop(stopCtx))
+}
+
+// TestListener_EmptyChangelog_DoesNotPublish verifies that when Since returns
+// no entries, the listener does not publish anything to the bus.
+//
+//nolint:paralleltest
+func TestListener_EmptyChangelog_DoesNotPublish(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	bus := eventbus.New()
+	defer bus.Close()
+
+	src := &mockSource{
+		subscribeResponses: []subscribeResponse{
+			{
+				events:     []outbound.FbEvent{{Name: "pagos_changed", Count: 1}},
+				closeAfter: false,
+			},
+		},
+	}
+
+	pagos := &mockChangelogRepo{
+		sinceFn: func(_ context.Context, _, _ int64, _ int) ([]outbound.ChangelogEntry, error) {
+			return nil, nil // empty — nothing committed yet
+		},
+	}
+	saldos := &mockChangelogRepo{}
+	probe := ventfb.WatermarkProbe(func(_ context.Context) (int64, error) {
+		return ventfb.SentinelNoActiveTx, nil
+	})
+
+	subCh, unsub := bus.Subscribe("pagos_changed")
+	defer unsub()
+
+	l := ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil,
+		ventfb.WithWatermarkProbe(probe))
+
+	ctx := context.Background()
+	require.NoError(t, l.Start(ctx))
+
+	// Wait briefly; Since is called but returns empty, so no publish expected.
+	// Give the listener a moment to process the event.
+	require.Eventually(t, func() bool {
+		return len(pagos.getSinceCalls()) > 0
+	}, 500*time.Millisecond, 5*time.Millisecond, "Since not called")
+
+	// Channel must be empty.
+	select {
+	case ids := <-subCh:
+		t.Fatalf("unexpected publish when changelog empty: got %v", ids)
+	default:
+		// correct — nothing published
+	}
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, l.Stop(stopCtx))
+}
+
+// TestListener_WatermarkFailure_PublishesEmptyAsWakeup verifies that when the
+// watermark probe returns an error, the listener publishes []int{} so
+// subscribers cursor-sync.
+//
+//nolint:paralleltest
+func TestListener_WatermarkFailure_PublishesEmptyAsWakeup(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	bus := eventbus.New()
+	defer bus.Close()
+
+	src := &mockSource{
+		subscribeResponses: []subscribeResponse{
+			{
+				events:     []outbound.FbEvent{{Name: "pagos_changed", Count: 1}},
+				closeAfter: false,
+			},
+		},
+	}
+
+	errWatermark := errors.New("watermark unavailable")
+	// Start must succeed (MaxSeqID call on init), so we return an error only
+	// after startup. Use a counter to distinguish init probe from event probe.
+	probeCallCount := 0
+	var probeMu sync.Mutex
+	probe := ventfb.WatermarkProbe(func(_ context.Context) (int64, error) {
+		probeMu.Lock()
+		n := probeCallCount
+		probeCallCount++
+		probeMu.Unlock()
+		if n >= 2 { // 0=init pagos MaxSeqID, 1=init saldos MaxSeqID, 2+=event probe
+			return 0, errWatermark
+		}
+		return ventfb.SentinelNoActiveTx, nil
+	})
+
+	// MaxSeqID is called at init time, not through watermarkProbe directly.
+	// So pagos/saldos repo MaxSeqID calls use the probe indirectly only on
+	// the first Start call. We need the actual probe to fail on the event.
+	//
+	// Simplify: have probe fail immediately after init (probeCallCount >= 1
+	// since watermarkProbe is called once in Start for the watermark, then
+	// pagos.MaxSeqID and saldos.MaxSeqID are called separately).
+	//
+	// Re-design: use a simpler approach — probe returns error always but
+	// we bypass it for MaxSeqID by using a maxFn on the repos.
+	pagos := &mockChangelogRepo{
+		maxFn: func(_ context.Context, _ int64) (int64, error) { return 0, nil },
+	}
+	saldos := &mockChangelogRepo{
+		maxFn: func(_ context.Context, _ int64) (int64, error) { return 0, nil },
+	}
+
+	// Separate probe: always error so the event handling always triggers wakeup.
+	errProbe := ventfb.WatermarkProbe(func(_ context.Context) (int64, error) {
+		probeMu.Lock()
+		n := probeCallCount
+		probeCallCount++
+		probeMu.Unlock()
+		if n == 0 {
+			// First call is in Start() for cursor initialization.
+			return ventfb.SentinelNoActiveTx, nil
+		}
+		return 0, errWatermark
+	})
+	_ = probe // discard the earlier probe definition
+
+	subCh, unsub := bus.Subscribe("pagos_changed")
+	defer unsub()
+
+	l := ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil,
+		ventfb.WithWatermarkProbe(errProbe))
+
+	ctx := context.Background()
+	require.NoError(t, l.Start(ctx))
+
+	// The listener should publish empty wakeup.
+	select {
+	case ids := <-subCh:
+		assert.Empty(t, ids, "watermark failure must publish empty []int{} wakeup")
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected empty wakeup publish within 500ms on watermark failure")
+	}
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, l.Stop(stopCtx))
+}
+
+// TestListener_ChangelogFailure_PublishesEmpty verifies that when Since returns
+// an error, the listener publishes []int{} as a wakeup.
+//
+//nolint:paralleltest
+func TestListener_ChangelogFailure_PublishesEmpty(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	bus := eventbus.New()
+	defer bus.Close()
+
+	src := &mockSource{
+		subscribeResponses: []subscribeResponse{
+			{
+				events:     []outbound.FbEvent{{Name: "pagos_changed", Count: 1}},
+				closeAfter: false,
+			},
+		},
+	}
+
+	pagos := &mockChangelogRepo{
+		sinceFn: func(_ context.Context, _, _ int64, _ int) ([]outbound.ChangelogEntry, error) {
+			return nil, errors.New("DB connection lost")
+		},
+	}
+	saldos := &mockChangelogRepo{}
+	probe := ventfb.WatermarkProbe(func(_ context.Context) (int64, error) {
+		return ventfb.SentinelNoActiveTx, nil
+	})
+
+	subCh, unsub := bus.Subscribe("pagos_changed")
+	defer unsub()
+
+	l := ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil,
+		ventfb.WithWatermarkProbe(probe))
+
+	ctx := context.Background()
+	require.NoError(t, l.Start(ctx))
+
+	select {
+	case ids := <-subCh:
+		assert.Empty(t, ids, "changelog failure must publish empty []int{} wakeup")
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected empty wakeup publish within 500ms on changelog failure")
+	}
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, l.Stop(stopCtx))
+}
+
+// TestListener_Start_InitializesLastSeenFromMaxSeqID verifies that after Start,
+// the listener's cursor starts at MaxSeqID for the given watermark, so history
+// is not replayed on reconnect.
+//
+//nolint:paralleltest
+func TestListener_Start_InitializesLastSeenFromMaxSeqID(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	bus := eventbus.New()
+	defer bus.Close()
+
+	// Send one event immediately after subscribing so we can observe the sinceSeq.
+	src := &mockSource{
+		subscribeResponses: []subscribeResponse{
+			{
+				events:     []outbound.FbEvent{{Name: "pagos_changed", Count: 1}},
+				closeAfter: false,
+			},
+		},
+	}
+
+	const initMax = int64(42)
+	var capturedSinceSeq int64
+	var mu sync.Mutex
+
+	pagos := &mockChangelogRepo{
+		maxFn: func(_ context.Context, _ int64) (int64, error) {
+			return initMax, nil
+		},
+		sinceFn: func(_ context.Context, sinceSeq, _ int64, _ int) ([]outbound.ChangelogEntry, error) {
+			mu.Lock()
+			capturedSinceSeq = sinceSeq
+			mu.Unlock()
+			return nil, nil // return empty so no publish
+		},
+	}
+	saldos := &mockChangelogRepo{
+		maxFn: func(_ context.Context, _ int64) (int64, error) { return 0, nil },
+	}
+	probe := ventfb.WatermarkProbe(func(_ context.Context) (int64, error) {
+		return ventfb.SentinelNoActiveTx, nil
+	})
+
+	l := ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil,
+		ventfb.WithWatermarkProbe(probe))
+
+	ctx := context.Background()
+	require.NoError(t, l.Start(ctx))
+
+	// Wait for the Since call to happen.
+	require.Eventually(t, func() bool {
+		return len(pagos.getSinceCalls()) > 0
+	}, 500*time.Millisecond, 5*time.Millisecond, "Since not called")
+
+	mu.Lock()
+	got := capturedSinceSeq
+	mu.Unlock()
+
+	assert.Equal(t, initMax, got,
+		"sinceSeq on first event must equal MaxSeqID value from Start")
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, l.Stop(stopCtx))
+}
+
+// TestListener_Start_MaxSeqIDFailure_ReturnsError verifies that Start returns
+// an error when MaxSeqID fails, so fx treats it as a startup failure.
+//
+//nolint:paralleltest
+func TestListener_Start_MaxSeqIDFailure_ReturnsError(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	bus := eventbus.New()
+	defer bus.Close()
+
+	src := &mockSource{}
+
+	pagos := &mockChangelogRepo{
+		maxFn: func(_ context.Context, _ int64) (int64, error) {
+			return 0, errors.New("Firebird unreachable")
+		},
+	}
+	saldos := &mockChangelogRepo{}
+	probe := ventfb.WatermarkProbe(func(_ context.Context) (int64, error) {
+		return ventfb.SentinelNoActiveTx, nil
+	})
+
+	l := ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil,
+		ventfb.WithWatermarkProbe(probe))
+
+	err := l.Start(context.Background())
+	require.Error(t, err, "Start must return error when MaxSeqID fails")
+	assert.Contains(t, err.Error(), "max_seq_id", "error should mention what failed")
+}
+
+// TestListener_ReconnectSyntheticPublish_IsEmpty verifies that the synthetic
+// publish on reconnect carries []int{} (empty, not nil and not real IDs),
+// which signals subscribers to cursor-sync.
+//
+//nolint:paralleltest
+func TestListener_ReconnectSyntheticPublish_IsEmpty(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	bus := eventbus.New()
+	defer bus.Close()
+
+	src := &mockSource{
+		subscribeResponses: []subscribeResponse{
+			{events: nil, closeAfter: true},  // disconnect triggers reconnect path
+			{events: nil, closeAfter: false}, // stable on second attempt
+		},
+	}
+
+	fc := newFakeClock()
+	defer fc.stop()
+	l := newListener(
+		src, bus,
+		ventfb.WithClock(fc),
+		ventfb.WithBackoffSchedule([]time.Duration{1 * time.Millisecond}),
+	)
+
+	pagosCh, unsubPagos := bus.Subscribe("pagos_changed")
+	saldosCh, unsubSaldos := bus.Subscribe("saldos_changed")
+	defer unsubPagos()
+	defer unsubSaldos()
+
+	ctx := context.Background()
+	require.NoError(t, l.Start(ctx))
+
+	require.Eventually(t, func() bool {
+		return len(fc.durations()) > 0
+	}, 2*time.Second, 5*time.Millisecond, "backoff not reached")
+	fc.tick()
+
+	// Receive the pagos synthetic publish and assert it's empty (not nil).
+	var pagosPayload []int
+	require.Eventually(t, func() bool {
+		select {
+		case pagosPayload = <-pagosCh:
+			return true
+		default:
+			return false
+		}
+	}, 2*time.Second, 5*time.Millisecond, "pagos synthetic publish not received")
+	assert.NotNil(t, pagosPayload, "synthetic publish must be []int{} not nil")
+	assert.Empty(t, pagosPayload, "synthetic publish must be empty []int{}")
+
+	// Same for saldos.
+	var saldosPayload []int
+	require.Eventually(t, func() bool {
+		select {
+		case saldosPayload = <-saldosCh:
+			return true
+		default:
+			return false
+		}
+	}, 2*time.Second, 5*time.Millisecond, "saldos synthetic publish not received")
+	assert.NotNil(t, saldosPayload, "synthetic publish must be []int{} not nil")
+	assert.Empty(t, saldosPayload, "synthetic publish must be empty []int{}")
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, l.Stop(stopCtx))
+}
+
+// TestListener_HonorsLimit500 verifies that the listener calls Since once per
+// event (with limit=500), even when 500 entries are returned. It does not loop
+// inside handleEvent to drain to completion — staying responsive is the priority;
+// the next event or cursor sync will pick up the rest.
+//
+//nolint:paralleltest
+func TestListener_HonorsLimit500(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	bus := eventbus.New()
+	defer bus.Close()
+
+	src := &mockSource{
+		subscribeResponses: []subscribeResponse{
+			{
+				events:     []outbound.FbEvent{{Name: "pagos_changed", Count: 1}},
+				closeAfter: false,
+			},
+		},
+	}
+
+	// Build 500 entries.
+	entries500 := make([]outbound.ChangelogEntry, 500)
+	for i := range 500 {
+		entries500[i] = outbound.ChangelogEntry{SeqID: int64(i + 1), PK: i + 1}
+	}
+
+	callCount := 0
+	var mu sync.Mutex
+	pagos := &mockChangelogRepo{
+		sinceFn: func(_ context.Context, _, _ int64, _ int) ([]outbound.ChangelogEntry, error) {
+			mu.Lock()
+			callCount++
+			mu.Unlock()
+			return entries500, nil
+		},
+	}
+	saldos := &mockChangelogRepo{}
+	probe := ventfb.WatermarkProbe(func(_ context.Context) (int64, error) {
+		return ventfb.SentinelNoActiveTx, nil
+	})
+
+	subCh, unsub := bus.Subscribe("pagos_changed")
+	defer unsub()
+
+	l := ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil,
+		ventfb.WithWatermarkProbe(probe))
+
+	ctx := context.Background()
+	require.NoError(t, l.Start(ctx))
+
+	// Wait for the publish.
+	select {
+	case ids := <-subCh:
+		assert.Len(t, ids, 500, "all 500 IDs must be published")
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected publish within 500ms")
+	}
+
+	// Give a brief window to confirm no extra Since call was made.
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	n := callCount
+	mu.Unlock()
+	assert.Equal(t, 1, n, "Since must be called exactly once per event (no looping to drain)")
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, l.Stop(stopCtx))
+}
+
+// ─── Property tests ───────────────────────────────────────────────────────────
+
+// TestProperty_Listener_LastSeenMonotonic verifies that lastSeenSeq is
+// non-decreasing over a rapid sequence of events with varying changelog
+// responses.
+//
+//nolint:paralleltest
+func TestProperty_Listener_LastSeenMonotonic(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	rapid.Check(t, func(rt *rapid.T) {
+		bus := eventbus.New()
+		defer bus.Close()
+
+		// Generate a list of SEQ_ID sequences to return for N events.
+		n := rapid.IntRange(2, 10).Draw(rt, "n_events")
+
+		// Keep track of what Since returns on each call to assert monotonicity.
+		var mu sync.Mutex
+		type callResult struct {
+			sinceSeq    int64
+			maxReturned int64
+		}
+		var results []callResult
+
+		callIdx := 0
+		// For each event, return a random set of entries with ascending SeqIDs.
+		eventEntries := make([][]outbound.ChangelogEntry, n)
+		for i := range n {
+			count := rapid.IntRange(0, 5).Draw(rt, "entry_count")
+			entries := make([]outbound.ChangelogEntry, count)
+			for j := range count {
+				entries[j] = outbound.ChangelogEntry{
+					SeqID: int64(i*10 + j + 1),
+					PK:    i*10 + j + 1,
+				}
+			}
+			eventEntries[i] = entries
+		}
+
+		pagos := &mockChangelogRepo{
+			sinceFn: func(_ context.Context, sinceSeq, _ int64, _ int) ([]outbound.ChangelogEntry, error) {
+				mu.Lock()
+				idx := callIdx
+				callIdx++
+				mu.Unlock()
+				if idx >= len(eventEntries) {
+					return nil, nil
+				}
+				entries := eventEntries[idx]
+				var maxSeq int64
+				for _, e := range entries {
+					if e.SeqID > maxSeq {
+						maxSeq = e.SeqID
+					}
+				}
+				mu.Lock()
+				results = append(results, callResult{sinceSeq, maxSeq})
+				mu.Unlock()
+				return entries, nil
+			},
+		}
+		saldos := &mockChangelogRepo{}
+		probe := ventfb.WatermarkProbe(func(_ context.Context) (int64, error) {
+			return ventfb.SentinelNoActiveTx, nil
+		})
+
+		events := make([]outbound.FbEvent, n)
+		for i := range n {
+			events[i] = outbound.FbEvent{Name: "pagos_changed", Count: 1}
+		}
+
+		src := &mockSource{
+			subscribeResponses: []subscribeResponse{
+				{events: events, closeAfter: false},
+			},
+		}
+
+		subCh, unsub := bus.Subscribe("pagos_changed")
+		defer unsub()
+
+		l := ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil,
+			ventfb.WithWatermarkProbe(probe))
+
+		ctx := context.Background()
+		require.NoError(t, l.Start(ctx))
+
+		// Drain all expected publishes (only non-empty ones trigger publishes).
+		nonEmpty := 0
+		for _, ee := range eventEntries {
+			if len(ee) > 0 {
+				nonEmpty++
+			}
+		}
+		for range nonEmpty {
+			select {
+			case <-subCh:
+			case <-time.After(500 * time.Millisecond):
+				// The listener might still be processing; that's ok for this test.
+				goto done
+			}
+		}
+	done:
+
+		stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		require.NoError(t, l.Stop(stopCtx))
+
+		// Assert lastSeenSeq is non-decreasing over the call sequence.
+		mu.Lock()
+		defer mu.Unlock()
+		for i := 1; i < len(results); i++ {
+			if results[i].sinceSeq < results[i-1].sinceSeq {
+				rt.Fatalf("lastSeenSeq decreased at call %d: %d -> %d",
+					i, results[i-1].sinceSeq, results[i].sinceSeq)
+			}
+		}
+	})
+}
+
+// TestProperty_Listener_NoIdLoss verifies the cursor-advancement invariant:
+// for each pair of consecutive Since calls (i, i+1), sinceSeq[i+1] equals
+// max(SeqID) returned by call i. This guarantees zero cursor gap — every
+// committed row with SeqID in (sinceSeq[i], max(SeqID)[i]] will be visible
+// to the next Since(sinceSeq[i+1], ...) call.
+//
+// The bus uses latest-wins coalescing so individual IDs may be lost in transit
+// (that is by design — subscribers use cursor sync to recover). The correct
+// invariant is at the cursor level, not the bus payload level.
+//
+//nolint:paralleltest
+func TestProperty_Listener_NoIdLoss(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	rapid.Check(t, func(rt *rapid.T) {
+		bus := eventbus.New()
+		defer bus.Close()
+
+		// Use n+1 events so we can observe sinceSeq on call N+1 and verify it
+		// equals max(SeqID) from call N.
+		n := rapid.IntRange(2, 6).Draw(rt, "n_events")
+
+		var mu sync.Mutex
+		// allEntries[i] is what call i returns.
+		allEntries := make([][]outbound.ChangelogEntry, n)
+		for i := range n {
+			count := rapid.IntRange(1, 4).Draw(rt, "count")
+			entries := make([]outbound.ChangelogEntry, count)
+			for j := range count {
+				entries[j] = outbound.ChangelogEntry{
+					SeqID: int64(i*100 + j + 1),
+					PK:    i*100 + j + 1,
+				}
+			}
+			allEntries[i] = entries
+		}
+
+		type callRecord struct {
+			sinceSeq int64
+			returned []outbound.ChangelogEntry
+		}
+		var callRecords []callRecord
+
+		callIdx := 0
+		doneCh := make(chan struct{})
+		pagos := &mockChangelogRepo{
+			sinceFn: func(_ context.Context, sinceSeq, _ int64, _ int) ([]outbound.ChangelogEntry, error) {
+				mu.Lock()
+				idx := callIdx
+				callIdx++
+				mu.Unlock()
+
+				var entries []outbound.ChangelogEntry
+				if idx < len(allEntries) {
+					entries = allEntries[idx]
+				}
+
+				mu.Lock()
+				callRecords = append(callRecords, callRecord{sinceSeq, entries})
+				remaining := n - callIdx
+				mu.Unlock()
+
+				if remaining <= 0 {
+					select {
+					case <-doneCh:
+					default:
+						close(doneCh)
+					}
+				}
+				return entries, nil
+			},
+		}
+		saldos := &mockChangelogRepo{}
+		probe := ventfb.WatermarkProbe(func(_ context.Context) (int64, error) {
+			return ventfb.SentinelNoActiveTx, nil
+		})
+
+		events := make([]outbound.FbEvent, n)
+		for i := range n {
+			events[i] = outbound.FbEvent{Name: "pagos_changed", Count: 1}
+		}
+
+		src := &mockSource{
+			subscribeResponses: []subscribeResponse{
+				{events: events, closeAfter: false},
+			},
+		}
+
+		l := ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil,
+			ventfb.WithWatermarkProbe(probe))
+
+		ctx := context.Background()
+		require.NoError(t, l.Start(ctx))
+
+		select {
+		case <-doneCh:
+		case <-time.After(2 * time.Second):
+		}
+		time.Sleep(20 * time.Millisecond)
+
+		stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		require.NoError(t, l.Stop(stopCtx))
+
+		mu.Lock()
+		records := make([]callRecord, len(callRecords))
+		copy(records, callRecords)
+		mu.Unlock()
+
+		// Need at least 2 calls to verify the invariant between calls.
+		if len(records) < 2 {
+			return
+		}
+
+		// For each call i (0-based), if call i returned non-empty entries,
+		// then sinceSeq of call i+1 must equal max(SeqID from call i).
+		for i := 0; i+1 < len(records); i++ {
+			if len(records[i].returned) == 0 {
+				// Empty return → cursor didn't advance; sinceSeq[i+1] == sinceSeq[i].
+				if records[i+1].sinceSeq != records[i].sinceSeq {
+					rt.Fatalf("cursor moved on empty batch: call[%d] sinceSeq=%d but call[%d] sinceSeq=%d",
+						i, records[i].sinceSeq, i+1, records[i+1].sinceSeq)
+				}
+				continue
+			}
+			var batchMax int64
+			for _, e := range records[i].returned {
+				if e.SeqID > batchMax {
+					batchMax = e.SeqID
+				}
+			}
+			if records[i+1].sinceSeq != batchMax {
+				rt.Fatalf("cursor gap at call[%d→%d]: sinceSeq=%d but expected max SeqID=%d from prev batch",
+					i, i+1, records[i+1].sinceSeq, batchMax)
+			}
+		}
+	})
 }

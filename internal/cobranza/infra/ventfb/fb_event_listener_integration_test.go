@@ -478,7 +478,9 @@ func TestE2E_FbEventListener_RealDB(t *testing.T) {
 	bus := eventbus.New()
 	t.Cleanup(bus.Close)
 
-	listener := ventfb.NewFbEventListener(src, bus, nil)
+	pagosChangelog := ventfb.NewPagosChangelogRepo(pool)
+	saldosChangelog := ventfb.NewSaldosChangelogRepo(pool)
+	listener := ventfb.NewFbEventListener(src, bus, pool, pagosChangelog, saldosChangelog, nil)
 
 	subCh, unsubscribe := bus.Subscribe("pagos_changed")
 	defer unsubscribe()
