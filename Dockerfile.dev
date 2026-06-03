@@ -1,0 +1,24 @@
+# Dev-only image: corre el API dentro de Docker para que el FbEventListener
+# pueda alcanzar el puerto auxiliar de Firebird, que vive en la red bridge
+# del contenedor (172.19.0.x). Desde el host de Docker Desktop Mac esa IP
+# no es ruteable; desde otro contenedor en `firebird_default` sí.
+#
+# Prod target sigue siendo Windows Server 2016 nativo. NO usar este
+# Dockerfile fuera de dev.
+#
+# Uso:
+#   docker compose up -d api
+#   docker compose logs -f api
+FROM golang:1.25-alpine
+
+# git y bash: air los usa para watch y reload. curl para healthcheck si lo
+# agregamos después.
+RUN apk add --no-cache git bash curl
+
+# air v1.x watcher con hot-reload de Go. Misma versión que en host.
+RUN go install github.com/air-verse/air@latest
+
+WORKDIR /app
+EXPOSE 3001
+
+CMD ["air"]

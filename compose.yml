@@ -31,6 +31,67 @@ services:
       retries: 10
       start_period: 5s
 
+  # API en Docker (dev only). El único motivo es que el FbEventListener
+  # pueda alcanzar el puerto auxiliar de Firebird sin pasar por la NAT del
+  # host de macOS — el driver firebirdsql respeta la IP que Firebird
+  # reporta (`172.19.0.2`, IP interna del contenedor) y solo otra
+  # entidad dentro de `firebird_default` puede rutear hacia ahí. Prod
+  # sigue corriendo nativo en Windows Server 2016 — este target no
+  # aplica fuera de dev local Mac/Linux.
+  #
+  # Usar: `docker compose up -d api && docker compose logs -f api`.
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: msp-api-dev
+    restart: unless-stopped
+    working_dir: /app
+    env_file: .env
+    environment:
+      # Firebird por nombre del contenedor (resoluble dentro de
+      # firebird_default).
+      FB_HOST: mueblera-firebird
+      FB_PORT: "3050"
+      # Postgres vive en otra red — usamos el alias de Docker Desktop
+      # para alcanzarlo via el port forward del host (compose
+      # publica msp-postgres en :5432).
+      PG_HOST: host.docker.internal
+      # Air dentro del contenedor; el host ya no corre `make dev`.
+      TMPDIR: /tmp
+      # El .env apunta a la ruta del host. Adentro del contenedor el repo
+      # está bind-mounted en /app, así que reescribimos a esa ruta.
+      FIREBASE_SERVICE_ACCOUNT_PATH: /app/serviceAccountKeyProduction.json
+    volumes:
+      # Bind mount del repo entero para hot reload via air. Los caches
+      # de Go viven en volumes nombrados para que no se descarte cada
+      # `down`/`up`.
+      - ./:/app
+      - api-go-cache:/go/pkg/mod
+      - api-build-cache:/root/.cache/go-build
+    ports:
+      - "${APP_PORT:-3001}:3001"
+    networks:
+      - firebird_default
+      - default
+    # Resolver host.docker.internal en Linux (no-op en Mac/Win).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   msp-postgres-data:
     name: msp-postgres-data
+  api-go-cache:
+    name: msp-api-go-cache
+  api-build-cache:
+    name: msp-api-build-cache
+
+# firebird_default es una red creada externamente cuando el contenedor
+# mueblera-firebird se levantó manualmente. Compose la referencia como
+# external para no intentar (re)crearla.
+networks:
+  firebird_default:
+    external: true
