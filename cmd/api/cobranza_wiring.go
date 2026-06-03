@@ -9,13 +9,14 @@ import (
 
 	"go.uber.org/fx"
 
-	"github.com/abdimuy/msp-api/internal/platform/firebird"
-	"github.com/abdimuy/msp-api/internal/platform/lifecycle"
-
 	cobranzaapp "github.com/abdimuy/msp-api/internal/cobranza/app"
+	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
 	cobranzamicrosip "github.com/abdimuy/msp-api/internal/cobranza/infra/microsip"
 	cobranzaventfb "github.com/abdimuy/msp-api/internal/cobranza/infra/ventfb"
 	cobranzaoutbound "github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
+	"github.com/abdimuy/msp-api/internal/platform/config"
+	"github.com/abdimuy/msp-api/internal/platform/firebird"
+	"github.com/abdimuy/msp-api/internal/platform/lifecycle"
 	ventasoutbound "github.com/abdimuy/msp-api/internal/ventas/ports/outbound"
 )
 
@@ -204,6 +205,47 @@ func provideCobranzaSaldosTombstoneCleaner(p *firebird.Pool) cobranzaoutbound.Sa
 // PagosTombstoneCleaner port (the concrete *PagosRepo satisfies both).
 func provideCobranzaPagosTombstoneCleaner(p *firebird.Pool) cobranzaoutbound.PagosTombstoneCleaner {
 	return cobranzaventfb.NewPagosRepo(p)
+}
+
+// provideCobranzaEventBus constructs the shared in-process event bus for the
+// cobranza module. The same *eventbus.Bus is consumed by the FbEventListener
+// (commit 6) and the SSE handlers (commit 7).
+func provideCobranzaEventBus() *eventbus.Bus {
+	return eventbus.New()
+}
+
+// provideFbEventSource opens a dedicated Firebird event connection (separate
+// TCP session from the regular query pool) for receiving POST_EVENT notifications.
+func provideFbEventSource(cfg *config.Config) (cobranzaoutbound.FbEventSource, error) {
+	return cobranzaventfb.NewFbEventSource(cfg.Firebird.DSN())
+}
+
+// provideFbEventListener wires the Firebird event source to the in-process bus.
+func provideFbEventListener(
+	src cobranzaoutbound.FbEventSource,
+	bus *eventbus.Bus,
+	logger *slog.Logger,
+) *cobranzaventfb.FbEventListener {
+	return cobranzaventfb.NewFbEventListener(src, bus, logger)
+}
+
+// registerCobranzaFbEventListenerLifecycle hooks the listener into the fx lifecycle.
+func registerCobranzaFbEventListenerLifecycle(lc fx.Lifecycle, l *cobranzaventfb.FbEventListener) {
+	lifecycle.Append(lc, "fb-event-listener", l)
+}
+
+// registerCobranzaFbEventSourceLifecycle registers an OnStop hook that closes
+// the Firebird event source after the listener has already stopped.
+// fx stops hooks in LIFO order, so this function must be invoked BEFORE
+// registerCobranzaFbEventListenerLifecycle in the fx.Invoke list so that the
+// listener's OnStop runs first (it was registered later) and the source closes
+// only after the listener has fully stopped.
+func registerCobranzaFbEventSourceLifecycle(lc fx.Lifecycle, src cobranzaoutbound.FbEventSource) {
+	lc.Append(fx.Hook{
+		OnStop: func(_ context.Context) error {
+			return src.Close()
+		},
+	})
 }
 
 // provideCobranzaReconciler assembles the cobranza reconciler.

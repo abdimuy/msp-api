@@ -35,6 +35,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
+	"github.com/abdimuy/msp-api/internal/cobranza/infra/ventfb"
 	"github.com/abdimuy/msp-api/internal/platform/config"
 	"github.com/abdimuy/msp-api/internal/platform/fbtestutil"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
@@ -438,5 +440,87 @@ func TestE2E_PostEvent_NotOnWhenAnyDo(t *testing.T) {
 			"statement immediately precedes EXIT or follows the final UPDATE OR INSERT, " +
 			"and the WHEN ANY DO handler contains only the INSERT INTO MSP_SALDOS_ERRORS " +
 			"plus EXIT — no POST_EVENT.",
+	)
+}
+
+// TestE2E_FbEventListener_RealDB verifies the full FbEventListener pipeline
+// against a live Firebird instance: inserting a committed pago causes the
+// listener to forward "pagos_changed" to the in-process event bus within 3s.
+//
+//nolint:paralleltest
+func TestE2E_FbEventListener_RealDB(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	requireMigration000021(t, pool)
+	requireFBEventReachable(t)
+
+	host := envOrDefault("FB_HOST", "localhost")
+	port := envOrDefault("FB_PORT", "3050")
+	database := os.Getenv("FB_DATABASE")
+	user := envOrDefault("FB_USER", "SYSDBA")
+	password := os.Getenv("FB_PASSWORD")
+	charset := envOrDefault("FB_CHARSET", "UTF8")
+	cfg := config.Firebird{
+		Host:         host,
+		Port:         portFromEnv(t, port),
+		Database:     database,
+		User:         user,
+		Password:     password,
+		Charset:      charset,
+		WireCrypt:    true,
+		WireCompress: false,
+	}
+
+	src, err := ventfb.NewFbEventSource(cfg.DSN())
+	require.NoError(t, err, "NewFbEventSource")
+	t.Cleanup(func() { _ = src.Close() })
+
+	bus := eventbus.New()
+	t.Cleanup(bus.Close)
+
+	listener := ventfb.NewFbEventListener(src, bus, nil)
+
+	subCh, unsubscribe := bus.Subscribe("pagos_changed")
+	defer unsubscribe()
+
+	ctx := context.Background()
+	require.NoError(t, listener.Start(ctx))
+
+	// Allow the subscription to register with the Firebird server.
+	time.Sleep(300 * time.Millisecond)
+
+	clienteID, _ := seedZonedClienteFromPool(t, pool)
+	folio := fmt.Sprintf("LIS%X", time.Now().UnixNano()&0xFFFFFF)
+	cargoID, _ := insertCommittedCargo(t, pool, clienteID, folio, decimal.RequireFromString("3000.00"))
+	_ = insertCommittedPago(t, pool, cargoID, decimal.RequireFromString("750.00"))
+
+	select {
+	case <-subCh:
+		t.Log("TestE2E_FbEventListener_RealDB: pagos_changed signal received from bus")
+	case <-time.After(3 * time.Second):
+		t.Fatal("expected pagos_changed bus signal within 3s after committed INSERT")
+	}
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, listener.Stop(stopCtx))
+}
+
+// TestE2E_FbEventListener_TCPDrop_Reconnects is skipped because simulating a
+// true TCP drop against a Dockerised Firebird from the Mac host is not feasible
+// without auxiliary tooling (e.g. tc / iptables / toxiproxy).  The reconnect
+// backoff and synthetic-publish mechanisms are fully covered by the unit test
+// TestFbEventListener_ReconnectBackoff and TestFbEventListener_SyntheticPublishAfterReconnect
+// in fb_event_listener_test.go, which exercise the exact same code paths
+// via a mock FbEventSource and a fake clock.
+//
+//nolint:paralleltest
+func TestE2E_FbEventListener_TCPDrop_Reconnects(t *testing.T) {
+	t.Skip(
+		"TestE2E_FbEventListener_TCPDrop_Reconnects: skipped — injecting a real TCP " +
+			"disconnect against Firebird in Docker is not feasible from the Mac host " +
+			"without toxiproxy or iptables. The reconnect + synthetic-publish logic is " +
+			"fully covered by unit tests TestFbEventListener_ReconnectBackoff and " +
+			"TestFbEventListener_SyntheticPublishAfterReconnect.",
 	)
 }
