@@ -54,7 +54,10 @@ func newHumaConfig(title string) huma.Config {
 // always registered; the feature flag inside sseCfg.SSEEnabled gates whether
 // they actually stream or return 503.
 //
-// pagosRepo and saldosRepo must be non-nil; they back the by-ids endpoints.
+// pagosRepo and ventasRepo must be non-nil; they back the by-ids endpoints.
+// ventasRepo is used for /sync/saldos/by-ids so the response shape (VentaDTO,
+// 38 fields) matches /sync/ventas/zona — the SaldoDTO (15-field raw cache) was
+// causing Android NPEs when Gson left non-null String fields as null.
 //
 // Returns the constructed huma.API for testing / introspection.
 func MountReadRouter(
@@ -64,7 +67,7 @@ func MountReadRouter(
 	sseCfg config.Cobranza,
 	logger *slog.Logger,
 	pagosRepo outbound.PagosRepo,
-	saldosRepo outbound.SaldosRepo,
+	ventasRepo outbound.VentasRepo,
 ) huma.API {
 	cfg := newHumaConfig("MSP API · Cobranza")
 	api := humachi.New(r, cfg)
@@ -81,7 +84,7 @@ func MountReadRouter(
 	sse := newSSEHandler(bus, sseCfg, logger)
 	mountCobranzaSSE(r, sse)
 	// by-ids endpoints — raw chi, flat JSON array, no Huma envelope.
-	byIDs := newByIDsHandlers(pagosRepo, saldosRepo, logger)
+	byIDs := newByIDsHandlers(pagosRepo, ventasRepo, logger)
 	mountByIDs(r, byIDs)
 	return api
 }

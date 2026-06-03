@@ -33,7 +33,7 @@ import (
 
 var (
 	_ outbound.PagosRepo  = (*fakePagosByIDsRepo)(nil)
-	_ outbound.SaldosRepo = (*fakeSaldosByIDsRepo)(nil)
+	_ outbound.VentasRepo = (*fakeVentasByIDsRepo)(nil)
 )
 
 // ─── Fakes ────────────────────────────────────────────────────────────────────
@@ -69,39 +69,20 @@ func (f *fakePagosByIDsRepo) ByIDs(_ context.Context, zonaID int, ids []int) ([]
 	return f.rows, f.err
 }
 
-// fakeSaldosByIDsRepo is a minimal SaldosRepo stub for by-ids unit tests.
-type fakeSaldosByIDsRepo struct {
-	rows       []domain.Saldo
+// fakeVentasByIDsRepo is a minimal VentasRepo stub for by-ids unit tests.
+// It records the last ByIDs call so tests can assert deduplication.
+type fakeVentasByIDsRepo struct {
+	rows       []domain.Venta
 	err        error
 	lastIDs    []int
 	lastZonaID int
 }
 
-func (f *fakeSaldosByIDsRepo) PorVenta(_ context.Context, _ int) (*domain.Saldo, error) {
-	return nil, domain.ErrSaldoNoEncontrado
+func (f *fakeVentasByIDsRepo) SyncPorZona(_ context.Context, _ int, _ time.Time, _, _ int, _ time.Time) (outbound.SyncPage[domain.Venta], error) {
+	return outbound.SyncPage[domain.Venta]{}, nil
 }
 
-func (f *fakeSaldosByIDsRepo) PorCargo(_ context.Context, _ int) (*domain.Saldo, error) {
-	return nil, domain.ErrSaldoNoEncontrado
-}
-
-func (f *fakeSaldosByIDsRepo) EnRutaPorZona(_ context.Context, _ int, _ time.Time) ([]domain.Saldo, error) {
-	return nil, nil
-}
-
-func (f *fakeSaldosByIDsRepo) AbiertasPorCliente(_ context.Context, _ int) ([]domain.Saldo, error) {
-	return nil, nil
-}
-
-func (f *fakeSaldosByIDsRepo) ResumenZonas(_ context.Context) ([]domain.ResumenZona, error) {
-	return nil, nil
-}
-
-func (f *fakeSaldosByIDsRepo) SyncPorZona(_ context.Context, _ int, _ time.Time, _, _ int) (outbound.SyncPage[domain.Saldo], error) {
-	return outbound.SyncPage[domain.Saldo]{}, nil
-}
-
-func (f *fakeSaldosByIDsRepo) ByIDs(_ context.Context, zonaID int, ids []int) ([]domain.Saldo, error) {
+func (f *fakeVentasByIDsRepo) ByIDs(_ context.Context, zonaID int, ids []int) ([]domain.Venta, error) {
 	f.lastZonaID = zonaID
 	f.lastIDs = ids
 	return f.rows, f.err
@@ -136,10 +117,10 @@ func byIDsSaldosOnlyUser() auth.CurrentUser {
 
 // mountByIDsRouter builds a read router with the two stub repos wired, then
 // plants the given CurrentUser.
-func mountByIDsRouter(cu auth.CurrentUser, pagos outbound.PagosRepo, saldos outbound.SaldosRepo) http.Handler {
+func mountByIDsRouter(cu auth.CurrentUser, pagos outbound.PagosRepo, ventas outbound.VentasRepo) http.Handler {
 	r := chi.NewRouter()
 	r.Use(planter(cu))
-	cobranzahttp.MountReadRouter(r, nil, eventbus.New(), config.Cobranza{}, slog.Default(), pagos, saldos)
+	cobranzahttp.MountReadRouter(r, nil, eventbus.New(), config.Cobranza{}, slog.Default(), pagos, ventas)
 	return r
 }
 
@@ -163,19 +144,33 @@ func makePago(impteID, zonaID int) domain.Pago {
 	})
 }
 
-// makeSaldo builds a minimal domain.Saldo for tests.
-func makeSaldo(doctoCCID, zonaID int) domain.Saldo {
+// makeVenta builds a minimal domain.Venta for tests. Fields mirror what the
+// Android VentaDto expects as non-null Strings (frec_pago, cliente_nombre,
+// nombre_cobrador, calle, etc.) — the exact shape that was crashing .isBlank().
+func makeVenta(doctoCCID, zonaID int) domain.Venta {
 	now := time.Date(2026, 5, 15, 10, 0, 0, 0, time.UTC)
-	return domain.HydrateSaldo(domain.HydrateSaldoParams{
-		DoctoCCID:     doctoCCID,
-		ClienteID:     11486,
-		ZonaClienteID: &zonaID,
-		Folio:         "CV-2026-001",
-		FechaCargo:    now,
-		PrecioTotal:   decimal.NewFromInt(5000),
-		TotalImporte:  decimal.NewFromInt(1500),
-		Saldo:         decimal.NewFromInt(3500),
-		UpdatedAt:     now,
+	return domain.HydrateVenta(domain.HydrateVentaParams{
+		DoctoCCID:      doctoCCID,
+		ClienteID:      11486,
+		ZonaClienteID:  &zonaID,
+		Folio:          "Y00002207",
+		FechaCargo:     now,
+		PrecioTotal:    decimal.NewFromInt(8900),
+		TotalImporte:   decimal.NewFromInt(250),
+		ImpteRest:      decimal.NewFromInt(0),
+		Saldo:          decimal.NewFromInt(8650),
+		NumPagos:       2,
+		CargoCancelado: false,
+		UpdatedAt:      now,
+		ClienteNombre:  "JORGE HERNANDEZ GARCIA",
+		NombreCobrador: "COBRADOR RUTA 1",
+		ZonaNombre:     "ZONA 01",
+		Calle:          "CALLE REFORMA 123",
+		Ciudad:         "GUADALAJARA",
+		Estado:         "JALISCO",
+		Telefono:       "3312345678",
+		FrecPago:       "SEMANAL",
+		Vendedor1:      "VENDEDOR UNO",
 	})
 }
 
@@ -200,7 +195,7 @@ func TestByIDs_Pagos_HappyPath(t *testing.T) {
 			makePago(103, 21552),
 		},
 	}
-	handler := mountByIDsRouter(byIDsUser(), pagosRepo, &fakeSaldosByIDsRepo{})
+	handler := mountByIDsRouter(byIDsUser(), pagosRepo, &fakeVentasByIDsRepo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/sync/pagos/by-ids?zona_id=21552&ids=101,102,103", nil)
 	rec := httptest.NewRecorder()
@@ -219,7 +214,7 @@ func TestByIDs_Pagos_HappyPath(t *testing.T) {
 func TestByIDs_Pagos_EmptyIDs(t *testing.T) {
 	t.Parallel()
 
-	handler := mountByIDsRouter(byIDsUser(), &fakePagosByIDsRepo{}, &fakeSaldosByIDsRepo{})
+	handler := mountByIDsRouter(byIDsUser(), &fakePagosByIDsRepo{}, &fakeVentasByIDsRepo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/sync/pagos/by-ids?zona_id=21552&ids=", nil)
 	rec := httptest.NewRecorder()
@@ -238,7 +233,7 @@ func TestByIDs_Pagos_TooMany(t *testing.T) {
 		ids[i] = i + 1
 	}
 
-	handler := mountByIDsRouter(byIDsUser(), &fakePagosByIDsRepo{}, &fakeSaldosByIDsRepo{})
+	handler := mountByIDsRouter(byIDsUser(), &fakePagosByIDsRepo{}, &fakeVentasByIDsRepo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/sync/pagos/by-ids?zona_id=21552&ids="+idsParam(ids...), nil)
 	rec := httptest.NewRecorder()
@@ -251,7 +246,7 @@ func TestByIDs_Pagos_TooMany(t *testing.T) {
 func TestByIDs_Pagos_NonNumeric(t *testing.T) {
 	t.Parallel()
 
-	handler := mountByIDsRouter(byIDsUser(), &fakePagosByIDsRepo{}, &fakeSaldosByIDsRepo{})
+	handler := mountByIDsRouter(byIDsUser(), &fakePagosByIDsRepo{}, &fakeVentasByIDsRepo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/sync/pagos/by-ids?zona_id=21552&ids=1,abc,3", nil)
 	rec := httptest.NewRecorder()
@@ -264,7 +259,7 @@ func TestByIDs_Pagos_NonNumeric(t *testing.T) {
 func TestByIDs_Pagos_ZonaMissing(t *testing.T) {
 	t.Parallel()
 
-	handler := mountByIDsRouter(byIDsUser(), &fakePagosByIDsRepo{}, &fakeSaldosByIDsRepo{})
+	handler := mountByIDsRouter(byIDsUser(), &fakePagosByIDsRepo{}, &fakeVentasByIDsRepo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/sync/pagos/by-ids?ids=1,2,3", nil)
 	rec := httptest.NewRecorder()
@@ -278,7 +273,7 @@ func TestByIDs_Pagos_ZonaForbidden(t *testing.T) {
 	t.Parallel()
 
 	// User with NO cobranza permissions → 403.
-	handler := mountByIDsRouter(noPermUser(), &fakePagosByIDsRepo{}, &fakeSaldosByIDsRepo{})
+	handler := mountByIDsRouter(noPermUser(), &fakePagosByIDsRepo{}, &fakeVentasByIDsRepo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/sync/pagos/by-ids?zona_id=21552&ids=1,2,3", nil)
 	rec := httptest.NewRecorder()
@@ -291,7 +286,7 @@ func TestByIDs_Pagos_DuplicateIDs(t *testing.T) {
 	t.Parallel()
 
 	pagosRepo := &fakePagosByIDsRepo{rows: []domain.Pago{makePago(1, 21552), makePago(2, 21552)}}
-	handler := mountByIDsRouter(byIDsUser(), pagosRepo, &fakeSaldosByIDsRepo{})
+	handler := mountByIDsRouter(byIDsUser(), pagosRepo, &fakeVentasByIDsRepo{})
 
 	// Pass duplicates: 1,1,1,2 → repo should receive deduplicated list.
 	req := httptest.NewRequest(http.MethodGet, "/sync/pagos/by-ids?zona_id=21552&ids=1,1,1,2", nil)
@@ -317,7 +312,7 @@ func TestByIDs_Pagos_ExactlyAt500(t *testing.T) {
 	}
 
 	pagosRepo := &fakePagosByIDsRepo{rows: nil}
-	handler := mountByIDsRouter(byIDsUser(), pagosRepo, &fakeSaldosByIDsRepo{})
+	handler := mountByIDsRouter(byIDsUser(), pagosRepo, &fakeVentasByIDsRepo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/sync/pagos/by-ids?zona_id=21552&ids="+idsParam(ids...), nil)
 	rec := httptest.NewRecorder()
@@ -328,16 +323,20 @@ func TestByIDs_Pagos_ExactlyAt500(t *testing.T) {
 
 // ─── Saldos by-ids tests ────────────────────────────────────────────────────────
 
+// TestByIDs_Saldos_HappyPath verifies that /sync/saldos/by-ids now returns the
+// enriched VentaDTO (38 fields) rather than the legacy SaldoDTO (15 fields).
+// This is the fix for the Android NPE in applyByIds where Gson left non-null
+// String fields (frec_pago, cliente_nombre, nombre_cobrador, calle, …) as null.
 func TestByIDs_Saldos_HappyPath(t *testing.T) {
 	t.Parallel()
 
-	saldosRepo := &fakeSaldosByIDsRepo{
-		rows: []domain.Saldo{
-			makeSaldo(5001, 21552),
-			makeSaldo(5002, 21552),
+	ventasRepo := &fakeVentasByIDsRepo{
+		rows: []domain.Venta{
+			makeVenta(5001, 21552),
+			makeVenta(5002, 21552),
 		},
 	}
-	handler := mountByIDsRouter(byIDsUser(), &fakePagosByIDsRepo{}, saldosRepo)
+	handler := mountByIDsRouter(byIDsUser(), &fakePagosByIDsRepo{}, ventasRepo)
 
 	req := httptest.NewRequest(http.MethodGet, "/sync/saldos/by-ids?zona_id=21552&ids=5001,5002", nil)
 	rec := httptest.NewRecorder()
@@ -345,11 +344,16 @@ func TestByIDs_Saldos_HappyPath(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 
-	var dtos []cobranzahttp.SaldoDTO
+	var dtos []cobranzahttp.VentaDTO
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dtos))
-	assert.Len(t, dtos, 2)
+	require.Len(t, dtos, 2)
 	assert.Equal(t, 5001, dtos[0].DoctoCCID)
 	assert.Equal(t, 5002, dtos[1].DoctoCCID)
+	// Assert the enriched fields that were null before the fix.
+	assert.NotEmpty(t, dtos[0].ClienteNombre, "cliente_nombre must be present in VentaDTO")
+	assert.NotEmpty(t, dtos[0].NombreCobrador, "nombre_cobrador must be present in VentaDTO")
+	assert.NotEmpty(t, dtos[0].FrecPago, "frec_pago must be present in VentaDTO")
+	assert.NotEmpty(t, dtos[0].Calle, "calle must be present in VentaDTO")
 }
 
 func TestByIDs_Saldos_PermDenied(t *testing.T) {
@@ -363,7 +367,7 @@ func TestByIDs_Saldos_PermDenied(t *testing.T) {
 		Nombre:      "Solo Pagos",
 		Permisos:    []string{string(authdomain.PermCobranzaVerPagos)},
 	}
-	handler := mountByIDsRouter(pagosOnlyUser, &fakePagosByIDsRepo{}, &fakeSaldosByIDsRepo{})
+	handler := mountByIDsRouter(pagosOnlyUser, &fakePagosByIDsRepo{}, &fakeVentasByIDsRepo{})
 
 	req := httptest.NewRequest(http.MethodGet, "/sync/saldos/by-ids?zona_id=21552&ids=5001", nil)
 	rec := httptest.NewRecorder()
@@ -376,8 +380,8 @@ func TestByIDs_Saldos_EmptyList_Returns200(t *testing.T) {
 	t.Parallel()
 
 	// When the repo returns no rows the handler must return 200 [].
-	saldosRepo := &fakeSaldosByIDsRepo{rows: nil}
-	handler := mountByIDsRouter(byIDsSaldosOnlyUser(), &fakePagosByIDsRepo{}, saldosRepo)
+	ventasRepo := &fakeVentasByIDsRepo{rows: nil}
+	handler := mountByIDsRouter(byIDsSaldosOnlyUser(), &fakePagosByIDsRepo{}, ventasRepo)
 
 	req := httptest.NewRequest(http.MethodGet, "/sync/saldos/by-ids?zona_id=21552&ids=99999", nil)
 	rec := httptest.NewRecorder()
@@ -385,7 +389,7 @@ func TestByIDs_Saldos_EmptyList_Returns200(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	var dtos []cobranzahttp.SaldoDTO
+	var dtos []cobranzahttp.VentaDTO
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dtos))
 	assert.Empty(t, dtos, "empty result from repo must produce [] not null")
 }
@@ -414,7 +418,7 @@ func TestProperty_ByIDs_ResponseSubsetOfRequest(t *testing.T) {
 		}
 
 		pagosRepo := &fakePagosByIDsRepo{rows: pagos}
-		handler := mountByIDsRouter(byIDsUser(), pagosRepo, &fakeSaldosByIDsRepo{})
+		handler := mountByIDsRouter(byIDsUser(), pagosRepo, &fakeVentasByIDsRepo{})
 
 		req := httptest.NewRequest(http.MethodGet,
 			"/sync/pagos/by-ids?zona_id=21552&ids="+idsParam(reqIDs...), nil)

@@ -139,10 +139,10 @@ func TestByIDs_Pagos_NoWatermarkFiltering(t *testing.T) {
 	})
 
 	pagosRepo := cobranzaventfb.NewPagosRepo(pool)
-	saldosRepo := cobranzaventfb.NewSaldosRepo(pool)
+	ventasRepo := cobranzaventfb.NewVentasRepo(pool)
 
 	// byIDsUser() from handlers_sync_by_ids_test.go — same _test package.
-	handler := mountByIDsRouter(byIDsUser(), pagosRepo, saldosRepo)
+	handler := mountByIDsRouter(byIDsUser(), pagosRepo, ventasRepo)
 
 	req := httptest.NewRequest(http.MethodGet,
 		fmt.Sprintf("/sync/pagos/by-ids?zona_id=%d&ids=%d", zonaID, impteID), nil)
@@ -210,9 +210,9 @@ INSERT INTO MSP_SALDOS_VENTAS (
 	})
 
 	pagosRepo := cobranzaventfb.NewPagosRepo(pool)
-	saldosRepo := cobranzaventfb.NewSaldosRepo(pool)
+	ventasRepo := cobranzaventfb.NewVentasRepo(pool)
 
-	handler := mountByIDsRouter(byIDsUser(), pagosRepo, saldosRepo)
+	handler := mountByIDsRouter(byIDsUser(), pagosRepo, ventasRepo)
 
 	req := httptest.NewRequest(http.MethodGet,
 		fmt.Sprintf("/sync/saldos/by-ids?zona_id=%d&ids=%d,%d", zonaA, doctoCCIDA, doctoCCIDB), nil)
@@ -221,7 +221,7 @@ INSERT INTO MSP_SALDOS_VENTAS (
 
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 
-	var dtos []cobranzahttp.SaldoDTO
+	var dtos []cobranzahttp.VentaDTO
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dtos))
 	require.Len(t, dtos, 1, "only the zona-A row must be returned; zona isolation must hold")
 	assert.Equal(t, doctoCCIDA, dtos[0].DoctoCCID)

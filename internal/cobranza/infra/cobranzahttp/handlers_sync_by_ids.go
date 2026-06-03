@@ -26,13 +26,13 @@ const maxByIDsLimit = 500
 // JSON array — no envelope — and the endpoints are latency-critical.
 type byIDsHandlers struct {
 	pagosRepo  outbound.PagosRepo
-	saldosRepo outbound.SaldosRepo
+	ventasRepo outbound.VentasRepo
 	logger     *slog.Logger
 }
 
 // newByIDsHandlers constructs a byIDsHandlers.
-func newByIDsHandlers(pagos outbound.PagosRepo, saldos outbound.SaldosRepo, logger *slog.Logger) *byIDsHandlers {
-	return &byIDsHandlers{pagosRepo: pagos, saldosRepo: saldos, logger: logger}
+func newByIDsHandlers(pagos outbound.PagosRepo, ventas outbound.VentasRepo, logger *slog.Logger) *byIDsHandlers {
+	return &byIDsHandlers{pagosRepo: pagos, ventasRepo: ventas, logger: logger}
 }
 
 // getPagosByIDs handles GET /v2/cobranza/sync/pagos/by-ids.
@@ -77,11 +77,11 @@ func (h *byIDsHandlers) getPagosByIDs(w http.ResponseWriter, r *http.Request) {
 
 // getSaldosByIDs handles GET /v2/cobranza/sync/saldos/by-ids.
 //
-// Identical contract to getPagosByIDs but returns []SaldoDTO and requires
-// PermCobranzaVerSaldos. The implementation mirrors getPagosByIDs; the dupl
-// linter suppression is justified because the two paths diverge at the
-// permission check, repo call, marshal function, and log key — extracting
-// them into a generic closure would trade concrete readability for abstraction.
+// Returns the enriched VentaDTO (same 38-field shape as /sync/ventas/zona)
+// for the requested DOCTO_CC_IDs, requiring PermCobranzaVerSaldos. The URL
+// stays /sync/saldos/by-ids — only the response shape changes from SaldoDTO
+// (15 raw cache fields) to VentaDTO (full JOIN projection). This fixes the
+// Android NPE in applyByIds where Gson left non-null String fields as null.
 //
 //nolint:dupl // mirrors getPagosByIDs; diverges at perm + repo + marshal — abstraction not worth it
 func (h *byIDsHandlers) getSaldosByIDs(w http.ResponseWriter, r *http.Request) {
@@ -100,17 +100,17 @@ func (h *byIDsHandlers) getSaldosByIDs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(ids) == 0 {
-		writeByIDsJSON(w, marshalSaldoDTOs(nil))
+		writeByIDsJSON(w, marshalVentaDTOs(nil))
 		return
 	}
-	saldos, err := h.saldosRepo.ByIDs(ctx, zonaID, ids)
+	ventas, err := h.ventasRepo.ByIDs(ctx, zonaID, ids)
 	if err != nil {
 		h.logger.ErrorContext(ctx, "cobranza.by_ids_saldos_failed",
 			slog.Int("zona_id", zonaID), slog.Int("ids_count", len(ids)), slog.Any("error", err))
 		writeAppErrorCobranza(w, err)
 		return
 	}
-	writeByIDsJSON(w, marshalSaldoDTOs(saldosToDTOs(saldos)))
+	writeByIDsJSON(w, marshalVentaDTOs(ventasToDTOs(ventas)))
 }
 
 // ─── Shared parse logic ────────────────────────────────────────────────────────
@@ -192,10 +192,10 @@ func pagosToDTOs(pagos []domain.Pago) []PagoDTO {
 	return dtos
 }
 
-func saldosToDTOs(saldos []domain.Saldo) []SaldoDTO {
-	dtos := make([]SaldoDTO, len(saldos))
-	for i, s := range saldos {
-		dtos[i] = toSaldoDTO(s)
+func ventasToDTOs(ventas []domain.Venta) []VentaDTO {
+	dtos := make([]VentaDTO, len(ventas))
+	for i, v := range ventas {
+		dtos[i] = toVentaDTO(v)
 	}
 	return dtos
 }
@@ -226,14 +226,14 @@ func marshalPagoDTOs(dtos []PagoDTO) []byte {
 	return b
 }
 
-// marshalSaldoDTOs serialises a []SaldoDTO to JSON bytes.
-func marshalSaldoDTOs(dtos []SaldoDTO) []byte {
+// marshalVentaDTOs serialises a []VentaDTO to JSON bytes.
+func marshalVentaDTOs(dtos []VentaDTO) []byte {
 	if dtos == nil {
-		dtos = []SaldoDTO{}
+		dtos = []VentaDTO{}
 	}
 	b, err := json.Marshal(dtos)
 	if err != nil {
-		slog.Warn("cobranza.by_ids_marshal_saldo_failed", "error", err)
+		slog.Warn("cobranza.by_ids_marshal_venta_failed", "error", err)
 		return []byte("[]")
 	}
 	return b

@@ -30,4 +30,15 @@ type VentasRepo interface {
 	// row con UPDATED_AT > cursor entra, incluyendo ventas que acaban de
 	// saldarse y tombstones — el cliente decide qué hacer con cada caso.
 	SyncPorZona(ctx context.Context, zonaID int, cursor time.Time, afterID, limit int, desde time.Time) (SyncPage[domain.Venta], error)
+
+	// ByIDs returns the enriched Venta rows for the given primary keys
+	// (DOCTO_CC_IDs) constrained to ZONA_CLIENTE_ID = zonaID. Uses the same
+	// selectVentaCols + ventaFromClause JOIN as SyncPorZona so the response
+	// shape is identical to GET /sync/ventas/zona/{id}. Rows whose PK is in
+	// ids but whose zona does not match are silently excluded (authorization
+	// filter, not 404). No watermark filtering — callers obtain these PKs
+	// from the SSE listener which only publishes committed rows.
+	//
+	// ids may contain duplicates; the result deduplicates by PK.
+	ByIDs(ctx context.Context, zonaID int, ids []int) ([]domain.Venta, error)
 }

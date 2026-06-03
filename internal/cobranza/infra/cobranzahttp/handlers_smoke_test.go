@@ -39,7 +39,7 @@ import (
 func buildSmokeRouter(
 	bus *eventbus.Bus,
 	pagos *fakePagosByIDsRepo,
-	saldos *fakeSaldosByIDsRepo,
+	ventas *fakeVentasByIDsRepo,
 ) http.Handler {
 	sseCfg := config.Cobranza{
 		SSEEnabled:   true,
@@ -47,7 +47,7 @@ func buildSmokeRouter(
 	}
 	r := chi.NewRouter()
 	r.Use(planter(byIDsUser())) // byIDsUser has PermCobranzaVerPagos + PermCobranzaVerSaldos
-	cobranzahttp.MountReadRouter(r, nil, bus, sseCfg, slog.Default(), pagos, saldos)
+	cobranzahttp.MountReadRouter(r, nil, bus, sseCfg, slog.Default(), pagos, ventas)
 	return r
 }
 
@@ -69,7 +69,7 @@ func TestSmoke_ScenarioH(t *testing.T) {
 		makePago(202, zonaID),
 	}
 	pagosRepo := &fakePagosByIDsRepo{rows: pagoRows}
-	saldosRepo := &fakeSaldosByIDsRepo{}
+	saldosRepo := &fakeVentasByIDsRepo{}
 
 	handler := buildSmokeRouter(bus, pagosRepo, saldosRepo)
 	srv := httptest.NewServer(handler)
@@ -195,7 +195,7 @@ func TestSmoke_ScenarioH_EmptyRepo(t *testing.T) {
 	defer bus.Close()
 
 	pagosRepo := &fakePagosByIDsRepo{rows: nil}
-	saldosRepo := &fakeSaldosByIDsRepo{}
+	saldosRepo := &fakeVentasByIDsRepo{}
 
 	handler := buildSmokeRouter(bus, pagosRepo, saldosRepo)
 	srv := httptest.NewServer(handler)

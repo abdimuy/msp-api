@@ -4,6 +4,7 @@ package ventfb
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -96,6 +97,54 @@ func (r *VentasRepo) SyncPorZona(
 		})
 	}
 	return runSyncPage[domain.Venta](ctx, r.pool, cursor, limit, pageQuery, scanVentaRows)
+}
+
+// ByIDs returns the enriched Venta rows for the given primary keys, constrained
+// to ZONA_CLIENTE_ID = zonaID. Uses selectVentaCols + ventaFromClause for
+// shape parity with SyncPorZona. No watermark filtering — the caller (by-ids
+// HTTP endpoint) obtained these PKs from the SSE listener which only publishes
+// committed rows.
+//
+// Duplicate IDs in the input are deduplicated before querying. Rows whose
+// PK is in ids but whose zona does not match are silently excluded.
+//
+//nolint:dupl // structurally mirrors PagosRepo.ByIDs; differs in column list + scanner + return type — abstraction not worth it
+func (r *VentasRepo) ByIDs(ctx context.Context, zonaID int, ids []int) ([]domain.Venta, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	// Dedup input IDs.
+	seen := make(map[int]struct{}, len(ids))
+	unique := make([]int, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+
+	// Build positional placeholders for IN clause.
+	placeholders := make([]string, len(unique))
+	args := make([]any, 0, len(unique)+1)
+	args = append(args, zonaID)
+	for i, id := range unique {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+
+	query := `
+SELECT ` + selectVentaCols + ventaFromClause + `
+WHERE s.ZONA_CLIENTE_ID = ?
+  AND s.DOCTO_CC_ID IN (` + strings.Join(placeholders, ",") + `)`
+
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	rows, err := q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, firebird.MapError(err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanVentaRows(rows)
 }
 
 // ventaSyncSpec parametrizes the enriched venta sync page query. Same cursor

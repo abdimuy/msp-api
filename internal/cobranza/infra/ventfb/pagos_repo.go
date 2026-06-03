@@ -287,6 +287,8 @@ ORDER BY p.UPDATED_AT, p.IMPTE_DOCTO_CC_ID`
 //
 // Duplicate IDs in the input are deduplicated before querying. Rows whose
 // PK is in ids but whose zona does not match are silently excluded.
+//
+//nolint:dupl // structurally mirrors VentasRepo.ByIDs; differs in column list + scanner + return type — abstraction not worth it
 func (r *PagosRepo) ByIDs(ctx context.Context, zonaID int, ids []int) ([]domain.Pago, error) {
 	if len(ids) == 0 {
 		return nil, nil
