@@ -173,13 +173,18 @@ func (h *sseHandler) streamLoop(
 				// Bus was closed; terminate stream gracefully.
 				return
 			}
-			if _, writeErr := fmt.Fprintf(w, "event: %s\ndata: {}\n\n", topic); writeErr != nil {
+			// `ts` es millis epoch UTC: el cliente lo usa para medir
+			// transit + total e2e hasta UI sin depender de NTP perfecto
+			// (host y device deberían diferir <100ms si ambos están al hora).
+			tsMs := time.Now().UnixMilli()
+			if _, writeErr := fmt.Fprintf(w, "event: %s\ndata: {\"ts\":%d}\n\n", topic, tsMs); writeErr != nil {
 				return
 			}
 			flusher.Flush()
 			h.logger.DebugContext(r.Context(), "cobranza.sse_event_pushed",
 				slog.String("kind", kind),
 				slog.Int("zona_id", zonaID),
+				slog.Int64("ts_ms", tsMs),
 			)
 		case <-ticker.C:
 			if _, writeErr := fmt.Fprint(w, ": ping\n\n"); writeErr != nil {
