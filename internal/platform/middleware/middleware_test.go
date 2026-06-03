@@ -175,6 +175,47 @@ func TestSecurityHeaders_Set(t *testing.T) {
 	assert.NotEmpty(t, rec.Header().Get("Referrer-Policy"))
 }
 
+// TestAccessLog_PreservesFlusher es la regresión del bug donde el
+// statusRecorder interno wrappeaba el ResponseWriter sin re-exponer
+// http.Flusher, rompiendo handlers de streaming (SSE) que hacen
+// w.(http.Flusher) — devolvían 500 con code=no_flusher detrás del
+// middleware aunque funcionaran en aislamiento (httptest.NewServer sin
+// AccessLog). El test pega un handler que afirma la conversión a Flusher
+// dentro de un servidor real con el middleware AccessLog encima.
+func TestAccessLog_PreservesFlusher(t *testing.T) {
+	t.Parallel()
+
+	var (
+		flusherOK bool
+		flushed   bool
+	)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		f, ok := w.(http.Flusher)
+		flusherOK = ok
+		if ok {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+			f.Flush()
+			flushed = true
+		}
+	})
+
+	srv := httptest.NewServer(middleware.AccessLog(handler))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	assert.True(t, flusherOK, "AccessLog must preserve http.Flusher for streaming handlers")
+	assert.True(t, flushed, "Flush() must not panic when called through the AccessLog wrapper")
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "ok", string(body))
+}
+
 func TestIsClientGone(t *testing.T) {
 	t.Parallel()
 	assert.False(t, middleware.IsClientGone(context.Background()))

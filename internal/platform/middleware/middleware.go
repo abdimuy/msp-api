@@ -94,6 +94,17 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// Flush forwards to the wrapped ResponseWriter when it implements
+// http.Flusher. Without this, the default *statusRecorder hides the
+// Flusher interface of the underlying writer, breaking streaming handlers
+// (e.g. SSE) that runtime-assert `w.(http.Flusher)`. No-op when the
+// underlying writer doesn't support flushing.
+func (s *statusRecorder) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // AccessLog logs each request with method, path, status, latency and bytes.
 func AccessLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
