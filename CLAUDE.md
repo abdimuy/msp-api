@@ -8,6 +8,8 @@ This file is loaded by Claude Code (and any AI/agent reading the repo) on every 
 
 **The database is a dummy store.** All behavior — ID generation, timestamps, defaults, validation, derived fields, computed columns — lives in Go. The schema is structural only.
 
+> **Scope:** this rule governs our **own Postgres app schema** (`migrations/`). The **Firebird adapter** (`migrations-firebird/`) is exempt — Microsip's `MUEBLERA.FDB` is trigger-driven by construction, so the read-model caches there are materialized with triggers + procedures + `POST_EVENT` and we follow that idiom. See [ADR 0006](docs/adr/0006-firebird-adapter-trigger-rule-exemption.md) for the rationale and what is still forbidden in the Firebird adapter (business rules in triggers, large bodies, mirroring API-owned data).
+
 Forbidden in migrations:
 - `DEFAULT gen_random_uuid()`, `DEFAULT uuid_generate_v4()`, or any UUID generator default. UUIDs are always created in Go via `uuid.New()`.
 - `DEFAULT now()`, `DEFAULT CURRENT_TIMESTAMP`. Timestamps are always set in Go via `time.Now()` (or carried in from a domain method like `audit.MarkUpdated()`).
