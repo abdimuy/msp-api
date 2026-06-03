@@ -149,11 +149,17 @@ func (h *sseHandler) authorizeSSE(w http.ResponseWriter, r *http.Request, kind s
 
 // streamLoop runs the select loop, writing events and keep-alive pings until
 // the client disconnects or the bus is closed.
+//
+// The event data format is: {"ts":N,"ids":[i1,i2,...]}
+// where ts is milliseconds since epoch UTC and ids is the compact JSON array
+// of cobranza IDs that changed. ids may be empty ([]): it signals "something
+// changed, do a cursor sync" — clients that only parse ts ignore the ids field
+// and degrade gracefully.
 func (h *sseHandler) streamLoop(
 	w http.ResponseWriter,
 	r *http.Request,
 	flusher http.Flusher,
-	ch <-chan struct{},
+	ch <-chan []int,
 	topic, kind string,
 	zonaID int,
 ) {
@@ -168,7 +174,7 @@ func (h *sseHandler) streamLoop(
 		select {
 		case <-r.Context().Done():
 			return
-		case _, open := <-ch:
+		case ids, open := <-ch:
 			if !open {
 				// Bus was closed; terminate stream gracefully.
 				return
@@ -177,7 +183,12 @@ func (h *sseHandler) streamLoop(
 			// transit + total e2e hasta UI sin depender de NTP perfecto
 			// (host y device deberían diferir <100ms si ambos están al hora).
 			tsMs := time.Now().UnixMilli()
-			if _, writeErr := fmt.Fprintf(w, "event: %s\ndata: {\"ts\":%d}\n\n", topic, tsMs); writeErr != nil {
+
+			// Build compact JSON array "[i1,i2,...]" without importing encoding/json.
+			idsJSON := buildIDsJSON(ids)
+
+			if _, writeErr := fmt.Fprintf(w, "event: %s\ndata: {\"ts\":%d,\"ids\":%s}\n\n",
+				topic, tsMs, idsJSON); writeErr != nil {
 				return
 			}
 			flusher.Flush()
@@ -185,6 +196,7 @@ func (h *sseHandler) streamLoop(
 				slog.String("kind", kind),
 				slog.Int("zona_id", zonaID),
 				slog.Int64("ts_ms", tsMs),
+				slog.Int("ids_count", len(ids)),
 			)
 		case <-ticker.C:
 			if _, writeErr := fmt.Fprint(w, ": ping\n\n"); writeErr != nil {
@@ -200,4 +212,24 @@ func (h *sseHandler) streamLoop(
 func mountCobranzaSSE(r chi.Router, h *sseHandler) {
 	r.Get("/sync/pagos/zona/{zona_id}/stream", h.streamPagos)
 	r.Get("/sync/saldos/zona/{zona_id}/stream", h.streamSaldos)
+}
+
+// buildIDsJSON builds a compact JSON array string "[i1,i2,...]" from a slice
+// of ints. Returns "[]" for nil or empty slices. Avoids importing encoding/json
+// to keep the hot path allocation-free for small slices.
+func buildIDsJSON(ids []int) string {
+	if len(ids) == 0 {
+		return "[]"
+	}
+	// Pre-allocate: each int ≤10 digits + comma + brackets.
+	buf := make([]byte, 0, 1+len(ids)*6)
+	buf = append(buf, '[')
+	for i, id := range ids {
+		if i > 0 {
+			buf = append(buf, ',')
+		}
+		buf = strconv.AppendInt(buf, int64(id), 10)
+	}
+	buf = append(buf, ']')
+	return string(buf)
 }

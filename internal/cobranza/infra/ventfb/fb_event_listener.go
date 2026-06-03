@@ -167,8 +167,10 @@ func (l *FbEventListener) loop(ctx context.Context) {
 				return
 			}
 			// Synthetic publish before next attempt.
-			l.bus.Publish(topicPagos)
-			l.bus.Publish(topicSaldos)
+			// commit 6 replaces these nil-ids publishes with a Since-call
+			// against the changelog repo so real IDs are carried.
+			l.bus.Publish(topicPagos, nil)
+			l.bus.Publish(topicSaldos, nil)
 			attempt = min(attempt+1, len(l.backoff)-1)
 			continue
 		}
@@ -198,8 +200,10 @@ func (l *FbEventListener) loop(ctx context.Context) {
 				return
 			}
 			// Synthetic publish before reopening.
-			l.bus.Publish(topicPagos)
-			l.bus.Publish(topicSaldos)
+			// commit 6 replaces these nil-ids publishes with a Since-call
+			// against the changelog repo so real IDs are carried.
+			l.bus.Publish(topicPagos, nil)
+			l.bus.Publish(topicSaldos, nil)
 			attempt = min(attempt+1, len(l.backoff)-1)
 		}
 	}
@@ -217,7 +221,7 @@ func (l *FbEventListener) drain(ctx context.Context, eventCh <-chan outbound.FbE
 			if !ok {
 				return true // channel closed — driver dropped the connection
 			}
-			l.bus.Publish(ev.Name)
+			l.bus.Publish(ev.Name, nil) // commit 6 replaces this with a Since-call against the changelog repo.
 			l.logger.DebugContext(
 				ctx, "fb_event_listener.event_received",
 				slog.String("name", ev.Name),

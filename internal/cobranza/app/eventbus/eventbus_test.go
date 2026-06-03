@@ -62,11 +62,11 @@ func TestBus_SingleSubscriber_ReceivesSignal(t *testing.T) {
 	ch, unsub := b.Subscribe("pagos_changed")
 	defer unsub()
 
-	b.Publish("pagos_changed")
+	b.Publish("pagos_changed", []int{1, 2, 3})
 
 	select {
-	case <-ch:
-		// received
+	case ids := <-ch:
+		assert.Equal(t, []int{1, 2, 3}, ids, "expected received ids to match published ids")
 	case <-time.After(time.Second):
 		t.Fatal("subscriber did not receive signal within 1s")
 	}
@@ -79,18 +79,19 @@ func TestBus_MultipleSubscribers_AllReceiveSignal(t *testing.T) {
 	defer b.Close()
 
 	const n = 10
-	channels := make([]<-chan struct{}, n)
+	channels := make([]<-chan []int, n)
 	for i := range n {
 		ch, unsub := b.Subscribe("topic")
 		t.Cleanup(unsub)
 		channels[i] = ch
 	}
 
-	b.Publish("topic")
+	b.Publish("topic", []int{42})
 
 	for i, ch := range channels {
 		select {
-		case <-ch:
+		case ids := <-ch:
+			assert.Equal(t, []int{42}, ids, "subscriber %d received wrong ids", i)
 		case <-time.After(time.Second):
 			t.Fatalf("subscriber %d did not receive signal", i)
 		}
@@ -106,7 +107,7 @@ func TestBus_Publish_DifferentTopic_NoSignal(t *testing.T) {
 	ch, unsub := b.Subscribe("pagos_changed")
 	defer unsub()
 
-	b.Publish("saldos_changed")
+	b.Publish("saldos_changed", []int{99})
 
 	select {
 	case <-ch:
@@ -125,7 +126,7 @@ func TestBus_Unsubscribe_StopsDelivery(t *testing.T) {
 	ch, unsub := b.Subscribe("topic")
 	unsub() // unsubscribe immediately
 
-	b.Publish("topic")
+	b.Publish("topic", []int{1})
 
 	select {
 	case <-ch:
@@ -139,7 +140,7 @@ func TestBus_Unsubscribe_StopsDelivery(t *testing.T) {
 
 // TestBus_SlowSubscriber_PublishNeverBlocks verifies that Publish returns
 // quickly even if a subscriber never drains its channel. The buffer=1 +
-// select-default pattern guarantees this.
+// latest-wins coalescing guarantees this.
 func TestBus_SlowSubscriber_PublishNeverBlocks(t *testing.T) {
 	t.Parallel()
 	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
@@ -153,8 +154,8 @@ func TestBus_SlowSubscriber_PublishNeverBlocks(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for range 100 {
-			b.Publish("topic")
+		for i := range 100 {
+			b.Publish("topic", []int{i})
 		}
 	}()
 
@@ -182,7 +183,7 @@ func TestBus_PublishAfterClose_NoOp(t *testing.T) {
 	b := eventbus.New()
 	b.Close()
 	// Must not panic.
-	b.Publish("pagos_changed")
+	b.Publish("pagos_changed", []int{1})
 }
 
 func TestBus_SubscribeAfterClose_ReturnsClosedChannel(t *testing.T) {
@@ -222,8 +223,8 @@ func TestBus_UnsubscribeDuringPublish_NoDeadlock(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for !stop.Load() {
-			b.Publish("topic")
+		for i := 0; !stop.Load(); i++ {
+			b.Publish("topic", []int{i})
 			time.Sleep(0) // yield so subscriber goroutines run
 		}
 	}()
@@ -270,7 +271,7 @@ func TestBus_ConcurrencyStress(t *testing.T) {
 	durations := make([]time.Duration, numPublish)
 	for i := range numPublish {
 		start := time.Now()
-		b.Publish("pagos_changed")
+		b.Publish("pagos_changed", []int{i})
 		durations[i] = time.Since(start)
 	}
 
@@ -306,7 +307,7 @@ func TestProperty_Bus_NoLeaksNoPanics(t *testing.T) {
 		defer b.Close()
 
 		type subEntry struct {
-			ch       <-chan struct{}
+			ch       <-chan []int
 			unsub    func()
 			topic    string
 			unsubbed bool
@@ -332,22 +333,23 @@ func TestProperty_Bus_NoLeaksNoPanics(t *testing.T) {
 				})
 
 			case 1: // publish
-				b.Publish(topic)
+				ids := []int{rapid.IntRange(1, 1000).Draw(rt, "id")}
+				b.Publish(topic, ids)
 
 				// Liveness: every active subscriber of this topic should have
-				// a signal pending (buffer=1 fills on Publish). If the channel
-				// was already full from a prior Publish the new signal was
-				// dropped (coalesced), but there is still a pending signal —
-				// try draining up to 1 slot, which accounts for both cases.
+				// a payload pending (buffer=1 fills on Publish). If the channel
+				// was already full from a prior Publish the new payload replaced
+				// the old one (latest-wins), but there is still a pending payload.
+				// Try draining up to 1 slot, which accounts for both cases.
 				for _, e := range entries {
 					if !e.unsubbed && e.topic == topic {
 						select {
 						case <-e.ch:
-							// Drained the signal; invariant confirmed.
+							// Drained the payload; invariant confirmed.
 						default:
 							// Channel was already empty after a prior drain OR
-							// the signal was coalesced away. Both are valid
-							// signal-only semantics; no assertion failure.
+							// the payload was coalesced away. Both are valid
+							// semantics; no assertion failure.
 						}
 					}
 				}
@@ -378,8 +380,8 @@ func TestProperty_Bus_NoLeaksNoPanics(t *testing.T) {
 }
 
 // TestProperty_Bus_SubscribePublishLiveness is a focused property test for the
-// liveness invariant: after Publish(topic), every subscriber active at that
-// moment must have a signal waiting.
+// liveness invariant: after Publish(topic, ids), every subscriber active at
+// that moment must have a payload waiting.
 func TestProperty_Bus_SubscribePublishLiveness(t *testing.T) {
 	t.Parallel()
 
@@ -388,7 +390,7 @@ func TestProperty_Bus_SubscribePublishLiveness(t *testing.T) {
 		defer b.Close()
 
 		n := rapid.IntRange(1, 20).Draw(rt, "num_subs")
-		channels := make([]<-chan struct{}, n)
+		channels := make([]<-chan []int, n)
 		unsubs := make([]func(), n)
 		for i := range n {
 			ch, unsub := b.Subscribe("t")
@@ -401,13 +403,14 @@ func TestProperty_Bus_SubscribePublishLiveness(t *testing.T) {
 			}
 		}()
 
-		b.Publish("t")
+		sentIDs := []int{1, 2, 3}
+		b.Publish("t", sentIDs)
 
-		// Each subscriber must have exactly one signal pending.
+		// Each subscriber must have exactly one payload pending.
 		for i, ch := range channels {
 			select {
-			case <-ch:
-				// signal received
+			case ids := <-ch:
+				assert.Equal(rt, sentIDs, ids, "subscriber %d received wrong ids", i)
 			case <-time.After(100 * time.Millisecond):
 				rt.Fatalf("subscriber %d did not receive signal after Publish", i)
 			}
@@ -424,7 +427,7 @@ func TestProperty_Bus_CloseUnblocksSubs(t *testing.T) {
 		b := eventbus.New()
 
 		n := rapid.IntRange(1, 10).Draw(rt, "num_subs")
-		channels := make([]<-chan struct{}, n)
+		channels := make([]<-chan []int, n)
 		for i := range n {
 			ch, _ := b.Subscribe("t") // unsub not needed; Close handles cleanup
 			channels[i] = ch
@@ -439,6 +442,193 @@ func TestProperty_Bus_CloseUnblocksSubs(t *testing.T) {
 			case <-time.After(100 * time.Millisecond):
 				rt.Fatalf("subscriber %d channel not closed within 100ms after Bus.Close", i)
 			}
+		}
+	})
+}
+
+// TestProperty_Eventbus_NoPanicsUnderRandomOps uses rapid to generate random
+// sequences of Subscribe/Publish/Unsubscribe/Close operations and asserts:
+//   - No panics.
+//   - No goroutine leaks (goleak).
+//   - Coalescing contract holds (latest payload visible in buffer).
+func TestProperty_Eventbus_NoPanicsUnderRandomOps(t *testing.T) {
+	t.Parallel()
+
+	rapid.Check(t, func(rt *rapid.T) {
+		defer goleak.VerifyNone(rt, goleak.IgnoreCurrent())
+
+		b := eventbus.New()
+
+		type entry struct {
+			ch       <-chan []int
+			unsub    func()
+			topic    string
+			unsubbed bool
+		}
+
+		topics := []string{"pagos_changed", "saldos_changed"}
+		var entries []*entry
+
+		ops := rapid.IntRange(1, 50).Draw(rt, "ops")
+		for range ops {
+			op := rapid.IntRange(0, 3).Draw(rt, "op")
+			topic := rapid.SampledFrom(topics).Draw(rt, "topic")
+
+			switch op {
+			case 0: // subscribe
+				ch, unsub := b.Subscribe(topic)
+				entries = append(entries, &entry{ch: ch, unsub: unsub, topic: topic})
+
+			case 1: // publish with random ids
+				n := rapid.IntRange(0, 5).Draw(rt, "n_ids")
+				ids := make([]int, n)
+				for i := range n {
+					ids[i] = rapid.IntRange(1, 9999).Draw(rt, "id")
+				}
+				b.Publish(topic, ids)
+
+			case 2: // unsubscribe random active entry
+				active := make([]*entry, 0, len(entries))
+				for _, e := range entries {
+					if !e.unsubbed {
+						active = append(active, e)
+					}
+				}
+				if len(active) > 0 {
+					idx := rapid.IntRange(0, len(active)-1).Draw(rt, "idx")
+					e := active[idx]
+					e.unsub()
+					e.unsubbed = true
+				}
+
+			case 3: // close — then stop loop
+				for _, e := range entries {
+					if !e.unsubbed {
+						e.unsub()
+					}
+				}
+				b.Close()
+				return
+			}
+		}
+
+		// Clean up.
+		for _, e := range entries {
+			if !e.unsubbed {
+				e.unsub()
+			}
+		}
+		b.Close()
+	})
+}
+
+// TestProperty_Eventbus_LatestWinsCoalescing verifies that when a subscriber
+// does not drain, multiple Publishes result in the latest payload being visible.
+func TestProperty_Eventbus_LatestWinsCoalescing(t *testing.T) {
+	t.Parallel()
+
+	b := eventbus.New()
+	defer b.Close()
+
+	ch, unsub := b.Subscribe("topic")
+	defer unsub()
+
+	// Publish three different payloads without the subscriber reading.
+	first := []int{1, 2, 3}
+	second := []int{4, 5, 6}
+	third := []int{7, 8, 9}
+
+	b.Publish("topic", first)
+	b.Publish("topic", second)
+	b.Publish("topic", third)
+
+	// Subscriber should receive the LAST payload (latest-wins coalescing).
+	select {
+	case ids := <-ch:
+		assert.Equal(t, third, ids, "latest-wins: subscriber must receive the last published ids")
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("subscriber did not receive payload within 200ms")
+	}
+}
+
+// TestProperty_Eventbus_EmptyPayloadDelivered verifies that Publish with nil
+// and Publish with []int{} both deliver an empty (non-nil) slice to a waiting
+// subscriber. Empty ids is a valid wakeup signal for cursor sync.
+func TestProperty_Eventbus_EmptyPayloadDelivered(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil_becomes_empty_slice", func(t *testing.T) {
+		t.Parallel()
+
+		b := eventbus.New()
+		defer b.Close()
+
+		ch, unsub := b.Subscribe("topic")
+		defer unsub()
+
+		b.Publish("topic", nil)
+
+		select {
+		case ids, ok := <-ch:
+			require.True(t, ok, "channel must be open")
+			assert.NotNil(t, ids, "nil publish must be delivered as non-nil empty slice")
+			assert.Empty(t, ids, "nil publish must deliver empty ids")
+		case <-time.After(200 * time.Millisecond):
+			t.Fatal("subscriber did not receive nil-publish wakeup within 200ms")
+		}
+	})
+
+	t.Run("empty_slice_delivered", func(t *testing.T) {
+		t.Parallel()
+
+		b := eventbus.New()
+		defer b.Close()
+
+		ch, unsub := b.Subscribe("topic")
+		defer unsub()
+
+		b.Publish("topic", []int{})
+
+		select {
+		case ids, ok := <-ch:
+			require.True(t, ok, "channel must be open")
+			assert.NotNil(t, ids, "empty publish must deliver non-nil slice")
+			assert.Empty(t, ids, "empty publish must deliver empty ids")
+		case <-time.After(200 * time.Millisecond):
+			t.Fatal("subscriber did not receive empty-publish wakeup within 200ms")
+		}
+	})
+}
+
+// TestProperty_Eventbus_ActiveSubscriberAlwaysGetsLastSignal verifies that at
+// least one Publish after Subscribe (but before Unsubscribe) means the channel
+// has ≥1 deliverable signal.
+func TestProperty_Eventbus_ActiveSubscriberAlwaysGetsLastSignal(t *testing.T) {
+	t.Parallel()
+
+	rapid.Check(t, func(rt *rapid.T) {
+		b := eventbus.New()
+		defer b.Close()
+
+		ch, unsub := b.Subscribe("topic")
+		defer unsub()
+
+		// Publish at least one payload with random ids.
+		numPublish := rapid.IntRange(1, 10).Draw(rt, "num_publish")
+		var lastIDs []int
+		for i := range numPublish {
+			lastIDs = []int{i + 1}
+			b.Publish("topic", lastIDs)
+		}
+
+		// Channel must have a pending signal (latest-wins: it holds the last payload).
+		select {
+		case ids, ok := <-ch:
+			require.True(rt, ok, "channel must be open before unsubscribe")
+			assert.Equal(rt, lastIDs, ids,
+				"active subscriber must receive the last published payload")
+		case <-time.After(100 * time.Millisecond):
+			rt.Fatal("active subscriber must have at least one signal pending after Publish")
 		}
 	})
 }

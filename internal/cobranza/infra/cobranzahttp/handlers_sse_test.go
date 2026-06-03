@@ -212,7 +212,7 @@ func TestSSE_PublishDeliversEvent(t *testing.T) {
 	// Give the handler a moment to subscribe before publishing.
 	time.Sleep(10 * time.Millisecond)
 
-	bus.Publish("pagos_changed")
+	bus.Publish("pagos_changed", []int{101, 202})
 
 	lineCh := make(chan string, 1)
 	go func() {
@@ -324,7 +324,7 @@ func TestSSE_SlowClient_DoesNotBlockPublisher(t *testing.T) {
 	}, 500*time.Millisecond, 5*time.Millisecond,
 		"both clients must be subscribed before publishing")
 
-	bus.Publish("pagos_changed")
+	bus.Publish("pagos_changed", []int{})
 
 	lineCh := make(chan string, 1)
 	go func() {
@@ -393,7 +393,7 @@ func TestSSE_100Clients_1000Publishes_Race(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			bus.Publish("pagos_changed")
+			bus.Publish("pagos_changed", []int{})
 		}()
 	}
 	wg.Wait()
