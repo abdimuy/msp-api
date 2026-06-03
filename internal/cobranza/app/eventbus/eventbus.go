@@ -100,6 +100,15 @@ func (b *Bus) Publish(topic string) {
 	}
 }
 
+// SubscriberCount returns the number of active subscribers for topic.
+// It acquires a read lock so it is safe for concurrent use and does not
+// contend with Publish.
+func (b *Bus) SubscriberCount(topic string) int {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return len(b.subs[topic])
+}
+
 // Close shuts down the Bus. It closes every subscriber channel (so range
 // loops and blocking reads on subscriber channels will unblock) and clears
 // the internal map. Idempotent: multiple Close calls are safe.

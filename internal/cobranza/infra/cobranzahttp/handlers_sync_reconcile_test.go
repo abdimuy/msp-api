@@ -4,6 +4,7 @@ package cobranzahttp_test
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -17,8 +18,10 @@ import (
 	"github.com/abdimuy/msp-api/internal/auth"
 	authdomain "github.com/abdimuy/msp-api/internal/auth/domain"
 	cobranzaapp "github.com/abdimuy/msp-api/internal/cobranza/app"
+	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
 	"github.com/abdimuy/msp-api/internal/cobranza/infra/cobranzahttp"
 	"github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
+	"github.com/abdimuy/msp-api/internal/platform/config"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -118,7 +121,7 @@ func buildReconcileSvc(pagosR outbound.PagosReconcileRepo, saldosR outbound.Sald
 func mountReconcileRouter(cu auth.CurrentUser, svc *cobranzaapp.Service) http.Handler {
 	r := chi.NewRouter()
 	r.Use(planter(cu))
-	cobranzahttp.MountReadRouter(r, svc)
+	cobranzahttp.MountReadRouter(r, svc, eventbus.New(), config.Cobranza{}, slog.Default())
 	return r
 }
 
@@ -321,7 +324,7 @@ func TestHandler_SyncPagosDigest_Unauthorized(t *testing.T) {
 	svc := buildReconcileSvc(&fakePagosReconcileRepo{}, &fakeSaldosReconcileRepo{})
 	r := chi.NewRouter()
 	// No planter — context has no CurrentUser.
-	cobranzahttp.MountReadRouter(r, svc)
+	cobranzahttp.MountReadRouter(r, svc, eventbus.New(), config.Cobranza{}, slog.Default())
 
 	req := httptest.NewRequest(http.MethodGet, "/sync/pagos/zona/1/digest", nil)
 	rec := httptest.NewRecorder()

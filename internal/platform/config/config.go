@@ -51,6 +51,7 @@ func (e Environment) IsValid() bool {
 // Config aggregates all runtime configuration.
 type Config struct {
 	App            App
+	Cobranza       Cobranza
 	HTTP           HTTP
 	Postgres       Postgres
 	Firebird       Firebird
@@ -58,6 +59,18 @@ type Config struct {
 	Sync           Sync
 	Storage        Storage
 	ImageProcessor ImageProcessor
+}
+
+// Cobranza holds cobranza-module-specific runtime knobs.
+type Cobranza struct {
+	// SSEEnabled gates the SSE streaming endpoints. Default false so the
+	// digest-reconcile path (commit 4) can be validated in production for a
+	// week before turning push on.
+	SSEEnabled bool `env:"COBRANZA_SSE_ENABLED" envDefault:"false"`
+	// SSEPingEvery controls how often the server writes an SSE keep-alive
+	// comment. Clients and proxies silently drop the ping; it only exists to
+	// keep the TCP connection alive through idle timeouts.
+	SSEPingEvery time.Duration `env:"COBRANZA_SSE_PING_INTERVAL" envDefault:"25s"`
 }
 
 // ImageProcessor holds the runtime knobs for the

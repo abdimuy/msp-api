@@ -19,6 +19,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/auth"
 	authdomain "github.com/abdimuy/msp-api/internal/auth/domain"
 	cobranzaapp "github.com/abdimuy/msp-api/internal/cobranza/app"
+	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
 	"github.com/abdimuy/msp-api/internal/cobranza/infra/cobranzahttp"
 	cobranzaventfb "github.com/abdimuy/msp-api/internal/cobranza/infra/ventfb"
 	cobranzaoutbound "github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
@@ -203,7 +204,7 @@ func buildReadRouter(txCtx context.Context, svc *cobranzaapp.Service, cu auth.Cu
 	r := chi.NewRouter()
 	r.Use(txInjector(txCtx))
 	r.Use(planter(cu))
-	cobranzahttp.MountReadRouter(r, svc)
+	cobranzahttp.MountReadRouter(r, svc, eventbus.New(), config.Cobranza{}, slog.Default())
 	return r
 }
 

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -22,9 +23,11 @@ import (
 	"github.com/abdimuy/msp-api/internal/auth"
 	authdomain "github.com/abdimuy/msp-api/internal/auth/domain"
 	cobranzaapp "github.com/abdimuy/msp-api/internal/cobranza/app"
+	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
 	"github.com/abdimuy/msp-api/internal/cobranza/domain"
 	"github.com/abdimuy/msp-api/internal/cobranza/infra/cobranzahttp"
 	"github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
+	"github.com/abdimuy/msp-api/internal/platform/config"
 )
 
 // ─── Compile-time interface checks ────────────────────────────────────────────
@@ -384,10 +387,12 @@ func buildTestService(
 }
 
 // mountReadWithUser wires a read router with a planted CurrentUser.
+// SSE is disabled (default config) so the SSE routes return 503; tests for
+// SSE behaviour live in handlers_sse_test.go.
 func mountReadWithUser(cu auth.CurrentUser, svc *cobranzaapp.Service) http.Handler {
 	r := chi.NewRouter()
 	r.Use(planter(cu))
-	cobranzahttp.MountReadRouter(r, svc)
+	cobranzahttp.MountReadRouter(r, svc, eventbus.New(), config.Cobranza{}, slog.Default())
 	return r
 }
 

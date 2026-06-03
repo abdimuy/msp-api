@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -19,9 +20,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	cobranzaapp "github.com/abdimuy/msp-api/internal/cobranza/app"
+	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
 	"github.com/abdimuy/msp-api/internal/cobranza/domain"
 	"github.com/abdimuy/msp-api/internal/cobranza/infra/cobranzahttp"
 	"github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
+	"github.com/abdimuy/msp-api/internal/platform/config"
 )
 
 // ─── Multipart helper ─────────────────────────────────────────────────────────
@@ -83,7 +86,7 @@ func seedHTTPImagen(t *testing.T, imagenes *fakePagosImagenesRepo, storage *fake
 // used to test the 401 path on the raw chi endpoint.
 func buildBareReadRouter(svc *cobranzaapp.Service) http.Handler {
 	r := chi.NewRouter()
-	cobranzahttp.MountReadRouter(r, svc)
+	cobranzahttp.MountReadRouter(r, svc, eventbus.New(), config.Cobranza{}, slog.Default())
 	return r
 }
 

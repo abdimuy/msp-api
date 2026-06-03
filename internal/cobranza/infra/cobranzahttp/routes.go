@@ -5,6 +5,7 @@
 package cobranzahttp
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -12,7 +13,9 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	cobranzaapp "github.com/abdimuy/msp-api/internal/cobranza/app"
+	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
 	"github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
+	"github.com/abdimuy/msp-api/internal/platform/config"
 )
 
 // securitySchemeName is the OpenAPI security-scheme identifier referenced by
@@ -42,11 +45,23 @@ func newHumaConfig(title string) huma.Config {
 // pago creation/imágenes) under the supplied chi router. The router is
 // expected to have authn already applied upstream.
 //
-// The streaming GET imagen endpoint is wired as a raw chi handler (not Huma)
-// to support binary streaming with ETag caching.
+// The streaming GET imagen endpoint and the SSE push endpoints are wired as
+// raw chi handlers (not Huma) to support binary streaming and chunked
+// transfer encoding respectively.
+//
+// bus, sseCfg, and logger are required for the SSE endpoints. Pass a
+// non-nil *eventbus.Bus obtained from eventbus.New(). The SSE routes are
+// always registered; the feature flag inside sseCfg.SSEEnabled gates whether
+// they actually stream or return 503.
 //
 // Returns the constructed huma.API for testing / introspection.
-func MountReadRouter(r chi.Router, svc *cobranzaapp.Service) huma.API {
+func MountReadRouter(
+	r chi.Router,
+	svc *cobranzaapp.Service,
+	bus *eventbus.Bus,
+	sseCfg config.Cobranza,
+	logger *slog.Logger,
+) huma.API {
 	cfg := newHumaConfig("MSP API · Cobranza")
 	api := humachi.New(r, cfg)
 	h := NewHandlers(svc, nil, nil)
@@ -56,6 +71,11 @@ func MountReadRouter(r chi.Router, svc *cobranzaapp.Service) huma.API {
 	// payloads; streaming arbitrary-size binary blobs with ETag + Cache-Control
 	// is cleaner via http.ResponseWriter.
 	mountObtenerImagenPago(r, h)
+	// SSE push endpoints — raw chi because Huma does not support streaming.
+	// Feature flag (sseCfg.SSEEnabled) is checked inside each handler; the
+	// routes are always registered so 503 is returned when the flag is off.
+	sse := newSSEHandler(bus, sseCfg, logger)
+	mountCobranzaSSE(r, sse)
 	return api
 }
 

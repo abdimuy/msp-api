@@ -15,6 +15,42 @@ import (
 	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
 )
 
+// ── SubscriberCount ───────────────────────────────────────────────────────────
+
+func TestBus_SubscriberCount(t *testing.T) {
+	t.Parallel()
+
+	b := eventbus.New()
+	defer b.Close()
+
+	assert.Equal(t, 0, b.SubscriberCount("topic"), "empty bus must return 0")
+
+	_, unsub1 := b.Subscribe("topic")
+	assert.Equal(t, 1, b.SubscriberCount("topic"), "one subscriber")
+
+	_, unsub2 := b.Subscribe("topic")
+	assert.Equal(t, 2, b.SubscriberCount("topic"), "two subscribers")
+
+	unsub1()
+	assert.Equal(t, 1, b.SubscriberCount("topic"), "back to one after first unsub")
+
+	unsub2()
+	assert.Equal(t, 0, b.SubscriberCount("topic"), "zero after all unsubs")
+}
+
+func TestBus_SubscriberCount_DifferentTopics_Independent(t *testing.T) {
+	t.Parallel()
+
+	b := eventbus.New()
+	defer b.Close()
+
+	_, unsub := b.Subscribe("pagos_changed")
+	defer unsub()
+
+	assert.Equal(t, 1, b.SubscriberCount("pagos_changed"))
+	assert.Equal(t, 0, b.SubscriberCount("saldos_changed"), "unrelated topic must be 0")
+}
+
 // ── Basic deterministic tests ─────────────────────────────────────────────────
 
 func TestBus_SingleSubscriber_ReceivesSignal(t *testing.T) {

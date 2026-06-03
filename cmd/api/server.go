@@ -28,6 +28,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/ventas/infra/venthttp"
 
 	cobranzaapp "github.com/abdimuy/msp-api/internal/cobranza/app"
+	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
 	"github.com/abdimuy/msp-api/internal/cobranza/infra/cobranzahttp"
 	cobranzaoutbound "github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
 )
@@ -125,6 +126,8 @@ func provideRootHandler(
 	cobranzaSvc *cobranzaapp.Service,
 	cobranzaReconciler *cobranzaapp.Reconciler,
 	cobranzaErrors cobranzaoutbound.ErrorsRepo,
+	cobranzaBus *eventbus.Bus,
+	logger *slog.Logger,
 ) RootHandler {
 	r := chi.NewRouter()
 
@@ -178,7 +181,7 @@ func provideRootHandler(
 		// the handler falls back to the idempotent fast-path).
 		r.Route("/cobranza", func(r chi.Router) {
 			r.Use(authn.Handler)
-			cobranzahttp.MountReadRouter(r, cobranzaSvc)
+			cobranzahttp.MountReadRouter(r, cobranzaSvc, cobranzaBus, cfg.Cobranza, logger)
 		})
 
 		// Cobranza admin endpoints — authn only; no failed-intent capture.
