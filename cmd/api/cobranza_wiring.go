@@ -187,11 +187,14 @@ func provideCobranzaSaldosReconcileRepo(p *firebird.Pool) cobranzaoutbound.Saldo
 // needs different cadence.
 func provideCobranzaReconcilerConfig() cobranzaapp.ReconcilerConfig {
 	return cobranzaapp.ReconcilerConfig{
-		Interval:               7 * 24 * time.Hour,
-		PageSize:               1000,
-		DriftLog:               true,
-		FixDrift:               true,
-		TombstoneRetentionDays: 30,
+		Interval:                 7 * 24 * time.Hour,
+		PageSize:                 1000,
+		DriftLog:                 true,
+		FixDrift:                 true,
+		TombstoneRetentionDays:   30,
+		ChangelogRetentionDays:   7,
+		ChangelogPruneInterval:   1 * time.Hour,
+		ChangelogPruneMaxPerCall: 50_000,
 	}
 }
 
@@ -270,21 +273,25 @@ func provideCobranzaReconciler(
 	pagosRecomputer cobranzaoutbound.PagosRecomputer,
 	saldosCleaner cobranzaoutbound.SaldosTombstoneCleaner,
 	pagosCleaner cobranzaoutbound.PagosTombstoneCleaner,
+	pagosChangelog cobranzaoutbound.PagosChangelogRepo,
+	saldosChangelog cobranzaoutbound.SaldosChangelogRepo,
 	clock cobranzaoutbound.Clock,
 	cfg cobranzaapp.ReconcilerConfig,
 	logger *slog.Logger,
 ) *cobranzaapp.Reconciler {
 	return cobranzaapp.NewReconciler(cobranzaapp.ReconcilerDeps{
-		SaldosLister:    saldosLister,
-		SaldosRepo:      saldosRepo,
-		Recomputer:      recomputer,
-		PagosLister:     pagosLister,
-		PagosRecomputer: pagosRecomputer,
-		SaldosTombstone: saldosCleaner,
-		PagosTombstone:  pagosCleaner,
-		Clock:           clock,
-		Config:          cfg,
-		Logger:          logger,
+		SaldosLister:        saldosLister,
+		SaldosRepo:          saldosRepo,
+		Recomputer:          recomputer,
+		PagosLister:         pagosLister,
+		PagosRecomputer:     pagosRecomputer,
+		SaldosTombstone:     saldosCleaner,
+		PagosTombstone:      pagosCleaner,
+		PagosChangelogRepo:  pagosChangelog,
+		SaldosChangelogRepo: saldosChangelog,
+		Clock:               clock,
+		Config:              cfg,
+		Logger:              logger,
 	})
 }
 
