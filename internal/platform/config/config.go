@@ -63,10 +63,15 @@ type Config struct {
 
 // Cobranza holds cobranza-module-specific runtime knobs.
 type Cobranza struct {
-	// SSEEnabled gates the SSE streaming endpoints. Default false so the
-	// digest-reconcile path (commit 4) can be validated in production for a
-	// week before turning push on.
-	SSEEnabled bool `env:"COBRANZA_SSE_ENABLED" envDefault:"false"`
+	// SSEEnabled gates the SSE streaming endpoints. Default true: SSE is the
+	// designed steady-state delivery channel for the mobile cobranza app and
+	// the digest-reconcile path (handlers_sync_reconcile.go) already covers
+	// the case where SSE is unavailable. The flag stays as an ops killswitch
+	// for emergencies (e.g. proxy buffering, leak): flip COBRANZA_SSE_ENABLED
+	// to false in .env and restart, no code change required. Clients
+	// gracefully fall through to polling+reconcile when the endpoint returns
+	// 503 (see CobranzaSseSubscriber.kt in msp-app-kt).
+	SSEEnabled bool `env:"COBRANZA_SSE_ENABLED" envDefault:"true"`
 	// SSEPingEvery controls how often the server writes an SSE keep-alive
 	// comment. Clients and proxies silently drop the ping; it only exists to
 	// keep the TCP connection alive through idle timeouts.
