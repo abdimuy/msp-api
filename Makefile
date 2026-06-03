@@ -334,7 +334,7 @@ test-mutation-ventas-domain: ## Run mutation testing on ventas/domain only
 test-mutation-ventas-app: ## Run mutation testing on ventas/app only
 	gremlins unleash ./internal/ventas/app
 
-test-mutation-cobranza: test-mutation-cobranza-domain test-mutation-cobranza-app ## Run mutation testing on the cobranza module (domain + app) with 80% kill-ratio gate
+test-mutation-cobranza: test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-cobranza-eventbus ## Run mutation testing on the cobranza module (domain + app + eventbus) with 80% kill-ratio gate
 
 # Cobranza maneja pagos a Microsip: kill-ratio 80% (vs default 75%) porque
 # un mutante sobreviviente acá podría persistir dinero incorrectamente.
