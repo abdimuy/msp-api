@@ -32,20 +32,26 @@ type DigestResult struct {
 // that implements PagosRepo also implements this interface; they are kept
 // separate so the HTTP layer can depend only on the surface it needs.
 type PagosReconcileRepo interface {
-	// Digest returns the point-in-time fingerprint for active pagos in zonaID.
-	Digest(ctx context.Context, zonaID int) (DigestResult, error)
-	// ListIDs returns active pago IDs with IMPTE_DOCTO_CC_ID > after, ordered
-	// ascending. Fetch limit+1 rows internally; if len > limit then has_more=true
-	// and the returned slice is trimmed to limit.
-	ListIDs(ctx context.Context, zonaID, after, limit int) (ids []int, hasMore bool, err error)
+	// Digest computes (count, xor, sum, max_updated_at) over the set the sync
+	// endpoint would deliver for this (zona, desde). Pass desde zero for the
+	// legacy "saldo > 0" filter (no window). The filter mirrors /sync: only
+	// CONCEPTO_CC_ID IN (87327, 27969) and s.SALDO > 0 (or FECHA >= desde when
+	// desde is set).
+	Digest(ctx context.Context, zonaID int, desde time.Time) (DigestResult, error)
+	// ListIDs returns the same set as Digest in pages, ASC by PK, with
+	// IMPTE_DOCTO_CC_ID > after. Fetch limit+1 rows internally; if len > limit
+	// then has_more=true and the returned slice is trimmed to limit.
+	ListIDs(ctx context.Context, zonaID, after, limit int, desde time.Time) (ids []int, hasMore bool, err error)
 }
 
 // SaldosReconcileRepo is the read-only port that exposes digest + ID list for
 // sync reconciliation on the saldos cache. Same shape as PagosReconcileRepo.
+// Pass desde zero for the "saldo > 0 only" filter; set it to extend the set
+// with recently-paid saldos (SALDO <= 0 AND FECHA_ULT_PAGO >= desde).
 type SaldosReconcileRepo interface {
 	// Digest returns the point-in-time fingerprint for active saldos in zonaID.
-	Digest(ctx context.Context, zonaID int) (DigestResult, error)
+	Digest(ctx context.Context, zonaID int, desde time.Time) (DigestResult, error)
 	// ListIDs returns active saldo IDs with DOCTO_CC_ID > after, ordered
 	// ascending.
-	ListIDs(ctx context.Context, zonaID, after, limit int) (ids []int, hasMore bool, err error)
+	ListIDs(ctx context.Context, zonaID, after, limit int, desde time.Time) (ids []int, hasMore bool, err error)
 }

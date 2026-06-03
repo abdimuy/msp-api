@@ -314,38 +314,45 @@ func clampReconcileLimit(limit int) int {
 	}
 }
 
-// DigestPagosPorZona returns the point-in-time digest for active pagos in
-// zonaID, computed under a single snapshot transaction.
-func (s *Service) DigestPagosPorZona(ctx context.Context, zonaID int) (outbound.DigestResult, error) {
+// DigestPagosPorZona returns the point-in-time digest for pagos in zonaID,
+// computed under a single snapshot transaction. Pass desde zero for the legacy
+// "saldo > 0 only" filter; set it to extend the set with pagos whose FECHA >=
+// desde (matching the /sync window). Backwards-compatible: old clients that
+// do not send ?desde= get the same filter as before.
+func (s *Service) DigestPagosPorZona(ctx context.Context, zonaID int, desde time.Time) (outbound.DigestResult, error) {
 	if s.pagosReconcile == nil {
 		return outbound.DigestResult{}, errWriteDepsMissing("pagos_reconcile")
 	}
-	return s.pagosReconcile.Digest(ctx, zonaID)
+	return s.pagosReconcile.Digest(ctx, zonaID, desde)
 }
 
-// ListIDsPagosPorZona returns active pago IDs for zonaID, paginated by after.
-// limit is clamped to [1, MaxReconcileLimit].
-func (s *Service) ListIDsPagosPorZona(ctx context.Context, zonaID, after, limit int) ([]int, bool, error) {
+// ListIDsPagosPorZona returns pago IDs for zonaID, paginated by after.
+// limit is clamped to [1, MaxReconcileLimit]. desde mirrors the /sync window
+// parameter — pass zero for the legacy filter.
+func (s *Service) ListIDsPagosPorZona(ctx context.Context, zonaID, after, limit int, desde time.Time) ([]int, bool, error) {
 	if s.pagosReconcile == nil {
 		return nil, false, errWriteDepsMissing("pagos_reconcile")
 	}
-	return s.pagosReconcile.ListIDs(ctx, zonaID, after, clampReconcileLimit(limit))
+	return s.pagosReconcile.ListIDs(ctx, zonaID, after, clampReconcileLimit(limit), desde)
 }
 
-// DigestSaldosPorZona returns the point-in-time digest for active saldos in
-// zonaID, computed under a single snapshot transaction.
-func (s *Service) DigestSaldosPorZona(ctx context.Context, zonaID int) (outbound.DigestResult, error) {
+// DigestSaldosPorZona returns the point-in-time digest for saldos in zonaID,
+// computed under a single snapshot transaction. Pass desde zero for the legacy
+// "saldo > 0 only" filter; set it to extend the set with recently-paid saldos
+// (SALDO <= 0 AND FECHA_ULT_PAGO >= desde).
+func (s *Service) DigestSaldosPorZona(ctx context.Context, zonaID int, desde time.Time) (outbound.DigestResult, error) {
 	if s.saldosReconcile == nil {
 		return outbound.DigestResult{}, errWriteDepsMissing("saldos_reconcile")
 	}
-	return s.saldosReconcile.Digest(ctx, zonaID)
+	return s.saldosReconcile.Digest(ctx, zonaID, desde)
 }
 
 // ListIDsSaldosPorZona returns active saldo IDs for zonaID, paginated by after.
-// limit is clamped to [1, MaxReconcileLimit].
-func (s *Service) ListIDsSaldosPorZona(ctx context.Context, zonaID, after, limit int) ([]int, bool, error) {
+// limit is clamped to [1, MaxReconcileLimit]. desde mirrors the /sync window
+// parameter — pass zero for the legacy filter.
+func (s *Service) ListIDsSaldosPorZona(ctx context.Context, zonaID, after, limit int, desde time.Time) ([]int, bool, error) {
 	if s.saldosReconcile == nil {
 		return nil, false, errWriteDepsMissing("saldos_reconcile")
 	}
-	return s.saldosReconcile.ListIDs(ctx, zonaID, after, clampReconcileLimit(limit))
+	return s.saldosReconcile.ListIDs(ctx, zonaID, after, clampReconcileLimit(limit), desde)
 }

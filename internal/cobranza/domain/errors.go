@@ -48,6 +48,15 @@ var (
 		"el parámetro 'desde' debe ser una fecha YYYY-MM-DD o un timestamp RFC3339",
 	)
 
+	// ErrDesdeReconcileInvalido is returned by the digest/ids endpoints when the
+	// ?desde= query parameter is present but is not a valid RFC3339 UTC timestamp.
+	// These endpoints only accept RFC3339 (not YYYY-MM-DD) because the window must
+	// be deterministic across calls.
+	ErrDesdeReconcileInvalido = apperror.NewValidation(
+		"desde_invalido",
+		"el parámetro desde debe ser RFC3339 UTC",
+	)
+
 	// ErrPagoNoEncontrado is returned when a pago lookup misses.
 	ErrPagoNoEncontrado = apperror.NewNotFound(
 		"pago_no_encontrado",

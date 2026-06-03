@@ -31,16 +31,19 @@ import (
 
 // fakePagosReconcileRepo is an in-memory stub for tests.
 type fakePagosReconcileRepo struct {
-	digest outbound.DigestResult
-	ids    []int
-	err    error
+	digest    outbound.DigestResult
+	ids       []int
+	err       error
+	lastDesde time.Time
 }
 
-func (f *fakePagosReconcileRepo) Digest(_ context.Context, _ int) (outbound.DigestResult, error) {
+func (f *fakePagosReconcileRepo) Digest(_ context.Context, _ int, desde time.Time) (outbound.DigestResult, error) {
+	f.lastDesde = desde
 	return f.digest, f.err
 }
 
-func (f *fakePagosReconcileRepo) ListIDs(_ context.Context, _, after, limit int) ([]int, bool, error) {
+func (f *fakePagosReconcileRepo) ListIDs(_ context.Context, _, after, limit int, desde time.Time) ([]int, bool, error) {
+	f.lastDesde = desde
 	if f.err != nil {
 		return nil, false, f.err
 	}
@@ -58,16 +61,19 @@ func (f *fakePagosReconcileRepo) ListIDs(_ context.Context, _, after, limit int)
 
 // fakeSaldosReconcileRepo is an in-memory stub for tests.
 type fakeSaldosReconcileRepo struct {
-	digest outbound.DigestResult
-	ids    []int
-	err    error
+	digest    outbound.DigestResult
+	ids       []int
+	err       error
+	lastDesde time.Time
 }
 
-func (f *fakeSaldosReconcileRepo) Digest(_ context.Context, _ int) (outbound.DigestResult, error) {
+func (f *fakeSaldosReconcileRepo) Digest(_ context.Context, _ int, desde time.Time) (outbound.DigestResult, error) {
+	f.lastDesde = desde
 	return f.digest, f.err
 }
 
-func (f *fakeSaldosReconcileRepo) ListIDs(_ context.Context, _, after, limit int) ([]int, bool, error) {
+func (f *fakeSaldosReconcileRepo) ListIDs(_ context.Context, _, after, limit int, desde time.Time) ([]int, bool, error) {
+	f.lastDesde = desde
 	if f.err != nil {
 		return nil, false, f.err
 	}
@@ -437,6 +443,99 @@ func TestHandler_SyncPagosIDs_EmptyZone(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Empty(t, body.IDs)
 	assert.False(t, body.HasMore)
+}
+
+// ─── desde parameter tests ─────────────────────────────────────────────────────
+
+func TestHandler_SyncPagosDigest_InvalidDesde_Returns422(t *testing.T) {
+	t.Parallel()
+	svc := buildReconcileSvc(&fakePagosReconcileRepo{}, &fakeSaldosReconcileRepo{})
+	handler := mountReconcileRouter(reconcileUser(), svc)
+
+	req := httptest.NewRequest(http.MethodGet, "/sync/pagos/zona/1/digest?desde=not-a-date", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	// parseReconcileDesde returns domain.ErrDesdeReconcileInvalido (NewValidation → 422).
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+}
+
+func TestHandler_SyncSaldosDigest_InvalidDesde_Returns422(t *testing.T) {
+	t.Parallel()
+	svc := buildReconcileSvc(&fakePagosReconcileRepo{}, &fakeSaldosReconcileRepo{})
+	handler := mountReconcileRouter(saldosOnlyUser(), svc)
+
+	req := httptest.NewRequest(http.MethodGet, "/sync/saldos/zona/1/digest?desde=2026-04-01", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	// YYYY-MM-DD is not accepted by the reconcile endpoints (RFC3339 only) → 422.
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+}
+
+func TestHandler_SyncPagosDigest_DesdePassedThrough(t *testing.T) {
+	t.Parallel()
+	pagosRepo := &fakePagosReconcileRepo{digest: outbound.DigestResult{CountActivos: 5, IDsSum: 50}}
+	svc := buildReconcileSvc(pagosRepo, &fakeSaldosReconcileRepo{})
+	handler := mountReconcileRouter(reconcileUser(), svc)
+
+	since := "2026-04-01T00:00:00Z"
+	req := httptest.NewRequest(http.MethodGet, "/sync/pagos/zona/1/digest?desde="+since, nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body)
+	expected := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+	assert.Equal(t, expected, pagosRepo.lastDesde,
+		"handler must pass the parsed desde to the repo")
+}
+
+func TestHandler_SyncSaldosDigest_DesdePassedThrough(t *testing.T) {
+	t.Parallel()
+	saldosRepo := &fakeSaldosReconcileRepo{digest: outbound.DigestResult{CountActivos: 3, IDsSum: 30}}
+	svc := buildReconcileSvc(&fakePagosReconcileRepo{}, saldosRepo)
+	handler := mountReconcileRouter(saldosOnlyUser(), svc)
+
+	since := "2026-05-15T08:30:00Z"
+	req := httptest.NewRequest(http.MethodGet, "/sync/saldos/zona/1/digest?desde="+since, nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body)
+	expected := time.Date(2026, 5, 15, 8, 30, 0, 0, time.UTC)
+	assert.Equal(t, expected, saldosRepo.lastDesde,
+		"handler must pass the parsed desde to the repo")
+}
+
+func TestHandler_SyncPagosIDs_DesdePassedThrough(t *testing.T) {
+	t.Parallel()
+	pagosRepo := &fakePagosReconcileRepo{ids: []int{10, 20, 30}}
+	svc := buildReconcileSvc(pagosRepo, &fakeSaldosReconcileRepo{})
+	handler := mountReconcileRouter(reconcileUser(), svc)
+
+	since := "2026-03-01T12:00:00Z"
+	req := httptest.NewRequest(http.MethodGet, "/sync/pagos/zona/1/ids?desde="+since, nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body)
+	expected := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	assert.Equal(t, expected, pagosRepo.lastDesde,
+		"handler must pass the parsed desde to the repo")
+}
+
+func TestHandler_SyncPagosDigest_NoDesde_ZeroTime(t *testing.T) {
+	t.Parallel()
+	// When ?desde= is absent the handler must pass time.Time{} (zero) to the repo.
+	pagosRepo := &fakePagosReconcileRepo{digest: outbound.DigestResult{}}
+	svc := buildReconcileSvc(pagosRepo, &fakeSaldosReconcileRepo{})
+	handler := mountReconcileRouter(reconcileUser(), svc)
+
+	req := httptest.NewRequest(http.MethodGet, "/sync/pagos/zona/1/digest", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.True(t, pagosRepo.lastDesde.IsZero(),
+		"absent ?desde= must forward time.Time{} (zero) to keep legacy saldo>0 filter")
 }
 
 // ─── Property test: digest changes when IDs change ────────────────────────────
