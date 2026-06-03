@@ -86,7 +86,7 @@ func seedHTTPImagen(t *testing.T, imagenes *fakePagosImagenesRepo, storage *fake
 // used to test the 401 path on the raw chi endpoint.
 func buildBareReadRouter(svc *cobranzaapp.Service) http.Handler {
 	r := chi.NewRouter()
-	cobranzahttp.MountReadRouter(r, svc, eventbus.New(), config.Cobranza{}, slog.Default())
+	cobranzahttp.MountReadRouter(r, svc, eventbus.New(), config.Cobranza{}, slog.Default(), nil, nil)
 	return r
 }
 

@@ -91,6 +91,10 @@ func (f *fakeSaldosRepo) SyncPorZona(
 	return f.syncPage, nil
 }
 
+func (f *fakeSaldosRepo) ByIDs(_ context.Context, _ int, _ []int) ([]domain.Saldo, error) {
+	return nil, nil
+}
+
 // fakePagosRepo is an in-memory outbound.PagosRepo for unit tests.
 type fakePagosRepo struct {
 	byVenta      map[int][]domain.Pago
@@ -137,6 +141,10 @@ func (f *fakePagosRepo) SyncPorZona(
 		return outbound.SyncPage[domain.Pago]{}, f.err
 	}
 	return f.syncPage, nil
+}
+
+func (f *fakePagosRepo) ByIDs(_ context.Context, _ int, _ []int) ([]domain.Pago, error) {
+	return nil, nil
 }
 
 // syncPagosCall records the args of the last fakePagosRepo.SyncPorZona call.

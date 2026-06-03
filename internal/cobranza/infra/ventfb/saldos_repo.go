@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -210,6 +211,52 @@ func (r *SaldosRepo) SyncPorZona(
 		})
 	}
 	return runSyncPage[domain.Saldo](ctx, r.pool, cursor, limit, pageQuery, scanSaldoRows)
+}
+
+// ByIDs returns the Saldo rows for the given primary keys (DOCTO_CC_IDs),
+// constrained to ZONA_CLIENTE_ID = zonaID. Rows whose PK is in ids but whose
+// zona does not match are silently excluded (authorization filter, not 404).
+// No watermark filtering — the caller (by-ids HTTP endpoint) obtained these
+// PKs from the SSE listener which only publishes committed rows.
+//
+// Duplicate IDs in the input are deduplicated before querying.
+func (r *SaldosRepo) ByIDs(ctx context.Context, zonaID int, ids []int) ([]domain.Saldo, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	// Dedup input IDs.
+	seen := make(map[int]struct{}, len(ids))
+	unique := make([]int, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+
+	// Build positional placeholders for IN clause.
+	placeholders := make([]string, len(unique))
+	args := make([]any, 0, len(unique)+1)
+	args = append(args, zonaID)
+	for i, id := range unique {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+
+	query := `
+SELECT ` + selectSaldoCols + `
+FROM MSP_SALDOS_VENTAS
+WHERE ZONA_CLIENTE_ID = ?
+  AND DOCTO_CC_ID IN (` + strings.Join(placeholders, ",") + `)`
+
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	rows, err := q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, firebird.MapError(err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanSaldoRows(rows)
 }
 
 // DeleteTombstonesOlderThan deletes tombstones whose UPDATED_AT < cutoff and

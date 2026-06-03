@@ -45,14 +45,16 @@ func newHumaConfig(title string) huma.Config {
 // pago creation/imágenes) under the supplied chi router. The router is
 // expected to have authn already applied upstream.
 //
-// The streaming GET imagen endpoint and the SSE push endpoints are wired as
-// raw chi handlers (not Huma) to support binary streaming and chunked
-// transfer encoding respectively.
+// The streaming GET imagen endpoint, SSE push endpoints, and by-ids endpoints
+// are wired as raw chi handlers (not Huma) to support binary streaming,
+// chunked transfer encoding, and flat JSON arrays respectively.
 //
 // bus, sseCfg, and logger are required for the SSE endpoints. Pass a
 // non-nil *eventbus.Bus obtained from eventbus.New(). The SSE routes are
 // always registered; the feature flag inside sseCfg.SSEEnabled gates whether
 // they actually stream or return 503.
+//
+// pagosRepo and saldosRepo must be non-nil; they back the by-ids endpoints.
 //
 // Returns the constructed huma.API for testing / introspection.
 func MountReadRouter(
@@ -61,6 +63,8 @@ func MountReadRouter(
 	bus *eventbus.Bus,
 	sseCfg config.Cobranza,
 	logger *slog.Logger,
+	pagosRepo outbound.PagosRepo,
+	saldosRepo outbound.SaldosRepo,
 ) huma.API {
 	cfg := newHumaConfig("MSP API · Cobranza")
 	api := humachi.New(r, cfg)
@@ -76,6 +80,9 @@ func MountReadRouter(
 	// routes are always registered so 503 is returned when the flag is off.
 	sse := newSSEHandler(bus, sseCfg, logger)
 	mountCobranzaSSE(r, sse)
+	// by-ids endpoints — raw chi, flat JSON array, no Huma envelope.
+	byIDs := newByIDsHandlers(pagosRepo, saldosRepo, logger)
+	mountByIDs(r, byIDs)
 	return api
 }
 

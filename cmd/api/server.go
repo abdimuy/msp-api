@@ -127,6 +127,8 @@ func provideRootHandler(
 	cobranzaReconciler *cobranzaapp.Reconciler,
 	cobranzaErrors cobranzaoutbound.ErrorsRepo,
 	cobranzaBus *eventbus.Bus,
+	cobranzaPagosRepo cobranzaoutbound.PagosRepo,
+	cobranzaSaldosRepo cobranzaoutbound.SaldosRepo,
 	logger *slog.Logger,
 ) RootHandler {
 	r := chi.NewRouter()
@@ -181,7 +183,7 @@ func provideRootHandler(
 		// the handler falls back to the idempotent fast-path).
 		r.Route("/cobranza", func(r chi.Router) {
 			r.Use(authn.Handler)
-			cobranzahttp.MountReadRouter(r, cobranzaSvc, cobranzaBus, cfg.Cobranza, logger)
+			cobranzahttp.MountReadRouter(r, cobranzaSvc, cobranzaBus, cfg.Cobranza, logger, cobranzaPagosRepo, cobranzaSaldosRepo)
 		})
 
 		// Cobranza admin endpoints — authn only; no failed-intent capture.

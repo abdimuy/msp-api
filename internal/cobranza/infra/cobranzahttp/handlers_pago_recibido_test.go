@@ -301,6 +301,10 @@ func (f *fakeSaldosRepoHTTP) SyncPorZona(_ context.Context, _ int, _ time.Time, 
 	return outbound.SyncPage[domain.Saldo]{}, nil
 }
 
+func (f *fakeSaldosRepoHTTP) ByIDs(_ context.Context, _ int, _ []int) ([]domain.Saldo, error) {
+	return nil, nil
+}
+
 // fakePagosRepoHTTP is a minimal PagosRepo for HTTP handler tests.
 type fakePagosRepoHTTP struct{}
 
@@ -316,6 +320,10 @@ func (fakePagosRepoHTTP) EnRutaPorZona(_ context.Context, _ int, _ time.Time) ([
 
 func (fakePagosRepoHTTP) SyncPorZona(_ context.Context, _ int, _ time.Time, _, _ int, _ time.Time) (outbound.SyncPage[domain.Pago], error) {
 	return outbound.SyncPage[domain.Pago]{}, nil
+}
+
+func (fakePagosRepoHTTP) ByIDs(_ context.Context, _ int, _ []int) ([]domain.Pago, error) {
+	return nil, nil
 }
 
 // fixedClockHTTP returns a fixed time for the service.
@@ -392,7 +400,7 @@ func buildTestService(
 func mountReadWithUser(cu auth.CurrentUser, svc *cobranzaapp.Service) http.Handler {
 	r := chi.NewRouter()
 	r.Use(planter(cu))
-	cobranzahttp.MountReadRouter(r, svc, eventbus.New(), config.Cobranza{}, slog.Default())
+	cobranzahttp.MountReadRouter(r, svc, eventbus.New(), config.Cobranza{}, slog.Default(), nil, nil)
 	return r
 }
 

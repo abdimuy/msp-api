@@ -204,7 +204,7 @@ func buildReadRouter(txCtx context.Context, svc *cobranzaapp.Service, cu auth.Cu
 	r := chi.NewRouter()
 	r.Use(txInjector(txCtx))
 	r.Use(planter(cu))
-	cobranzahttp.MountReadRouter(r, svc, eventbus.New(), config.Cobranza{}, slog.Default())
+	cobranzahttp.MountReadRouter(r, svc, eventbus.New(), config.Cobranza{}, slog.Default(), nil, nil)
 	return r
 }
 

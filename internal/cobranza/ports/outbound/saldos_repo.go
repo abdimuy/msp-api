@@ -41,6 +41,14 @@ type SaldosRepo interface {
 	// afterID is used for sub-cursor pagination when has_more=true.
 	// Pass cursor=time.Time{} for a full initial sync.
 	SyncPorZona(ctx context.Context, zonaID int, cursor time.Time, afterID, limit int) (SyncPage[domain.Saldo], error)
+
+	// ByIDs returns the Saldo rows for the given primary keys (DOCTO_CC_IDs)
+	// constrained to ZONA_CLIENTE_ID = zonaID. Rows whose PK is in ids but whose
+	// zona does not match are silently excluded (authorization filter, not 404).
+	// No watermark filtering — callers expect to see the IDs they asked for.
+	//
+	// ids may contain duplicates; the result deduplicates by PK.
+	ByIDs(ctx context.Context, zonaID int, ids []int) ([]domain.Saldo, error)
 }
 
 // SaldosTombstoneCleaner physically deletes saldo rows marked as cancelled

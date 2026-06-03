@@ -56,7 +56,7 @@ func sseNopermUser() auth.CurrentUser {
 func buildSSERouter(bus *eventbus.Bus, sseCfg config.Cobranza, cu auth.CurrentUser) http.Handler {
 	r := chi.NewRouter()
 	r.Use(planter(cu))
-	cobranzahttp.MountReadRouter(r, nil, bus, sseCfg, slog.Default())
+	cobranzahttp.MountReadRouter(r, nil, bus, sseCfg, slog.Default(), nil, nil)
 	return r
 }
 
@@ -158,7 +158,7 @@ func TestSSE_Unauthenticated_Returns401(t *testing.T) {
 	cfg := config.Cobranza{SSEEnabled: true, SSEPingEvery: 25 * time.Second}
 	// Build router WITHOUT planting a CurrentUser.
 	r := chi.NewRouter()
-	cobranzahttp.MountReadRouter(r, nil, bus, cfg, slog.Default())
+	cobranzahttp.MountReadRouter(r, nil, bus, cfg, slog.Default(), nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/sync/pagos/zona/1/stream", nil)
 	rec := httptest.NewRecorder()

@@ -249,6 +249,10 @@ func (r *internalFakeSaldosRepo) SyncPorZona(_ context.Context, _ int, _ time.Ti
 	return outbound.SyncPage[domain.Saldo]{}, nil
 }
 
+func (r *internalFakeSaldosRepo) ByIDs(_ context.Context, _ int, _ []int) ([]domain.Saldo, error) {
+	return nil, nil
+}
+
 func newInternalFakeSaldosRepo() *internalFakeSaldosRepo {
 	return &internalFakeSaldosRepo{}
 }

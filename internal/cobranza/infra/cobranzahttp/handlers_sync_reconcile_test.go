@@ -127,7 +127,7 @@ func buildReconcileSvc(pagosR outbound.PagosReconcileRepo, saldosR outbound.Sald
 func mountReconcileRouter(cu auth.CurrentUser, svc *cobranzaapp.Service) http.Handler {
 	r := chi.NewRouter()
 	r.Use(planter(cu))
-	cobranzahttp.MountReadRouter(r, svc, eventbus.New(), config.Cobranza{}, slog.Default())
+	cobranzahttp.MountReadRouter(r, svc, eventbus.New(), config.Cobranza{}, slog.Default(), nil, nil)
 	return r
 }
 
@@ -330,7 +330,7 @@ func TestHandler_SyncPagosDigest_Unauthorized(t *testing.T) {
 	svc := buildReconcileSvc(&fakePagosReconcileRepo{}, &fakeSaldosReconcileRepo{})
 	r := chi.NewRouter()
 	// No planter — context has no CurrentUser.
-	cobranzahttp.MountReadRouter(r, svc, eventbus.New(), config.Cobranza{}, slog.Default())
+	cobranzahttp.MountReadRouter(r, svc, eventbus.New(), config.Cobranza{}, slog.Default(), nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/sync/pagos/zona/1/digest", nil)
 	rec := httptest.NewRecorder()

@@ -55,6 +55,14 @@ type PagosRepo interface {
 	// En sync incremental (cursor set) el filtro de saldo se quita; el filtro
 	// de concepto (87327, 27969) se mantiene siempre.
 	SyncPorZona(ctx context.Context, zonaID int, cursor time.Time, afterID, limit int, desde time.Time) (SyncPage[domain.Pago], error)
+
+	// ByIDs returns the Pago rows for the given primary keys (IMPTE_DOCTO_CC_IDs)
+	// constrained to ZONA_CLIENTE_ID = zonaID. Rows whose PK is in ids but whose
+	// zona does not match are silently excluded (authorization filter, not 404).
+	// No watermark filtering — callers expect to see the IDs they asked for.
+	//
+	// ids may contain duplicates; the result deduplicates by PK.
+	ByIDs(ctx context.Context, zonaID int, ids []int) ([]domain.Pago, error)
 }
 
 // PagosRecomputer wraps the MSP_RECOMPUTE_PAGO stored procedure. Used only
