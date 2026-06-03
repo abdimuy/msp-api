@@ -68,6 +68,19 @@ func (h *sseHandler) serveSSE(w http.ResponseWriter, r *http.Request, topic, kin
 		return
 	}
 
+	// Desactivar el WriteTimeout del *http.Server (default 30s) — sin esto
+	// el server cierra el TCP a los 30s y la app cliente loguea
+	// "SSE pagos falló (attempt=N) — reintento en 30000ms: null". El
+	// middleware.Timeout que envuelve este handler también cancela el ctx
+	// a la misma duración, pero ese se salta por path en server.go
+	// (Timeout skip para rutas /stream).
+	if rc := http.NewResponseController(w); rc != nil {
+		if err := rc.SetWriteDeadline(time.Time{}); err != nil {
+			h.logger.WarnContext(r.Context(), "cobranza.sse_set_deadline_failed",
+				slog.String("kind", kind), slog.String("error", err.Error()))
+		}
+	}
+
 	ch, unsubscribe := h.bus.Subscribe(topic)
 	defer unsubscribe()
 

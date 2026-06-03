@@ -216,6 +216,38 @@ func TestAccessLog_PreservesFlusher(t *testing.T) {
 	assert.Equal(t, "ok", string(body))
 }
 
+// TestTimeout_SkipsStreamingPaths verifica que el Timeout middleware NO
+// envuelve el ctx con WithTimeout cuando la ruta termina en /stream.
+// Sin este skip, SSE handlers ven ctx.Done a los `d` segundos y la
+// conexión se cierra, haciendo que la app cliente vea drop+reconnect
+// cíclico cada 30s aunque ningún error real haya ocurrido.
+func TestTimeout_SkipsStreamingPaths(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name        string
+		path        string
+		wantTimeout bool
+	}{
+		{"stream path bypasses timeout", "/v2/cobranza/sync/pagos/zona/1/stream", false},
+		{"non-stream path enforces timeout", "/v2/cobranza/saldos/cliente/1", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var sawDeadline bool
+			handler := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				_, sawDeadline = r.Context().Deadline()
+			})
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			rec := httptest.NewRecorder()
+			middleware.Timeout(10*time.Millisecond)(handler).ServeHTTP(rec, req)
+			assert.Equal(t, tc.wantTimeout, sawDeadline,
+				"deadline presence must follow streaming-skip rule")
+		})
+	}
+}
+
 func TestIsClientGone(t *testing.T) {
 	t.Parallel()
 	assert.False(t, middleware.IsClientGone(context.Background()))

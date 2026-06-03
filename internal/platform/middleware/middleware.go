@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -105,6 +106,17 @@ func (s *statusRecorder) Flush() {
 	}
 }
 
+// Unwrap exposes the underlying ResponseWriter so http.NewResponseController
+// can walk to it. Without Unwrap, ResponseController.SetWriteDeadline /
+// SetReadDeadline / EnableFullDuplex / Hijack would fail with
+// errNotSupported on any handler behind AccessLog — which means a streaming
+// handler (e.g. SSE) cannot disable the server's WriteTimeout for itself
+// even when needed. The Unwrap protocol is the http.ResponseWriter ladder
+// formalized in Go 1.20.
+func (s *statusRecorder) Unwrap() http.ResponseWriter {
+	return s.ResponseWriter
+}
+
 // AccessLog logs each request with method, path, status, latency and bytes.
 func AccessLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -131,11 +143,27 @@ func AccessLog(next http.Handler) http.Handler {
 func Timeout(d time.Duration) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if isStreamingPath(r.URL.Path) {
+				// Streaming endpoints (SSE) por definición duran indefinidamente;
+				// aplicarles un deadline fijo cancela el ctx y la app cliente ve
+				// un drop cada `d` segundos. Las conexiones se cierran solas
+				// cuando el cliente desconecta (write error en el próximo evento
+				// o ping del handler) o cuando el server se apaga (lifecycle).
+				next.ServeHTTP(w, r)
+				return
+			}
 			ctx, cancel := context.WithTimeout(r.Context(), d)
 			defer cancel()
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// isStreamingPath identifica rutas long-lived que no deben sujetarse al
+// Timeout middleware. Mantiene la lista pequeña y por sufijo exacto para
+// que sea trivial auditar qué endpoints quedan exentos.
+func isStreamingPath(p string) bool {
+	return strings.HasSuffix(p, "/stream")
 }
 
 // BodyLimit caps the size of incoming request bodies.
