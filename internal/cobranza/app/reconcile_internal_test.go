@@ -94,6 +94,97 @@ func TestReconcilerConfig_ApplyDefaults_ZeroPageSize(t *testing.T) {
 		"zero PageSize must become 1000 default")
 }
 
+// ─── ReconcilerConfig changelog pruner defaults ───────────────────────────────
+
+// TestReconcilerConfig_ApplyDefaults_ChangelogPruneInterval verifies that a
+// zero ChangelogPruneInterval is replaced with 1 hour and that a negative
+// value is also replaced. A positive explicit value must be kept unchanged.
+func TestReconcilerConfig_ApplyDefaults_ChangelogPruneInterval(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		in           time.Duration
+		wantInterval time.Duration
+	}{
+		{"zero_becomes_one_hour", 0, time.Hour},
+		{"negative_becomes_one_hour", -1, time.Hour},
+		{"positive_unchanged", 30 * time.Minute, 30 * time.Minute},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := ReconcilerConfig{
+				Interval:               time.Hour,
+				PageSize:               1,
+				ChangelogPruneInterval: tc.in,
+			}
+			cfg.applyDefaults()
+			assert.Equal(t, tc.wantInterval, cfg.ChangelogPruneInterval)
+		})
+	}
+}
+
+// TestReconcilerConfig_ApplyDefaults_ChangelogPruneMaxPerCall verifies that a
+// zero or negative ChangelogPruneMaxPerCall is replaced with 50_000.
+func TestReconcilerConfig_ApplyDefaults_ChangelogPruneMaxPerCall(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		in      int
+		wantMax int
+	}{
+		{"zero_becomes_50k", 0, 50_000},
+		{"negative_becomes_50k", -1, 50_000},
+		{"positive_unchanged", 100, 100},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := ReconcilerConfig{
+				Interval:                 time.Hour,
+				PageSize:                 1,
+				ChangelogPruneMaxPerCall: tc.in,
+			}
+			cfg.applyDefaults()
+			assert.Equal(t, tc.wantMax, cfg.ChangelogPruneMaxPerCall)
+		})
+	}
+}
+
+// TestReconcilerConfig_ApplyDefaults_ChangelogRetentionDays verifies the
+// ChangelogRetentionDays sentinel semantics:
+//
+//   - Negative → replaced with 7 (disabled marker treated as unset).
+//   - Zero → kept as 0 (explicit "disabled" — no goroutine spawned).
+//   - Positive → kept unchanged.
+func TestReconcilerConfig_ApplyDefaults_ChangelogRetentionDays(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		in       int
+		wantDays int
+	}{
+		{"negative_becomes_7", -1, 7},
+		{"zero_stays_zero", 0, 0}, // disabled; must NOT be replaced
+		{"positive_unchanged", 14, 14},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := ReconcilerConfig{
+				Interval:               time.Hour,
+				PageSize:               1,
+				ChangelogRetentionDays: tc.in,
+			}
+			cfg.applyDefaults()
+			assert.Equal(t, tc.wantDays, cfg.ChangelogRetentionDays)
+		})
+	}
+}
+
 // ─── hasDrift() nil-safety tests ─────────────────────────────────────────────
 
 // buildSaldo is a helper that creates a Saldo with the given saldo amount for

@@ -32,6 +32,18 @@ type ReconcilerConfig struct {
 	// will have either resynced from scratch or seen the tombstone. Set to 0
 	// to disable tombstone cleanup entirely.
 	TombstoneRetentionDays int
+	// ChangelogRetentionDays is how many days a row stays in the cobranza
+	// changelog tables (MSP_PAGOS_CHANGELOG, MSP_SALDOS_CHANGELOG) before the
+	// reconciler hard-deletes it. Defaults to 7. Set to 0 to disable changelog
+	// pruning entirely.
+	ChangelogRetentionDays int
+	// ChangelogPruneInterval is how often the changelog pruner runs. Defaults
+	// to 1 hour. Independent of Interval (which controls the full reconcile pass).
+	ChangelogPruneInterval time.Duration
+	// ChangelogPruneMaxPerCall is the upper bound on rows deleted per pruner
+	// call, per changelog table. Caps lock contention on very large catch-up
+	// passes (e.g. first run after the migration shipped). Defaults to 50_000.
+	ChangelogPruneMaxPerCall int
 }
 
 func (c *ReconcilerConfig) applyDefaults() {
@@ -40,6 +52,16 @@ func (c *ReconcilerConfig) applyDefaults() {
 	}
 	if c.PageSize <= 0 {
 		c.PageSize = 1000
+	}
+	// ChangelogRetentionDays < 0 → default 7; == 0 → disabled (no default applied).
+	if c.ChangelogRetentionDays < 0 {
+		c.ChangelogRetentionDays = 7
+	}
+	if c.ChangelogPruneInterval <= 0 {
+		c.ChangelogPruneInterval = time.Hour
+	}
+	if c.ChangelogPruneMaxPerCall <= 0 {
+		c.ChangelogPruneMaxPerCall = 50_000
 	}
 }
 
@@ -71,7 +93,9 @@ type ReconcileReport struct {
 // ReconcilerDeps groups the Reconciler's collaborators. Required: SaldosLister,
 // SaldosRepo, Recomputer, Clock, Logger. Optional (pagos reconciliation):
 // PagosLister + PagosRecomputer. Optional (tombstone cleanup): SaldosTombstone
-// and/or PagosTombstone.
+// and/or PagosTombstone. Optional (changelog pruning): PagosChangelogRepo
+// and/or SaldosChangelogRepo — if both are nil and ChangelogRetentionDays > 0
+// the reconciler logs a warning at Start and skips the pruner goroutine.
 type ReconcilerDeps struct {
 	SaldosLister    outbound.SaldosLister
 	SaldosRepo      outbound.SaldosRepo
@@ -80,21 +104,28 @@ type ReconcilerDeps struct {
 	PagosRecomputer outbound.PagosRecomputer
 	SaldosTombstone outbound.SaldosTombstoneCleaner
 	PagosTombstone  outbound.PagosTombstoneCleaner
-	Clock           outbound.Clock
-	Config          ReconcilerConfig
-	Logger          *slog.Logger
+	// PagosChangelogRepo and SaldosChangelogRepo are required when changelog
+	// pruning is enabled (ChangelogRetentionDays > 0). If both are nil and
+	// retention > 0, the reconciler starts the other passes but logs a warning
+	// and skips the pruner goroutine.
+	PagosChangelogRepo  outbound.PagosChangelogRepo
+	SaldosChangelogRepo outbound.SaldosChangelogRepo
+	Clock               outbound.Clock
+	Config              ReconcilerConfig
+	Logger              *slog.Logger
 }
 
 // Reconciler walks every row in MSP_SALDOS_VENTAS (and optionally
 // MSP_PAGOS_VENTAS) on a configurable interval, recomputes each row via the
 // Firebird stored procedure, logs (and optionally fixes) any drift, and prunes
-// expired tombstones. It implements lifecycle.Hooks so fx can manage its goroutine.
+// expired tombstones and changelog rows. It implements lifecycle.Hooks so fx
+// can manage its goroutines.
 type Reconciler struct {
 	deps    ReconcilerDeps
 	mu      sync.Mutex
 	running bool
 	cancel  context.CancelFunc
-	done    chan struct{}
+	wg      sync.WaitGroup
 }
 
 // NewReconciler builds a Reconciler from a deps struct.
@@ -103,8 +134,11 @@ func NewReconciler(deps ReconcilerDeps) *Reconciler {
 	return &Reconciler{deps: deps}
 }
 
-// Start implements lifecycle.Hooks. Launches the ticker goroutine and returns
-// immediately. Idempotent — a second call while already running is a no-op.
+// Start implements lifecycle.Hooks. Launches the ticker goroutine(s) and
+// returns immediately. Idempotent — a second call while already running is a
+// no-op.
+//
+//nolint:contextcheck // intentional: the loops must outlive the fx start ctx.
 func (r *Reconciler) Start(_ context.Context) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -113,14 +147,36 @@ func (r *Reconciler) Start(_ context.Context) error {
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
 	r.cancel = cancel
-	r.done = make(chan struct{})
 	r.running = true
-	//nolint:contextcheck // intentional: the loop must outlive the fx start ctx.
-	go r.loop(runCtx)
+
+	r.wg.Add(1)
+	go func() {
+		defer r.wg.Done()
+		r.loop(runCtx)
+	}()
+
+	// Spawn the changelog pruner goroutine only when pruning is enabled and at
+	// least one repo is wired up. If both repos are nil but retention > 0 we
+	// log a warning so operators know the pruner is silently skipped.
+	if r.deps.Config.ChangelogRetentionDays > 0 {
+		hasPagos := r.deps.PagosChangelogRepo != nil
+		hasSaldos := r.deps.SaldosChangelogRepo != nil
+		if !hasPagos && !hasSaldos {
+			r.deps.Logger.Warn("cobranza.changelog_pruner: retention enabled but both repos are nil — pruner not started",
+				slog.Int("retention_days", r.deps.Config.ChangelogRetentionDays))
+		} else {
+			r.wg.Add(1)
+			go func() {
+				defer r.wg.Done()
+				r.changelogPruneLoop(runCtx)
+			}()
+		}
+	}
+
 	return nil
 }
 
-// Stop signals the goroutine to exit and waits for it to drain, bounded by
+// Stop signals all goroutines to exit and waits for them to drain, bounded by
 // ctx deadline. Implements lifecycle.Hooks.
 func (r *Reconciler) Stop(ctx context.Context) error {
 	r.mu.Lock()
@@ -129,11 +185,17 @@ func (r *Reconciler) Stop(ctx context.Context) error {
 		return nil
 	}
 	cancel := r.cancel
-	done := r.done
 	r.running = false
 	r.mu.Unlock()
 
 	cancel()
+
+	done := make(chan struct{})
+	go func() {
+		r.wg.Wait()
+		close(done)
+	}()
+
 	select {
 	case <-done:
 		return nil
@@ -142,10 +204,9 @@ func (r *Reconciler) Stop(ctx context.Context) error {
 	}
 }
 
-// loop is the ticker goroutine. Each tick fires Run; transient errors are
-// logged and the loop continues.
+// loop is the reconcile ticker goroutine. Each tick fires Run; transient
+// errors are logged and the loop continues.
 func (r *Reconciler) loop(ctx context.Context) {
-	defer close(r.done)
 	ticker := time.NewTicker(r.deps.Config.Interval)
 	defer ticker.Stop()
 
@@ -222,6 +283,62 @@ func (r *Reconciler) runTombstoneCleanup(ctx context.Context, cutoff time.Time, 
 				"error", err, "cutoff", cutoff)
 		} else {
 			report.PagosTombstonesDeleted = n
+		}
+	}
+}
+
+// changelogPruneLoop is the pruner ticker goroutine. It runs independently of
+// the reconcile loop, fires every ChangelogPruneInterval, and calls
+// pruneChangelogs on each tick.
+func (r *Reconciler) changelogPruneLoop(ctx context.Context) {
+	ticker := time.NewTicker(r.deps.Config.ChangelogPruneInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			r.pruneChangelogs(ctx)
+		}
+	}
+}
+
+// pruneChangelogs hard-deletes rows older than ChangelogRetentionDays from
+// MSP_PAGOS_CHANGELOG and MSP_SALDOS_CHANGELOG. Each table is capped at
+// ChangelogPruneMaxPerCall rows per call to avoid lock escalation on Firebird.
+// Errors are logged and do not abort the pass — the next tick will retry.
+func (r *Reconciler) pruneChangelogs(ctx context.Context) {
+	if r.deps.Config.ChangelogRetentionDays <= 0 {
+		return
+	}
+	cutoff := r.deps.Clock.Now().Add(-time.Duration(r.deps.Config.ChangelogRetentionDays) * 24 * time.Hour)
+	maxN := r.deps.Config.ChangelogPruneMaxPerCall
+
+	if r.deps.PagosChangelogRepo != nil {
+		deleted, err := r.deps.PagosChangelogRepo.DeleteOlderThan(ctx, cutoff, maxN)
+		if err != nil {
+			r.deps.Logger.WarnContext(ctx, "cobranza.changelog_prune_failed",
+				slog.String("kind", "pagos"),
+				slog.String("error", err.Error()))
+		} else {
+			r.deps.Logger.InfoContext(ctx, "cobranza.changelog_pruned",
+				slog.String("kind", "pagos"),
+				slog.Int("deleted", deleted),
+				slog.Time("cutoff", cutoff))
+		}
+	}
+	if r.deps.SaldosChangelogRepo != nil {
+		deleted, err := r.deps.SaldosChangelogRepo.DeleteOlderThan(ctx, cutoff, maxN)
+		if err != nil {
+			r.deps.Logger.WarnContext(ctx, "cobranza.changelog_prune_failed",
+				slog.String("kind", "saldos"),
+				slog.String("error", err.Error()))
+		} else {
+			r.deps.Logger.InfoContext(ctx, "cobranza.changelog_pruned",
+				slog.String("kind", "saldos"),
+				slog.Int("deleted", deleted),
+				slog.Time("cutoff", cutoff))
 		}
 	}
 }
