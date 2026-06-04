@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -218,15 +219,26 @@ func (m *mockChangelogRepo) getSinceCalls() []sinceCall {
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
+// noProbeInterval disables the watermark-probe loop in tests that do not
+// exercise it. This prevents the probe goroutine from firing unexpectedly and
+// interfering with goleak or unrelated Since-call counts.
+const noProbeInterval = 24 * time.Hour
+
 // newListener builds a FbEventListener wired with a mock source, bus, mock
 // changelog repos, a fixed watermark probe, and any extra options.
+// The watermark-probe loop interval is set to 24h so it never fires during a
+// typical unit test. Tests that explicitly exercise the probe pass their own
+// WithWatermarkProbeInterval option or call probeWatermarkOnce directly.
 func newListener(src *mockSource, bus *eventbus.Bus, opts ...ventfb.Option) *ventfb.FbEventListener {
 	pagos := &mockChangelogRepo{}
 	saldos := &mockChangelogRepo{}
 	probe := ventfb.WatermarkProbe(func(_ context.Context) (int64, error) {
 		return ventfb.SentinelNoActiveTx, nil
 	})
-	allOpts := append([]ventfb.Option{ventfb.WithWatermarkProbe(probe)}, opts...)
+	allOpts := append([]ventfb.Option{
+		ventfb.WithWatermarkProbe(probe),
+		ventfb.WithWatermarkProbeInterval(noProbeInterval),
+	}, opts...)
 	return ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil, allOpts...)
 }
 
@@ -242,7 +254,10 @@ func newListenerWithRepos(
 	probe := ventfb.WatermarkProbe(func(_ context.Context) (int64, error) {
 		return ventfb.SentinelNoActiveTx, nil
 	})
-	allOpts := append([]ventfb.Option{ventfb.WithWatermarkProbe(probe)}, opts...)
+	allOpts := append([]ventfb.Option{
+		ventfb.WithWatermarkProbe(probe),
+		ventfb.WithWatermarkProbeInterval(noProbeInterval),
+	}, opts...)
 	l := ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil, allOpts...)
 	return l, pagos, saldos
 }
@@ -325,7 +340,8 @@ func TestFbEventListener_PublishesToBus(t *testing.T) {
 	})
 
 	l := ventfb.NewFbEventListener(customSrc, bus, nil, pagos, saldos, nil,
-		ventfb.WithWatermarkProbe(probe))
+		ventfb.WithWatermarkProbe(probe),
+		ventfb.WithWatermarkProbeInterval(noProbeInterval))
 
 	subCh, unsub := bus.Subscribe("pagos_changed")
 	defer unsub()
@@ -531,7 +547,8 @@ func TestFbEventListener_Stop_DeadlineExceeded(t *testing.T) {
 		return ventfb.SentinelNoActiveTx, nil
 	})
 	l := ventfb.NewFbEventListener(customSrc, bus, nil, pagos, saldos, nil,
-		ventfb.WithWatermarkProbe(probe))
+		ventfb.WithWatermarkProbe(probe),
+		ventfb.WithWatermarkProbeInterval(noProbeInterval))
 
 	ctx := context.Background()
 	require.NoError(t, l.Start(ctx))
@@ -721,7 +738,8 @@ func TestListener_OnPostEvent_QueriesChangelogWithLastSeen(t *testing.T) {
 	defer unsub()
 
 	l := ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil,
-		ventfb.WithWatermarkProbe(probe))
+		ventfb.WithWatermarkProbe(probe),
+		ventfb.WithWatermarkProbeInterval(noProbeInterval))
 
 	ctx := context.Background()
 	require.NoError(t, l.Start(ctx))
@@ -805,7 +823,8 @@ func TestListener_AdvancesLastSeenToMaxReturned(t *testing.T) {
 	defer unsub()
 
 	l := ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil,
-		ventfb.WithWatermarkProbe(probe))
+		ventfb.WithWatermarkProbe(probe),
+		ventfb.WithWatermarkProbeInterval(noProbeInterval))
 
 	ctx := context.Background()
 	require.NoError(t, l.Start(ctx))
@@ -867,7 +886,8 @@ func TestListener_EmptyChangelog_DoesNotPublish(t *testing.T) {
 	defer unsub()
 
 	l := ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil,
-		ventfb.WithWatermarkProbe(probe))
+		ventfb.WithWatermarkProbe(probe),
+		ventfb.WithWatermarkProbeInterval(noProbeInterval))
 
 	ctx := context.Background()
 	require.NoError(t, l.Start(ctx))
@@ -962,7 +982,8 @@ func TestListener_WatermarkFailure_PublishesEmptyAsWakeup(t *testing.T) {
 	defer unsub()
 
 	l := ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil,
-		ventfb.WithWatermarkProbe(errProbe))
+		ventfb.WithWatermarkProbe(errProbe),
+		ventfb.WithWatermarkProbeInterval(noProbeInterval))
 
 	ctx := context.Background()
 	require.NoError(t, l.Start(ctx))
@@ -1013,7 +1034,8 @@ func TestListener_ChangelogFailure_PublishesEmpty(t *testing.T) {
 	defer unsub()
 
 	l := ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil,
-		ventfb.WithWatermarkProbe(probe))
+		ventfb.WithWatermarkProbe(probe),
+		ventfb.WithWatermarkProbeInterval(noProbeInterval))
 
 	ctx := context.Background()
 	require.NoError(t, l.Start(ctx))
@@ -1074,7 +1096,8 @@ func TestListener_Start_InitializesLastSeenFromMaxSeqID(t *testing.T) {
 	})
 
 	l := ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil,
-		ventfb.WithWatermarkProbe(probe))
+		ventfb.WithWatermarkProbe(probe),
+		ventfb.WithWatermarkProbeInterval(noProbeInterval))
 
 	ctx := context.Background()
 	require.NoError(t, l.Start(ctx))
@@ -1119,7 +1142,8 @@ func TestListener_Start_MaxSeqIDFailure_ReturnsError(t *testing.T) {
 	})
 
 	l := ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil,
-		ventfb.WithWatermarkProbe(probe))
+		ventfb.WithWatermarkProbe(probe),
+		ventfb.WithWatermarkProbeInterval(noProbeInterval))
 
 	err := l.Start(context.Background())
 	require.Error(t, err, "Start must return error when MaxSeqID fails")
@@ -1242,7 +1266,8 @@ func TestListener_HonorsLimit500(t *testing.T) {
 	defer unsub()
 
 	l := ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil,
-		ventfb.WithWatermarkProbe(probe))
+		ventfb.WithWatermarkProbe(probe),
+		ventfb.WithWatermarkProbeInterval(noProbeInterval))
 
 	ctx := context.Background()
 	require.NoError(t, l.Start(ctx))
@@ -1350,7 +1375,8 @@ func TestProperty_Listener_LastSeenMonotonic(t *testing.T) {
 		defer unsub()
 
 		l := ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil,
-			ventfb.WithWatermarkProbe(probe))
+			ventfb.WithWatermarkProbe(probe),
+			ventfb.WithWatermarkProbeInterval(noProbeInterval))
 
 		ctx := context.Background()
 		require.NoError(t, l.Start(ctx))
@@ -1477,7 +1503,8 @@ func TestProperty_Listener_NoIdLoss(t *testing.T) {
 		}
 
 		l := ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil,
-			ventfb.WithWatermarkProbe(probe))
+			ventfb.WithWatermarkProbe(probe),
+			ventfb.WithWatermarkProbeInterval(noProbeInterval))
 
 		ctx := context.Background()
 		require.NoError(t, l.Start(ctx))
@@ -1525,4 +1552,335 @@ func TestProperty_Listener_NoIdLoss(t *testing.T) {
 			}
 		}
 	})
+}
+
+// ─── Watermark probe tests ─────────────────────────────────────────────────────
+
+// probeLeakIgnores returns goleak options that filter out background goroutines
+// created by the integration tests in this package (database/sql pool). Those
+// goroutines are created by tests that run before the unit tests in the same
+// binary and are unrelated to the listener lifecycle.
+func probeLeakIgnores() []goleak.Option {
+	return []goleak.Option{
+		goleak.IgnoreTopFunction("database/sql.(*DB).connectionCleaner"),
+		goleak.IgnoreTopFunction("database/sql.(*DB).connectionOpener"),
+	}
+}
+
+// newListenerForProbe builds a listener with both pagos/saldos repos exposed
+// and a controllable watermark probe. The probe goroutine interval is set to
+// 24h so the ticker never fires during the test; tests call probeWatermarkOnce
+// directly via the exported ProbeWatermarkOnce method.
+//
+// The probe is used by Start once for the init watermark, so the probe function
+// must succeed on that first call. Tests use an atomic counter to distinguish
+// the Start probe call (count=0) from explicit ProbeWatermarkOnce calls
+// (count>=1).
+func newListenerForProbe(
+	bus *eventbus.Bus,
+	probeFn func(ctx context.Context) (int64, error),
+) (*ventfb.FbEventListener, *mockChangelogRepo, *mockChangelogRepo) {
+	src := &mockSource{
+		subscribeResponses: []subscribeResponse{
+			{events: nil, closeAfter: false},
+		},
+	}
+	pagos := &mockChangelogRepo{}
+	saldos := &mockChangelogRepo{}
+	probe := ventfb.WatermarkProbe(probeFn)
+	l := ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil,
+		ventfb.WithWatermarkProbe(probe),
+		ventfb.WithWatermarkProbeInterval(noProbeInterval))
+	return l, pagos, saldos
+}
+
+// TestProbeLoop_FiresHandleEventOnWatermarkAdvance verifies that probeWatermarkOnce
+// calls handleEvent (via Since) for both topics when the watermark strictly
+// advances between ticks.
+//
+//nolint:paralleltest
+func TestProbeLoop_FiresHandleEventOnWatermarkAdvance(t *testing.T) {
+	defer goleak.VerifyNone(t, probeLeakIgnores()...)
+
+	bus := eventbus.New()
+	defer bus.Close()
+
+	// probeCallCount tracks total probe invocations (including the Start init call).
+	// Call 0 = Start init, call 1 = first ProbeWatermarkOnce, call 2 = second.
+	var probeCallCount int64
+	l, pagos, saldos := newListenerForProbe(bus, func(_ context.Context) (int64, error) {
+		count := atomic.AddInt64(&probeCallCount, 1) - 1 // 0-indexed
+		switch count {
+		case 0:
+			// Start init call — return a valid watermark.
+			return ventfb.SentinelNoActiveTx, nil
+		case 1:
+			// First ProbeWatermarkOnce — advance from 0 (lastObservedWatermark) to 100.
+			return 100, nil
+		default:
+			// Second ProbeWatermarkOnce — advance from 100 to 150.
+			return 150, nil
+		}
+	})
+
+	ctx := context.Background()
+	require.NoError(t, l.Start(ctx))
+
+	// First explicit tick: watermark 100 > 0 — fires Since for both topics.
+	l.ProbeWatermarkOnce(ctx)
+	sinceCallsAfterFirst := len(pagos.getSinceCalls()) + len(saldos.getSinceCalls())
+	assert.Equal(t, 2, sinceCallsAfterFirst,
+		"first probe tick (advance 0->100) must call Since for both pagos and saldos")
+
+	// Second explicit tick: watermark 150 > 100 — fires Since again for both topics.
+	l.ProbeWatermarkOnce(ctx)
+	sinceCallsAfterSecond := len(pagos.getSinceCalls()) + len(saldos.getSinceCalls())
+	assert.Equal(t, 4, sinceCallsAfterSecond,
+		"second probe tick (advance 100->150) must call Since for both topics again")
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, l.Stop(stopCtx))
+}
+
+// TestProbeLoop_SkipsWhenWatermarkUnchanged verifies that probeWatermarkOnce does
+// NOT call Since when the watermark returns the same value on consecutive ticks.
+//
+//nolint:paralleltest
+func TestProbeLoop_SkipsWhenWatermarkUnchanged(t *testing.T) {
+	defer goleak.VerifyNone(t, probeLeakIgnores()...)
+
+	bus := eventbus.New()
+	defer bus.Close()
+
+	var probeCallCount int64
+	l, pagos, saldos := newListenerForProbe(bus, func(_ context.Context) (int64, error) {
+		count := atomic.AddInt64(&probeCallCount, 1) - 1
+		if count == 0 {
+			// Start init call — return valid watermark.
+			return ventfb.SentinelNoActiveTx, nil
+		}
+		return 100, nil // all probe ticks return 100
+	})
+
+	ctx := context.Background()
+	require.NoError(t, l.Start(ctx))
+
+	// First explicit tick: 100 > 0 — Since IS called for both topics.
+	l.ProbeWatermarkOnce(ctx)
+	afterFirst := len(pagos.getSinceCalls()) + len(saldos.getSinceCalls())
+	assert.Equal(t, 2, afterFirst, "first tick (advance 0->100) must probe both topics")
+
+	// Second explicit tick: 100 == 100 — Since must NOT be called again.
+	l.ProbeWatermarkOnce(ctx)
+	afterSecond := len(pagos.getSinceCalls()) + len(saldos.getSinceCalls())
+	assert.Equal(t, 2, afterSecond,
+		"second tick with unchanged watermark (100->100) must not call Since")
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, l.Stop(stopCtx))
+}
+
+// TestProbeLoop_SkipsWhenWatermarkRetreats verifies that a retreating watermark
+// (should never happen in practice but defensive) does NOT trigger handleEvent.
+//
+//nolint:paralleltest
+func TestProbeLoop_SkipsWhenWatermarkRetreats(t *testing.T) {
+	defer goleak.VerifyNone(t, probeLeakIgnores()...)
+
+	bus := eventbus.New()
+	defer bus.Close()
+
+	var probeCallCount int64
+	l, pagos, saldos := newListenerForProbe(bus, func(_ context.Context) (int64, error) {
+		count := atomic.AddInt64(&probeCallCount, 1) - 1
+		switch count {
+		case 0:
+			// Start init call.
+			return ventfb.SentinelNoActiveTx, nil
+		case 1:
+			// First ProbeWatermarkOnce — advance 0 -> 100.
+			return 100, nil
+		default:
+			// Second ProbeWatermarkOnce — retreat 100 -> 50.
+			return 50, nil
+		}
+	})
+
+	ctx := context.Background()
+	require.NoError(t, l.Start(ctx))
+
+	// First tick: advance 0 -> 100 — Since IS called.
+	l.ProbeWatermarkOnce(ctx)
+	afterFirst := len(pagos.getSinceCalls()) + len(saldos.getSinceCalls())
+	assert.Equal(t, 2, afterFirst, "first tick (advance 0->100) must call Since for both topics")
+
+	// Second tick: retreat 100 -> 50 — Since must NOT be called.
+	l.ProbeWatermarkOnce(ctx)
+	afterSecond := len(pagos.getSinceCalls()) + len(saldos.getSinceCalls())
+	assert.Equal(t, 2, afterSecond,
+		"second tick (retreat 100->50) must not call Since")
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, l.Stop(stopCtx))
+}
+
+// TestProbeLoop_ProbeFailureIsNonFatal verifies that a probe error is logged and
+// skipped — the listener does not crash and the next successful tick works.
+//
+//nolint:paralleltest
+func TestProbeLoop_ProbeFailureIsNonFatal(t *testing.T) {
+	defer goleak.VerifyNone(t, probeLeakIgnores()...)
+
+	bus := eventbus.New()
+	defer bus.Close()
+
+	errFirebird := errors.New("MON$TRANSACTIONS unavailable")
+	var probeCallCount int64
+	l, pagos, saldos := newListenerForProbe(bus, func(_ context.Context) (int64, error) {
+		count := atomic.AddInt64(&probeCallCount, 1) - 1
+		switch count {
+		case 0:
+			// Start init call — must succeed so Start() doesn't return an error.
+			return ventfb.SentinelNoActiveTx, nil
+		case 1:
+			// First ProbeWatermarkOnce — return an error.
+			return 0, errFirebird
+		default:
+			// Second ProbeWatermarkOnce — success, watermark advanced.
+			return 200, nil
+		}
+	})
+
+	ctx := context.Background()
+	require.NoError(t, l.Start(ctx))
+
+	// First probe tick: error — Since must NOT be called.
+	l.ProbeWatermarkOnce(ctx)
+	afterError := len(pagos.getSinceCalls()) + len(saldos.getSinceCalls())
+	assert.Equal(t, 0, afterError,
+		"probe error must not call Since")
+
+	// Second probe tick: success, watermark 200 > 0 (lastObservedWatermark was not
+	// updated on the error tick, so it's still 0) — Since IS called for both topics.
+	l.ProbeWatermarkOnce(ctx)
+	afterSuccess := len(pagos.getSinceCalls()) + len(saldos.getSinceCalls())
+	assert.Equal(t, 2, afterSuccess,
+		"after probe error, next successful tick with new watermark must call Since")
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, l.Stop(stopCtx))
+}
+
+// TestStart_SpawnsBothLoops verifies that Start spawns both the main event loop
+// (evidenced by Subscribe being called) and the watermark-probe loop (evidenced
+// by MinActiveTransactionID being called within the probe interval window).
+//
+// This test uses a short probe interval (10ms) and a buffered probe counter to
+// detect that the probe goroutine actually fired at least once.
+//
+//nolint:paralleltest
+func TestStart_SpawnsBothLoops(t *testing.T) {
+	defer goleak.VerifyNone(t, probeLeakIgnores()...)
+
+	bus := eventbus.New()
+	defer bus.Close()
+
+	// stable source: never closes, so subscribe is called once and stays open.
+	src := &mockSource{
+		subscribeResponses: []subscribeResponse{
+			{events: nil, closeAfter: false},
+		},
+	}
+
+	probeCalls := make(chan struct{}, 64)
+	probe := ventfb.WatermarkProbe(func(_ context.Context) (int64, error) {
+		select {
+		case probeCalls <- struct{}{}:
+		default:
+		}
+		return ventfb.SentinelNoActiveTx, nil
+	})
+
+	pagos := &mockChangelogRepo{}
+	saldos := &mockChangelogRepo{}
+	l := ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil,
+		ventfb.WithWatermarkProbe(probe),
+		ventfb.WithWatermarkProbeInterval(10*time.Millisecond))
+
+	ctx := context.Background()
+	require.NoError(t, l.Start(ctx))
+
+	// Assert main loop subscribed.
+	require.Eventually(t, func() bool {
+		return src.subscribeCallCount() >= 1
+	}, 2*time.Second, 5*time.Millisecond, "main loop must Subscribe within 2s")
+
+	// Assert probe loop fired (probe goroutine must call watermarkProbe within
+	// a few ticks of the 10ms interval; give it 500ms generous window).
+	// Start itself calls the probe once — drain it before waiting for loop calls.
+	for {
+		select {
+		case <-probeCalls:
+			continue
+		default:
+		}
+		break
+	}
+	require.Eventually(t, func() bool {
+		select {
+		case <-probeCalls:
+			return true
+		default:
+			return false
+		}
+	}, 500*time.Millisecond, 5*time.Millisecond,
+		"probe loop must call watermarkProbe at least once within 500ms")
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, l.Stop(stopCtx))
+}
+
+// TestStop_WaitsForBothLoops verifies that Stop blocks until both the event loop
+// and the probe loop have exited, and that no goroutines leak afterward.
+// goleak.VerifyNone is the authoritative check here.
+//
+//nolint:paralleltest
+func TestStop_WaitsForBothLoops(t *testing.T) {
+	defer goleak.VerifyNone(t, probeLeakIgnores()...)
+
+	bus := eventbus.New()
+	defer bus.Close()
+
+	src := &mockSource{
+		subscribeResponses: []subscribeResponse{
+			{events: nil, closeAfter: false},
+		},
+	}
+	probe := ventfb.WatermarkProbe(func(_ context.Context) (int64, error) {
+		return ventfb.SentinelNoActiveTx, nil
+	})
+	pagos := &mockChangelogRepo{}
+	saldos := &mockChangelogRepo{}
+
+	l := ventfb.NewFbEventListener(src, bus, nil, pagos, saldos, nil,
+		ventfb.WithWatermarkProbe(probe),
+		ventfb.WithWatermarkProbeInterval(10*time.Millisecond))
+
+	ctx := context.Background()
+	require.NoError(t, l.Start(ctx))
+
+	// Give both loops time to start.
+	require.Eventually(t, func() bool {
+		return src.subscribeCallCount() >= 1
+	}, 2*time.Second, 5*time.Millisecond, "main loop must Subscribe")
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, l.Stop(stopCtx))
+	// goleak.VerifyNone at deferred call confirms no goroutine leak.
 }

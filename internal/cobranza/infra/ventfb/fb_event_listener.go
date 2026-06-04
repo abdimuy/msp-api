@@ -19,6 +19,13 @@ const (
 	topicSaldos = "saldos_changed"
 )
 
+// defaultWatermarkProbeInterval is how often the probe goroutine checks whether
+// the Firebird watermark (MinActiveTransactionID) has advanced. This closes the
+// gap where a long-running Microsip GUI transaction blocks the watermark and its
+// eventual commit does not emit POST_EVENT — without this probe the listener
+// would stay asleep with pending rows until some unrelated POST_EVENT arrives.
+const defaultWatermarkProbeInterval = 5 * time.Second
+
 // defaultBackoffSchedule is the exponential backoff sequence used between
 // reconnect attempts. After the last entry the final value is reused (cap 30s).
 var defaultBackoffSchedule = []time.Duration{
@@ -67,6 +74,14 @@ func WithWatermarkProbe(p WatermarkProbe) Option {
 	return func(l *FbEventListener) { l.watermarkProbe = p }
 }
 
+// WithWatermarkProbeInterval overrides the interval between watermark-advance
+// probes. Pass a very large duration (e.g. 24*time.Hour) in tests that do not
+// exercise the probe loop so it never fires during the test window and does not
+// interfere with goleak. Pass 0 to disable the probe loop entirely.
+func WithWatermarkProbeInterval(d time.Duration) Option {
+	return func(l *FbEventListener) { l.watermarkProbeInterval = d }
+}
+
 // FbEventListener bridges Firebird POST_EVENT notifications to the in-process
 // eventbus.Bus. It subscribes to "pagos_changed" and "saldos_changed" topics
 // and fan-outs signals to all SSE handlers.
@@ -79,29 +94,42 @@ func WithWatermarkProbe(p WatermarkProbe) Option {
 // publishes synthetic []int{} signals for both topics (so SSE subscribers
 // cursor-sync during the outage window), then reopens the connection.
 //
+// A secondary watermark-probe goroutine runs every watermarkProbeInterval and
+// synthesizes handleEvent calls when the watermark strictly advances. This
+// closes the gap where a long-running Microsip GUI transaction blocks the
+// watermark: when that transaction finally commits, Firebird does NOT emit
+// POST_EVENT, so without the probe the listener would stay asleep until some
+// unrelated POST_EVENT happened to arrive.
+//
 // Lifecycle methods Start and Stop mirror PagoRetryWorker exactly.
 type FbEventListener struct {
-	source          outbound.FbEventSource
-	bus             *eventbus.Bus
-	pool            *firebird.Pool
-	pagosChangelog  outbound.PagosChangelogRepo
-	saldosChangelog outbound.SaldosChangelogRepo
-	logger          *slog.Logger
-	clock           listenerClock
-	backoff         []time.Duration
-	watermarkProbe  WatermarkProbe
+	source                 outbound.FbEventSource
+	bus                    *eventbus.Bus
+	pool                   *firebird.Pool
+	pagosChangelog         outbound.PagosChangelogRepo
+	saldosChangelog        outbound.SaldosChangelogRepo
+	logger                 *slog.Logger
+	clock                  listenerClock
+	backoff                []time.Duration
+	watermarkProbe         WatermarkProbe
+	watermarkProbeInterval time.Duration
 
 	mu      sync.Mutex
 	running bool
 	cancel  context.CancelFunc
-	done    chan struct{}
+	wg      sync.WaitGroup
 
 	// lastSeenSeq holds the highest SEQ_ID we have published per topic.
 	// Reset on Stop; re-initialized on every Start from MaxSeqID(watermark).
 	// Access serialized by lastSeenMu (separate from the lifecycle mu to avoid
 	// contention between Start/Stop and the drain hot path).
-	lastSeenMu  sync.Mutex
-	lastSeenSeq map[string]int64
+	//
+	// lastObservedWatermark is the watermark seen by the most recent probe tick.
+	// Used to detect strict advances in watermarkProbeLoop. Protected by
+	// lastSeenMu (cheap to colocate; both fields move at the same cadence).
+	lastSeenMu            sync.Mutex
+	lastSeenSeq           map[string]int64
+	lastObservedWatermark int64
 }
 
 // NewFbEventListener builds a listener. source must be constructed before
@@ -121,14 +149,15 @@ func NewFbEventListener(
 		logger = slog.Default()
 	}
 	l := &FbEventListener{
-		source:          source,
-		bus:             bus,
-		pool:            pool,
-		pagosChangelog:  pagosChangelog,
-		saldosChangelog: saldosChangelog,
-		logger:          logger,
-		clock:           realListenerClock{},
-		backoff:         defaultBackoffSchedule,
+		source:                 source,
+		bus:                    bus,
+		pool:                   pool,
+		pagosChangelog:         pagosChangelog,
+		saldosChangelog:        saldosChangelog,
+		logger:                 logger,
+		clock:                  realListenerClock{},
+		backoff:                defaultBackoffSchedule,
+		watermarkProbeInterval: defaultWatermarkProbeInterval,
 	}
 	// Default watermark probe uses the real MinActiveTransactionID function.
 	l.watermarkProbe = func(ctx context.Context) (int64, error) {
@@ -153,7 +182,7 @@ func NewFbEventListener(
 // derivamos `loopCtx` de él, el loop muere exactamente a los 15s y deja
 // de recibir POST_EVENT sin loggear nada. El loop se ata a
 // context.Background() y solo se cancela por l.cancel() en Stop().
-func (l *FbEventListener) Start(_ context.Context) error {
+func (l *FbEventListener) Start(_ context.Context) error { //nolint:contextcheck // intentional: fresh ctx for long-lived goroutines
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.running {
@@ -195,16 +224,31 @@ func (l *FbEventListener) Start(_ context.Context) error {
 	// loopCtx is intentionally derived from Background(): the loop goroutine
 	// outlives the fx OnStart context (which is cancelled after startup).
 	// The loop is only cancelled by l.cancel() in Stop().
-	loopCtx, cancel2 := context.WithCancel(context.Background()) //nolint:contextcheck // intentional — loop outlives Start ctx
+	loopCtx, cancel2 := context.WithCancel(context.Background()) //nolint:contextcheck,gosec // intentional — loop outlives Start ctx; cancel2 is stored in l.cancel and called by Stop
 	l.cancel = cancel2
-	l.done = make(chan struct{})
 	l.running = true
-	go l.loop(loopCtx) //nolint:contextcheck // loopCtx is the long-lived context; this is correct by design
+
+	// Spawn the main event loop and the watermark-probe loop. Both share loopCtx
+	// and both call wg.Done() when they exit. Stop() waits on the WaitGroup.
+	l.wg.Add(1)
+	go func() { //nolint:contextcheck // loopCtx is the long-lived context; this is correct by design
+		defer l.wg.Done()
+		l.loop(loopCtx)
+	}()
+
+	if l.watermarkProbeInterval > 0 {
+		l.wg.Add(1)
+		go func() { //nolint:contextcheck // loopCtx is the long-lived context; this is correct by design
+			defer l.wg.Done()
+			l.watermarkProbeLoop(loopCtx)
+		}()
+	}
 	return nil
 }
 
-// Stop signals the listener to stop and waits for the goroutine to exit.
-// Idempotent.
+// Stop signals the listener to stop and waits for all goroutines to exit.
+// Idempotent. Blocks until both the event loop and the watermark-probe loop
+// have exited, or until ctx is cancelled.
 func (l *FbEventListener) Stop(ctx context.Context) error {
 	l.mu.Lock()
 	if !l.running {
@@ -212,9 +256,11 @@ func (l *FbEventListener) Stop(ctx context.Context) error {
 		return nil
 	}
 	l.cancel()
-	done := l.done
 	l.running = false
 	l.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() { l.wg.Wait(); close(done) }()
 	select {
 	case <-done:
 		return nil
@@ -228,7 +274,6 @@ func (l *FbEventListener) Stop(ctx context.Context) error {
 // exponential backoff, publishing synthetic []int{} signals before each
 // reconnect attempt so SSE subscribers can cursor-sync.
 func (l *FbEventListener) loop(ctx context.Context) {
-	defer close(l.done)
 	attempt := 0
 	for {
 		if ctx.Err() != nil {
@@ -399,5 +444,77 @@ func (l *FbEventListener) waitBackoff(ctx context.Context, attempt int) bool {
 		return true
 	case <-ctx.Done():
 		return false
+	}
+}
+
+// watermarkProbeLoop runs in parallel to loop(). Every watermarkProbeInterval
+// it calls probeWatermarkOnce to detect watermark advances caused by long-running
+// Microsip GUI transactions finally committing. Firebird does NOT emit POST_EVENT
+// when MON$TRANSACTIONS state changes, so without this goroutine the listener
+// would stay asleep with pending changelog rows until some unrelated POST_EVENT
+// happened to arrive.
+//
+// Cost in steady state: one MIN(MON$TRANSACTION_ID) query per interval.
+// Negligible (microseconds). The probe fires handleEvent only when the watermark
+// strictly advances, so there are no spurious publishes in steady state.
+func (l *FbEventListener) watermarkProbeLoop(ctx context.Context) {
+	ticker := time.NewTicker(l.watermarkProbeInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			l.probeWatermarkOnce(ctx)
+		}
+	}
+}
+
+// ProbeWatermarkOnce is the exported entry-point for unit tests that want to
+// drive probeWatermarkOnce deterministically without a real ticker. In
+// production code only watermarkProbeLoop calls probeWatermarkOnce.
+func (l *FbEventListener) ProbeWatermarkOnce(ctx context.Context) { l.probeWatermarkOnce(ctx) }
+
+// probeWatermarkOnce checks the current watermark and, if it strictly advanced
+// from the last observed value, synthesizes a handleEvent call for each topic.
+//
+// Extracted from watermarkProbeLoop so unit tests can drive it deterministically
+// without a real ticker.
+//
+// First-tick sentinel: lastObservedWatermark is initialized to 0 (Go zero-value).
+// On the first call (prev=0), the condition watermark > prev is true for any
+// real watermark value, so we always do one sanity probe at startup. This is
+// harmless — handleEvent's Since(lastSeenSeq, watermark) won't publish anything
+// if the cursor is already up to date (which it is: Start initialized it via
+// MaxSeqID). Subsequent ticks only fire when watermark strictly advances.
+func (l *FbEventListener) probeWatermarkOnce(ctx context.Context) {
+	watermark, err := l.watermarkProbe(ctx)
+	if err != nil {
+		l.logger.WarnContext(ctx, "fb_event_listener.watermark_probe_failed",
+			slog.String("error", err.Error()))
+		return
+	}
+
+	l.lastSeenMu.Lock()
+	prev := l.lastObservedWatermark
+	advanced := watermark > prev
+	if advanced {
+		l.lastObservedWatermark = watermark
+	}
+	l.lastSeenMu.Unlock()
+
+	if !advanced {
+		// Watermark did not advance — no long-running tx committed in this window.
+		// The push channel handles all normal cases; nothing to do.
+		return
+	}
+
+	l.logger.DebugContext(ctx, "fb_event_listener.watermark_advanced",
+		slog.Int64("prev", prev),
+		slog.Int64("current", watermark))
+
+	for _, topic := range []string{topicPagos, topicSaldos} {
+		l.handleEvent(ctx, outbound.FbEvent{Name: topic, Count: 0})
 	}
 }
