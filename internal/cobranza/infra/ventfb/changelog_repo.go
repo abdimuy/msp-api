@@ -83,10 +83,12 @@ SELECT FIRST ? SEQ_ID, IMPTE_DOCTO_CC_ID, TX_ID, COMMIT_AT
 // COMMIT_AT < cutoff. Usa un sub-SELECT con FIRST para limitar el scan y
 // evitar escalación de locks en Firebird 2.x / 3.x.
 func (r *PagosChangelogRepo) DeleteOlderThan(ctx context.Context, cutoff time.Time, maxDelete int) (int, error) {
-	// Firebird ROWS/FIRST en DELETE no es portable en 2.x. El patrón
-	// DELETE ... WHERE pk IN (SELECT FIRST ? pk ...) sí lo es.
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	result, err := q.ExecContext(ctx, `
+	var n int64
+	err := firebird.RunInTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		// Firebird ROWS/FIRST en DELETE no es portable en 2.x. El patrón
+		// DELETE ... WHERE pk IN (SELECT FIRST ? pk ...) sí lo es.
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		result, eerr := q.ExecContext(ctx, `
 DELETE FROM MSP_PAGOS_CHANGELOG
  WHERE SEQ_ID IN (
    SELECT FIRST ? SEQ_ID
@@ -94,15 +96,18 @@ DELETE FROM MSP_PAGOS_CHANGELOG
     WHERE COMMIT_AT < ?
     ORDER BY SEQ_ID ASC
  )`,
-		maxDelete, firebird.ToWallClock(cutoff))
-	if err != nil {
-		return 0, firebird.MapError(err)
-	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return 0, firebird.MapError(err)
-	}
-	return int(n), nil
+			maxDelete, firebird.ToWallClock(cutoff))
+		if eerr != nil {
+			return firebird.MapError(eerr)
+		}
+		rows, rerr := result.RowsAffected()
+		if rerr != nil {
+			return firebird.MapError(rerr)
+		}
+		n = rows
+		return nil
+	})
+	return int(n), err
 }
 
 // MaxSeqID retorna el mayor SEQ_ID visible bajo el watermark en
@@ -165,8 +170,10 @@ SELECT FIRST ? SEQ_ID, DOCTO_CC_ID, TX_ID, COMMIT_AT
 // DeleteOlderThan elimina hasta maxDelete filas de MSP_SALDOS_CHANGELOG cuyo
 // COMMIT_AT < cutoff.
 func (r *SaldosChangelogRepo) DeleteOlderThan(ctx context.Context, cutoff time.Time, maxDelete int) (int, error) {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	result, err := q.ExecContext(ctx, `
+	var n int64
+	err := firebird.RunInTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		result, eerr := q.ExecContext(ctx, `
 DELETE FROM MSP_SALDOS_CHANGELOG
  WHERE SEQ_ID IN (
    SELECT FIRST ? SEQ_ID
@@ -174,15 +181,18 @@ DELETE FROM MSP_SALDOS_CHANGELOG
     WHERE COMMIT_AT < ?
     ORDER BY SEQ_ID ASC
  )`,
-		maxDelete, firebird.ToWallClock(cutoff))
-	if err != nil {
-		return 0, firebird.MapError(err)
-	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return 0, firebird.MapError(err)
-	}
-	return int(n), nil
+			maxDelete, firebird.ToWallClock(cutoff))
+		if eerr != nil {
+			return firebird.MapError(eerr)
+		}
+		rows, rerr := result.RowsAffected()
+		if rerr != nil {
+			return firebird.MapError(rerr)
+		}
+		n = rows
+		return nil
+	})
+	return int(n), err
 }
 
 // MaxSeqID retorna el mayor SEQ_ID visible bajo el watermark en

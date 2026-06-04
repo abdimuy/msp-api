@@ -299,20 +299,25 @@ WHERE ZONA_CLIENTE_ID = ?
 // returns how many rows were removed. Implements
 // outbound.SaldosTombstoneCleaner.
 func (r *SaldosRepo) DeleteTombstonesOlderThan(ctx context.Context, cutoff time.Time) (int, error) {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	res, err := q.ExecContext(ctx, `
+	var n int64
+	err := firebird.RunInTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		res, eerr := q.ExecContext(ctx, `
 DELETE FROM MSP_SALDOS_VENTAS
 WHERE CARGO_CANCELADO = 'S' AND UPDATED_AT < ?`,
-		firebird.ToWallClock(cutoff),
-	)
-	if err != nil {
-		return 0, firebird.MapError(err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return 0, firebird.MapError(err)
-	}
-	return int(n), nil
+			firebird.ToWallClock(cutoff),
+		)
+		if eerr != nil {
+			return firebird.MapError(eerr)
+		}
+		rows, rerr := res.RowsAffected()
+		if rerr != nil {
+			return firebird.MapError(rerr)
+		}
+		n = rows
+		return nil
+	})
+	return int(n), err
 }
 
 // ─── scan helpers ─────────────────────────────────────────────────────────────

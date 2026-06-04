@@ -141,55 +141,59 @@ ORDER BY RECEIVED_AT ASC, ID ASC`
 // Insert persists a new PagoRecibido. The repo trusts that p has been
 // constructed via NewPagoRecibido (so state == pendiente, intentos == 0).
 func (r *PagosRecibidosRepo) Insert(ctx context.Context, p *domain.PagoRecibido) error {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	a := p.Audit()
-	args := []any{
-		p.ID().String(),
-		p.CargoDoctoCCID(), p.ClienteID(), p.CobradorID(), p.Cobrador(),
-		p.Importe(), p.FormaCobroID(), p.ConceptoCCID(),
-		firebird.ToWallClock(p.FechaHoraPago()), p.Lat(), p.Lon(),
-		estadoFromSincronizacion(p.Sincronizacion()), p.Intentos(), p.UltimoError(),
-		p.DoctoCCID(), p.ImpteDoctoCCID(), p.Folio(),
-		firebird.ToWallClock(p.ReceivedAt()), nullableWallClock(p.AplicadoAt()),
-		a.CreatedBy().String(), a.UpdatedBy().String(), firebird.ToWallClock(a.UpdatedAt()),
-	}
-	_, err := q.ExecContext(ctx, insertPagoRecibidoSQL, args...)
-	if err != nil {
-		mapped := firebird.MapError(err)
-		// Duplicate primary key → idempotency conflict. The platform mapper
-		// returns the generic "firebird_unique_violation" Conflict; surface
-		// it as the domain-typed ErrPagoYaExiste so callers can fast-path.
-		var ae *apperror.Error
-		if errors.As(mapped, &ae) && ae.Code == "firebird_unique_violation" {
-			return domain.ErrPagoYaExiste
+	return firebird.RunInTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		a := p.Audit()
+		args := []any{
+			p.ID().String(),
+			p.CargoDoctoCCID(), p.ClienteID(), p.CobradorID(), p.Cobrador(),
+			p.Importe(), p.FormaCobroID(), p.ConceptoCCID(),
+			firebird.ToWallClock(p.FechaHoraPago()), p.Lat(), p.Lon(),
+			estadoFromSincronizacion(p.Sincronizacion()), p.Intentos(), p.UltimoError(),
+			p.DoctoCCID(), p.ImpteDoctoCCID(), p.Folio(),
+			firebird.ToWallClock(p.ReceivedAt()), nullableWallClock(p.AplicadoAt()),
+			a.CreatedBy().String(), a.UpdatedBy().String(), firebird.ToWallClock(a.UpdatedAt()),
 		}
-		return mapped
-	}
-	return nil
+		_, err := q.ExecContext(ctx, insertPagoRecibidoSQL, args...)
+		if err != nil {
+			mapped := firebird.MapError(err)
+			// Duplicate primary key → idempotency conflict. The platform mapper
+			// returns the generic "firebird_unique_violation" Conflict; surface
+			// it as the domain-typed ErrPagoYaExiste so callers can fast-path.
+			var ae *apperror.Error
+			if errors.As(mapped, &ae) && ae.Code == "firebird_unique_violation" {
+				return domain.ErrPagoYaExiste
+			}
+			return mapped
+		}
+		return nil
+	})
 }
 
 // Update persists state changes (MarcarAplicada / RegistrarFallo). Returns
 // ErrPagoNoEncontrado when no row matches the ID.
 func (r *PagosRecibidosRepo) Update(ctx context.Context, p *domain.PagoRecibido) error {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	a := p.Audit()
-	args := []any{
-		estadoFromSincronizacion(p.Sincronizacion()),
-		p.Intentos(),
-		p.UltimoError(),
-		p.DoctoCCID(),
-		p.ImpteDoctoCCID(),
-		p.Folio(),
-		nullableWallClock(p.AplicadoAt()),
-		a.UpdatedBy().String(),
-		firebird.ToWallClock(a.UpdatedAt()),
-		p.ID().String(),
-	}
-	res, err := q.ExecContext(ctx, updatePagoRecibidoSQL, args...)
-	if err != nil {
-		return firebird.MapError(err)
-	}
-	return ensureRowAffectedPago(res, domain.ErrPagoNoEncontrado)
+	return firebird.RunInTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		a := p.Audit()
+		args := []any{
+			estadoFromSincronizacion(p.Sincronizacion()),
+			p.Intentos(),
+			p.UltimoError(),
+			p.DoctoCCID(),
+			p.ImpteDoctoCCID(),
+			p.Folio(),
+			nullableWallClock(p.AplicadoAt()),
+			a.UpdatedBy().String(),
+			firebird.ToWallClock(a.UpdatedAt()),
+			p.ID().String(),
+		}
+		res, err := q.ExecContext(ctx, updatePagoRecibidoSQL, args...)
+		if err != nil {
+			return firebird.MapError(err)
+		}
+		return ensureRowAffectedPago(res, domain.ErrPagoNoEncontrado)
+	})
 }
 
 // LockByID acquires SELECT … WITH LOCK on the row. Must be inside a tx.
@@ -287,37 +291,41 @@ ORDER BY CREATED_AT ASC, ID ASC`
 
 // InsertImagen persists a row in MSP_PAGOS_IMAGENES.
 func (r *PagosRecibidosRepo) InsertImagen(ctx context.Context, pagoID uuid.UUID, img *domain.Imagen) error {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	a := img.Audit()
-	storage := img.Storage()
-	_, err := q.ExecContext(
-		ctx, insertPagoImagenSQL,
-		img.ID().String(),
-		pagoID.String(),
-		storage.Kind().String(),
-		storage.Key(),
-		img.Mime(),
-		img.SizeBytes(),
-		img.Descripcion(),
-		firebird.ToWallClock(a.CreatedAt()),
-		firebird.ToWallClock(a.UpdatedAt()),
-		a.CreatedBy().String(),
-		a.UpdatedBy().String(),
-	)
-	if err != nil {
-		return firebird.MapError(err)
-	}
-	return nil
+	return firebird.RunInTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		a := img.Audit()
+		storage := img.Storage()
+		_, err := q.ExecContext(
+			ctx, insertPagoImagenSQL,
+			img.ID().String(),
+			pagoID.String(),
+			storage.Kind().String(),
+			storage.Key(),
+			img.Mime(),
+			img.SizeBytes(),
+			img.Descripcion(),
+			firebird.ToWallClock(a.CreatedAt()),
+			firebird.ToWallClock(a.UpdatedAt()),
+			a.CreatedBy().String(),
+			a.UpdatedBy().String(),
+		)
+		if err != nil {
+			return firebird.MapError(err)
+		}
+		return nil
+	})
 }
 
 // DeleteImagen removes a single row from MSP_PAGOS_IMAGENES.
 func (r *PagosRecibidosRepo) DeleteImagen(ctx context.Context, imagenID uuid.UUID) error {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	res, err := q.ExecContext(ctx, deletePagoImagenSQL, imagenID.String())
-	if err != nil {
-		return firebird.MapError(err)
-	}
-	return ensureRowAffectedPago(res, domain.ErrImagenNoEncontrada)
+	return firebird.RunInTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		res, err := q.ExecContext(ctx, deletePagoImagenSQL, imagenID.String())
+		if err != nil {
+			return firebird.MapError(err)
+		}
+		return ensureRowAffectedPago(res, domain.ErrImagenNoEncontrada)
+	})
 }
 
 // FindImagenByID loads a single comprobante row.

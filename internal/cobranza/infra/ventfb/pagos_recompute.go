@@ -23,9 +23,11 @@ func NewPagosRecomputer(pool *firebird.Pool) *PagosRecomputer {
 
 // Recompute calls EXECUTE PROCEDURE MSP_RECOMPUTE_PAGO(:impteID).
 func (r *PagosRecomputer) Recompute(ctx context.Context, impteID int) error {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	if _, err := q.ExecContext(ctx, "EXECUTE PROCEDURE MSP_RECOMPUTE_PAGO(?)", impteID); err != nil {
-		return firebird.MapError(err)
-	}
-	return nil
+	return firebird.RunInTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		if _, err := q.ExecContext(ctx, "EXECUTE PROCEDURE MSP_RECOMPUTE_PAGO(?)", impteID); err != nil {
+			return firebird.MapError(err)
+		}
+		return nil
+	})
 }
