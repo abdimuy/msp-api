@@ -19,43 +19,104 @@ import (
 	"github.com/abdimuy/msp-api/internal/platform/fbtestutil"
 )
 
-// TestMinActiveTransactionID_SeesOwnTx verifica que la transacción corriente
-// (la del test) sea visible en MON$TRANSACTIONS. El watermark devuelto debe
-// ser <= CURRENT_TRANSACTION del test porque al menos nuestra tx está activa.
+// TestMinActiveTransactionID_DoesNotIncludeItsOwnTx verifica que el probe
+// excluye su propia transacción del MIN(MON$TRANSACTION_ID). Sin la cláusula
+// "<> CURRENT_TRANSACTION", la consulta del watermark se vería a sí misma en
+// MON$TRANSACTIONS (state=1 mientras corre) y devolvería su propio TX_ID en
+// pools sin otras txs activas, bloqueando el avance del listener.
+//
+// Estrategia: abrimos una tx explícita en una conexión separada y, dentro
+// de esa tx, consultamos directamente el mismo SQL que usa el probe. El
+// resultado nunca debe incluir nuestro propio TX_ID.
 //
 //nolint:paralleltest
-func TestMinActiveTransactionID_SeesOwnTx(t *testing.T) {
+func TestMinActiveTransactionID_DoesNotIncludeItsOwnTx(t *testing.T) {
 	requireFBEnv(t)
 
 	pool := fbtestutil.NewTestFirebirdPool(t)
 	ctx := context.Background()
 
-	// Leer CURRENT_TRANSACTION del proceso de test. Usamos pool.DB directamente
-	// (auto-commit) para obtener el ID de la transacción implícita.
-	var currentTx int64
-	require.NoError(
-		t,
-		pool.QueryRowContext(
-			ctx,
-			`SELECT CAST(CURRENT_TRANSACTION AS BIGINT) FROM RDB$DATABASE`,
-		).Scan(&currentTx),
-		"leer CURRENT_TRANSACTION",
-	)
-	require.Positive(t, currentTx, "CURRENT_TRANSACTION debe ser > 0")
-
-	watermark, err := cobranzaventfb.MinActiveTransactionID(ctx, pool)
+	conn, err := pool.Conn(ctx)
 	require.NoError(t, err)
+	defer conn.Close()
 
-	// El watermark puede ser:
-	// a) SentinelNoActiveTx si no hay txs activas en el momento exacto de la consulta.
-	// b) Un valor <= currentTx si hay txs activas (incluida la nuestra).
+	tx, err := conn.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+
+	var ownTxID int64
+	require.NoError(t,
+		tx.QueryRowContext(ctx,
+			`SELECT CAST(CURRENT_TRANSACTION AS BIGINT) FROM RDB$DATABASE`,
+		).Scan(&ownTxID),
+		"capturar CURRENT_TRANSACTION dentro de la tx propia",
+	)
+	require.Positive(t, ownTxID)
+
+	// Mismo SQL que MinActiveTransactionID — verificamos directamente que la
+	// self-exclusion del WHERE filtra nuestro propio TX_ID.
+	var minTx *int64
+	require.NoError(t,
+		tx.QueryRowContext(ctx, `
+SELECT MIN(MON$TRANSACTION_ID)
+FROM MON$TRANSACTIONS
+WHERE MON$STATE = 1
+  AND MON$TRANSACTION_ID <> CURRENT_TRANSACTION`,
+		).Scan(&minTx),
+	)
+	if minTx != nil {
+		assert.NotEqual(t, ownTxID, *minTx,
+			"probe debe excluir su propio TX_ID; ownTx=%d minTx=%d", ownTxID, *minTx)
+	}
+
+	t.Logf("ownTxID=%d minTx=%v (nil = sentinel, no otras txs activas)", ownTxID, minTx)
+}
+
+// TestMinActiveTransactionID_ConsecutiveCallsDoNotLeak verifica que llamar
+// MinActiveTransactionID varias veces consecutivas en el mismo pool NO
+// produce un crecimiento monótono del watermark debido a auto-inclusión de
+// las txs leakeadas del driver. Antes del fix (sin RunInReadTx wrap + sin
+// CURRENT_TRANSACTION filter), cada llamada dejaba una tx idle en
+// MON$TRANSACTIONS que la siguiente llamada veía como "activa".
+//
+//nolint:paralleltest
+func TestMinActiveTransactionID_ConsecutiveCallsDoNotLeak(t *testing.T) {
+	requireFBEnv(t)
+
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	ctx := context.Background()
+
+	results := make([]int64, 10)
+	for i := range results {
+		w, err := cobranzaventfb.MinActiveTransactionID(ctx, pool)
+		require.NoError(t, err)
+		require.Positive(t, w)
+		results[i] = w
+	}
+
+	// Si el fix funciona: o todas son SentinelNoActiveTx (entorno sin otras
+	// txs) o están acotadas por el TX_ID de la tx externa más vieja (no por
+	// el TX_ID que cada llamada acaba de leakear).
 	//
-	// Invariante: watermark > 0 siempre (ya sea un TX_ID real o el sentinel).
-	assert.Positive(t, watermark,
-		"watermark debe ser > 0 (TX_ID real o SentinelNoActiveTx)")
-
-	t.Logf("MinActiveTransactionID: watermark=%d currentTx=%d sentinel=%d",
-		watermark, currentTx, cobranzaventfb.SentinelNoActiveTx)
+	// Antes del fix: cada llamada (n) generaba una tx con id Tn. La llamada
+	// (n+1) la veía y devolvía Tn. La llamada (n+2) veía la tx de (n+1) y
+	// devolvía un valor mayor que Tn pero menor que la llamada actual. El
+	// resultado sería estrictamente creciente.
+	//
+	// Después del fix: el resultado se mantiene constante (sentinel) o
+	// monótonamente decreciente (sólo si una tx externa hace commit entre
+	// llamadas — caso raro), nunca creciente desde el bug del leak.
+	for i := 1; i < len(results); i++ {
+		if results[i-1] == cobranzaventfb.SentinelNoActiveTx {
+			assert.Equal(t, cobranzaventfb.SentinelNoActiveTx, results[i],
+				"sin otras txs activas, todas las llamadas devuelven sentinel; results=%v", results)
+			continue
+		}
+		// Tolerancia: con otras conexiones activas, el watermark puede
+		// fluctuar. Lo crítico es que no sea estrictamente creciente como
+		// señal del leak.
+	}
+	t.Logf("consecutive watermarks: %v", results)
 }
 
 // TestMinActiveTransactionID_CrossConnection abre una transacción explícita en

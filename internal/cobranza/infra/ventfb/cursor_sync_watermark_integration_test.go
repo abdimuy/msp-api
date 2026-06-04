@@ -64,9 +64,18 @@ func forceSaldoTxID(t *testing.T, q firebird.Querier, doctoCCID int, txID int64)
 	require.NoError(t, err, "forceSaldoTxID: UPDATE MSP_SALDOS_VENTAS TX_ID")
 }
 
-// TestSyncPagosZona_ExcludesRowsAboveWatermark verifies that a pago row with a
-// TX_ID above the current watermark (simulating an in-flight long transaction)
-// is excluded from sync, while a row with a committed TX_ID (1) is included.
+// TestSyncPagosZona_ExcludesRowsAboveWatermark verifies that a pago row whose
+// TX_ID is at the watermark boundary is excluded from sync (strict less-than
+// predicate), while a row with a committed TX_ID (1) is included.
+//
+// The simulated "in-flight" row uses TX_ID = math.MaxInt64 — equal to
+// SentinelNoActiveTx, the watermark returned by MinActiveTransactionID when
+// no other state=1 transactions exist on the database. The filter is
+// `TX_ID < watermark`, so a row whose TX_ID equals the watermark is excluded
+// (off-by-one verified). Before the watermark probe was patched to self-
+// exclude (commit "fix(cobranza-fb): watermark probe self-exclusion + RunInReadTx
+// wrap"), the probe could return its own implicit tx_id and any large value
+// would have served — that path is now closed.
 //
 //nolint:paralleltest // serial: shares rollback-only tx.
 func TestSyncPagosZona_ExcludesRowsAboveWatermark(t *testing.T) {
@@ -86,10 +95,11 @@ func TestSyncPagosZona_ExcludesRowsAboveWatermark(t *testing.T) {
 		impteA := insertPagoImporte(t, q, cargoA, importe)
 		forcePagoTxID(t, q, impteA, 1)
 
-		// Row B: TX_ID = math.MaxInt64-1 → simulates an in-flight transaction.
+		// Row B: TX_ID = math.MaxInt64 (== SentinelNoActiveTx); the filter
+		// `TX_ID < watermark` is FALSE at the boundary → row excluded.
 		cargoB := insertCargoDoctosCC(t, q, clienteID, "WM-PG-B", importe)
 		impteB := insertPagoImporte(t, q, cargoB, importe)
-		forcePagoTxID(t, q, impteB, math.MaxInt64-1)
+		forcePagoTxID(t, q, impteB, math.MaxInt64)
 
 		// Wait out the clock-skew margin so UPDATED_AT is below upperBound.
 		time.Sleep(2 * time.Second)
@@ -108,9 +118,9 @@ func TestSyncPagosZona_ExcludesRowsAboveWatermark(t *testing.T) {
 		assert.NotNil(t, foundA,
 			"pago with TX_ID=1 (committed) must appear in sync")
 		assert.Nil(t, foundB,
-			"pago with TX_ID=MaxInt64-1 (in-flight simulation) must be excluded by watermark")
+			"pago with TX_ID=MaxInt64 (at the watermark boundary) must be excluded by strict-less-than filter")
 
-		t.Logf("watermark exclusion ok: impteA=%d (TX_ID=1, included) impteB=%d (TX_ID=MaxInt64-1, excluded)",
+		t.Logf("watermark exclusion ok: impteA=%d (TX_ID=1, included) impteB=%d (TX_ID=MaxInt64, excluded)",
 			impteA, impteB)
 	})
 }
@@ -168,8 +178,10 @@ func TestSyncPagosZona_ClockSkewMarginIsOneSecond(t *testing.T) {
 	})
 }
 
-// TestSyncSaldosZona_ExcludesRowsAboveWatermark verifies that a saldo row with
-// TX_ID above the watermark is excluded, mirroring the pagos test.
+// TestSyncSaldosZona_ExcludesRowsAboveWatermark verifies that a saldo row at
+// the watermark boundary is excluded, mirroring the pagos test. See
+// TestSyncPagosZona_ExcludesRowsAboveWatermark for the rationale on using
+// TX_ID = math.MaxInt64.
 //
 //nolint:paralleltest // serial: shares rollback-only tx.
 func TestSyncSaldosZona_ExcludesRowsAboveWatermark(t *testing.T) {
@@ -188,9 +200,10 @@ func TestSyncSaldosZona_ExcludesRowsAboveWatermark(t *testing.T) {
 		cargoA := insertCargoDoctosCC(t, q, clienteID, "WM-SA-A", importe)
 		forceSaldoTxID(t, q, cargoA, 1)
 
-		// Cargo B: TX_ID = math.MaxInt64-1 → in-flight simulation.
+		// Cargo B: TX_ID = math.MaxInt64 (boundary). Filter `< sentinel` is
+		// FALSE → excluded.
 		cargoB := insertCargoDoctosCC(t, q, clienteID, "WM-SA-B", importe)
-		forceSaldoTxID(t, q, cargoB, math.MaxInt64-1)
+		forceSaldoTxID(t, q, cargoB, math.MaxInt64)
 
 		// Wait out the clock-skew margin.
 		time.Sleep(2 * time.Second)
@@ -222,9 +235,9 @@ func TestSyncSaldosZona_ExcludesRowsAboveWatermark(t *testing.T) {
 		assert.True(t, foundA,
 			"saldo with TX_ID=1 (committed) must appear in sync")
 		assert.False(t, foundB,
-			"saldo with TX_ID=MaxInt64-1 (in-flight simulation) must be excluded by watermark")
+			"saldo with TX_ID=MaxInt64 (at watermark boundary) must be excluded by strict-less-than filter")
 
-		t.Logf("saldo watermark exclusion ok: cargoA=%d (TX_ID=1, included) cargoB=%d (TX_ID=MaxInt64-1, excluded)",
+		t.Logf("saldo watermark exclusion ok: cargoA=%d (TX_ID=1, included) cargoB=%d (TX_ID=MaxInt64, excluded)",
 			cargoA, cargoB)
 	})
 }
