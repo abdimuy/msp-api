@@ -198,7 +198,7 @@ const selectPagoColsP = `
 	p.APLICADO,
 	p.UPDATED_AT,
 	COALESCE(dc.DESCRIPCION, ''),
-	c.NOMBRE,
+	COALESCE(c.NOMBRE, ''),
 	dc.COBRADOR_ID,
 	fcd.FORMA_COBRO_ID`
 
@@ -210,15 +210,28 @@ const selectPagoColsP = `
 // y COBRADOR_ID, CLIENTES para NOMBRE_CLIENTE, FORMAS_COBRO_DOCTOS para
 // FORMA_COBRO_ID. El sistema Node legacy hace estos JOINs.
 //
+// IMPORTANTE: DOCTOS_CC y CLIENTES van por LEFT JOIN para que tombstones
+// (CANCELADO='S' en MSP_PAGOS_VENTAS) — y especialmente las filas cuyo
+// DOCTO_CC padre fue borrado en Microsip — sigan apareciendo en el sync y en
+// /by-ids. Con INNER JOIN un DELETE FROM DOCTOS_CC dejaba huérfana la fila
+// del cache: el trigger marca CANCELADO='S' pero el JOIN excluye la row y
+// el cliente móvil nunca recibe la señal de borrado. Los campos enriquecidos
+// quedan NULL/” para tombstones, lo cual es correcto — el cliente sólo
+// necesita el flag `cancelado` para borrar localmente.
+//
+// MSP_SALDOS_VENTAS sigue como INNER JOIN: el saldo padre nunca desaparece
+// (cancelar el pago refunde el saldo, no lo borra), así que un fallo del
+// JOIN ahí sí indica un cargo huérfano y debe excluirse.
+//
 // Filtro de concepto: el Node solo entrega pagos con CONCEPTO_CC_ID IN
 // (87327, 27969) — cobranza en ruta y abono mostrador. El cache pre-incluye
 // otros conceptos (155, 11, 27968...) que no son cobranza activa y
 // confundirian al cobrador. Lo filtramos a nivel del query del sync.
 const pagoFromClause = `
 FROM MSP_PAGOS_VENTAS p
-JOIN MSP_SALDOS_VENTAS s   ON s.DOCTO_CC_ID = p.DOCTO_CC_ACR_ID
-JOIN DOCTOS_CC dc          ON dc.DOCTO_CC_ID = p.DOCTO_CC_ID
-JOIN CLIENTES c            ON c.CLIENTE_ID = p.CLIENTE_ID
+JOIN MSP_SALDOS_VENTAS s        ON s.DOCTO_CC_ID = p.DOCTO_CC_ACR_ID
+LEFT JOIN DOCTOS_CC dc          ON dc.DOCTO_CC_ID = p.DOCTO_CC_ID
+LEFT JOIN CLIENTES c            ON c.CLIENTE_ID = p.CLIENTE_ID
 LEFT JOIN FORMAS_COBRO_DOCTOS fcd
        ON fcd.NOM_TABLA_DOCTOS = 'DOCTOS_CC' AND fcd.DOCTO_ID = p.DOCTO_CC_ID`
 
@@ -360,7 +373,8 @@ func (r *PagosRepo) DeleteTombstonesOlderThan(ctx context.Context, cutoff time.T
 	var n int64
 	err := firebird.RunInTx(ctx, r.pool.DB, func(ctx context.Context) error {
 		q := firebird.GetQuerier(ctx, r.pool.DB)
-		res, eerr := q.ExecContext(ctx, `
+		res, eerr := q.ExecContext(
+			ctx, `
 DELETE FROM MSP_PAGOS_VENTAS
 WHERE CANCELADO = 'S' AND UPDATED_AT < ?`,
 			firebird.ToWallClock(cutoff),
