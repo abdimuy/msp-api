@@ -16,16 +16,6 @@ var (
 	_ outbound.SaldosReconcileRepo = (*SaldosRepo)(nil)
 )
 
-// snapshotTx begins a Firebird snapshot-isolation tx. The firebirdsql driver
-// maps sql.LevelRepeatableRead to isc_tpb_concurrency (Firebird snapshot, no
-// blocking of writers). The driver does not expose a read-only TPB option via
-// database/sql, so the tx is opened with isc_tpb_write even though Digest /
-// ListIDs only read. This is safe: we never write within these queries.
-// The returned tx must be rolled back or committed by the caller.
-func snapshotTx(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
-	return db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
-}
-
 // ─── PagosRepo — Digest + ListIDs ─────────────────────────────────────────────
 
 // Digest streams pago PKs and UPDATED_AT under a snapshot transaction and
@@ -37,17 +27,22 @@ func snapshotTx(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
 // The firebirdsql driver does not provide a native XOR aggregate so we stream
 // the rows — at 50k rows that is roughly 800 kB over loopback, well within
 // acceptable bounds.
+//
+// firebird.RunInSnapshotTx wraps the read in a REPEATABLE READ
+// (isc_tpb_concurrency) transaction explicitly committed at the end. This
+// guarantees a single point-in-time view across the streamed rows and avoids
+// the implicit-transaction leak in the nakagami/firebirdsql driver — the tx
+// transitions cleanly to MON\$STATE=3 (committed) instead of lingering as
+// idle/uncommitted.
 func (r *PagosRepo) Digest(ctx context.Context, zonaID int, desde time.Time) (outbound.DigestResult, error) {
-	tx, err := snapshotTx(ctx, r.pool.DB)
-	if err != nil {
-		return outbound.DigestResult{}, firebird.MapError(err)
-	}
-	defer func() { _ = tx.Rollback() }()
+	var result outbound.DigestResult
+	err := firebird.RunInSnapshotTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
 
-	saldoFilter, extraArgs := pagoDigestSaldoFilter(desde)
-	args := append([]any{zonaID}, extraArgs...)
-	//nolint:gosec // SQL built from package-level consts; saldoFilter is a fixed literal, not user input.
-	query := `
+		saldoFilter, extraArgs := pagoDigestSaldoFilter(desde)
+		args := append([]any{zonaID}, extraArgs...)
+		//nolint:gosec // SQL built from package-level consts; saldoFilter is a fixed literal, not user input.
+		query := `
 SELECT p.IMPTE_DOCTO_CC_ID, p.UPDATED_AT
 ` + pagoFromClause + `
 WHERE p.ZONA_CLIENTE_ID = ?
@@ -55,17 +50,20 @@ WHERE p.ZONA_CLIENTE_ID = ?
   AND ` + pagoConceptoFilter + `
   AND ` + saldoFilter
 
-	rows, err := tx.QueryContext(ctx, query, args...)
-	if err != nil {
-		return outbound.DigestResult{}, firebird.MapError(err)
-	}
-	defer func() { _ = rows.Close() }()
+		rows, qerr := q.QueryContext(ctx, query, args...)
+		if qerr != nil {
+			return firebird.MapError(qerr)
+		}
+		defer func() { _ = rows.Close() }()
 
-	result, err := computeDigest(ctx, rows)
-	if err != nil {
-		return outbound.DigestResult{}, err
-	}
-	return result, nil
+		d, derr := computeDigest(ctx, rows)
+		if derr != nil {
+			return derr
+		}
+		result = d
+		return nil
+	})
+	return result, err
 }
 
 // ListIDs returns pago IDs for zonaID with IMPTE_DOCTO_CC_ID > after, ordered
@@ -73,16 +71,15 @@ WHERE p.ZONA_CLIENTE_ID = ?
 // matches the digest count. Fetches limit+1 rows to detect has_more without
 // an extra count query.
 func (r *PagosRepo) ListIDs(ctx context.Context, zonaID, after, limit int, desde time.Time) ([]int, bool, error) {
-	tx, err := snapshotTx(ctx, r.pool.DB)
-	if err != nil {
-		return nil, false, firebird.MapError(err)
-	}
-	defer func() { _ = tx.Rollback() }()
+	var ids []int
+	var hasMore bool
+	err := firebird.RunInSnapshotTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
 
-	saldoFilter, extraArgs := pagoDigestSaldoFilter(desde)
-	args := append([]any{limit + 1, zonaID, after}, extraArgs...)
-	//nolint:gosec // SQL built from package-level consts; saldoFilter is a fixed literal, not user input.
-	query := `
+		saldoFilter, extraArgs := pagoDigestSaldoFilter(desde)
+		args := append([]any{limit + 1, zonaID, after}, extraArgs...)
+		//nolint:gosec // SQL built from package-level consts; saldoFilter is a fixed literal, not user input.
+		query := `
 SELECT FIRST ? p.IMPTE_DOCTO_CC_ID
 ` + pagoFromClause + `
 WHERE p.ZONA_CLIENTE_ID = ?
@@ -92,13 +89,24 @@ WHERE p.ZONA_CLIENTE_ID = ?
   AND ` + saldoFilter + `
 ORDER BY p.IMPTE_DOCTO_CC_ID ASC`
 
-	rows, err := tx.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, false, firebird.MapError(err)
-	}
-	defer func() { _ = rows.Close() }()
+		rows, qerr := q.QueryContext(ctx, query, args...)
+		if qerr != nil {
+			return firebird.MapError(qerr)
+		}
+		defer func() { _ = rows.Close() }()
 
-	return scanIDsWithHasMore(rows, limit)
+		scanned, more, serr := scanIDsWithHasMore(rows, limit)
+		if serr != nil {
+			return serr
+		}
+		ids = scanned
+		hasMore = more
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return ids, hasMore, nil
 }
 
 // pagoDigestSaldoFilter returns the saldo WHERE fragment and any extra bind
@@ -119,49 +127,49 @@ func pagoDigestSaldoFilter(desde time.Time) (string, []any) {
 // SALDO > 0 rows are included; when desde is set, rows with SALDO <= 0 AND
 // FECHA_ULT_PAGO >= desde are also included. Same approach as PagosRepo.Digest.
 func (r *SaldosRepo) Digest(ctx context.Context, zonaID int, desde time.Time) (outbound.DigestResult, error) {
-	tx, err := snapshotTx(ctx, r.pool.DB)
-	if err != nil {
-		return outbound.DigestResult{}, firebird.MapError(err)
-	}
-	defer func() { _ = tx.Rollback() }()
+	var result outbound.DigestResult
+	err := firebird.RunInSnapshotTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
 
-	saldoFilter, extraArgs := saldoDigestSaldoFilter(desde)
-	args := append([]any{zonaID}, extraArgs...)
-	//nolint:gosec // SQL built from a fixed two-branch literal; no user input in saldoFilter.
-	query := `
+		saldoFilter, extraArgs := saldoDigestSaldoFilter(desde)
+		args := append([]any{zonaID}, extraArgs...)
+		//nolint:gosec // SQL built from a fixed two-branch literal; no user input in saldoFilter.
+		query := `
 SELECT DOCTO_CC_ID, UPDATED_AT
 FROM MSP_SALDOS_VENTAS
 WHERE ZONA_CLIENTE_ID = ?
   AND CARGO_CANCELADO = 'N'
   AND ` + saldoFilter
 
-	rows, err := tx.QueryContext(ctx, query, args...)
-	if err != nil {
-		return outbound.DigestResult{}, firebird.MapError(err)
-	}
-	defer func() { _ = rows.Close() }()
+		rows, qerr := q.QueryContext(ctx, query, args...)
+		if qerr != nil {
+			return firebird.MapError(qerr)
+		}
+		defer func() { _ = rows.Close() }()
 
-	result, err := computeDigest(ctx, rows)
-	if err != nil {
-		return outbound.DigestResult{}, err
-	}
-	return result, nil
+		d, derr := computeDigest(ctx, rows)
+		if derr != nil {
+			return derr
+		}
+		result = d
+		return nil
+	})
+	return result, err
 }
 
 // ListIDs returns saldo IDs for zonaID with DOCTO_CC_ID > after, ordered
 // ascending. The filter is identical to Digest so the pageable ID set always
 // matches the digest count.
 func (r *SaldosRepo) ListIDs(ctx context.Context, zonaID, after, limit int, desde time.Time) ([]int, bool, error) {
-	tx, err := snapshotTx(ctx, r.pool.DB)
-	if err != nil {
-		return nil, false, firebird.MapError(err)
-	}
-	defer func() { _ = tx.Rollback() }()
+	var ids []int
+	var hasMore bool
+	err := firebird.RunInSnapshotTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
 
-	saldoFilter, extraArgs := saldoDigestSaldoFilter(desde)
-	args := append([]any{limit + 1, zonaID, after}, extraArgs...)
-	//nolint:gosec // SQL built from a fixed two-branch literal; no user input in saldoFilter.
-	query := `
+		saldoFilter, extraArgs := saldoDigestSaldoFilter(desde)
+		args := append([]any{limit + 1, zonaID, after}, extraArgs...)
+		//nolint:gosec // SQL built from a fixed two-branch literal; no user input in saldoFilter.
+		query := `
 SELECT FIRST ? DOCTO_CC_ID
 FROM MSP_SALDOS_VENTAS
 WHERE ZONA_CLIENTE_ID = ?
@@ -170,13 +178,24 @@ WHERE ZONA_CLIENTE_ID = ?
   AND ` + saldoFilter + `
 ORDER BY DOCTO_CC_ID ASC`
 
-	rows, err := tx.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, false, firebird.MapError(err)
-	}
-	defer func() { _ = rows.Close() }()
+		rows, qerr := q.QueryContext(ctx, query, args...)
+		if qerr != nil {
+			return firebird.MapError(qerr)
+		}
+		defer func() { _ = rows.Close() }()
 
-	return scanIDsWithHasMore(rows, limit)
+		scanned, more, serr := scanIDsWithHasMore(rows, limit)
+		if serr != nil {
+			return serr
+		}
+		ids = scanned
+		hasMore = more
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return ids, hasMore, nil
 }
 
 // saldoDigestSaldoFilter returns the saldo WHERE fragment and any extra bind
