@@ -60,17 +60,23 @@ func NewPagosChangelogRepo(pool *firebird.Pool) *PagosChangelogRepo {
 // Since returns up to limit rows de MSP_PAGOS_CHANGELOG donde SEQ_ID > sinceSeq
 // y TX_ID < watermark, ordenados por SEQ_ID ascendente.
 func (r *PagosChangelogRepo) Since(ctx context.Context, sinceSeq, watermark int64, limit int) ([]outbound.ChangelogEntry, error) {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	rows, err := q.QueryContext(ctx, `
+	var result []outbound.ChangelogEntry
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		rows, qerr := q.QueryContext(ctx, `
 SELECT FIRST ? SEQ_ID, IMPTE_DOCTO_CC_ID, TX_ID, COMMIT_AT
   FROM MSP_PAGOS_CHANGELOG
  WHERE SEQ_ID > ? AND TX_ID < ?
  ORDER BY SEQ_ID ASC`,
-		limit, sinceSeq, watermark)
-	if err != nil {
-		return nil, firebird.MapError(err)
-	}
-	return scanChangelogRows(rows)
+			limit, sinceSeq, watermark)
+		if qerr != nil {
+			return firebird.MapError(qerr)
+		}
+		var serr error
+		result, serr = scanChangelogRows(rows)
+		return serr
+	})
+	return result, err
 }
 
 // DeleteOlderThan elimina hasta maxDelete filas de MSP_PAGOS_CHANGELOG cuyo
@@ -103,18 +109,22 @@ DELETE FROM MSP_PAGOS_CHANGELOG
 // MSP_PAGOS_CHANGELOG, o 0 cuando la tabla está vacía o todas las filas
 // están por encima del watermark.
 func (r *PagosChangelogRepo) MaxSeqID(ctx context.Context, watermark int64) (int64, error) {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	var maxSeq *int64
-	err := q.QueryRowContext(ctx, `
+	var result int64
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		var maxSeq *int64
+		serr := q.QueryRowContext(ctx, `
 SELECT MAX(SEQ_ID) FROM MSP_PAGOS_CHANGELOG WHERE TX_ID < ?`,
-		watermark).Scan(&maxSeq)
-	if err != nil {
-		return 0, firebird.MapError(err)
-	}
-	if maxSeq == nil {
-		return 0, nil
-	}
-	return *maxSeq, nil
+			watermark).Scan(&maxSeq)
+		if serr != nil {
+			return firebird.MapError(serr)
+		}
+		if maxSeq != nil {
+			result = *maxSeq
+		}
+		return nil
+	})
+	return result, err
 }
 
 // ─── SaldosChangelogRepo ──────────────────────────────────────────────────────
@@ -133,17 +143,23 @@ func NewSaldosChangelogRepo(pool *firebird.Pool) *SaldosChangelogRepo {
 // Since returns up to limit rows de MSP_SALDOS_CHANGELOG donde SEQ_ID > sinceSeq
 // y TX_ID < watermark, ordenados por SEQ_ID ascendente.
 func (r *SaldosChangelogRepo) Since(ctx context.Context, sinceSeq, watermark int64, limit int) ([]outbound.ChangelogEntry, error) {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	rows, err := q.QueryContext(ctx, `
+	var result []outbound.ChangelogEntry
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		rows, qerr := q.QueryContext(ctx, `
 SELECT FIRST ? SEQ_ID, DOCTO_CC_ID, TX_ID, COMMIT_AT
   FROM MSP_SALDOS_CHANGELOG
  WHERE SEQ_ID > ? AND TX_ID < ?
  ORDER BY SEQ_ID ASC`,
-		limit, sinceSeq, watermark)
-	if err != nil {
-		return nil, firebird.MapError(err)
-	}
-	return scanChangelogRows(rows)
+			limit, sinceSeq, watermark)
+		if qerr != nil {
+			return firebird.MapError(qerr)
+		}
+		var serr error
+		result, serr = scanChangelogRows(rows)
+		return serr
+	})
+	return result, err
 }
 
 // DeleteOlderThan elimina hasta maxDelete filas de MSP_SALDOS_CHANGELOG cuyo
@@ -173,16 +189,20 @@ DELETE FROM MSP_SALDOS_CHANGELOG
 // MSP_SALDOS_CHANGELOG, o 0 cuando la tabla está vacía o todas las filas
 // están por encima del watermark.
 func (r *SaldosChangelogRepo) MaxSeqID(ctx context.Context, watermark int64) (int64, error) {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	var maxSeq *int64
-	err := q.QueryRowContext(ctx, `
+	var result int64
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		var maxSeq *int64
+		serr := q.QueryRowContext(ctx, `
 SELECT MAX(SEQ_ID) FROM MSP_SALDOS_CHANGELOG WHERE TX_ID < ?`,
-		watermark).Scan(&maxSeq)
-	if err != nil {
-		return 0, firebird.MapError(err)
-	}
-	if maxSeq == nil {
-		return 0, nil
-	}
-	return *maxSeq, nil
+			watermark).Scan(&maxSeq)
+		if serr != nil {
+			return firebird.MapError(serr)
+		}
+		if maxSeq != nil {
+			result = *maxSeq
+		}
+		return nil
+	})
+	return result, err
 }

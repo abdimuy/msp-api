@@ -194,6 +194,9 @@ func (r *PagosRecibidosRepo) Update(ctx context.Context, p *domain.PagoRecibido)
 
 // LockByID acquires SELECT … WITH LOCK on the row. Must be inside a tx.
 func (r *PagosRecibidosRepo) LockByID(ctx context.Context, id uuid.UUID) error {
+	if !firebird.HasTx(ctx) {
+		return firebird.ErrNoTx
+	}
 	q := firebird.GetQuerier(ctx, r.pool.DB)
 	var one int
 	err := q.QueryRowContext(ctx, lockPagoRecibidoSQL, id.String()).Scan(&one)
@@ -208,43 +211,53 @@ func (r *PagosRecibidosRepo) LockByID(ctx context.Context, id uuid.UUID) error {
 
 // FindByID loads a PagoRecibido with its imagenes child collection.
 func (r *PagosRecibidosRepo) FindByID(ctx context.Context, id uuid.UUID) (*domain.PagoRecibido, error) {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	row := q.QueryRowContext(ctx, findPagoRecibidoByIDSQL, id.String())
-	p, err := scanPagoRecibidoRow(row)
+	var result *domain.PagoRecibido
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		row := q.QueryRowContext(ctx, findPagoRecibidoByIDSQL, id.String())
+		p, serr := scanPagoRecibidoRow(row)
+		if serr != nil {
+			return serr
+		}
+		imgs, serr := r.ListImagenes(ctx, id)
+		if serr != nil {
+			return serr
+		}
+		result = hydrateWithImagenes(p, imgs)
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	imgs, err := r.ListImagenes(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	hydrated := hydrateWithImagenes(p, imgs)
-	return hydrated, nil
+	return result, nil
 }
 
 // ListPendientes drains the outbox: pendientes with intentos < maxIntentos,
 // ordered by RECEIVED_AT ascending (oldest first) for fair processing.
 // Imagenes are NOT loaded — the retry worker doesn't need them.
 func (r *PagosRecibidosRepo) ListPendientes(ctx context.Context, maxIntentos, limit int) ([]*domain.PagoRecibido, error) {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	rows, err := q.QueryContext(ctx, listPagosRecibidosPendientesSQL, limit, maxIntentos)
-	if err != nil {
-		return nil, firebird.MapError(err)
-	}
-	defer func() { _ = rows.Close() }()
-
 	var out []*domain.PagoRecibido
-	for rows.Next() {
-		p, scanErr := scanPagoRecibidoRowFromRows(rows)
-		if scanErr != nil {
-			return nil, scanErr
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		rows, qerr := q.QueryContext(ctx, listPagosRecibidosPendientesSQL, limit, maxIntentos)
+		if qerr != nil {
+			return firebird.MapError(qerr)
 		}
-		out = append(out, p)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, firebird.MapError(err)
-	}
-	return out, nil
+		defer func() { _ = rows.Close() }()
+
+		for rows.Next() {
+			p, scanErr := scanPagoRecibidoRowFromRows(rows)
+			if scanErr != nil {
+				return scanErr
+			}
+			out = append(out, p)
+		}
+		if serr := rows.Err(); serr != nil {
+			return firebird.MapError(serr)
+		}
+		return nil
+	})
+	return out, err
 }
 
 // ─── PagosImagenesRepo methods (child collection) ────────────────────────
@@ -309,32 +322,44 @@ func (r *PagosRecibidosRepo) DeleteImagen(ctx context.Context, imagenID uuid.UUI
 
 // FindImagenByID loads a single comprobante row.
 func (r *PagosRecibidosRepo) FindImagenByID(ctx context.Context, imagenID uuid.UUID) (*domain.Imagen, error) {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	row := q.QueryRowContext(ctx, findPagoImagenByIDSQL, imagenID.String())
-	return scanPagoImagenRow(row)
+	var result *domain.Imagen
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		row := q.QueryRowContext(ctx, findPagoImagenByIDSQL, imagenID.String())
+		var serr error
+		result, serr = scanPagoImagenRow(row)
+		return serr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // ListImagenes returns every comprobante attached to pagoID.
 func (r *PagosRecibidosRepo) ListImagenes(ctx context.Context, pagoID uuid.UUID) ([]*domain.Imagen, error) {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	rows, err := q.QueryContext(ctx, listPagoImagenesSQL, pagoID.String())
-	if err != nil {
-		return nil, firebird.MapError(err)
-	}
-	defer func() { _ = rows.Close() }()
-
 	var out []*domain.Imagen
-	for rows.Next() {
-		img, scanErr := scanPagoImagenRowFromRows(rows)
-		if scanErr != nil {
-			return nil, scanErr
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		rows, qerr := q.QueryContext(ctx, listPagoImagenesSQL, pagoID.String())
+		if qerr != nil {
+			return firebird.MapError(qerr)
 		}
-		out = append(out, img)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, firebird.MapError(err)
-	}
-	return out, nil
+		defer func() { _ = rows.Close() }()
+
+		for rows.Next() {
+			img, scanErr := scanPagoImagenRowFromRows(rows)
+			if scanErr != nil {
+				return scanErr
+			}
+			out = append(out, img)
+		}
+		if serr := rows.Err(); serr != nil {
+			return firebird.MapError(serr)
+		}
+		return nil
+	})
+	return out, err
 }
 
 // ─── Scanning helpers ───────────────────────────────────────────────────────

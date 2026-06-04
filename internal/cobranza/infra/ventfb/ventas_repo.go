@@ -138,13 +138,19 @@ SELECT ` + selectVentaCols + ventaFromClause + `
 WHERE s.ZONA_CLIENTE_ID = ?
   AND s.DOCTO_CC_ID IN (` + strings.Join(placeholders, ",") + `)`
 
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	rows, err := q.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, firebird.MapError(err)
-	}
-	defer func() { _ = rows.Close() }()
-	return scanVentaRows(rows)
+	var result []domain.Venta
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		rows, qerr := q.QueryContext(ctx, query, args...)
+		if qerr != nil {
+			return firebird.MapError(qerr)
+		}
+		defer func() { _ = rows.Close() }()
+		var serr error
+		result, serr = scanVentaRows(rows)
+		return serr
+	})
+	return result, err
 }
 
 // ventaSyncSpec parametrizes the enriched venta sync page query. Same cursor

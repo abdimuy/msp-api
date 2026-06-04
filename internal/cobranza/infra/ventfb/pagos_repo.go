@@ -58,67 +58,85 @@ const selectPagoCols = `
 // PorVenta returns every pago acreditado al cargo doctoCCID, ordered by FECHA
 // ascending.
 func (r *PagosRepo) PorVenta(ctx context.Context, doctoCCID int) ([]domain.Pago, error) {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	rows, err := q.QueryContext(ctx, `
+	var result []domain.Pago
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		rows, qerr := q.QueryContext(ctx, `
 SELECT `+selectPagoCols+`
 FROM MSP_PAGOS_VENTAS
 WHERE DOCTO_CC_ACR_ID = ?
   AND CANCELADO = 'N'
 ORDER BY FECHA`, doctoCCID)
-	if err != nil {
-		return nil, firebird.MapError(err)
-	}
-	defer func() { _ = rows.Close() }()
-	return scanPagoRows(rows)
+		if qerr != nil {
+			return firebird.MapError(qerr)
+		}
+		defer func() { _ = rows.Close() }()
+		var serr error
+		result, serr = scanPagoRows(rows)
+		return serr
+	})
+	return result, err
 }
 
 // PorCliente returns every pago hecho por el cliente, ordered by FECHA
 // descending.
 func (r *PagosRepo) PorCliente(ctx context.Context, clienteID int) ([]domain.Pago, error) {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	rows, err := q.QueryContext(ctx, `
+	var result []domain.Pago
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		rows, qerr := q.QueryContext(ctx, `
 SELECT `+selectPagoCols+`
 FROM MSP_PAGOS_VENTAS
 WHERE CLIENTE_ID = ?
   AND CANCELADO = 'N'
 ORDER BY FECHA DESC`, clienteID)
-	if err != nil {
-		return nil, firebird.MapError(err)
-	}
-	defer func() { _ = rows.Close() }()
-	return scanPagoRows(rows)
+		if qerr != nil {
+			return firebird.MapError(qerr)
+		}
+		defer func() { _ = rows.Close() }()
+		var serr error
+		result, serr = scanPagoRows(rows)
+		return serr
+	})
+	return result, err
 }
 
 // EnRutaPorZona returns pagos hechos en la zona con FECHA >= desde, ordered by
 // FECHA descending. Pass desde=time.Time{} (zero value) to return all pagos
 // for the zone.
 func (r *PagosRepo) EnRutaPorZona(ctx context.Context, zonaID int, desde time.Time) ([]domain.Pago, error) {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
+	var result []domain.Pago
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
 
-	var (
-		rows *sql.Rows
-		err  error
-	)
-	if desde.IsZero() {
-		rows, err = q.QueryContext(ctx, `
+		var (
+			rows *sql.Rows
+			qerr error
+		)
+		if desde.IsZero() {
+			rows, qerr = q.QueryContext(ctx, `
 SELECT `+selectPagoCols+`
 FROM MSP_PAGOS_VENTAS
 WHERE ZONA_CLIENTE_ID = ?
   AND CANCELADO = 'N'
 ORDER BY FECHA DESC`, zonaID)
-	} else {
-		rows, err = q.QueryContext(ctx, `
+		} else {
+			rows, qerr = q.QueryContext(ctx, `
 SELECT `+selectPagoCols+`
 FROM MSP_PAGOS_VENTAS
 WHERE ZONA_CLIENTE_ID = ? AND FECHA >= ?
   AND CANCELADO = 'N'
 ORDER BY FECHA DESC`, zonaID, firebird.ToWallClock(desde))
-	}
-	if err != nil {
-		return nil, firebird.MapError(err)
-	}
-	defer func() { _ = rows.Close() }()
-	return scanPagoRows(rows)
+		}
+		if qerr != nil {
+			return firebird.MapError(qerr)
+		}
+		defer func() { _ = rows.Close() }()
+		var serr error
+		result, serr = scanPagoRows(rows)
+		return serr
+	})
+	return result, err
 }
 
 // SyncPorZona returns a page of pagos for incremental sync. See port doc.
@@ -318,13 +336,19 @@ SELECT ` + selectPagoColsP + pagoFromClause + `
 WHERE p.ZONA_CLIENTE_ID = ?
   AND p.IMPTE_DOCTO_CC_ID IN (` + strings.Join(placeholders, ",") + `)`
 
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	rows, err := q.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, firebird.MapError(err)
-	}
-	defer func() { _ = rows.Close() }()
-	return scanEnrichedPagoRows(rows)
+	var result []domain.Pago
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		rows, qerr := q.QueryContext(ctx, query, args...)
+		if qerr != nil {
+			return firebird.MapError(qerr)
+		}
+		defer func() { _ = rows.Close() }()
+		var serr error
+		result, serr = scanEnrichedPagoRows(rows)
+		return serr
+	})
+	return result, err
 }
 
 // DeleteTombstonesOlderThan deletes tombstones whose UPDATED_AT < cutoff and

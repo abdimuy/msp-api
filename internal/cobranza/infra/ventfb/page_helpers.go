@@ -27,23 +27,29 @@ const syncClockSkewSeconds = 1
 // nextCursor is 0 when fewer than limit rows remain (caller knows the table
 // is exhausted); otherwise it is the last seen PK.
 func listIDPage(ctx context.Context, pool *firebird.Pool, queryTmpl string, cursorAfter, limit int) ([]int, int, error) {
-	q := firebird.GetQuerier(ctx, pool.DB)
-	rows, err := q.QueryContext(ctx, queryTmpl, limit, cursorAfter)
-	if err != nil {
-		return nil, 0, firebird.MapError(err)
-	}
-	defer func() { _ = rows.Close() }()
-
 	var ids []int
-	for rows.Next() {
-		var id int
-		if scanErr := rows.Scan(&id); scanErr != nil {
-			return nil, 0, firebird.MapError(scanErr)
+	err := firebird.RunInReadTx(ctx, pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, pool.DB)
+		rows, qerr := q.QueryContext(ctx, queryTmpl, limit, cursorAfter)
+		if qerr != nil {
+			return firebird.MapError(qerr)
 		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, 0, firebird.MapError(err)
+		defer func() { _ = rows.Close() }()
+
+		for rows.Next() {
+			var id int
+			if scanErr := rows.Scan(&id); scanErr != nil {
+				return firebird.MapError(scanErr)
+			}
+			ids = append(ids, id)
+		}
+		if serr := rows.Err(); serr != nil {
+			return firebird.MapError(serr)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, 0, err
 	}
 
 	if len(ids) < limit {
@@ -158,37 +164,41 @@ func runSyncPage[T itemWithUpdatedAt](
 	pageQuery func(ctx context.Context, q firebird.Querier, upper time.Time, watermark int64) (*sql.Rows, error),
 	rowScanner func(rows *sql.Rows) ([]T, error),
 ) (outbound.SyncPage[T], error) {
-	q := firebird.GetQuerier(ctx, pool.DB)
+	var page outbound.SyncPage[T]
+	err := firebird.RunInReadTx(ctx, pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, pool.DB)
 
-	sn, err := serverNowAndWatermark(ctx, q, pool)
-	if err != nil {
-		return outbound.SyncPage[T]{}, err
-	}
+		sn, serr := serverNowAndWatermark(ctx, q, pool)
+		if serr != nil {
+			return serr
+		}
 
-	rows, err := pageQuery(ctx, q, sn.upperBound, sn.watermark)
-	if err != nil {
-		return outbound.SyncPage[T]{}, err
-	}
-	defer func() { _ = rows.Close() }()
+		rows, serr := pageQuery(ctx, q, sn.upperBound, sn.watermark)
+		if serr != nil {
+			return serr
+		}
+		defer func() { _ = rows.Close() }()
 
-	items, err := rowScanner(rows)
-	if err != nil {
-		return outbound.SyncPage[T]{}, err
-	}
-	if err := rows.Err(); err != nil {
-		return outbound.SyncPage[T]{}, firebird.MapError(err)
-	}
+		items, serr := rowScanner(rows)
+		if serr != nil {
+			return serr
+		}
+		if serr := rows.Err(); serr != nil {
+			return firebird.MapError(serr)
+		}
 
-	page := outbound.SyncPage[T]{
-		Items:        items,
-		MaxUpdatedAt: cursor.UTC(),
-		ServerNow:    sn.serverNow,
-		HasMore:      len(items) == limit,
-	}
-	if len(items) > 0 {
-		page.MaxUpdatedAt = items[len(items)-1].UpdatedAt()
-	}
-	return page, nil
+		page = outbound.SyncPage[T]{
+			Items:        items,
+			MaxUpdatedAt: cursor.UTC(),
+			ServerNow:    sn.serverNow,
+			HasMore:      len(items) == limit,
+		}
+		if len(items) > 0 {
+			page.MaxUpdatedAt = items[len(items)-1].UpdatedAt()
+		}
+		return nil
+	})
+	return page, err
 }
 
 // syncNow holds the computed values from a serverNowAndWatermark call.

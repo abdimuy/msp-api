@@ -72,31 +72,47 @@ ORDER BY FECHA_CARGO DESC`
 // PorVenta returns the saldo for the given PV document ID.
 // Returns ErrSaldoNoEncontrado when no cache row exists.
 func (r *SaldosRepo) PorVenta(ctx context.Context, doctoPVID int) (*domain.Saldo, error) {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	row := q.QueryRowContext(ctx, selectSaldoPorVenta, doctoPVID)
-	s, err := scanSaldo(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, domain.ErrSaldoNoEncontrado
-	}
+	var result *domain.Saldo
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		row := q.QueryRowContext(ctx, selectSaldoPorVenta, doctoPVID)
+		scanned, serr := scanSaldo(row)
+		if errors.Is(serr, sql.ErrNoRows) {
+			return domain.ErrSaldoNoEncontrado
+		}
+		if serr != nil {
+			return firebird.MapError(serr)
+		}
+		result = scanned
+		return nil
+	})
 	if err != nil {
-		return nil, firebird.MapError(err)
+		return nil, err
 	}
-	return s, nil
+	return result, nil
 }
 
 // PorCargo returns the saldo for the given cargo (DOCTOS_CC) ID.
 // Returns ErrSaldoNoEncontrado when no cache row exists.
 func (r *SaldosRepo) PorCargo(ctx context.Context, doctoCCID int) (*domain.Saldo, error) {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	row := q.QueryRowContext(ctx, selectSaldoPorCargo, doctoCCID)
-	s, err := scanSaldo(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, domain.ErrSaldoNoEncontrado
-	}
+	var result *domain.Saldo
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		row := q.QueryRowContext(ctx, selectSaldoPorCargo, doctoCCID)
+		scanned, serr := scanSaldo(row)
+		if errors.Is(serr, sql.ErrNoRows) {
+			return domain.ErrSaldoNoEncontrado
+		}
+		if serr != nil {
+			return firebird.MapError(serr)
+		}
+		result = scanned
+		return nil
+	})
 	if err != nil {
-		return nil, firebird.MapError(err)
+		return nil, err
 	}
-	return s, nil
+	return result, nil
 }
 
 // EnRutaPorZona returns ventas abiertas (saldo > 0) for the given zona, plus
@@ -105,25 +121,27 @@ func (r *SaldosRepo) PorCargo(ctx context.Context, doctoCCID int) (*domain.Saldo
 // truncated to DATE precision by the underlying column type, so any HH:MM:SS
 // component is ignored.
 func (r *SaldosRepo) EnRutaPorZona(ctx context.Context, zonaID int, desde time.Time) ([]domain.Saldo, error) {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
+	var result []domain.Saldo
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
 
-	var (
-		rows *sql.Rows
-		err  error
-	)
+		var (
+			rows *sql.Rows
+			qerr error
+		)
 
-	if desde.IsZero() {
-		// Single branch: only abiertas. Uses IDX_MSP_SALDOS_ZONA_SALDO.
-		query := `
+		if desde.IsZero() {
+			// Single branch: only abiertas. Uses IDX_MSP_SALDOS_ZONA_SALDO.
+			query := `
 SELECT ` + selectSaldoCols + `
 FROM MSP_SALDOS_VENTAS
 WHERE ZONA_CLIENTE_ID = ? AND SALDO > 0
 ORDER BY FECHA_CARGO DESC`
-		rows, err = q.QueryContext(ctx, query, zonaID)
-	} else {
-		// UNION: abiertas + recientemente pagadas. Each branch uses its own
-		// covering index: IDX_..._ZONA_SALDO and IDX_..._ZONA_FUP.
-		query := `
+			rows, qerr = q.QueryContext(ctx, query, zonaID)
+		} else {
+			// UNION: abiertas + recientemente pagadas. Each branch uses its own
+			// covering index: IDX_..._ZONA_SALDO and IDX_..._ZONA_FUP.
+			query := `
 SELECT ` + selectSaldoCols + `
 FROM MSP_SALDOS_VENTAS
 WHERE ZONA_CLIENTE_ID = ? AND SALDO > 0
@@ -133,63 +151,75 @@ FROM MSP_SALDOS_VENTAS
 WHERE ZONA_CLIENTE_ID = ? AND SALDO <= 0
   AND FECHA_ULT_PAGO >= ?
 ORDER BY FECHA_CARGO DESC`
-		rows, err = q.QueryContext(ctx, query, zonaID, zonaID, desde)
-	}
-	if err != nil {
-		return nil, firebird.MapError(err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	return scanSaldoRows(rows)
+			rows, qerr = q.QueryContext(ctx, query, zonaID, zonaID, desde)
+		}
+		if qerr != nil {
+			return firebird.MapError(qerr)
+		}
+		defer func() { _ = rows.Close() }()
+		var serr error
+		result, serr = scanSaldoRows(rows)
+		return serr
+	})
+	return result, err
 }
 
 // AbiertasPorCliente returns all open saldos (saldo > 0) for the given cliente.
 func (r *SaldosRepo) AbiertasPorCliente(ctx context.Context, clienteID int) ([]domain.Saldo, error) {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	rows, err := q.QueryContext(ctx, selectSaldosAbiertasPorCliente, clienteID)
-	if err != nil {
-		return nil, firebird.MapError(err)
-	}
-	defer func() { _ = rows.Close() }()
-	return scanSaldoRows(rows)
+	var result []domain.Saldo
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		rows, qerr := q.QueryContext(ctx, selectSaldosAbiertasPorCliente, clienteID)
+		if qerr != nil {
+			return firebird.MapError(qerr)
+		}
+		defer func() { _ = rows.Close() }()
+		var serr error
+		result, serr = scanSaldoRows(rows)
+		return serr
+	})
+	return result, err
 }
 
 // ResumenZonas returns an aggregated view of open saldos grouped by zona.
 // Rows with NULL ZONA_CLIENTE_ID are skipped (unzoned clients cannot be on a route).
 func (r *SaldosRepo) ResumenZonas(ctx context.Context) ([]domain.ResumenZona, error) {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	rows, err := q.QueryContext(ctx, `
+	var result []domain.ResumenZona
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		rows, qerr := q.QueryContext(ctx, `
 SELECT ZONA_CLIENTE_ID, COUNT(*), SUM(SALDO)
 FROM MSP_SALDOS_VENTAS
 WHERE SALDO > 0
   AND ZONA_CLIENTE_ID IS NOT NULL
 GROUP BY ZONA_CLIENTE_ID
 ORDER BY ZONA_CLIENTE_ID`)
-	if err != nil {
-		return nil, firebird.MapError(err)
-	}
-	defer func() { _ = rows.Close() }()
+		if qerr != nil {
+			return firebird.MapError(qerr)
+		}
+		defer func() { _ = rows.Close() }()
 
-	var result []domain.ResumenZona
-	for rows.Next() {
-		var (
-			zonaID      int
-			totalVentas int
-			saldoRaw    any
-		)
-		if err := rows.Scan(&zonaID, &totalVentas, &saldoRaw); err != nil {
-			return nil, firebird.MapError(err)
+		for rows.Next() {
+			var (
+				zonaID      int
+				totalVentas int
+				saldoRaw    any
+			)
+			if serr := rows.Scan(&zonaID, &totalVentas, &saldoRaw); serr != nil {
+				return firebird.MapError(serr)
+			}
+			saldo, serr := firebird.ScanDecimal(saldoRaw, 2)
+			if serr != nil {
+				return serr
+			}
+			result = append(result, domain.HydrateResumenZona(zonaID, totalVentas, saldo))
 		}
-		saldo, err := firebird.ScanDecimal(saldoRaw, 2)
-		if err != nil {
-			return nil, err
+		if serr := rows.Err(); serr != nil {
+			return firebird.MapError(serr)
 		}
-		result = append(result, domain.HydrateResumenZona(zonaID, totalVentas, saldo))
-	}
-	if err := rows.Err(); err != nil {
-		return nil, firebird.MapError(err)
-	}
-	return result, nil
+		return nil
+	})
+	return result, err
 }
 
 // SyncPorZona returns a page of saldos for incremental sync. Tombstones are
@@ -250,13 +280,19 @@ FROM MSP_SALDOS_VENTAS
 WHERE ZONA_CLIENTE_ID = ?
   AND DOCTO_CC_ID IN (` + strings.Join(placeholders, ",") + `)`
 
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	rows, err := q.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, firebird.MapError(err)
-	}
-	defer func() { _ = rows.Close() }()
-	return scanSaldoRows(rows)
+	var result []domain.Saldo
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		rows, qerr := q.QueryContext(ctx, query, args...)
+		if qerr != nil {
+			return firebird.MapError(qerr)
+		}
+		defer func() { _ = rows.Close() }()
+		var serr error
+		result, serr = scanSaldoRows(rows)
+		return serr
+	})
+	return result, err
 }
 
 // DeleteTombstonesOlderThan deletes tombstones whose UPDATED_AT < cutoff and
