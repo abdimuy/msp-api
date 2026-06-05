@@ -9,6 +9,20 @@ import (
 	platform "github.com/abdimuy/msp-api/internal/platform/domain"
 )
 
+// Estatus is a discriminator that distinguishes how a Usuario record was
+// created and which identity is authoritative for it.
+type Estatus string
+
+const (
+	// EstatusFirebaseUser marks a Usuario that was created through the normal
+	// Firebase Authentication flow. It always has a non-empty FIREBASE_UID.
+	EstatusFirebaseUser Estatus = "FIREBASE_USER"
+	// EstatusVendedorOnly marks a Usuario that exists solely for sale
+	// attribution in the Microsip catalog. It has no Firebase identity
+	// (FIREBASE_UID is the zero-value) and cannot authenticate until promoted.
+	EstatusVendedorOnly Estatus = "VENDEDOR_ONLY"
+)
+
 // Usuario is the auth module's principal entity: an authenticated person
 // who may operate the API. Uniqueness is enforced on both email and
 // firebase_uid at the repository layer.
@@ -23,6 +37,7 @@ type Usuario struct {
 	telefono    *platform.Telefono
 	almacenID   *int
 	activo      bool
+	estatus     Estatus
 	audit       audit.Auditable
 }
 
@@ -47,6 +62,32 @@ func NewUsuario(
 		telefono:    telefono,
 		almacenID:   almacenID,
 		activo:      true,
+		estatus:     EstatusFirebaseUser,
+		audit:       audit.NewAuditable(now, createdBy),
+	}
+}
+
+// NewVendedorUsuario builds a vendedor-only Usuario — one that exists only
+// for sale attribution. It has no Firebase identity (FIREBASE_UID is the
+// zero-value) and ESTATUS = VENDEDOR_ONLY. If the vendedor later authenticates
+// via Firebase, the row is promoted in place: same ID, the FIREBASE_UID and
+// ESTATUS fields move forward. See SyncFromFirebase in the app layer.
+func NewVendedorUsuario(
+	id uuid.UUID,
+	email Email,
+	nombre Nombre,
+	createdBy uuid.UUID,
+	now time.Time,
+) *Usuario {
+	return &Usuario{
+		id:          id,
+		firebaseUID: FirebaseUID{}, // zero-value: vendedor has no Firebase identity yet
+		email:       email,
+		nombre:      nombre,
+		telefono:    nil,
+		almacenID:   nil,
+		activo:      true,
+		estatus:     EstatusVendedorOnly,
 		audit:       audit.NewAuditable(now, createdBy),
 	}
 }
@@ -63,6 +104,7 @@ type HydrateUsuarioParams struct {
 	Telefono    *platform.Telefono
 	AlmacenID   *int
 	Activo      bool
+	Estatus     Estatus
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 	CreatedBy   uuid.UUID
@@ -79,6 +121,7 @@ func HydrateUsuario(p HydrateUsuarioParams) *Usuario {
 		telefono:    p.Telefono,
 		almacenID:   p.AlmacenID,
 		activo:      p.Activo,
+		estatus:     p.Estatus,
 		audit:       audit.HydrateAuditable(p.CreatedAt, p.UpdatedAt, p.CreatedBy, p.UpdatedBy),
 	}
 }
@@ -106,6 +149,10 @@ func (u *Usuario) AlmacenID() *int { return u.almacenID }
 
 // Activo reports whether the usuario is currently active.
 func (u *Usuario) Activo() bool { return u.activo }
+
+// Estatus returns the usuario's discriminator: FIREBASE_USER for normal
+// Firebase-authenticated users; VENDEDOR_ONLY for catalog-only vendedores.
+func (u *Usuario) Estatus() Estatus { return u.estatus }
 
 // Audit returns a copy of the audit subrecord.
 func (u *Usuario) Audit() audit.Auditable { return u.audit }

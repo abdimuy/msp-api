@@ -217,3 +217,87 @@ func TestUsuario_AuditCopy(t *testing.T) {
 	a.MarkUpdated(uuid.New())
 	assert.Equal(t, u.CreatedBy(), u.UpdatedBy(), "internal audit must be untouched")
 }
+
+func TestNewUsuario_SetsEstatusFirebaseUser(t *testing.T) {
+	t.Parallel()
+	u := domain.NewUsuario(
+		uuid.New(),
+		mustFirebaseUID(t, "abc123"),
+		mustEmail(t, "vendor@muebleriamsp.mx"),
+		mustNombre(t, "Juan Pérez"),
+		nil,
+		nil,
+		uuid.New(),
+		time.Now().UTC(),
+	)
+	assert.Equal(t, domain.EstatusFirebaseUser, u.Estatus())
+}
+
+func TestNewVendedorUsuario_SetsEstatusVendedorOnly(t *testing.T) {
+	t.Parallel()
+	u := domain.NewVendedorUsuario(
+		uuid.New(),
+		mustEmail(t, "vendedor@muebleriamsp.mx"),
+		mustNombre(t, "María López"),
+		uuid.New(),
+		time.Now().UTC(),
+	)
+	assert.Equal(t, domain.EstatusVendedorOnly, u.Estatus())
+}
+
+func TestNewVendedorUsuario_FirebaseUIDIsZero(t *testing.T) {
+	t.Parallel()
+	u := domain.NewVendedorUsuario(
+		uuid.New(),
+		mustEmail(t, "carlos@muebleriamsp.mx"),
+		mustNombre(t, "Carlos Ramírez"),
+		uuid.New(),
+		time.Now().UTC(),
+	)
+	assert.True(t, u.FirebaseUID().IsZero(), "vendedor-only usuario must have zero FirebaseUID")
+	assert.Nil(t, u.Telefono())
+	assert.Nil(t, u.AlmacenID())
+	assert.True(t, u.Activo())
+}
+
+func TestNewVendedorUsuario_AuditSeededFromNow(t *testing.T) {
+	t.Parallel()
+	createdBy := uuid.New()
+	now := time.Date(2026, 6, 4, 10, 0, 0, 0, time.UTC)
+
+	u := domain.NewVendedorUsuario(
+		uuid.New(),
+		mustEmail(t, "lucia@muebleriamsp.mx"),
+		mustNombre(t, "Lucía Torres"),
+		createdBy,
+		now,
+	)
+	assert.Equal(t, now, u.CreatedAt())
+	assert.Equal(t, now, u.UpdatedAt())
+	assert.Equal(t, createdBy, u.CreatedBy())
+	assert.Equal(t, createdBy, u.UpdatedBy())
+}
+
+func TestHydrateUsuario_PreservesEstatus(t *testing.T) {
+	t.Parallel()
+	id := uuid.New()
+	createdBy := uuid.New()
+	updatedBy := uuid.New()
+	now := time.Date(2026, 6, 4, 0, 0, 0, 0, time.UTC)
+
+	u := domain.HydrateUsuario(domain.HydrateUsuarioParams{
+		ID:          id,
+		FirebaseUID: domain.HydrateFirebaseUID(""),
+		Email:       domain.HydrateEmail("vendedor@muebleriamsp.mx"),
+		Nombre:      domain.HydrateNombre("Ana García"),
+		Telefono:    nil,
+		AlmacenID:   nil,
+		Activo:      true,
+		Estatus:     domain.EstatusVendedorOnly,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		CreatedBy:   createdBy,
+		UpdatedBy:   updatedBy,
+	})
+	assert.Equal(t, domain.EstatusVendedorOnly, u.Estatus())
+}

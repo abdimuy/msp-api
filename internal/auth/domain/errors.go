@@ -30,6 +30,14 @@ var (
 		"usuario_inactivo",
 		"el usuario está inactivo",
 	)
+	// ErrVendedorEmailInactivo is returned when the ensure-vendedores flow
+	// finds the email already exists but its Usuario is deactivated. The flow
+	// does NOT silently reactivate it — reactivation must be an explicit office
+	// decision.
+	ErrVendedorEmailInactivo = apperror.NewConflict(
+		"vendedor_email_inactivo",
+		"el vendedor con ese correo está inactivo",
+	)
 
 	// ErrRolNotFound is returned when a rol lookup misses.
 	ErrRolNotFound = apperror.NewNotFound(
