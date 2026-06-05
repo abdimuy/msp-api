@@ -92,6 +92,80 @@ func (s *Service) SyncFromFirebase(ctx context.Context, idToken string) (*domain
 	return out, nil
 }
 
+// VendedorEnsureResult pairs an input email with the resolved usuario_id —
+// either pre-existing (active) or freshly created.
+type VendedorEnsureResult struct {
+	Email     string
+	UsuarioID uuid.UUID
+}
+
+// EnsureVendedoresByEmail resolves a list of vendedor emails to MSP_USUARIOS
+// IDs, creating missing rows on demand as VENDEDOR_ONLY users. The flow per
+// email is:
+//
+//  1. Validate the email syntactically (domain.NewEmail).
+//  2. Look up by email.
+//  3. If found and active (any ESTATUS): reuse — return its ID.
+//     A cobrador may also be a vendedor of his own ventas; this is idempotent.
+//  4. If found and inactive: return domain.ErrVendedorEmailInactivo so the
+//     office can re-activate it explicitly. Do NOT silently reactivate.
+//  5. If not found: build a NewVendedorUsuario(uuid.New(), email, nombre,
+//     createdBy, now). The nombre is derived from the email's local-part via
+//     the existing deriveNombreFromToken("", email) helper. Save it.
+//
+// The method is idempotent BY CONSTRUCTION: each email is processed
+// independently. If processing email[i] fails, prior successful saves stay
+// committed. A re-invocation with the same list resumes from where it stopped.
+// No outer transaction is needed.
+//
+// The first validation/conflict error in the list aborts and is returned to
+// the caller (so the Android app can show a meaningful message).
+func (s *Service) EnsureVendedoresByEmail(
+	ctx context.Context,
+	emails []string,
+	createdBy uuid.UUID,
+) ([]VendedorEnsureResult, error) {
+	out := make([]VendedorEnsureResult, 0, len(emails))
+	for _, raw := range emails {
+		email, err := domain.NewEmail(raw)
+		if err != nil {
+			return nil, err
+		}
+
+		existing, lookupErr := s.usuarios.FindByEmail(ctx, email.Value())
+		if lookupErr == nil {
+			if !existing.Activo() {
+				return nil, domain.ErrVendedorEmailInactivo
+			}
+			out = append(out, VendedorEnsureResult{
+				Email:     email.Value(),
+				UsuarioID: existing.ID(),
+			})
+			continue
+		}
+		if !errors.Is(lookupErr, domain.ErrUsuarioNotFound) {
+			return nil, lookupErr
+		}
+
+		nombre, vErr := domain.NewNombre(deriveNombreFromToken("", email.Value()))
+		if vErr != nil {
+			return nil, vErr
+		}
+
+		fresh := domain.NewVendedorUsuario(
+			uuid.New(), email, nombre, createdBy, s.clock.Now(),
+		)
+		if saveErr := s.usuarios.Save(ctx, fresh); saveErr != nil {
+			return nil, saveErr
+		}
+		out = append(out, VendedorEnsureResult{
+			Email:     email.Value(),
+			UsuarioID: fresh.ID(),
+		})
+	}
+	return out, nil
+}
+
 // deriveNombreFromToken returns the token's display name when present,
 // otherwise the local-part of the email (everything before the '@'). The
 // resulting candidate is validated by domain.NewNombre at the caller.
