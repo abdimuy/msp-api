@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -134,4 +135,78 @@ func TestSyncFromFirebase(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 1, h.firebase.Verified)
 	})
+}
+
+// TestSyncFromFirebase_PromotesVendedorOnly verifies that a VENDEDOR_ONLY row
+// is promoted in place (same ID, new FUID) when the owner creates a Firebase
+// account and logs in for the first time.
+func TestSyncFromFirebase_PromotesVendedorOnly(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, false)
+
+	// Seed a VENDEDOR_ONLY usuario via NewVendedorUsuario.
+	vendEmail := "lucia.torres@muebleriamsp.mx"
+	email, err := domain.NewEmail(vendEmail)
+	require.NoError(t, err)
+	nombre, err := domain.NewNombre("Lucía Torres")
+	require.NoError(t, err)
+	seededID := uuid.New()
+	createdBy := uuid.New()
+	vendedor := domain.NewVendedorUsuario(seededID, email, nombre, createdBy, h.clock.T)
+	require.NoError(t, h.usuarios.Save(t.Context(), vendedor))
+
+	// Firebase token arrives with a brand-new UID but the same email.
+	h.firebase.Token = tokenFor("fb-new-uid", vendEmail, "Lucía Torres")
+
+	u, syncErr := h.svc.SyncFromFirebase(t.Context(), "raw-token")
+	require.NoError(t, syncErr)
+
+	// Must reuse the same row — ID is preserved.
+	assert.Equal(t, seededID, u.ID(), "promoted usuario must keep the original ID")
+
+	// Firebase identity attached.
+	assert.Equal(t, "fb-new-uid", u.FirebaseUID().Value())
+	assert.Equal(t, domain.EstatusFirebaseUser, u.Estatus())
+
+	// Audit bumped: UpdatedAt must be after CreatedAt.
+	assert.True(t, u.UpdatedAt().After(u.CreatedAt()) || u.UpdatedAt().Equal(u.CreatedAt()),
+		"UpdatedAt must be >= CreatedAt after promotion")
+
+	// Outbox event emitted with first_login=true.
+	require.Len(t, h.outbox.Calls, 1)
+	assert.Equal(t, eventUserSynced, h.outbox.Calls[0].EventType)
+	payload, ok := h.outbox.Calls[0].Payload.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, true, payload["first_login"])
+
+	// Exactly one email row remains in the fake repo.
+	found, findErr := h.usuarios.FindByEmail(t.Context(), vendEmail)
+	require.NoError(t, findErr)
+	assert.Equal(t, seededID, found.ID())
+}
+
+// TestSyncFromFirebase_InactiveVendedorOnly_Rejected verifies that an inactive
+// VENDEDOR_ONLY user blocks the promotion and returns ErrUsuarioInactivo.
+func TestSyncFromFirebase_InactiveVendedorOnly_Rejected(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, false)
+
+	vendEmail := "pedro.soto@muebleriamsp.mx"
+	email, err := domain.NewEmail(vendEmail)
+	require.NoError(t, err)
+	nombre, err := domain.NewNombre("Pedro Soto")
+	require.NoError(t, err)
+	seededID := uuid.New()
+	vendedor := domain.NewVendedorUsuario(seededID, email, nombre, uuid.New(), h.clock.T)
+	require.NoError(t, h.usuarios.Save(t.Context(), vendedor))
+
+	// Deactivate the vendedor before the login attempt.
+	vendedor.Desactivar(seededID, h.clock.T)
+	require.NoError(t, h.usuarios.Update(t.Context(), vendedor))
+
+	h.firebase.Token = tokenFor("fb-new-uid-2", vendEmail, "Pedro Soto")
+
+	_, syncErr := h.svc.SyncFromFirebase(t.Context(), "raw-token")
+	require.ErrorIs(t, syncErr, domain.ErrUsuarioInactivo)
+	assert.Empty(t, h.outbox.Calls)
 }

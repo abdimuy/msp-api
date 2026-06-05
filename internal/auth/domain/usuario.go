@@ -208,6 +208,20 @@ func (u *Usuario) Reactivar(updatedBy uuid.UUID, _ time.Time) {
 	u.audit.MarkUpdated(updatedBy)
 }
 
+// PromoteToFirebaseUser converts a VENDEDOR_ONLY usuario into a FIREBASE_USER
+// by attaching a Firebase identity. The ID, email, nombre, and audit history
+// are preserved; only the firebase_uid and estatus change. Calling this on a
+// non-VENDEDOR_ONLY usuario panics — repository or service code must check
+// Estatus() before invoking.
+func (u *Usuario) PromoteToFirebaseUser(fuid FirebaseUID, updatedBy uuid.UUID, _ time.Time) {
+	if u.estatus != EstatusVendedorOnly {
+		panic("PromoteToFirebaseUser called on non-VENDEDOR_ONLY usuario")
+	}
+	u.firebaseUID = fuid
+	u.estatus = EstatusFirebaseUser
+	u.audit.MarkUpdated(updatedBy)
+}
+
 // RenameForSoftDelete is intended for the repository layer: when a usuario
 // is deactivated the unique email and firebase_uid columns are mangled to
 // free them for reuse by a future usuario with the same identity. The

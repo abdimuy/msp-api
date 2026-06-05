@@ -57,24 +57,19 @@ func (s *Service) SyncFromFirebase(ctx context.Context, idToken string) (*domain
 			return lookupErr
 		}
 
-		fuid, vErr := domain.NewFirebaseUID(token.UID)
-		if vErr != nil {
-			return vErr
+		promoted, ok, promErr := s.promoteVendedorOnly(ctx, token.UID, token.Email)
+		if promErr != nil {
+			return promErr
 		}
-		email, vErr := domain.NewEmail(token.Email)
-		if vErr != nil {
-			return vErr
-		}
-		nombre, vErr := domain.NewNombre(deriveNombreFromToken(token.Name, token.Email))
-		if vErr != nil {
-			return vErr
+		if ok {
+			out = promoted
+			firstLogin = true
+			return nil
 		}
 
-		id := uuid.New()
-		now := s.clock.Now()
-		fresh := domain.NewUsuario(id, fuid, email, nombre, nil, nil, id, now)
-		if saveErr := s.usuarios.Save(ctx, fresh); saveErr != nil {
-			return saveErr
+		fresh, createErr := s.createFromToken(ctx, token.UID, token.Email, token.Name)
+		if createErr != nil {
+			return createErr
 		}
 		out = fresh
 		firstLogin = true
@@ -164,6 +159,66 @@ func (s *Service) EnsureVendedoresByEmail(
 		})
 	}
 	return out, nil
+}
+
+// promoteVendedorOnly checks whether a VENDEDOR_ONLY row already exists for
+// the given email. If it does, it attaches the Firebase UID in place and
+// persists the change, returning (entity, true, nil). It returns
+// (nil, false, nil) when no vendedor-only row is found, signalling the caller
+// to fall through to the normal new-user creation path. Any unexpected
+// repository error is returned as a non-nil error with ok=false.
+func (s *Service) promoteVendedorOnly(ctx context.Context, uid, email string) (*domain.Usuario, bool, error) {
+	byEmail, emailErr := s.usuarios.FindByEmail(ctx, email)
+	if emailErr != nil {
+		if errors.Is(emailErr, domain.ErrUsuarioNotFound) {
+			return nil, false, nil
+		}
+		return nil, false, emailErr
+	}
+	if byEmail.Estatus() != domain.EstatusVendedorOnly {
+		// Email exists but is FIREBASE_USER with a different FUID — fall through
+		// so the Save below fails with the email UNIQUE collision, surfacing as
+		// ErrUsuarioYaExiste (two distinct Firebase accounts claiming the same
+		// email is an admin-level decision).
+		return nil, false, nil
+	}
+	if !byEmail.Activo() {
+		return nil, false, domain.ErrUsuarioInactivo
+	}
+	fuid, vErr := domain.NewFirebaseUID(uid)
+	if vErr != nil {
+		return nil, false, vErr
+	}
+	byEmail.PromoteToFirebaseUser(fuid, byEmail.ID(), s.clock.Now())
+	if updErr := s.usuarios.Update(ctx, byEmail); updErr != nil {
+		return nil, false, updErr
+	}
+	return byEmail, true, nil
+}
+
+// createFromToken builds and saves a brand-new FIREBASE_USER usuario from the
+// token fields. It is only called when no existing row (by FUID or by email)
+// matched the incoming token.
+func (s *Service) createFromToken(ctx context.Context, uid, email, name string) (*domain.Usuario, error) {
+	fuid, vErr := domain.NewFirebaseUID(uid)
+	if vErr != nil {
+		return nil, vErr
+	}
+	em, vErr := domain.NewEmail(email)
+	if vErr != nil {
+		return nil, vErr
+	}
+	nombre, vErr := domain.NewNombre(deriveNombreFromToken(name, email))
+	if vErr != nil {
+		return nil, vErr
+	}
+	id := uuid.New()
+	now := s.clock.Now()
+	fresh := domain.NewUsuario(id, fuid, em, nombre, nil, nil, id, now)
+	if saveErr := s.usuarios.Save(ctx, fresh); saveErr != nil {
+		return nil, saveErr
+	}
+	return fresh, nil
 }
 
 // deriveNombreFromToken returns the token's display name when present,

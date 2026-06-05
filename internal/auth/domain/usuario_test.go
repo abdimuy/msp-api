@@ -278,6 +278,52 @@ func TestNewVendedorUsuario_AuditSeededFromNow(t *testing.T) {
 	assert.Equal(t, createdBy, u.UpdatedBy())
 }
 
+func TestPromoteToFirebaseUser_TransitionsState(t *testing.T) {
+	t.Parallel()
+	createdBy := uuid.New()
+	now := time.Date(2026, 6, 4, 10, 0, 0, 0, time.UTC)
+
+	u := domain.NewVendedorUsuario(
+		uuid.New(),
+		mustEmail(t, "vendedor@muebleriamsp.mx"),
+		mustNombre(t, "Pedro Soto"),
+		createdBy,
+		now,
+	)
+	require.Equal(t, domain.EstatusVendedorOnly, u.Estatus())
+
+	promoter := u.ID()
+	laterTime := now.Add(time.Minute)
+	fuid := mustFirebaseUID(t, "fb-promoted-uid")
+	u.PromoteToFirebaseUser(fuid, promoter, laterTime)
+
+	assert.Equal(t, domain.EstatusFirebaseUser, u.Estatus())
+	assert.Equal(t, "fb-promoted-uid", u.FirebaseUID().Value())
+	assert.Equal(t, promoter, u.UpdatedBy())
+	// UpdatedAt must advance beyond CreatedAt because MarkUpdated uses wall time.
+	assert.True(t, u.UpdatedAt().After(now) || u.UpdatedAt().Equal(now),
+		"UpdatedAt should be >= CreatedAt after promotion")
+}
+
+func TestPromoteToFirebaseUser_PanicsOnNonVendedor(t *testing.T) {
+	t.Parallel()
+	u := domain.NewUsuario(
+		uuid.New(),
+		mustFirebaseUID(t, "fb-existing"),
+		mustEmail(t, "firebase@muebleriamsp.mx"),
+		mustNombre(t, "Existing User"),
+		nil, nil,
+		uuid.New(),
+		time.Now().UTC(),
+	)
+	require.Equal(t, domain.EstatusFirebaseUser, u.Estatus())
+
+	fuid := mustFirebaseUID(t, "fb-other")
+	require.Panics(t, func() {
+		u.PromoteToFirebaseUser(fuid, uuid.New(), time.Now())
+	})
+}
+
 func TestHydrateUsuario_PreservesEstatus(t *testing.T) {
 	t.Parallel()
 	id := uuid.New()
