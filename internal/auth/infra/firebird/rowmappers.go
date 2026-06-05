@@ -44,16 +44,18 @@ func parseUUIDColumn(column, raw string) (uuid.UUID, error) {
 // delivers UTF-8 Go strings directly.
 func usuarioFromRow(s rowScanner) (*domain.Usuario, error) {
 	var (
-		idRaw, fuid, email         string
+		idRaw, email               string
+		fuid                       sql.NullString
 		nombre                     string
 		telefono                   sql.NullString
 		almacenID                  sql.NullInt32
 		activo                     bool
+		estatus                    string
 		createdAtRaw, updatedAtRaw any
 		createdByRaw, updatedByRaw string
 	)
 	if err := s.Scan(
-		&idRaw, &fuid, &email, &nombre, &telefono, &almacenID, &activo,
+		&idRaw, &fuid, &email, &nombre, &telefono, &almacenID, &activo, &estatus,
 		&createdAtRaw, &updatedAtRaw, &createdByRaw, &updatedByRaw,
 	); err != nil {
 		return nil, err
@@ -81,6 +83,10 @@ func usuarioFromRow(s rowScanner) (*domain.Usuario, error) {
 		return nil, err
 	}
 
+	var firebaseUIDOpt domain.FirebaseUID
+	if fuid.Valid {
+		firebaseUIDOpt = domain.HydrateFirebaseUID(fuid.String)
+	}
 	var telOpt *platform.Telefono
 	if telefono.Valid {
 		t := platform.HydrateTelefono(telefono.String)
@@ -94,12 +100,13 @@ func usuarioFromRow(s rowScanner) (*domain.Usuario, error) {
 
 	return domain.HydrateUsuario(domain.HydrateUsuarioParams{
 		ID:          id,
-		FirebaseUID: domain.HydrateFirebaseUID(fuid),
+		FirebaseUID: firebaseUIDOpt,
 		Email:       domain.HydrateEmail(email),
 		Nombre:      domain.HydrateNombre(nombre),
 		Telefono:    telOpt,
 		AlmacenID:   almacenOpt,
 		Activo:      activo,
+		Estatus:     domain.Estatus(estatus),
 		CreatedAt:   createdAt,
 		UpdatedAt:   updatedAt,
 		CreatedBy:   createdBy,

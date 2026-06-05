@@ -561,9 +561,9 @@ func TestUsuarioRepo_List_MalformedRow(t *testing.T) {
 		_, err := q.ExecContext(
 			ctx,
 			`INSERT INTO MSP_USUARIOS
-			 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO,
+			 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO, ESTATUS,
 			  CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY)
-			 VALUES (?, ?, ?, 'malformed-list', TRUE, ?, ?, ?, ?)`,
+			 VALUES (?, ?, ?, 'malformed-list', TRUE, 'FIREBASE_USER', ?, ?, ?, ?)`,
 			badID, "fb-listmal-"+uuid.NewString(),
 			"listmal-"+uuid.NewString()+"@example.invalid",
 			now, now, badID, badID,
@@ -613,9 +613,9 @@ func TestUsuarioRepo_FindByID_MalformedUUID(t *testing.T) {
 		_, err := q.ExecContext(
 			ctx,
 			`INSERT INTO MSP_USUARIOS
-			 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO,
+			 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO, ESTATUS,
 			  CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY)
-			 VALUES (?, ?, ?, 'malformed', TRUE, ?, ?, ?, ?)`,
+			 VALUES (?, ?, ?, 'malformed', TRUE, 'FIREBASE_USER', ?, ?, ?, ?)`,
 			badID, "fb-malformed-"+uuid.NewString(), email,
 			now, now, badID, badID,
 		)
@@ -652,9 +652,9 @@ func TestUsuarioRepo_FindByEmail_MalformedCreatedBy(t *testing.T) {
 		_, err := q.ExecContext(
 			ctx,
 			`INSERT INTO MSP_USUARIOS
-			 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO,
+			 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO, ESTATUS,
 			  CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY)
-			 VALUES (?, ?, ?, 'anchor', TRUE, ?, ?, ?, ?)`,
+			 VALUES (?, ?, ?, 'anchor', TRUE, 'FIREBASE_USER', ?, ?, ?, ?)`,
 			badAnchorID, "fb-anchor-"+uuid.NewString(),
 			"anchor-"+uuid.NewString()+"@example.invalid",
 			now, now, badAnchorID, badAnchorID,
@@ -667,9 +667,9 @@ func TestUsuarioRepo_FindByEmail_MalformedCreatedBy(t *testing.T) {
 		_, err = q.ExecContext(
 			ctx,
 			`INSERT INTO MSP_USUARIOS
-			 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO,
+			 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO, ESTATUS,
 			  CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY)
-			 VALUES (?, ?, ?, 'victim', TRUE, ?, ?, ?, ?)`,
+			 VALUES (?, ?, ?, 'victim', TRUE, 'FIREBASE_USER', ?, ?, ?, ?)`,
 			victimID, "fb-victim-"+uuid.NewString(), victimEmail,
 			now, now, badAnchorID, victimID,
 		)
@@ -702,9 +702,9 @@ func TestUsuarioRepo_FindByEmail_MalformedUpdatedBy(t *testing.T) {
 		_, err := q.ExecContext(
 			ctx,
 			`INSERT INTO MSP_USUARIOS
-			 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO,
+			 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO, ESTATUS,
 			  CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY)
-			 VALUES (?, ?, ?, 'ub-anchor', TRUE, ?, ?, ?, ?)`,
+			 VALUES (?, ?, ?, 'ub-anchor', TRUE, 'FIREBASE_USER', ?, ?, ?, ?)`,
 			badAnchorID, "fb-ubanchor-"+uuid.NewString(),
 			"ubanchor-"+uuid.NewString()+"@example.invalid",
 			now, now, badAnchorID, badAnchorID,
@@ -716,9 +716,9 @@ func TestUsuarioRepo_FindByEmail_MalformedUpdatedBy(t *testing.T) {
 		_, err = q.ExecContext(
 			ctx,
 			`INSERT INTO MSP_USUARIOS
-			 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO,
+			 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO, ESTATUS,
 			  CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY)
-			 VALUES (?, ?, ?, 'ubvictim', TRUE, ?, ?, ?, ?)`,
+			 VALUES (?, ?, ?, 'ubvictim', TRUE, 'FIREBASE_USER', ?, ?, ?, ?)`,
 			victimID, "fb-ubvictim-"+uuid.NewString(), victimEmail,
 			now, now, victimID, badAnchorID,
 		)
@@ -777,6 +777,57 @@ func TestUsuarioRepo_RolesFor_MalformedRolRow(t *testing.T) {
 		appErr, ok := apperror.As(err)
 		require.True(t, ok)
 		assert.Equal(t, "firebird_uuid_invalid", appErr.Code)
+	})
+}
+
+// TestUsuarioRepo_SaveVendedorOnly_NullFirebaseUID verifies that a
+// vendedor-only usuario (no Firebase identity) round-trips through Save and
+// FindByID with a zero FirebaseUID and EstatusVendedorOnly.
+func TestUsuarioRepo_SaveVendedorOnly_NullFirebaseUID(t *testing.T) {
+	t.Parallel()
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := authfb.NewUsuarioRepo(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		root := seedRootUsuario(ctx, t, pool)
+		email, err := domain.NewEmail("vendedor-only-" + uuid.NewString() + "@example.invalid")
+		require.NoError(t, err)
+		nombre, err := domain.NewNombre("Vendedor Solo")
+		require.NoError(t, err)
+		v := domain.NewVendedorUsuario(uuid.New(), email, nombre, root, testNow())
+
+		require.NoError(t, repo.Save(ctx, v))
+
+		got, err := repo.FindByID(ctx, v.ID())
+		require.NoError(t, err)
+		assert.True(t, got.FirebaseUID().IsZero(), "vendedor-only debe tener FirebaseUID vacío")
+		assert.Equal(t, domain.EstatusVendedorOnly, got.Estatus())
+		assert.Equal(t, email.Value(), got.Email().Value())
+	})
+}
+
+// TestUsuarioRepo_MultipleVendedoresNullUID_NoUniqueViolation verifies that
+// multiple vendedor-only usuarios (all with NULL FIREBASE_UID) can be saved
+// without triggering a unique-constraint violation on the FIREBASE_UID column.
+func TestUsuarioRepo_MultipleVendedoresNullUID_NoUniqueViolation(t *testing.T) {
+	t.Parallel()
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := authfb.NewUsuarioRepo(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		root := seedRootUsuario(ctx, t, pool)
+
+		for i := range 3 {
+			suffix := uuid.NewString()
+			email, err := domain.NewEmail("vendedor-multi-" + strconv.Itoa(i) + "-" + suffix + "@example.invalid")
+			require.NoError(t, err)
+			nombre, err := domain.NewNombre("Vendedor Multi " + strconv.Itoa(i))
+			require.NoError(t, err)
+			v := domain.NewVendedorUsuario(uuid.New(), email, nombre, root, testNow())
+
+			require.NoError(t, repo.Save(ctx, v),
+				"vendedor %d no debe producir violación de unicidad en FIREBASE_UID", i)
+		}
 	})
 }
 

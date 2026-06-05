@@ -12,9 +12,9 @@ package firebird
 
 const insertUsuario = `
 INSERT INTO MSP_USUARIOS
-    (ID, FIREBASE_UID, EMAIL, NOMBRE, TELEFONO, ALMACEN_ID, ACTIVO,
+    (ID, FIREBASE_UID, EMAIL, NOMBRE, TELEFONO, ALMACEN_ID, ACTIVO, ESTATUS,
      CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 const updateUsuario = `
 UPDATE MSP_USUARIOS
@@ -24,11 +24,12 @@ SET FIREBASE_UID = ?,
     TELEFONO = ?,
     ALMACEN_ID = ?,
     ACTIVO = ?,
+    ESTATUS = ?,
     UPDATED_AT = ?,
     UPDATED_BY = ?
 WHERE ID = ?`
 
-const usuarioColumns = `ID, FIREBASE_UID, EMAIL, NOMBRE, TELEFONO, ALMACEN_ID, ACTIVO,
+const usuarioColumns = `ID, FIREBASE_UID, EMAIL, NOMBRE, TELEFONO, ALMACEN_ID, ACTIVO, ESTATUS,
        CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY`
 
 const selectUsuarioByID = `

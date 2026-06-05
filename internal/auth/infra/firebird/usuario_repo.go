@@ -36,6 +36,10 @@ var _ outbound.UsuarioRepo = (*UsuarioRepo)(nil)
 func (r *UsuarioRepo) Save(ctx context.Context, u *domain.Usuario) error {
 	q := firebird.GetQuerier(ctx, r.pool.DB)
 
+	var firebaseUID any
+	if !u.FirebaseUID().IsZero() {
+		firebaseUID = u.FirebaseUID().Value()
+	}
 	var telefono any
 	if u.Telefono() != nil {
 		telefono = u.Telefono().Value()
@@ -48,12 +52,13 @@ func (r *UsuarioRepo) Save(ctx context.Context, u *domain.Usuario) error {
 	_, err := q.ExecContext(
 		ctx, insertUsuario,
 		u.ID().String(),
-		u.FirebaseUID().Value(),
+		firebaseUID,
 		u.Email().Value(),
 		u.Nombre().Value(),
 		telefono,
 		almacenID,
 		u.Activo(),
+		string(u.Estatus()),
 		firebird.ToWallClock(u.CreatedAt()),
 		firebird.ToWallClock(u.UpdatedAt()),
 		u.CreatedBy().String(),
@@ -69,6 +74,10 @@ func (r *UsuarioRepo) Save(ctx context.Context, u *domain.Usuario) error {
 func (r *UsuarioRepo) Update(ctx context.Context, u *domain.Usuario) error {
 	q := firebird.GetQuerier(ctx, r.pool.DB)
 
+	var firebaseUID any
+	if !u.FirebaseUID().IsZero() {
+		firebaseUID = u.FirebaseUID().Value()
+	}
 	var telefono any
 	if u.Telefono() != nil {
 		telefono = u.Telefono().Value()
@@ -80,12 +89,13 @@ func (r *UsuarioRepo) Update(ctx context.Context, u *domain.Usuario) error {
 
 	res, err := q.ExecContext(
 		ctx, updateUsuario,
-		u.FirebaseUID().Value(),
+		firebaseUID,
 		u.Email().Value(),
 		u.Nombre().Value(),
 		telefono,
 		almacenID,
 		u.Activo(),
+		string(u.Estatus()),
 		firebird.ToWallClock(u.UpdatedAt()),
 		u.UpdatedBy().String(),
 		u.ID().String(),

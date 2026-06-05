@@ -135,14 +135,18 @@ func (f *FakeUsuarioRepo) Save(_ context.Context, u *domain.Usuario) error {
 	if f.SaveErr != nil {
 		return f.SaveErr
 	}
-	if _, exists := f.ByFUID[u.FirebaseUID().Value()]; exists {
-		return domain.ErrUsuarioYaExiste
+	if !u.FirebaseUID().IsZero() {
+		if _, exists := f.ByFUID[u.FirebaseUID().Value()]; exists {
+			return domain.ErrUsuarioYaExiste
+		}
 	}
 	if _, exists := f.ByEmail[u.Email().Value()]; exists {
 		return domain.ErrUsuarioYaExiste
 	}
 	f.ByID[u.ID()] = u
-	f.ByFUID[u.FirebaseUID().Value()] = u
+	if !u.FirebaseUID().IsZero() {
+		f.ByFUID[u.FirebaseUID().Value()] = u
+	}
 	f.ByEmail[u.Email().Value()] = u
 	return nil
 }
@@ -158,10 +162,14 @@ func (f *FakeUsuarioRepo) Update(_ context.Context, u *domain.Usuario) error {
 	if !ok {
 		return domain.ErrUsuarioNotFound
 	}
-	delete(f.ByFUID, existing.FirebaseUID().Value())
+	if !existing.FirebaseUID().IsZero() {
+		delete(f.ByFUID, existing.FirebaseUID().Value())
+	}
 	delete(f.ByEmail, existing.Email().Value())
 	f.ByID[u.ID()] = u
-	f.ByFUID[u.FirebaseUID().Value()] = u
+	if !u.FirebaseUID().IsZero() {
+		f.ByFUID[u.FirebaseUID().Value()] = u
+	}
 	f.ByEmail[u.Email().Value()] = u
 	return nil
 }
@@ -186,6 +194,9 @@ func (f *FakeUsuarioRepo) FindByFirebaseUID(_ context.Context, fuid string) (*do
 	defer f.mu.Unlock()
 	if f.FindErr != nil {
 		return nil, f.FindErr
+	}
+	if fuid == "" {
+		return nil, domain.ErrUsuarioNotFound
 	}
 	u, ok := f.ByFUID[fuid]
 	if !ok {
