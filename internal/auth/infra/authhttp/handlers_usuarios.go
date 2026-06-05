@@ -159,6 +159,36 @@ func (h *Handlers) RevocarRolDeUsuario(w http.ResponseWriter, r *http.Request) {
 	response.NoContent(w)
 }
 
+// EnsureVendedoresByEmail handles POST /v2/usuarios/ensure-vendedores-by-email.
+// The authenticated caller (a cobrador, in practice) submits a list of vendedor
+// emails; the service lazily upserts missing ones as VENDEDOR_ONLY usuarios
+// and returns the email→usuario_id mapping. No specific permission is
+// required: the endpoint is idempotent and side-effect-free as far as the
+// caller is concerned.
+func (h *Handlers) EnsureVendedoresByEmail(w http.ResponseWriter, r *http.Request) {
+	var req EnsureVendedoresByEmailRequest
+	if decErr := decodeJSON(r, &req); decErr != nil {
+		response.Error(w, r, decErr)
+		return
+	}
+	if fe := validator.Default().Struct(req); fe != nil {
+		response.ValidationError(w, r, fe)
+		return
+	}
+	by, ok := currentUserID(r)
+	if !ok {
+		response.Error(w, r, apperror.NewUnauthorized("unauthenticated", "no autenticado"))
+		return
+	}
+
+	results, err := h.svc.EnsureVendedoresByEmail(r.Context(), req.Emails, by)
+	if err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	response.JSON(w, r, http.StatusOK, toEnsureVendedoresResponse(results))
+}
+
 // parseUUIDParam reads a URL parameter and parses it as a UUID, returning a
 // 422 apperror with a stable "invalid_uuid" code on failure.
 func parseUUIDParam(r *http.Request, name string) (uuid.UUID, error) {

@@ -60,6 +60,10 @@ func MountRouter(
 			r.With(RequirePermission(domain.PermUsuariosDesactivar)).Delete("/{id}", h.DesactivarUsuario)
 			r.With(idem, RequirePermission(domain.PermUsuariosAsignarRol)).Post("/{id}/roles", h.AsignarRolAUsuario)
 			r.With(RequirePermission(domain.PermUsuariosAsignarRol)).Delete("/{id}/roles/{rol_id}", h.RevocarRolDeUsuario)
+			// No RequirePermission: cobrador calls this on every venta to resolve
+			// vendedor emails; any authenticated user may call it. No idem: the
+			// service is idempotent by construction — same list, same result.
+			r.Post("/ensure-vendedores-by-email", h.EnsureVendedoresByEmail)
 		})
 
 		r.Route("/roles", func(r chi.Router) {

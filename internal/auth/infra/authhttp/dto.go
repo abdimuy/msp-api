@@ -41,6 +41,27 @@ type AsignarPermisoRequest struct {
 	Codigo string `json:"codigo" validate:"required,min=1,max=60"`
 }
 
+// EnsureVendedoresByEmailRequest is the body for
+// POST /usuarios/ensure-vendedores-by-email. The endpoint is called by the
+// Android cobrador app right before posting a venta, to resolve the email of
+// each catalog vendedor (assigned by camioneta in Firestore) to a stable
+// MSP_USUARIOS.ID. Unknown emails are lazily upserted as VENDEDOR_ONLY users.
+type EnsureVendedoresByEmailRequest struct {
+	Emails []string `json:"emails" validate:"required,min=1,max=20,dive,required,email"`
+}
+
+// VendedorEnsureResponse pairs an input email with its resolved usuario_id.
+type VendedorEnsureResponse struct {
+	Email     string `json:"email"`
+	UsuarioID string `json:"usuario_id"`
+}
+
+// EnsureVendedoresResponse is the 200 OK envelope returned by the
+// ensure-vendedores-by-email endpoint.
+type EnsureVendedoresResponse struct {
+	Vendedores []VendedorEnsureResponse `json:"vendedores"`
+}
+
 // UsuarioResponse is the JSON projection of a domain.Usuario.
 type UsuarioResponse struct {
 	ID          string  `json:"id"`

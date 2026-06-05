@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/abdimuy/msp-api/internal/auth"
+	"github.com/abdimuy/msp-api/internal/auth/app"
 	"github.com/abdimuy/msp-api/internal/auth/domain"
 )
 
@@ -47,6 +48,19 @@ func toPermisoResponse(p *domain.Permiso) PermisoResponse {
 		Description: p.Description(),
 		Categoria:   p.Categoria(),
 	}
+}
+
+// toEnsureVendedoresResponse projects the service-layer results into the JSON
+// DTO. Order is preserved.
+func toEnsureVendedoresResponse(results []app.VendedorEnsureResult) EnsureVendedoresResponse {
+	items := make([]VendedorEnsureResponse, 0, len(results))
+	for _, r := range results {
+		items = append(items, VendedorEnsureResponse{
+			Email:     r.Email,
+			UsuarioID: r.UsuarioID.String(),
+		})
+	}
+	return EnsureVendedoresResponse{Vendedores: items}
 }
 
 // toCurrentUserResponse projects the cross-module auth.CurrentUser into its

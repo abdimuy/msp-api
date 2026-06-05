@@ -195,6 +195,31 @@ paths:
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
 
+  /usuarios/ensure-vendedores-by-email:
+    post:
+      tags: [usuarios]
+      summary: Lazy upsert vendedor usuarios by email, returning usuario_id mapping.
+      operationId: ensureVendedoresByEmail
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnsureVendedoresByEmailRequest"
+      responses:
+        "200":
+          description: Resolved vendedor mapping.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnsureVendedoresResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
   /roles/:
     get:
       tags: [roles]
@@ -449,6 +474,12 @@ components:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
+    Conflict:
+      description: The request conflicts with existing data (e.g. inactive vendedor).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
 
   schemas:
     LoginRequest:
@@ -528,6 +559,41 @@ components:
           type: string
           minLength: 1
           maxLength: 60
+
+    EnsureVendedoresByEmailRequest:
+      type: object
+      additionalProperties: false
+      required: [emails]
+      properties:
+        emails:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            type: string
+            format: email
+
+    VendedorEnsureResponse:
+      type: object
+      additionalProperties: false
+      required: [email, usuario_id]
+      properties:
+        email:
+          type: string
+          format: email
+        usuario_id:
+          type: string
+          format: uuid
+
+    EnsureVendedoresResponse:
+      type: object
+      additionalProperties: false
+      required: [vendedores]
+      properties:
+        vendedores:
+          type: array
+          items:
+            $ref: "#/components/schemas/VendedorEnsureResponse"
 
     Usuario:
       type: object

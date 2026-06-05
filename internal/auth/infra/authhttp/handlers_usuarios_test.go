@@ -36,6 +36,7 @@ func mountWithCurrentUser(rig *testRig, cu auth.CurrentUser) chi.Router {
 		r.With(RequirePermission(domain.PermUsuariosDesactivar)).Delete("/{id}", h.DesactivarUsuario)
 		r.With(RequirePermission(domain.PermUsuariosAsignarRol)).Post("/{id}/roles", h.AsignarRolAUsuario)
 		r.With(RequirePermission(domain.PermUsuariosAsignarRol)).Delete("/{id}/roles/{rol_id}", h.RevocarRolDeUsuario)
+		r.Post("/ensure-vendedores-by-email", h.EnsureVendedoresByEmail)
 	})
 	r.Route("/roles", func(r chi.Router) {
 		r.With(RequirePermission(domain.PermRolesListar)).Get("/", h.ListarRoles)
@@ -221,6 +222,108 @@ func TestRevocarRol_Returns204(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+}
+
+// ─── EnsureVendedoresByEmail ────────────────────────────────────────────────
+
+func TestEnsureVendedoresByEmail_HappyPath(t *testing.T) {
+	t.Parallel()
+	rig := newTestRig(t)
+	caller := rig.seedUsuario(t, "fbuid-ev", "ev@muebleriamsp.mx", "Cobrador Uno")
+
+	r := mountWithCurrentUser(rig, adminCurrentUser(caller))
+	rec := doRequestRouter(t, r, http.MethodPost, "/usuarios/ensure-vendedores-by-email",
+		EnsureVendedoresByEmailRequest{Emails: []string{"juan@muebleriamsp.mx", "maria@muebleriamsp.mx"}},
+	)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var resp EnsureVendedoresResponse
+	decodeBody(t, rec, &resp)
+	require.Len(t, resp.Vendedores, 2)
+	assert.Equal(t, "juan@muebleriamsp.mx", resp.Vendedores[0].Email)
+	assert.NotEmpty(t, resp.Vendedores[0].UsuarioID)
+	_, parseErr := uuid.Parse(resp.Vendedores[0].UsuarioID)
+	require.NoError(t, parseErr, "usuario_id must be a valid UUID")
+	assert.Equal(t, "maria@muebleriamsp.mx", resp.Vendedores[1].Email)
+	_, parseErr = uuid.Parse(resp.Vendedores[1].UsuarioID)
+	require.NoError(t, parseErr, "usuario_id must be a valid UUID")
+}
+
+func TestEnsureVendedoresByEmail_NoAuth_401(t *testing.T) {
+	t.Parallel()
+	rig := newTestRig(t)
+
+	// Build a router with NO CurrentUser planted — the handler must detect the
+	// missing auth and return 401.
+	r := chi.NewRouter()
+	h := NewHandlers(rig.svc, rig.usuarios)
+	r.Post("/usuarios/ensure-vendedores-by-email", h.EnsureVendedoresByEmail)
+
+	rec := doRequestRouter(t, r, http.MethodPost, "/usuarios/ensure-vendedores-by-email",
+		EnsureVendedoresByEmailRequest{Emails: []string{"x@muebleriamsp.mx"}},
+	)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code, rec.Body.String())
+}
+
+func TestEnsureVendedoresByEmail_EmptyList_422(t *testing.T) {
+	t.Parallel()
+	rig := newTestRig(t)
+	caller := rig.seedUsuario(t, "fbuid-ev2", "ev2@muebleriamsp.mx", "Cobrador Dos")
+
+	r := mountWithCurrentUser(rig, adminCurrentUser(caller))
+	rec := doRequestRouter(t, r, http.MethodPost, "/usuarios/ensure-vendedores-by-email",
+		EnsureVendedoresByEmailRequest{Emails: []string{}},
+	)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+}
+
+func TestEnsureVendedoresByEmail_TooMany_422(t *testing.T) {
+	t.Parallel()
+	rig := newTestRig(t)
+	caller := rig.seedUsuario(t, "fbuid-ev3", "ev3@muebleriamsp.mx", "Cobrador Tres")
+
+	emails := make([]string, 21)
+	for i := range emails {
+		emails[i] = "v" + string(rune('a'+i)) + "@muebleriamsp.mx"
+	}
+	r := mountWithCurrentUser(rig, adminCurrentUser(caller))
+	rec := doRequestRouter(t, r, http.MethodPost, "/usuarios/ensure-vendedores-by-email",
+		EnsureVendedoresByEmailRequest{Emails: emails},
+	)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+}
+
+func TestEnsureVendedoresByEmail_InvalidEmail_422(t *testing.T) {
+	t.Parallel()
+	rig := newTestRig(t)
+	caller := rig.seedUsuario(t, "fbuid-ev4", "ev4@muebleriamsp.mx", "Cobrador Cuatro")
+
+	r := mountWithCurrentUser(rig, adminCurrentUser(caller))
+	rec := doRequestRouter(t, r, http.MethodPost, "/usuarios/ensure-vendedores-by-email",
+		EnsureVendedoresByEmailRequest{Emails: []string{"not-a-valid-email"}},
+	)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+}
+
+func TestEnsureVendedoresByEmail_InactiveVendedor_409(t *testing.T) {
+	t.Parallel()
+	rig := newTestRig(t)
+	caller := rig.seedUsuario(t, "fbuid-ev5", "ev5@muebleriamsp.mx", "Cobrador Cinco")
+
+	// Seed a VENDEDOR_ONLY usuario and then deactivate it.
+	inactive := rig.seedUsuario(t, "fbuid-inactivo", "inactivo@muebleriamsp.mx", "Inactivo Vendedor")
+	inactive.Desactivar(caller.ID(), rig.clockTime)
+	require.NoError(t, rig.usuarios.Update(context.Background(), inactive))
+
+	r := mountWithCurrentUser(rig, adminCurrentUser(caller))
+	rec := doRequestRouter(t, r, http.MethodPost, "/usuarios/ensure-vendedores-by-email",
+		EnsureVendedoresByEmailRequest{Emails: []string{"inactivo@muebleriamsp.mx"}},
+	)
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+
+	var body map[string]any
+	decodeBody(t, rec, &body)
+	assert.Equal(t, "vendedor_email_inactivo", body["code"], "response must carry stable error code")
 }
 
 // doRequestRouter sends a JSON request through the supplied router. Similar to
