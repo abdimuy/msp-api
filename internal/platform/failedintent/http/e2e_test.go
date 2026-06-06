@@ -412,7 +412,7 @@ func buildE2ERouter(t *testing.T, d e2eRouterDeps) *chi.Mux {
 
 	dispatcher := &settableDispatcher{}
 	usuarioLookup := &e2eUsuarioLookup{repo: d.usuarios}
-	fiSvc := failedintenthttp.NewService(d.intentStore, dispatcher, usuarioLookup, nil, nil)
+	fiSvc := failedintenthttp.NewService(d.intentStore, dispatcher, usuarioLookup, nil, nil, nil)
 
 	authn := authhttp.NewAuthnMiddleware(d.firebase, d.usuarios)
 	idemMW := idempotency.Middleware(idempotency.Config{

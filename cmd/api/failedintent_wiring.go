@@ -123,7 +123,7 @@ func provideFailedIntentHTTPService(
 	dispatcher failedintent.ReplayDispatcher,
 	usuarios failedintenthttp.UsuarioLookup,
 ) *failedintenthttp.Service {
-	return failedintenthttp.NewService(store, dispatcher, usuarios, nil, nil)
+	return failedintenthttp.NewService(store, dispatcher, usuarios, nil, nil, nil)
 }
 
 // provideFailedIntentJanitor builds the background purge component.

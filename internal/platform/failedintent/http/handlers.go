@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -41,16 +42,21 @@ type Service struct {
 	store      failedintent.Store
 	dispatcher failedintent.ReplayDispatcher
 	usuarios   UsuarioLookup
+	blobs      failedintent.BlobStorage
 	clock      func() time.Time
 	newID      func() uuid.UUID
 }
 
 // NewService constructs a Service. Nil clock and newID are replaced with
 // time.Now and uuid.New respectively, matching the core package convention.
+// blobs is optional: pass nil when the deployment does not opt into
+// multipart capture; in that case Replay falls back to the inline body and
+// any intent that does carry a BodyBlobPath surfaces a clear error.
 func NewService(
 	store failedintent.Store,
 	dispatcher failedintent.ReplayDispatcher,
 	usuarios UsuarioLookup,
+	blobs failedintent.BlobStorage,
 	clock func() time.Time,
 	newID func() uuid.UUID,
 ) *Service {
@@ -64,6 +70,7 @@ func NewService(
 		store:      store,
 		dispatcher: dispatcher,
 		usuarios:   usuarios,
+		blobs:      blobs,
 		clock:      clock,
 		newID:      newID,
 	}
@@ -335,7 +342,8 @@ func (s *Service) Replay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := s.executeReplay(r.Context(), *intent, intent.Body, cu)
+	// Pass nil so resolveReplayBody auto-selects between blob and inline.
+	result := s.executeReplay(r.Context(), *intent, nil, cu)
 
 	response.JSON(w, r, http.StatusOK, ReplayResponse{
 		Outcome:           string(result.outcome),
@@ -383,6 +391,16 @@ func (s *Service) ReplayWith(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if intent.BodyBlobPath != "" {
+		// A multipart-captured body cannot meaningfully be overridden by a
+		// JSON payload — the boundary and binary parts wouldn't line up.
+		response.Error(w, r, apperror.NewValidation(
+			"blob_intent_replay_with_unsupported",
+			"este intento se capturó con multipart; usar /replay en lugar de /replay-with",
+		))
+		return
+	}
+
 	if intent.UsuarioID == nil {
 		response.Error(w, r, apperror.NewValidation(
 			"intent_has_no_usuario",
@@ -407,27 +425,33 @@ func (s *Service) ReplayWith(w http.ResponseWriter, r *http.Request) {
 }
 
 // buildReplayRequest assembles the http.Request that will be dispatched as a
-// replay. The body parameter is used as the request body; callers pass either
-// intent.Body (for Replay) or a corrected payload (for ReplayWith).
-// Extracted to keep Replay/ReplayWith within the cyclomatic budget.
+// replay. The body source depends on the intent shape: a non-empty
+// overrideBody (ReplayWith) wins; otherwise a blob path is streamed back
+// from disk with the original Content-Type; otherwise the inline JSON body
+// is used. Extracted to keep Replay/ReplayWith within the cyclomatic budget.
 func (s *Service) buildReplayRequest(
 	ctx context.Context,
 	intent *failedintent.Intent,
 	cu auth.CurrentUser,
-	body json.RawMessage,
+	overrideBody json.RawMessage,
 ) (*http.Request, error) {
+	body, contentType, openErr := s.resolveReplayBody(ctx, intent, overrideBody)
+	if openErr != nil {
+		return nil, openErr
+	}
+
 	//nolint:gosec // G704: method/path are captured from this server's own
 	// request stream, not from untrusted external input. The intent row's
 	// method and path were vetted at capture time by the existing chi router.
-	req, err := http.NewRequestWithContext(
-		ctx, intent.Method, intent.Path,
-		bytes.NewReader(body),
-	)
+	req, err := http.NewRequestWithContext(ctx, intent.Method, intent.Path, body)
 	if err != nil {
+		if closer, ok := body.(io.Closer); ok {
+			_ = closer.Close()
+		}
 		return nil, err
 	}
 
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", contentType)
 	req.Header.Set(failedintent.HeaderInternalReplay, intent.ID.String())
 	req.Header.Set("X-Request-ID", s.newID().String())
 
@@ -448,6 +472,40 @@ func (s *Service) buildReplayRequest(
 	// same auth context the original request had.
 	req = req.WithContext(auth.PlantCurrentUser(replayCtx, cu))
 	return req, nil
+}
+
+// resolveReplayBody picks the body source for a replay. Returns the body
+// (caller owns Close() if it implements io.Closer), the Content-Type to set
+// on the replay request, and any error.
+func (s *Service) resolveReplayBody(
+	ctx context.Context,
+	intent *failedintent.Intent,
+	overrideBody json.RawMessage,
+) (io.Reader, string, error) {
+	if len(overrideBody) > 0 {
+		return bytes.NewReader(overrideBody), "application/json", nil
+	}
+	if intent.BodyBlobPath != "" {
+		if s.blobs == nil {
+			return nil, "", apperror.NewInternal(
+				"failed_intent_blob_unavailable",
+				"el almacenamiento de blobs no está configurado",
+			)
+		}
+		rc, err := s.blobs.Open(ctx, intent.BodyBlobPath)
+		if err != nil {
+			return nil, "", apperror.NewInternal(
+				"failed_intent_blob_open_failed",
+				"no se pudo abrir el blob del intento fallido",
+			).WithError(err).WithField("path", intent.BodyBlobPath)
+		}
+		ct := intent.BodyContentType
+		if ct == "" {
+			ct = "application/octet-stream"
+		}
+		return rc, ct, nil
+	}
+	return bytes.NewReader(intent.Body), "application/json", nil
 }
 
 // tryUpdateStatus transitions the intent after a replay. Conflict errors and

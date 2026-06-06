@@ -386,7 +386,7 @@ func TestListar_EmptyStore_ReturnsEmpty(t *testing.T) {
 	t.Parallel()
 
 	store := newMemoryStore()
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -420,7 +420,7 @@ func TestListar_FilterByStatus(t *testing.T) {
 	seedIntent(t, store, i1)
 	seedIntent(t, store, i2)
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -440,7 +440,7 @@ func TestListar_InvalidStatus_Returns422(t *testing.T) {
 	t.Parallel()
 
 	store := newMemoryStore()
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -457,7 +457,7 @@ func TestListar_InvalidCursor_Returns422(t *testing.T) {
 	t.Parallel()
 
 	store := newMemoryStore()
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -482,7 +482,7 @@ func TestListar_PageSizeClamped(t *testing.T) {
 		require.NoError(t, store.Save(context.Background(), intent))
 	}
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -509,7 +509,7 @@ func TestObtener_Existing_ReturnsDTO(t *testing.T) {
 	intent := makeIntent(id, now)
 	seedIntent(t, store, intent)
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -531,7 +531,7 @@ func TestObtener_NotFound_Returns404(t *testing.T) {
 	t.Parallel()
 
 	store := newMemoryStore()
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -549,7 +549,7 @@ func TestObtener_InvalidUUID_Returns422(t *testing.T) {
 	t.Parallel()
 
 	store := newMemoryStore()
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -574,7 +574,7 @@ func TestResolver_ValidIgnored_ReturnsUpdatedDTO(t *testing.T) {
 	seedIntent(t, store, intent)
 
 	clock := fixedClock(now)
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, clock, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, clock, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -604,7 +604,7 @@ func TestResolver_ValidResolvedManual_ReturnsUpdatedDTO(t *testing.T) {
 	intent := makeIntent(id, now)
 	seedIntent(t, store, intent)
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -630,7 +630,7 @@ func TestResolver_InvalidStatus_Returns422(t *testing.T) {
 	intent := makeIntent(id, time.Now().UTC())
 	seedIntent(t, store, intent)
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -655,7 +655,7 @@ func TestResolver_NotesTooLong_Returns422(t *testing.T) {
 	intent := makeIntent(id, time.Now().UTC())
 	seedIntent(t, store, intent)
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -682,7 +682,7 @@ func TestResolver_NoCurrentUser_Returns401(t *testing.T) {
 	intent := makeIntent(id, time.Now().UTC())
 	seedIntent(t, store, intent)
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	// Do NOT plant a CurrentUser — pass nil.
 	r := newRouter(t, svc, nil)
 
@@ -707,7 +707,7 @@ func TestResolver_OptimisticConflict_Returns409(t *testing.T) {
 	intent.Status = failedintent.StatusIgnored // Already terminal
 	seedIntent(t, store, intent)
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -732,7 +732,7 @@ func TestResolver_UnknownField_Returns422(t *testing.T) {
 	intent := makeIntent(id, time.Now().UTC())
 	seedIntent(t, store, intent)
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -775,7 +775,7 @@ func TestReplay_Success_TransitionsToRetriedOK(t *testing.T) {
 
 	dispatcher := &fakeDispatcher{respondStatus: http.StatusCreated}
 
-	svc := failedintenthttp.NewService(store, dispatcher, lookup, fixedClock(now), nil)
+	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, fixedClock(now), nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -841,7 +841,7 @@ func TestReplay_FailureStatus_TransitionsToRetriedFail(t *testing.T) {
 
 	dispatcher := &fakeDispatcher{respondStatus: http.StatusUnprocessableEntity}
 
-	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil)
+	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -867,7 +867,7 @@ func TestReplay_IntentNotFound_Returns404(t *testing.T) {
 	t.Parallel()
 
 	store := newMemoryStore()
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -890,7 +890,7 @@ func TestReplay_IntentMissingUsuario_Returns422(t *testing.T) {
 	intent.UsuarioID = nil // No associated user.
 	seedIntent(t, store, intent)
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -916,7 +916,7 @@ func TestReplay_UsuarioLookupError_Surfaces(t *testing.T) {
 		err: apperror.NewForbidden("user_inactive", "usuario inactivo"),
 	}
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, lookup, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, lookup, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -942,7 +942,7 @@ func TestReplay_TerminalIntent_DoesNotMutateStatus(t *testing.T) {
 	lookup := &stubUsuarioLookup{user: expectedCU}
 	dispatcher := &fakeDispatcher{respondStatus: http.StatusOK}
 
-	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil)
+	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -984,7 +984,7 @@ func TestReplay_AlwaysGeneratesFreshIdempotencyKey(t *testing.T) {
 	dispatcher := &fakeDispatcher{respondStatus: http.StatusOK}
 
 	generatedID := uuid.MustParse("12345678-1234-1234-1234-123456789012")
-	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, fixedID(generatedID))
+	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil, fixedID(generatedID))
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -1029,7 +1029,7 @@ func TestListar_ValidCursor_DecodesAndPaginates(t *testing.T) {
 		require.NoError(t, store.Save(context.Background(), intent))
 	}
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -1063,7 +1063,7 @@ func TestListar_InvalidPageSize_FallsBackToDefault(t *testing.T) {
 	t.Parallel()
 
 	store := newMemoryStore()
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -1084,7 +1084,7 @@ func TestListar_ZeroPageSize_FallsBackToDefault(t *testing.T) {
 	t.Parallel()
 
 	store := newMemoryStore()
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -1102,7 +1102,7 @@ func TestListar_StoreError_Propagates(t *testing.T) {
 	store := newMemoryStore()
 	store.listErr = apperror.NewInternal("db_error", "error de base de datos")
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -1120,7 +1120,7 @@ func TestObtener_StoreError_Propagates(t *testing.T) {
 	store := newMemoryStore()
 	store.getErr = apperror.NewInternal("db_error", "error de base de datos")
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -1141,7 +1141,7 @@ func TestResolver_GetAfterUpdateError(t *testing.T) {
 	intent := makeIntent(id, time.Now().UTC())
 	seedIntent(t, store, intent)
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -1183,7 +1183,7 @@ func TestReplay_BodyPreview_Truncation(t *testing.T) {
 		respondBody:   largeBody,
 	}
 
-	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil)
+	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -1220,7 +1220,7 @@ func TestReplay_TryUpdateStatus_ConflictAfterConcurrentChange(t *testing.T) {
 	lookup := &stubUsuarioLookup{user: expectedCU}
 	dispatcher := &fakeDispatcher{respondStatus: http.StatusOK}
 
-	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil)
+	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -1256,7 +1256,7 @@ func TestReplay_TryUpdateStatus_GenericError(t *testing.T) {
 	lookup := &stubUsuarioLookup{user: expectedCU}
 	dispatcher := &fakeDispatcher{respondStatus: http.StatusOK}
 
-	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil)
+	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -1288,7 +1288,7 @@ func TestReplayWriter_Header(t *testing.T) {
 	// A dispatcher that sets a response header — this exercises rw.Header().
 	headerSettingDispatcher := &headerDispatcher{status: http.StatusOK}
 
-	svc := failedintenthttp.NewService(store, headerSettingDispatcher, lookup, nil, nil)
+	svc := failedintenthttp.NewService(store, headerSettingDispatcher, lookup, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -1346,7 +1346,7 @@ func TestSecurity_AdminRoutesRequirePermission(t *testing.T) {
 	store := newMemoryStore()
 	dispatcher := &fakeDispatcher{respondStatus: http.StatusOK}
 	lookup := &stubUsuarioLookup{}
-	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil)
+	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil, nil)
 
 	for _, tc := range cases {
 		tc := tc
@@ -1449,7 +1449,7 @@ func TestReplayWith_Success_UsesCorrectedBody(t *testing.T) {
 	lookup := &stubUsuarioLookup{user: expectedCU}
 	dispatcher := &fakeDispatcher{respondStatus: http.StatusCreated}
 
-	svc := failedintenthttp.NewService(store, dispatcher, lookup, fixedClock(now), nil)
+	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, fixedClock(now), nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -1499,7 +1499,7 @@ func TestReplayWith_InvalidBody_Returns422(t *testing.T) {
 	intent := makeIntent(id, time.Now().UTC())
 	seedIntent(t, store, intent)
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -1525,7 +1525,7 @@ func TestReplayWith_DecodeError_Returns422(t *testing.T) {
 	intent := makeIntent(id, time.Now().UTC())
 	seedIntent(t, store, intent)
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -1550,7 +1550,7 @@ func TestReplayWith_UnknownField_Returns422(t *testing.T) {
 	intent := makeIntent(id, time.Now().UTC())
 	seedIntent(t, store, intent)
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -1571,7 +1571,7 @@ func TestReplayWith_IntentNotFound_Returns404(t *testing.T) {
 	t.Parallel()
 
 	store := newMemoryStore()
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -1602,7 +1602,7 @@ func TestReplayWith_TerminalIntent_DoesNotMutateStatus(t *testing.T) {
 	lookup := &stubUsuarioLookup{user: expectedCU}
 	dispatcher := &fakeDispatcher{respondStatus: http.StatusOK}
 
-	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil)
+	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -1643,7 +1643,7 @@ func TestMeListar_EmptyForUserWithNoFailures(t *testing.T) {
 		seedIntent(t, store, intent)
 	}
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU() // cu.ID is different from otherUser
 	r := newMeRouter(t, svc, &cu)
 
@@ -1686,7 +1686,7 @@ func TestMeListar_FiltersToCurrentUser(t *testing.T) {
 		seedIntent(t, store, intent)
 	}
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	r := newMeRouter(t, svc, &cu)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -1710,7 +1710,7 @@ func TestMeListar_NoCurrentUser_Returns401(t *testing.T) {
 	t.Parallel()
 
 	store := newMemoryStore()
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	// Pass nil — no CurrentUser planted.
 	r := newMeRouter(t, svc, nil)
 
@@ -1729,7 +1729,7 @@ func TestMeListar_InvalidStatus_Returns422(t *testing.T) {
 	t.Parallel()
 
 	store := newMemoryStore()
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newMeRouter(t, svc, &cu)
 
@@ -1759,7 +1759,7 @@ func TestMeListar_PageSizeClamped(t *testing.T) {
 		seedIntent(t, store, intent)
 	}
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	r := newMeRouter(t, svc, &cu)
 
 	req := httptest.NewRequest(http.MethodGet, "/?page_size=999", nil)
@@ -1794,7 +1794,7 @@ func TestReplayWith_AlwaysGeneratesFreshIdempotencyKey(t *testing.T) {
 	lookup := &stubUsuarioLookup{user: auth.CurrentUser{ID: *intent.UsuarioID}}
 	dispatcher := &fakeDispatcher{respondStatus: http.StatusOK}
 
-	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil)
+	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -1833,7 +1833,7 @@ func TestReplayWith_SetsInternalReplayHeader(t *testing.T) {
 	lookup := &stubUsuarioLookup{user: auth.CurrentUser{ID: *intent.UsuarioID}}
 	dispatcher := &fakeDispatcher{respondStatus: http.StatusOK}
 
-	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil)
+	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -1877,7 +1877,7 @@ func TestReplayWith_PlantsOriginalCurrentUser(t *testing.T) {
 	lookup := &stubUsuarioLookup{user: originalCU}
 	dispatcher := &fakeDispatcher{respondStatus: http.StatusOK}
 
-	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil)
+	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -1913,7 +1913,7 @@ func TestReplayWith_CallsIncrementRetry(t *testing.T) {
 	dispatcher := &fakeDispatcher{respondStatus: http.StatusUnprocessableEntity} // retried_fail keeps status=new guard working
 
 	// First call.
-	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil)
+	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -1964,7 +1964,7 @@ func TestReplayWith_UsuarioLookupError_Surfaces(t *testing.T) {
 	}
 	dispatcher := &fakeDispatcher{respondStatus: http.StatusOK}
 
-	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil)
+	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -1994,7 +1994,7 @@ func TestReplayWith_IntentMissingUsuario_Returns422(t *testing.T) {
 
 	dispatcher := &fakeDispatcher{respondStatus: http.StatusOK}
 
-	svc := failedintenthttp.NewService(store, dispatcher, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, dispatcher, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -2022,7 +2022,7 @@ func TestReplayWith_NullBody_Returns422(t *testing.T) {
 	seedIntent(t, store, intent)
 
 	dispatcher := &fakeDispatcher{respondStatus: http.StatusOK}
-	svc := failedintenthttp.NewService(store, dispatcher, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, dispatcher, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -2068,7 +2068,7 @@ func FuzzReplayWith_BodyParsing(f *testing.F) {
 		lookup := &stubUsuarioLookup{user: auth.CurrentUser{ID: *intent.UsuarioID}}
 		dispatcher := &fakeDispatcher{respondStatus: http.StatusOK}
 
-		svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil)
+		svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil, nil)
 		cu := defaultCU()
 		r := newRouter(t, svc, &cu)
 
@@ -2142,7 +2142,7 @@ func TestMeListar_CrossUserIsolation(t *testing.T) {
 		seedIntent(t, store, intent)
 	}
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 
 	callMeListar := func(t *testing.T, userID uuid.UUID) failedintenthttp.ListResponse {
 		t.Helper()
@@ -2200,7 +2200,7 @@ func TestMeListar_CursorPagination_RoundTrip(t *testing.T) {
 		allIDs = append(allIDs, id.String())
 	}
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	r := newMeRouter(t, svc, &cu)
 
 	collectPage := func(t *testing.T, query string) failedintenthttp.ListResponse {
@@ -2284,7 +2284,7 @@ func TestMeListar_StatusAndUserFilterCombined(t *testing.T) {
 		seedIntent(t, store, intent)
 	}
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	r := newMeRouter(t, svc, &cu)
 
 	req := httptest.NewRequest(http.MethodGet, "/?status=ignored&page_size=100", nil)
@@ -2326,7 +2326,7 @@ func TestMeListar_ConcurrentRequests_NoRace(t *testing.T) {
 		seedIntent(t, store, intent)
 	}
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	r := newMeRouter(t, svc, &cu)
 
 	var wg sync.WaitGroup
@@ -2486,7 +2486,7 @@ func TestMountMeRouter_ServesGET(t *testing.T) {
 	t.Parallel()
 
 	store := newMemoryStore()
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 
 	cu := defaultCU()
 	parent := chi.NewRouter()
@@ -2515,7 +2515,7 @@ func TestMeListar_StoreError_Propagates(t *testing.T) {
 	store := newMemoryStore()
 	store.listErr = apperror.NewInternal("db_error", "error de base de datos")
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newMeRouter(t, svc, &cu)
 
@@ -2533,7 +2533,7 @@ func TestReplay_StoreGetError_Propagates(t *testing.T) {
 	store := newMemoryStore()
 	store.getErr = apperror.NewInternal("db_error", "error de base de datos")
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -2552,7 +2552,7 @@ func TestReplayWith_StoreGetError_Propagates(t *testing.T) {
 	store := newMemoryStore()
 	store.getErr = apperror.NewInternal("db_error", "error de base de datos")
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -2586,7 +2586,7 @@ func TestReplay_IncrementRetryError_ContinuesReplay(t *testing.T) {
 	lookup := &stubUsuarioLookup{user: expectedCU}
 	dispatcher := &fakeDispatcher{respondStatus: http.StatusOK}
 
-	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil)
+	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -2610,7 +2610,7 @@ func TestDecodeCursor_MalformedParts(t *testing.T) {
 	t.Parallel()
 
 	store := newMemoryStore()
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -2632,7 +2632,7 @@ func TestDecodeCursor_InvalidTimePart(t *testing.T) {
 	t.Parallel()
 
 	store := newMemoryStore()
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -2655,7 +2655,7 @@ func TestDecodeCursor_InvalidUUIDPart(t *testing.T) {
 	t.Parallel()
 
 	store := newMemoryStore()
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -2688,7 +2688,7 @@ func TestExecuteReplay_BuildRequestError_ReturnsRetriedFail(t *testing.T) {
 	lookup := &stubUsuarioLookup{user: expectedCU}
 	dispatcher := &fakeDispatcher{respondStatus: http.StatusOK}
 
-	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil)
+	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 

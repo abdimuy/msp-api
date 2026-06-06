@@ -31,6 +31,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -226,6 +227,11 @@ type ReplayDispatcher interface {
 type Config struct {
 	// Store is the persistence backend. Required.
 	Store Store
+	// Blob, when non-nil, opts the middleware into multipart capture:
+	// the body is streamed to BlobStorage.Save and the resulting path is
+	// persisted on the Intent. Leaving it nil preserves the pre-blob
+	// behavior of skipping multipart requests entirely.
+	Blob BlobStorage
 	// PathPrefixes lists request-path prefixes that opt-in to capture.
 	// Defaults to {"/v2/ventas"}.
 	PathPrefixes []string
@@ -235,6 +241,9 @@ type Config struct {
 	// BodyCapBytes is the maximum captured request body. Defaults to
 	// DefaultBodyCapBytes (256 KiB).
 	BodyCapBytes int64
+	// MaxMultipartBytes caps the per-blob size on the multipart path.
+	// Defaults to DefaultMaxMultipartBytes (50 MiB).
+	MaxMultipartBytes int64
 	// Clock supplies the current time. Injected for tests; defaults to
 	// time.Now when nil.
 	Clock func() time.Time
@@ -252,6 +261,9 @@ func (c *Config) defaults() {
 	}
 	if c.BodyCapBytes == 0 {
 		c.BodyCapBytes = DefaultBodyCapBytes
+	}
+	if c.MaxMultipartBytes == 0 {
+		c.MaxMultipartBytes = DefaultMaxMultipartBytes
 	}
 	if c.Clock == nil {
 		c.Clock = time.Now
@@ -280,13 +292,25 @@ func CaptureMiddleware(cfg Config) func(http.Handler) http.Handler {
 }
 
 // handle is the per-request capture body, extracted so the closure stays
-// cyclomatically trivial.
+// cyclomatically trivial. Multipart requests are routed to handleMultipart
+// when Blob storage is configured; everything else falls through to
+// handleJSON.
 func handle(cfg Config, next http.Handler, w http.ResponseWriter, r *http.Request) {
 	if !shouldCapture(cfg, r) {
 		next.ServeHTTP(w, r)
 		return
 	}
+	if cfg.Blob != nil && isMultipart(r) {
+		handleMultipart(cfg, next, w, r)
+		return
+	}
+	handleJSON(cfg, next, w, r)
+}
 
+// handleJSON is the original capture path: buffer up to BodyCapBytes, run the
+// downstream handler, persist the captured intent on >=400. Unchanged
+// behavior from before the blob support.
+func handleJSON(cfg Config, next http.Handler, w http.ResponseWriter, r *http.Request) {
 	body, truncated, err := readCappedBody(r, cfg.BodyCapBytes)
 	if err != nil {
 		// Reading the body failed before we even reached the handler — log
@@ -308,10 +332,156 @@ func handle(cfg Config, next http.Handler, w http.ResponseWriter, r *http.Reques
 		return
 	}
 	intent := buildIntent(cfg, r, body, truncated, cw)
-	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+	saveIntent(cfg, r.Context(), intent)
+}
+
+// handleMultipart tees the request body to BlobStorage while the downstream
+// handler reads it. On 4xx/5xx the intent is persisted with BodyBlobPath +
+// BodyContentType; on 2xx/3xx the on-disk blob is best-effort deleted to
+// avoid leaving a useless artifact. A blob-save failure does not stop the
+// request: when the response is bad we still persist the intent with
+// BodyTruncated=true so the audit row exists.
+func handleMultipart(cfg Config, next http.Handler, w http.ResponseWriter, r *http.Request) {
+	intentID := cfg.NewID()
+	contentType := r.Header.Get("Content-Type")
+
+	pipeR, pipeW := io.Pipe()
+	saveDone := make(chan multipartSaveResult, 1)
+	go func() {
+		path, saveErr := cfg.Blob.Save(
+			context.WithoutCancel(r.Context()),
+			intentID, pipeR, cfg.MaxMultipartBytes,
+		)
+		// Drain anything still in the pipe so the TeeReader is not blocked
+		// (handler may abort mid-read on overflow / error / 4xx).
+		_, _ = io.Copy(io.Discard, pipeR)
+		_ = pipeR.Close()
+		saveDone <- multipartSaveResult{path: path, err: saveErr}
+	}()
+
+	original := r.Body
+	tee := &teeReadCloser{
+		reader: io.TeeReader(original, pipeW),
+		closer: original,
+		writer: pipeW,
+	}
+	r.Body = tee
+
+	cw := newCaptureWriter(w)
+	next.ServeHTTP(cw, r)
+
+	// Ensure the pipe writer is closed even when the handler did not drain
+	// the body — without this the Save goroutine blocks on its read.
+	tee.closeWriterOnce()
+
+	saveResult := <-saveDone
+
+	// 2xx/3xx: best-effort cleanup of the blob; the request succeeded so
+	// there is no failed-intent row to anchor it to.
+	if cw.status < http.StatusBadRequest {
+		if saveResult.err == nil && saveResult.path != "" {
+			_ = cfg.Blob.Delete(context.WithoutCancel(r.Context()), saveResult.path)
+		}
+		return
+	}
+
+	intent := buildMultipartIntent(cfg, r, intentID, contentType, saveResult, cw)
+	saveIntent(cfg, r.Context(), intent)
+}
+
+// multipartSaveResult is the outcome of the blob-save goroutine.
+type multipartSaveResult struct {
+	path string
+	err  error
+}
+
+// teeReadCloser wraps a TeeReader so its Close also closes the underlying
+// body AND the pipe writer feeding the Save goroutine. Closing the pipe
+// writer unblocks the goroutine when the handler stops reading early.
+type teeReadCloser struct {
+	reader      io.Reader
+	closer      io.Closer
+	writer      *io.PipeWriter
+	writerClose sync.Once
+}
+
+func (t *teeReadCloser) Read(p []byte) (int, error) {
+	n, err := t.reader.Read(p)
+	if errors.Is(err, io.EOF) {
+		// EOF on the source — close the pipe writer so Save returns.
+		t.closeWriterOnce()
+	}
+	return n, err
+}
+
+func (t *teeReadCloser) Close() error {
+	t.closeWriterOnce()
+	if t.closer != nil {
+		return t.closer.Close()
+	}
+	return nil
+}
+
+func (t *teeReadCloser) closeWriterOnce() {
+	t.writerClose.Do(func() {
+		_ = t.writer.Close()
+	})
+}
+
+// buildMultipartIntent assembles the Intent for a multipart capture. When the
+// blob save failed (overflow / I/O error) the audit row is still produced
+// with BodyTruncated=true and an empty BodyBlobPath — the promise "evidence
+// remains" matters more than the body.
+func buildMultipartIntent(
+	cfg Config,
+	r *http.Request,
+	intentID uuid.UUID,
+	contentType string,
+	save multipartSaveResult,
+	cw *captureWriter,
+) Intent {
+	now := cfg.Clock()
+	intent := Intent{
+		ID:              intentID,
+		ReceivedAt:      now,
+		Method:          r.Method,
+		Path:            r.URL.Path,
+		IdempotencyKey:  r.Header.Get(idempotency.HeaderKey),
+		RequestID:       requestIDOrNew(r.Context()),
+		Body:            json.RawMessage(`null`),
+		BodyTruncated:   save.err != nil,
+		BodyBlobPath:    save.path,
+		BodyContentType: contentType,
+		HTTPStatus:      cw.status,
+		RetryCount:      0,
+		Status:          StatusNew,
+	}
+	if save.err != nil {
+		// Don't leave a dangling path on the row when Save failed.
+		intent.BodyBlobPath = ""
+		slog.WarnContext(r.Context(),
+			"failedintent: multipart blob save failed; persisting intent without body",
+			"error", save.err, "intent_id", intentID.String(),
+		)
+	}
+	if cu, ok := auth.CurrentUserFromContext(r.Context()); ok {
+		intent.FirebaseUID = cu.FirebaseUID
+		id := cu.ID
+		intent.UsuarioID = &id
+	}
+	intent.ErrorCode, intent.ErrorMessage = parseProblemJSON(cw.body.Bytes())
+	return intent
+}
+
+// saveIntent persists the captured intent and emits the structured log. A
+// Store.Save failure is logged but never propagated — failing the request
+// because the capture pipeline broke would be worse than losing one piece of
+// evidence.
+func saveIntent(cfg Config, parentCtx context.Context, intent Intent) {
+	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(parentCtx), 5*time.Second)
 	defer cancel()
 	if saveErr := cfg.Store.Save(saveCtx, intent); saveErr != nil {
-		slog.ErrorContext(r.Context(),
+		slog.ErrorContext(parentCtx,
 			"failedintent: store save failed",
 			"error", saveErr,
 			"intent_id", intent.ID,
@@ -320,7 +490,12 @@ func handle(cfg Config, next http.Handler, w http.ResponseWriter, r *http.Reques
 		)
 		return
 	}
-	emitCapturedLog(r.Context(), intent)
+	emitCapturedLog(parentCtx, intent)
+}
+
+// isMultipart reports whether the request's Content-Type is multipart/form-data.
+func isMultipart(r *http.Request) bool {
+	return strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data")
 }
 
 // shouldCapture is the predicate gating the rest of the middleware. Kept
@@ -335,9 +510,10 @@ func shouldCapture(cfg Config, r *http.Request) bool {
 	if !pathPrefixMatches(cfg.PathPrefixes, r.URL.Path) {
 		return false
 	}
-	// Skip multipart uploads — bodies are binary and far over BodyCapBytes;
-	// capturing would either crash JSONB or dump base64 noise into the DB.
-	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+	// Multipart uploads opt-out unless a Blob storage is wired. Without
+	// one, capturing would either truncate the body over BodyCapBytes or
+	// dump base64 noise into the inline column.
+	if isMultipart(r) && cfg.Blob == nil {
 		return false
 	}
 	return true
