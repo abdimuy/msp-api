@@ -186,8 +186,12 @@ func (m *memoryStore) IncrementRetry(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
-func (m *memoryStore) PurgeOlderThan(_ context.Context, _ time.Time) (int64, error) {
-	return 0, nil
+func (m *memoryStore) PurgeOlderThan(_ context.Context, _ time.Time) (failedintent.PurgeResult, error) {
+	return failedintent.PurgeResult{}, nil
+}
+
+func (m *memoryStore) ReferencedPaths(_ context.Context) ([]string, error) {
+	return nil, nil
 }
 
 // compareUUID compares two UUIDs lexicographically. Returns -1, 0, or 1.

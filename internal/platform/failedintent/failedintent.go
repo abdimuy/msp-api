@@ -106,25 +106,38 @@ func (s Status) IsTerminal() bool {
 func (s Status) String() string { return string(s) }
 
 // Intent is the canonical captured record.
+//
+// Body and BodyBlobPath are mutually exclusive in practice:
+//
+//   - JSON capture path: Body holds the (possibly truncated) payload bytes
+//     and BodyBlobPath is "".
+//   - Multipart capture path: Body is empty (null JSON), BodyBlobPath points
+//     to the on-disk blob written by BlobStorage.Save, and BodyContentType
+//     holds the original Content-Type header (including the multipart
+//     boundary) so replay can reconstruct the request byte-exact.
+//
+// The schema does NOT enforce this invariant — it lives here, per CLAUDE.md.
 type Intent struct {
-	ID             uuid.UUID
-	ReceivedAt     time.Time
-	Method         string
-	Path           string
-	FirebaseUID    string
-	UsuarioID      *uuid.UUID
-	IdempotencyKey string
-	RequestID      uuid.UUID
-	Body           json.RawMessage
-	BodyTruncated  bool
-	HTTPStatus     int
-	ErrorCode      string
-	ErrorMessage   string
-	RetryCount     int
-	Status         Status
-	ResolvedAt     *time.Time
-	ResolvedBy     *uuid.UUID
-	Notes          string
+	ID              uuid.UUID
+	ReceivedAt      time.Time
+	Method          string
+	Path            string
+	FirebaseUID     string
+	UsuarioID       *uuid.UUID
+	IdempotencyKey  string
+	RequestID       uuid.UUID
+	Body            json.RawMessage
+	BodyTruncated   bool
+	BodyBlobPath    string
+	BodyContentType string
+	HTTPStatus      int
+	ErrorCode       string
+	ErrorMessage    string
+	RetryCount      int
+	Status          Status
+	ResolvedAt      *time.Time
+	ResolvedBy      *uuid.UUID
+	Notes           string
 }
 
 // ListParams is the cursor-paginated input for Store.List.
@@ -150,9 +163,18 @@ type Page[T any] struct {
 	HasMore        bool
 }
 
+// PurgeResult is the outcome of Store.PurgeOlderThan. BlobPaths lists every
+// non-empty body_blob_path of the rows that were just deleted, so the caller
+// (janitor) can hand them to BlobStorage.Delete in one pass — keeping rows
+// and blobs in lockstep without a second SELECT.
+type PurgeResult struct {
+	RowsDeleted int64
+	BlobPaths   []string
+}
+
 // Store persists and retrieves Intent records.
 //
-//nolint:interfacebloat // 6 methods, within the 8-method cap.
+//nolint:interfacebloat // 7 methods, within the 8-method cap.
 type Store interface {
 	// Save inserts an intent. Implementations should treat (id) as a
 	// uniqueness constraint and silently no-op on duplicate primary key.
@@ -181,8 +203,15 @@ type Store interface {
 	IncrementRetry(ctx context.Context, id uuid.UUID) error
 
 	// PurgeOlderThan deletes rows whose received_at is strictly less than
-	// `before`. Returns the count of deleted rows.
-	PurgeOlderThan(ctx context.Context, before time.Time) (int64, error)
+	// `before`. Returns the deletion count plus every non-empty
+	// body_blob_path of the deleted rows so the caller can clean the
+	// matching on-disk blobs.
+	PurgeOlderThan(ctx context.Context, before time.Time) (PurgeResult, error)
+
+	// ReferencedPaths returns every non-empty body_blob_path currently in
+	// failed_intents. Used by the boot-time orphan sweep to detect blob
+	// files on disk that no longer have a database referent.
+	ReferencedPaths(ctx context.Context) ([]string, error)
 }
 
 // ReplayDispatcher dispatches a reconstructed *http.Request through the

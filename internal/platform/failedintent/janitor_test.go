@@ -2,6 +2,7 @@ package failedintent_test
 
 import (
 	"context"
+	"io"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -81,26 +82,43 @@ func (m *memStore) IncrementRetry(_ context.Context, _ uuid.UUID) error {
 
 // PurgeOlderThan removes intents whose ReceivedAt is strictly before `before`.
 // It always signals purgeCh after running (even on error).
-func (m *memStore) PurgeOlderThan(_ context.Context, before time.Time) (int64, error) {
+func (m *memStore) PurgeOlderThan(
+	_ context.Context, before time.Time,
+) (failedintent.PurgeResult, error) {
 	m.purges.Add(1)
 	defer func() {
 		m.purgeCh <- struct{}{}
 	}()
 
 	if m.purgeErr != nil {
-		return 0, m.purgeErr
+		return failedintent.PurgeResult{}, m.purgeErr
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var deleted int64
+	var result failedintent.PurgeResult
 	for id, intent := range m.intents {
 		if intent.ReceivedAt.Before(before) {
 			delete(m.intents, id)
-			deleted++
+			result.RowsDeleted++
+			if intent.BodyBlobPath != "" {
+				result.BlobPaths = append(result.BlobPaths, intent.BodyBlobPath)
+			}
 		}
 	}
-	return deleted, nil
+	return result, nil
+}
+
+func (m *memStore) ReferencedPaths(_ context.Context) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var paths []string
+	for _, intent := range m.intents {
+		if intent.BodyBlobPath != "" {
+			paths = append(paths, intent.BodyBlobPath)
+		}
+	}
+	return paths, nil
 }
 
 // waitForPurge blocks until at least one PurgeOlderThan call completes or the
@@ -262,6 +280,73 @@ func TestJanitor_StopWithoutStart_IsNoOp(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	require.NoError(t, j.Stop(ctx))
+}
+
+// fakeBlobs is a Delete-counting BlobStorage used by the janitor test.
+// Save/Open are not exercised here; they return zero values.
+type fakeBlobs struct {
+	mu      sync.Mutex
+	deleted []string
+}
+
+func (f *fakeBlobs) Save(_ context.Context, _ uuid.UUID, _ io.Reader, _ int64) (string, error) {
+	return "", nil
+}
+
+func (f *fakeBlobs) Open(_ context.Context, _ string) (io.ReadCloser, error) {
+	return nil, failedintent.ErrBlobNotFound
+}
+
+func (f *fakeBlobs) Delete(_ context.Context, path string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleted = append(f.deleted, path)
+	return nil
+}
+
+// TestJanitor_PurgeDeletesBlobs verifies the janitor wires PurgeResult.BlobPaths
+// through to BlobStorage.Delete on each purge cycle.
+func TestJanitor_PurgeDeletesBlobs(t *testing.T) {
+	t.Parallel()
+
+	store := newMemStore()
+	blobs := &fakeBlobs{}
+	now := time.Now()
+
+	old := uuid.New()
+	store.add(failedintent.Intent{
+		ID:           old,
+		ReceivedAt:   now.Add(-100 * 24 * time.Hour),
+		BodyBlobPath: "/blob/old.bin",
+	})
+	// Old row with no blob — must not appear in the Delete list.
+	store.add(failedintent.Intent{
+		ID:         uuid.New(),
+		ReceivedAt: now.Add(-100 * 24 * time.Hour),
+	})
+
+	j := failedintent.NewJanitor(failedintent.JanitorConfig{
+		Store:    store,
+		Blob:     blobs,
+		Interval: time.Hour,
+		Retain:   90 * 24 * time.Hour,
+		Clock:    func() time.Time { return now },
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	require.NoError(t, j.Start(ctx))
+	store.waitForPurge(ctx)
+
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), time.Second)
+	defer stopCancel()
+	require.NoError(t, j.Stop(stopCtx))
+
+	blobs.mu.Lock()
+	defer blobs.mu.Unlock()
+	assert.Equal(t, []string{"/blob/old.bin"}, blobs.deleted,
+		"only the purged row's blob path must be deleted")
 }
 
 // TestJanitor_DefaultsApplied verifies that NewJanitor fills zero-valued

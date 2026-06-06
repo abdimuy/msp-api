@@ -564,8 +564,12 @@ func (s *e2eIntentStore) IncrementRetry(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
-func (s *e2eIntentStore) PurgeOlderThan(context.Context, time.Time) (int64, error) {
-	return 0, nil
+func (s *e2eIntentStore) PurgeOlderThan(context.Context, time.Time) (failedintent.PurgeResult, error) {
+	return failedintent.PurgeResult{}, nil
+}
+
+func (s *e2eIntentStore) ReferencedPaths(context.Context) ([]string, error) {
+	return nil, nil
 }
 
 // ─── e2eUsuarioLookup — UsuarioLookup adapter for the failedintent svc ────────

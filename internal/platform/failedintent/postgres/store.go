@@ -47,13 +47,13 @@ func (s *Store) Save(ctx context.Context, i failedintent.Intent) error {
 			id, received_at, method, path, firebase_uid, usuario_id,
 			idempotency_key, request_id, body, body_truncated, http_status,
 			error_code, error_message, retry_count, status, resolved_at,
-			resolved_by, notes
+			resolved_by, notes, body_blob_path, body_content_type
 		)
 		VALUES (
 			$1, $2, $3, $4, NULLIF($5, ''), $6,
 			NULLIF($7, ''), $8, $9, $10, $11,
 			$12, $13, $14, $15, $16,
-			$17, $18
+			$17, $18, NULLIF($19, ''), NULLIF($20, '')
 		)
 		ON CONFLICT (id) DO NOTHING`
 	if _, err := transaction.GetQuerier(ctx, s.pool).Exec(ctx, q,
@@ -75,6 +75,8 @@ func (s *Store) Save(ctx context.Context, i failedintent.Intent) error {
 		nullTime(i.ResolvedAt),
 		i.ResolvedBy,
 		i.Notes,
+		i.BodyBlobPath,
+		i.BodyContentType,
 	); err != nil {
 		return fmt.Errorf("failedintent.postgres: save %s: %w", i.ID, err)
 	}
@@ -91,7 +93,8 @@ func (s *Store) Get(ctx context.Context, id uuid.UUID) (*failedintent.Intent, er
 			COALESCE(idempotency_key, ''), request_id,
 			body, body_truncated, http_status,
 			error_code, error_message, retry_count, status,
-			resolved_at, resolved_by, COALESCE(notes, '')
+			resolved_at, resolved_by, COALESCE(notes, ''),
+			COALESCE(body_blob_path, ''), COALESCE(body_content_type, '')
 		FROM failed_intents
 		WHERE id = $1`
 	row := transaction.GetQuerier(ctx, s.pool).QueryRow(ctx, q, id)
@@ -119,7 +122,8 @@ func (s *Store) List(
 			COALESCE(idempotency_key, ''), request_id,
 			body, body_truncated, http_status,
 			error_code, error_message, retry_count, status,
-			resolved_at, resolved_by, COALESCE(notes, '')
+			resolved_at, resolved_by, COALESCE(notes, ''),
+			COALESCE(body_blob_path, ''), COALESCE(body_content_type, '')
 		FROM failed_intents
 		WHERE ($1::timestamptz IS NULL
 		       OR received_at < $1
@@ -186,14 +190,61 @@ func (s *Store) IncrementRetry(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// PurgeOlderThan deletes rows with received_at < before. Returns the count.
-func (s *Store) PurgeOlderThan(ctx context.Context, before time.Time) (int64, error) {
-	const q = `DELETE FROM failed_intents WHERE received_at < $1`
-	tag, err := transaction.GetQuerier(ctx, s.pool).Exec(ctx, q, before.UTC())
+// PurgeOlderThan deletes rows with received_at < before. The DELETE uses
+// RETURNING body_blob_path so the caller gets both the row count and the
+// list of on-disk blob paths to clean up in a single statement — no
+// post-hoc SELECT, no chance of skew between DB and filesystem.
+func (s *Store) PurgeOlderThan(
+	ctx context.Context, before time.Time,
+) (failedintent.PurgeResult, error) {
+	const q = `DELETE FROM failed_intents WHERE received_at < $1 RETURNING body_blob_path`
+	rows, err := transaction.GetQuerier(ctx, s.pool).Query(ctx, q, before.UTC())
 	if err != nil {
-		return 0, fmt.Errorf("failedintent.postgres: purge: %w", err)
+		return failedintent.PurgeResult{}, fmt.Errorf("failedintent.postgres: purge: %w", err)
 	}
-	return tag.RowsAffected(), nil
+	defer rows.Close()
+
+	var result failedintent.PurgeResult
+	for rows.Next() {
+		var path *string
+		if scanErr := rows.Scan(&path); scanErr != nil {
+			return failedintent.PurgeResult{}, fmt.Errorf("failedintent.postgres: purge scan: %w", scanErr)
+		}
+		result.RowsDeleted++
+		if path != nil && *path != "" {
+			result.BlobPaths = append(result.BlobPaths, *path)
+		}
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return failedintent.PurgeResult{}, fmt.Errorf("failedintent.postgres: purge rows: %w", rowsErr)
+	}
+	return result, nil
+}
+
+// ReferencedPaths returns every non-NULL body_blob_path currently in the
+// table. Used by the boot-time orphan sweep.
+func (s *Store) ReferencedPaths(ctx context.Context) ([]string, error) {
+	const q = `SELECT body_blob_path FROM failed_intents WHERE body_blob_path IS NOT NULL`
+	rows, err := transaction.GetQuerier(ctx, s.pool).Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("failedintent.postgres: referenced paths: %w", err)
+	}
+	defer rows.Close()
+
+	var paths []string
+	for rows.Next() {
+		var p string
+		if scanErr := rows.Scan(&p); scanErr != nil {
+			return nil, fmt.Errorf("failedintent.postgres: referenced paths scan: %w", scanErr)
+		}
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, fmt.Errorf("failedintent.postgres: referenced paths rows: %w", rowsErr)
+	}
+	return paths, nil
 }
 
 // --- helpers ---------------------------------------------------------------
@@ -263,6 +314,8 @@ func scanIntent(row pgx.Row) (failedintent.Intent, error) {
 		&resolved,
 		&i.ResolvedBy,
 		&i.Notes,
+		&i.BodyBlobPath,
+		&i.BodyContentType,
 	)
 	if err != nil {
 		return failedintent.Intent{}, err

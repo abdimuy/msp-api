@@ -149,6 +149,78 @@ func TestStore_Save_GetRoundTrip_Integration(t *testing.T) {
 	})
 }
 
+// TestStore_Save_GetRoundTripWithBlobFields_Integration verifies that the
+// new BodyBlobPath/BodyContentType columns persist and re-hydrate correctly,
+// and that an empty string round-trips as NULL → "" via NULLIF/COALESCE.
+func TestStore_Save_GetRoundTripWithBlobFields_Integration(t *testing.T) {
+	t.Parallel()
+	requirePool(t)
+
+	s := failedintentpg.New(testPool)
+
+	t.Run("blob fields set", func(t *testing.T) {
+		t.Parallel()
+		testutil.WithTestTransaction(t, testPool, func(ctx context.Context) {
+			intent := newIntent(t.Name())
+			intent.BodyBlobPath = "/var/lib/msp/failed-intents/abc.bin"
+			intent.BodyContentType = "multipart/form-data; boundary=----WebKitFormBoundary"
+			require.NoError(t, s.Save(ctx, intent))
+
+			got, err := s.Get(ctx, intent.ID)
+			require.NoError(t, err)
+			require.NotNil(t, got)
+			assert.Equal(t, intent.BodyBlobPath, got.BodyBlobPath)
+			assert.Equal(t, intent.BodyContentType, got.BodyContentType)
+		})
+	})
+
+	t.Run("blob fields empty round-trip as empty strings", func(t *testing.T) {
+		t.Parallel()
+		testutil.WithTestTransaction(t, testPool, func(ctx context.Context) {
+			intent := newIntent(t.Name())
+			intent.BodyBlobPath = ""
+			intent.BodyContentType = ""
+			require.NoError(t, s.Save(ctx, intent))
+
+			got, err := s.Get(ctx, intent.ID)
+			require.NoError(t, err)
+			require.NotNil(t, got)
+			assert.Empty(t, got.BodyBlobPath)
+			assert.Empty(t, got.BodyContentType)
+		})
+	})
+}
+
+// TestStore_ReferencedPaths_Integration verifies that ReferencedPaths returns
+// exactly the non-empty body_blob_path values currently in failed_intents.
+func TestStore_ReferencedPaths_Integration(t *testing.T) {
+	t.Parallel()
+	requirePool(t)
+
+	s := failedintentpg.New(testPool)
+	testutil.WithTestTransaction(t, testPool, func(ctx context.Context) {
+		withBlob1 := newIntent(t.Name() + "-blob-1")
+		withBlob1.BodyBlobPath = "/var/lib/msp/failed-intents/blob-1.bin"
+		require.NoError(t, s.Save(ctx, withBlob1))
+
+		withBlob2 := newIntent(t.Name() + "-blob-2")
+		withBlob2.BodyBlobPath = "/var/lib/msp/failed-intents/blob-2.bin"
+		require.NoError(t, s.Save(ctx, withBlob2))
+
+		// A row without a blob must NOT appear.
+		withoutBlob := newIntent(t.Name() + "-no-blob")
+		withoutBlob.BodyBlobPath = ""
+		require.NoError(t, s.Save(ctx, withoutBlob))
+
+		paths, err := s.ReferencedPaths(ctx)
+		require.NoError(t, err)
+		assert.ElementsMatch(t,
+			[]string{withBlob1.BodyBlobPath, withBlob2.BodyBlobPath},
+			paths,
+		)
+	})
+}
+
 // TestStore_Save_OnConflictIsNoOp_Integration verifies that saving an intent
 // with the same ID as an existing row is silently ignored.
 func TestStore_Save_OnConflictIsNoOp_Integration(t *testing.T) {
@@ -435,6 +507,8 @@ func TestStore_PurgeOlderThan_Integration(t *testing.T) {
 
 		oldest := newIntent(t.Name() + "-oldest")
 		oldest.ReceivedAt = now.Add(-2 * time.Hour)
+		oldest.BodyBlobPath = "/tmp/failed-intents/oldest.bin"
+		oldest.BodyContentType = "multipart/form-data; boundary=xxx"
 		require.NoError(t, s.Save(ctx, oldest))
 
 		middle := newIntent(t.Name() + "-middle")
@@ -446,9 +520,11 @@ func TestStore_PurgeOlderThan_Integration(t *testing.T) {
 		require.NoError(t, s.Save(ctx, newest))
 
 		cutoff := now.Add(-90 * time.Minute) // between oldest and middle
-		deleted, err := s.PurgeOlderThan(ctx, cutoff)
+		result, err := s.PurgeOlderThan(ctx, cutoff)
 		require.NoError(t, err)
-		assert.Equal(t, int64(1), deleted, "only the row older than cutoff must be deleted")
+		assert.Equal(t, int64(1), result.RowsDeleted, "only the row older than cutoff must be deleted")
+		assert.Equal(t, []string{"/tmp/failed-intents/oldest.bin"}, result.BlobPaths,
+			"blob path of purged row must be returned")
 
 		// oldest must be gone.
 		gotOldest, err := s.Get(ctx, oldest.ID)

@@ -66,8 +66,12 @@ func (f *fakeStore) IncrementRetry(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
 
-func (f *fakeStore) PurgeOlderThan(_ context.Context, _ time.Time) (int64, error) {
-	return 0, nil
+func (f *fakeStore) PurgeOlderThan(_ context.Context, _ time.Time) (failedintent.PurgeResult, error) {
+	return failedintent.PurgeResult{}, nil
+}
+
+func (f *fakeStore) ReferencedPaths(_ context.Context) ([]string, error) {
+	return nil, nil
 }
 
 func (f *fakeStore) count() int {

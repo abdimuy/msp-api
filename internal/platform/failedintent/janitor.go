@@ -23,6 +23,10 @@ const DefaultRetain = 90 * 24 * time.Hour
 type JanitorConfig struct {
 	// Store is the persistence backend whose rows are purged.
 	Store Store
+	// Blob, when non-nil, is invoked to delete every on-disk blob whose
+	// owning row was just purged. Leaving it nil is valid for tests and
+	// deployments that never opt into multipart capture.
+	Blob BlobStorage
 	// Interval is the period between purge ticks. Defaults to one hour.
 	Interval time.Duration
 	// Retain is how long an intent is kept after capture. Defaults to 90 days.
@@ -122,9 +126,12 @@ func (j *Janitor) run(ctx context.Context) {
 
 // purgeOnce performs one purge cycle. Errors are logged, not returned: the
 // janitor must keep ticking even when the DB is temporarily unhappy.
+// When the deletion freed any on-disk blobs and a Blob storage is wired,
+// the blobs are removed best-effort — a Delete error never aborts the cycle
+// (the boot-time orphan sweep is the safety net).
 func (j *Janitor) purgeOnce(ctx context.Context) {
 	cutoff := j.cfg.Clock().Add(-j.cfg.Retain)
-	deleted, err := j.cfg.Store.PurgeOlderThan(ctx, cutoff)
+	result, err := j.cfg.Store.PurgeOlderThan(ctx, cutoff)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
@@ -134,10 +141,21 @@ func (j *Janitor) purgeOnce(ctx context.Context) {
 		)
 		return
 	}
-	if deleted == 0 {
+	if result.RowsDeleted == 0 {
 		return
 	}
+	if j.cfg.Blob != nil {
+		for _, path := range result.BlobPaths {
+			if delErr := j.cfg.Blob.Delete(ctx, path); delErr != nil {
+				slog.WarnContext(ctx, "failedintent.janitor: blob delete failed",
+					"error", delErr, "path", path,
+				)
+			}
+		}
+	}
 	slog.InfoContext(ctx, "failedintent.janitor: purged",
-		"count", deleted, "cutoff", cutoff,
+		"count", result.RowsDeleted,
+		"blobs_deleted", len(result.BlobPaths),
+		"cutoff", cutoff,
 	)
 }
