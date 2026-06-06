@@ -42,6 +42,12 @@ type ListVentasFilters struct {
 	ClienteID *int
 	// TipoVenta restricts to a specific tipo de venta. Empty string disables.
 	TipoVenta string
+	// Situacion restricts to a specific situación (borrador, revisada,
+	// aprobada, cancelada). Empty string disables.
+	Situacion string
+	// Sincronizacion restricts to a specific sincronización (pendiente,
+	// aplicada). Empty string disables.
+	Sincronizacion string
 	// IncluirCanceladas controls whether soft-cancelled ventas are returned.
 	// Defaults to false (cancelled ventas excluded).
 	IncluirCanceladas bool

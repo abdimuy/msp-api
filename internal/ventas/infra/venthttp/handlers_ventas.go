@@ -177,6 +177,8 @@ func (h *Handlers) ListarVentas(ctx context.Context, in *ListarVentasInput) (*Li
 func buildListarFilters(in *ListarVentasInput) (outbound.ListVentasFilters, error) {
 	filters := outbound.ListVentasFilters{
 		TipoVenta:         in.TipoVenta,
+		Situacion:         in.Situacion,
+		Sincronizacion:    in.Sincronizacion,
 		IncluirCanceladas: in.IncluirCanceladas,
 	}
 	if in.Desde != "" {

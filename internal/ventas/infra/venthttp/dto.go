@@ -313,8 +313,10 @@ type ListarVentasInput struct {
 	Hasta             string `query:"hasta"               format:"date-time"                       doc:"Filtra FECHA_VENTA < hasta"`
 	VendedorUsuarioID string `query:"vendedor_usuario_id" format:"uuid"                            doc:"Restringe a ventas con este vendedor"`
 	ClienteID         string `query:"cliente_id"                                                   doc:"Restringe a ventas con este cliente_id de Microsip (entero positivo)"`
-	TipoVenta         string `query:"tipo_venta"          enum:"CONTADO,CREDITO"                   doc:"Filtra por tipo de venta"`
-	IncluirCanceladas bool   `query:"incluir_canceladas"                                           doc:"Incluye ventas canceladas en el resultado"`
+	TipoVenta         string `query:"tipo_venta"          enum:"CONTADO,CREDITO"                                    doc:"Filtra por tipo de venta"`
+	Situacion         string `query:"situacion"           enum:"borrador,revisada,aprobada,cancelada"               doc:"Filtra por situación exacta"`
+	Sincronizacion    string `query:"sincronizacion"      enum:"pendiente,aplicada"                                 doc:"Filtra por sincronización exacta"`
+	IncluirCanceladas bool   `query:"incluir_canceladas"                                                            doc:"Incluye ventas canceladas en el resultado"`
 }
 
 // ─── Edit input wrappers ───────────────────────────────────────────────────

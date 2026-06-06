@@ -712,6 +712,8 @@ func buildListQuery(
 	conds := []string{}
 	args, conds = appendVendedorFilter(args, conds, f)
 	args, conds = appendTipoVentaFilter(args, conds, f)
+	args, conds = appendSituacionFilter(args, conds, f)
+	args, conds = appendSincronizacionFilter(args, conds, f)
 	args, conds = appendClienteIDFilter(args, conds, f)
 	args, conds = appendDesdeFilter(args, conds, f)
 	args, conds = appendHastaFilter(args, conds, f)
@@ -755,6 +757,30 @@ func appendTipoVentaFilter(
 }
 
 //nolint:nonamedreturns // multi-result tuple is clearer when named.
+func appendSituacionFilter(
+	args []any, conds []string, f outbound.ListVentasFilters,
+) (nextArgs []any, nextConds []string) {
+	if f.Situacion == "" {
+		return args, conds
+	}
+	conds = append(conds, "v.SITUACION = ?")
+	args = append(args, f.Situacion)
+	return args, conds
+}
+
+//nolint:nonamedreturns // multi-result tuple is clearer when named.
+func appendSincronizacionFilter(
+	args []any, conds []string, f outbound.ListVentasFilters,
+) (nextArgs []any, nextConds []string) {
+	if f.Sincronizacion == "" {
+		return args, conds
+	}
+	conds = append(conds, "v.SINCRONIZACION = ?")
+	args = append(args, f.Sincronizacion)
+	return args, conds
+}
+
+//nolint:nonamedreturns // multi-result tuple is clearer when named.
 func appendClienteIDFilter(
 	args []any, conds []string, f outbound.ListVentasFilters,
 ) (nextArgs []any, nextConds []string) {
@@ -794,6 +820,11 @@ func appendCanceladasFilter(
 	conds []string, f outbound.ListVentasFilters,
 ) []string {
 	if f.IncluirCanceladas {
+		return conds
+	}
+	// If the caller explicitly filters by Situacion == "cancelada", skip
+	// the v.CANCELED_AT IS NULL guard — otherwise no rows would ever match.
+	if f.Situacion == "cancelada" {
 		return conds
 	}
 	return append(conds, "v.CANCELED_AT IS NULL")
