@@ -70,6 +70,27 @@ type ReplayWithRequest struct {
 	Body json.RawMessage `json:"body"`
 }
 
+// BlobPartDTO is the JSON projection of a failedintent.BlobPart, returned
+// by GET /{id}/blob-parts. The `value` field is base64-encoded so any byte
+// sequence survives the JSON round-trip; the UI decodes it when rendering
+// inline (text fields).
+type BlobPartDTO struct {
+	Index       int    `json:"index"`
+	Name        string `json:"name,omitempty"`
+	Kind        string `json:"kind"`
+	ContentType string `json:"content_type"`
+	Filename    string `json:"filename,omitempty"`
+	SizeBytes   int64  `json:"size_bytes"`
+	// Value is base64(stdlib base64.StdEncoding). Present iff Kind=="field".
+	Value string `json:"value,omitempty"`
+}
+
+// BlobPartsResponse is the envelope returned by GET /{id}/blob-parts.
+type BlobPartsResponse struct {
+	ContentType string        `json:"content_type"`
+	Parts       []BlobPartDTO `json:"parts"`
+}
+
 // intentToDTO maps a domain Intent to its JSON projection.
 func intentToDTO(i failedintent.Intent) IntentDTO {
 	dto := IntentDTO{

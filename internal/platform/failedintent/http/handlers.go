@@ -39,12 +39,13 @@ type UsuarioLookup interface {
 
 // Service bundles dependencies for the four admin handlers.
 type Service struct {
-	store      failedintent.Store
-	dispatcher failedintent.ReplayDispatcher
-	usuarios   UsuarioLookup
-	blobs      failedintent.BlobStorage
-	clock      func() time.Time
-	newID      func() uuid.UUID
+	store          failedintent.Store
+	dispatcher     failedintent.ReplayDispatcher
+	usuarios       UsuarioLookup
+	blobs          failedintent.BlobStorage
+	partsInspector *failedintent.BlobPartsInspector
+	clock          func() time.Time
+	newID          func() uuid.UUID
 }
 
 // NewService constructs a Service. Nil clock and newID are replaced with
@@ -66,13 +67,18 @@ func NewService(
 	if newID == nil {
 		newID = uuid.New
 	}
+	var inspector *failedintent.BlobPartsInspector
+	if blobs != nil {
+		inspector = failedintent.NewBlobPartsInspector(blobs)
+	}
 	return &Service{
-		store:      store,
-		dispatcher: dispatcher,
-		usuarios:   usuarios,
-		blobs:      blobs,
-		clock:      clock,
-		newID:      newID,
+		store:          store,
+		dispatcher:     dispatcher,
+		usuarios:       usuarios,
+		blobs:          blobs,
+		partsInspector: inspector,
+		clock:          clock,
+		newID:          newID,
 	}
 }
 
@@ -249,7 +255,8 @@ func (s *Service) Resolver(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.InfoContext(r.Context(), "failedintent.resolved",
+	slog.InfoContext(
+		r.Context(), "failedintent.resolved",
 		"intent_id", id.String(),
 		"status", string(target),
 		"resolver_id", cu.ID.String(),
@@ -279,7 +286,8 @@ func (s *Service) executeReplay(
 	// Best-effort retry count increment — a failure here must not abort the
 	// replay; we log a warning and continue.
 	if incErr := s.store.IncrementRetry(ctx, id); incErr != nil {
-		slog.WarnContext(ctx, "failedintent: increment retry failed",
+		slog.WarnContext(
+			ctx, "failedintent: increment retry failed",
 			"error", incErr, "intent_id", id.String(),
 		)
 	}
@@ -290,7 +298,8 @@ func (s *Service) executeReplay(
 	replayReq, buildErr := s.buildReplayRequest(ctx, &intent, cu, body)
 	if buildErr != nil {
 		// A build failure is non-recoverable; return a synthetic fail outcome.
-		slog.ErrorContext(ctx, "failedintent: replay request build failed",
+		slog.ErrorContext(
+			ctx, "failedintent: replay request build failed",
 			"error", buildErr, "intent_id", id.String(),
 		)
 		return replayResult{outcome: failedintent.StatusRetriedFail, httpStatus: http.StatusInternalServerError}
@@ -526,13 +535,15 @@ func (s *Service) tryUpdateStatus(
 	if err != nil {
 		ae, isApp := apperror.As(err)
 		if isApp && ae.Code == "failed_intent_status_conflict" {
-			slog.WarnContext(ctx, "failedintent: status conflict after replay — another actor changed status",
+			slog.WarnContext(
+				ctx, "failedintent: status conflict after replay — another actor changed status",
 				"intent_id", id.String(),
 				"attempted_outcome", string(outcome),
 			)
 			return
 		}
-		slog.WarnContext(ctx, "failedintent: update status after replay failed",
+		slog.WarnContext(
+			ctx, "failedintent: update status after replay failed",
 			"error", err,
 			"intent_id", id.String(),
 			"attempted_outcome", string(outcome),
