@@ -3,7 +3,6 @@ package blobfs_test
 import (
 	"bytes"
 	"context"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -30,10 +29,10 @@ func TestNew_RequiresBaseDir(t *testing.T) {
 	t.Parallel()
 
 	_, err := blobfs.New("")
-	assert.Error(t, err)
+	require.Error(t, err)
 
 	_, err = blobfs.New("   ")
-	assert.Error(t, err)
+	require.Error(t, err)
 }
 
 func TestNew_CreatesMissingDir(t *testing.T) {
@@ -59,7 +58,7 @@ func TestNew_RejectsExistingFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(file, []byte("x"), 0o600))
 
 	_, err := blobfs.New(file)
-	assert.Error(t, err)
+	require.Error(t, err)
 }
 
 func TestSave_WritesAndCommitsAtomically(t *testing.T) {
@@ -93,8 +92,7 @@ func TestSave_RejectsOverflow(t *testing.T) {
 	body := bytes.NewReader(bytes.Repeat([]byte("x"), 2048))
 
 	_, err := store.Save(context.Background(), id, body, 1024)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, failedintent.ErrBlobTooLarge)
+	require.ErrorIs(t, err, failedintent.ErrBlobTooLarge)
 
 	// No artifact left behind.
 	entries, readErr := os.ReadDir(store.BaseDir())
@@ -110,7 +108,7 @@ func TestSave_RejectsNilID(t *testing.T) {
 
 	store := newStore(t)
 	_, err := store.Save(context.Background(), uuid.Nil, strings.NewReader("x"), 1024)
-	assert.Error(t, err)
+	require.Error(t, err)
 }
 
 func TestSave_RejectsNonPositiveLimit(t *testing.T) {
@@ -118,10 +116,10 @@ func TestSave_RejectsNonPositiveLimit(t *testing.T) {
 
 	store := newStore(t)
 	_, err := store.Save(context.Background(), uuid.New(), strings.NewReader("x"), 0)
-	assert.Error(t, err)
+	require.Error(t, err)
 
 	_, err = store.Save(context.Background(), uuid.New(), strings.NewReader("x"), -1)
-	assert.Error(t, err)
+	require.Error(t, err)
 }
 
 func TestOpen_ReturnsBlobBytes(t *testing.T) {
@@ -186,7 +184,7 @@ func TestDelete_RemovesBlob(t *testing.T) {
 	require.NoError(t, store.Delete(context.Background(), path))
 
 	_, err = os.Stat(path)
-	assert.True(t, errors.Is(err, os.ErrNotExist), "blob must be gone")
+	assert.ErrorIs(t, err, os.ErrNotExist, "blob must be gone")
 }
 
 func TestDelete_MissingFile_NoError(t *testing.T) {

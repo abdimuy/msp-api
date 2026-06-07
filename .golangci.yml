@@ -199,6 +199,8 @@ linters:
           alias: failedintenthttp
         - pkg: github.com/abdimuy/msp-api/internal/platform/failedintent/postgres
           alias: failedintentpg
+        - pkg: github.com/abdimuy/msp-api/internal/platform/failedintent/blobfs
+          alias: failedintentblobfs
         - pkg: github.com/abdimuy/msp-api/internal/auth/ports/outbound
           alias: authoutbound
         - pkg: github.com/abdimuy/msp-api/internal/auth/infra/firebird
@@ -221,6 +223,10 @@ linters:
           alias: cobranzamicrosip
         - pkg: github.com/abdimuy/msp-api/internal/cobranza/ports/outbound
           alias: cobranzaoutbound
+        - pkg: github.com/abdimuy/msp-api/internal/microsip/app
+          alias: microsipapp
+        - pkg: github.com/abdimuy/msp-api/internal/microsip/ports/outbound
+          alias: microsipoutbound
         - pkg: github.com/go-playground/validator/v10
           alias: pv
         - pkg: firebase.google.com/go/v4

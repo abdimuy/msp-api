@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -59,6 +60,38 @@ type Config struct {
 	Sync           Sync
 	Storage        Storage
 	ImageProcessor ImageProcessor
+	Microsip       Microsip
+	FailedIntent   FailedIntent
+}
+
+// FailedIntent holds blob-store knobs for the failedintent capture pipeline.
+//
+//   - BlobDir is where multipart bodies land on disk. When empty, it defaults
+//     to STORAGE_DIR/failed-intents so a sibling exists by construction.
+//   - MaxMultipartBytes caps each individual blob (50 MiB by default). A
+//     request whose body exceeds the cap is still captured, but the intent's
+//     BodyBlobPath is empty and BodyTruncated is true.
+type FailedIntent struct {
+	BlobDir           string `env:"FAILEDINTENT_BLOB_DIR"`
+	MaxMultipartBytes int64  `env:"FAILEDINTENT_MAX_MULTIPART_BYTES" envDefault:"52428800"`
+}
+
+// FailedIntentBlobDir returns the resolved blob directory, falling back to
+// a sibling under STORAGE_DIR when FAILEDINTENT_BLOB_DIR is unset.
+func (c *Config) FailedIntentBlobDir() string {
+	if strings.TrimSpace(c.FailedIntent.BlobDir) != "" {
+		return c.FailedIntent.BlobDir
+	}
+	return filepath.Join(c.Storage.Dir, "failed-intents")
+}
+
+// Microsip holds runtime knobs for the read-only microsip catalog module.
+type Microsip struct {
+	// PriceListIDs are the PRECIO_EMPRESA_IDs filtered into the article
+	// list query (legacy default: 42 MUEBLERIAS, 8437, 6925). Keeping the
+	// list configurable means a future business decision to swap price
+	// lists does not require a recompile.
+	PriceListIDs []int `env:"MICROSIP_PRICE_LIST_IDS" envSeparator:"," envDefault:"42,8437,6925"`
 }
 
 // Cobranza holds cobranza-module-specific runtime knobs.

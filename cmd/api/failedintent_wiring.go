@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"sync/atomic"
 
@@ -11,7 +12,9 @@ import (
 	"github.com/abdimuy/msp-api/internal/auth"
 	authoutbound "github.com/abdimuy/msp-api/internal/auth/ports/outbound"
 	apperror "github.com/abdimuy/msp-api/internal/platform/apperror"
+	"github.com/abdimuy/msp-api/internal/platform/config"
 	"github.com/abdimuy/msp-api/internal/platform/failedintent"
+	failedintentblobfs "github.com/abdimuy/msp-api/internal/platform/failedintent/blobfs"
 	failedintenthttp "github.com/abdimuy/msp-api/internal/platform/failedintent/http"
 	failedintentpg "github.com/abdimuy/msp-api/internal/platform/failedintent/postgres"
 	"github.com/abdimuy/msp-api/internal/platform/lifecycle"
@@ -90,15 +93,47 @@ func (u *usuarioLookup) BuildCurrentUserByID(
 
 var _ failedintenthttp.UsuarioLookup = (*usuarioLookup)(nil)
 
-// provideFailedIntentStore builds the Postgres-backed Store.
-func provideFailedIntentStore(p *postgres.Pool) failedintent.Store {
+// provideFailedIntentStore builds the Postgres-backed Store. The concrete
+// type is exposed alongside the interface so the orphan-sweep wiring can
+// consume the ReferencedPaths method without dragging it into the Store
+// interface from cross-package callers.
+func provideFailedIntentStore(p *postgres.Pool) *failedintentpg.Store {
 	return failedintentpg.New(p.Pool)
 }
 
+// provideFailedIntentStoreInterface narrows the concrete *postgres.Store to
+// the Store interface that consumers depend on.
+func provideFailedIntentStoreInterface(s *failedintentpg.Store) failedintent.Store {
+	return s
+}
+
+// provideFailedIntentBlobStorage builds the filesystem-backed BlobStorage
+// adapter rooted at the resolved blob dir (defaults to
+// STORAGE_DIR/failed-intents).
+func provideFailedIntentBlobStorage(cfg *config.Config) (*failedintentblobfs.Store, error) {
+	return failedintentblobfs.New(cfg.FailedIntentBlobDir())
+}
+
+// provideFailedIntentBlobStorageInterface exposes the concrete blobfs.Store
+// as the BlobStorage interface that the http subpackage and the middleware
+// consume.
+func provideFailedIntentBlobStorageInterface(s *failedintentblobfs.Store) failedintent.BlobStorage {
+	return s
+}
+
 // provideFailedIntentCaptureConfig assembles the CaptureMiddleware config
-// with defaults (POST/PATCH/PUT on /v2/ventas, 256 KiB body cap).
-func provideFailedIntentCaptureConfig(store failedintent.Store) failedintent.Config {
-	return failedintent.Config{Store: store}
+// wiring the configured MaxMultipartBytes plus the blob storage so
+// multipart /v2/ventas bodies opt into capture.
+func provideFailedIntentCaptureConfig(
+	store failedintent.Store,
+	blob failedintent.BlobStorage,
+	cfg *config.Config,
+) failedintent.Config {
+	return failedintent.Config{
+		Store:             store,
+		Blob:              blob,
+		MaxMultipartBytes: cfg.FailedIntent.MaxMultipartBytes,
+	}
 }
 
 // provideSettableReplayDispatcher constructs the cycle-breaking dispatcher.
@@ -117,18 +152,27 @@ func provideFailedIntentUsuarioLookup(repo authoutbound.UsuarioRepo) failedinten
 	return &usuarioLookup{repo: repo}
 }
 
-// provideFailedIntentHTTPService wires the admin handlers.
+// provideFailedIntentHTTPService wires the admin handlers. The blob storage
+// is required so /replay can stream multipart bodies from disk back through
+// the dispatcher byte-exact.
 func provideFailedIntentHTTPService(
 	store failedintent.Store,
 	dispatcher failedintent.ReplayDispatcher,
 	usuarios failedintenthttp.UsuarioLookup,
+	blobs failedintent.BlobStorage,
 ) *failedintenthttp.Service {
-	return failedintenthttp.NewService(store, dispatcher, usuarios, nil, nil, nil)
+	return failedintenthttp.NewService(store, dispatcher, usuarios, blobs, nil, nil)
 }
 
-// provideFailedIntentJanitor builds the background purge component.
-func provideFailedIntentJanitor(store failedintent.Store) *failedintent.Janitor {
-	return failedintent.NewJanitor(failedintent.JanitorConfig{Store: store})
+// provideFailedIntentJanitor builds the background purge component wired to
+// delete blobs alongside their parent rows.
+func provideFailedIntentJanitor(
+	store failedintent.Store, blobs failedintent.BlobStorage,
+) *failedintent.Janitor {
+	return failedintent.NewJanitor(failedintent.JanitorConfig{
+		Store: store,
+		Blob:  blobs,
+	})
 }
 
 // wireReplayDispatcher publishes the assembled root handler to the
@@ -142,4 +186,33 @@ func wireReplayDispatcher(d *SettableReplayDispatcher, root RootHandler) {
 // lifecycle so it starts at boot and drains at shutdown.
 func registerFailedIntentJanitorLifecycle(lc fx.Lifecycle, j *failedintent.Janitor) {
 	lifecycle.Append(lc, "failedintent-janitor", j)
+}
+
+// invokeFailedIntentOrphanSweep registers a boot-time sweep that removes
+// .bin files left behind by a previous run (crashed after rename, dropped
+// row via a manual migration, etc.). Failures are logged, not fatal — the
+// service still boots when the sweep cannot run.
+func invokeFailedIntentOrphanSweep(
+	lc fx.Lifecycle,
+	store *failedintentpg.Store,
+	blobs *failedintentblobfs.Store,
+) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			report, err := failedintentblobfs.SweepOrphans(ctx, blobs, store)
+			if err != nil {
+				slog.WarnContext(ctx,
+					"failedintent: orphan sweep failed at boot",
+					"error", err,
+				)
+				return nil
+			}
+			slog.InfoContext(ctx,
+				"failedintent: orphan sweep complete",
+				"scanned", report.Scanned,
+				"deleted", report.Deleted,
+			)
+			return nil
+		},
+	})
 }

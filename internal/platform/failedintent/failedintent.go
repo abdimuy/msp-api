@@ -332,7 +332,7 @@ func handleJSON(cfg Config, next http.Handler, w http.ResponseWriter, r *http.Re
 		return
 	}
 	intent := buildIntent(cfg, r, body, truncated, cw)
-	saveIntent(cfg, r.Context(), intent)
+	saveIntent(r.Context(), cfg, intent)
 }
 
 // handleMultipart tees the request body to BlobStorage while the downstream
@@ -347,11 +347,13 @@ func handleMultipart(cfg Config, next http.Handler, w http.ResponseWriter, r *ht
 
 	pipeR, pipeW := io.Pipe()
 	saveDone := make(chan multipartSaveResult, 1)
+	// Decouple from r.Context() so a client disconnect mid-upload does not
+	// abort the blob write — we still want the partial body persisted as
+	// part of the audit row.
+	saveCtx := context.WithoutCancel(r.Context())
 	go func() {
-		path, saveErr := cfg.Blob.Save(
-			context.WithoutCancel(r.Context()),
-			intentID, pipeR, cfg.MaxMultipartBytes,
-		)
+		//nolint:contextcheck // saveCtx is already detached from r.Context().
+		path, saveErr := cfg.Blob.Save(saveCtx, intentID, pipeR, cfg.MaxMultipartBytes)
 		// Drain anything still in the pipe so the TeeReader is not blocked
 		// (handler may abort mid-read on overflow / error / 4xx).
 		_, _ = io.Copy(io.Discard, pipeR)
@@ -380,13 +382,14 @@ func handleMultipart(cfg Config, next http.Handler, w http.ResponseWriter, r *ht
 	// there is no failed-intent row to anchor it to.
 	if cw.status < http.StatusBadRequest {
 		if saveResult.err == nil && saveResult.path != "" {
-			_ = cfg.Blob.Delete(context.WithoutCancel(r.Context()), saveResult.path)
+			//nolint:contextcheck // detached so a client disconnect does not abort cleanup.
+			_ = cfg.Blob.Delete(saveCtx, saveResult.path)
 		}
 		return
 	}
 
 	intent := buildMultipartIntent(cfg, r, intentID, contentType, saveResult, cw)
-	saveIntent(cfg, r.Context(), intent)
+	saveIntent(r.Context(), cfg, intent)
 }
 
 // multipartSaveResult is the outcome of the blob-save goroutine.
@@ -414,6 +417,8 @@ func (t *teeReadCloser) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// Close closes the underlying body and unblocks the Save goroutine by
+// closing the pipe writer if it has not been closed yet.
 func (t *teeReadCloser) Close() error {
 	t.closeWriterOnce()
 	if t.closer != nil {
@@ -477,7 +482,7 @@ func buildMultipartIntent(
 // Store.Save failure is logged but never propagated — failing the request
 // because the capture pipeline broke would be worse than losing one piece of
 // evidence.
-func saveIntent(cfg Config, parentCtx context.Context, intent Intent) {
+func saveIntent(parentCtx context.Context, cfg Config, intent Intent) {
 	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(parentCtx), 5*time.Second)
 	defer cancel()
 	if saveErr := cfg.Store.Save(saveCtx, intent); saveErr != nil {

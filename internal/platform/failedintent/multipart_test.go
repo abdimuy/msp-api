@@ -134,7 +134,7 @@ func TestMultipart_CaptureOn422_PersistsBlobAndIntent(t *testing.T) {
 		// Drain the body to ensure the TeeReader pumps everything to the blob.
 		var err error
 		bodyBytesSeenByHandler, err = io.ReadAll(r.Body)
-		require.NoError(t, err)
+		assert.NoError(t, err)
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		_, _ = io.WriteString(w, problemBody422)
 	})

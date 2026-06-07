@@ -37,6 +37,13 @@ const tempPattern = ".upload-*.tmp"
 // for SweepOrphans to detect in-flight uploads via prefix check.
 const tempPrefix = ".upload-"
 
+var (
+	errBaseDirRequired  = errors.New("failedintent.blobfs: base directory is required")
+	errBaseDirNotDir    = errors.New("failedintent.blobfs: base dir is not a directory")
+	errNilIntentID      = errors.New("failedintent.blobfs: intent id must not be nil")
+	errNonPositiveLimit = errors.New("failedintent.blobfs: limitBytes must be positive")
+)
+
 // Store implements failedintent.BlobStorage rooted at a base directory.
 type Store struct {
 	baseDir string
@@ -46,7 +53,7 @@ type Store struct {
 // path, creates the directory tree if missing, and verifies it is a directory.
 func New(baseDir string) (*Store, error) {
 	if strings.TrimSpace(baseDir) == "" {
-		return nil, errors.New("failedintent.blobfs: base directory is required")
+		return nil, errBaseDirRequired
 	}
 	abs, err := filepath.Abs(baseDir)
 	if err != nil {
@@ -60,7 +67,7 @@ func New(baseDir string) (*Store, error) {
 		return nil, fmt.Errorf("failedintent.blobfs: stat base dir: %w", statErr)
 	}
 	if !info.IsDir() {
-		return nil, fmt.Errorf("failedintent.blobfs: base dir is not a directory: %s", abs)
+		return nil, fmt.Errorf("%w: %s", errBaseDirNotDir, abs)
 	}
 	return &Store{baseDir: abs}, nil
 }
@@ -78,10 +85,10 @@ func (s *Store) Save(
 	_ context.Context, intentID uuid.UUID, body io.Reader, limitBytes int64,
 ) (string, error) {
 	if intentID == uuid.Nil {
-		return "", errors.New("failedintent.blobfs: intent id must not be nil")
+		return "", errNilIntentID
 	}
 	if limitBytes <= 0 {
-		return "", errors.New("failedintent.blobfs: limitBytes must be positive")
+		return "", errNonPositiveLimit
 	}
 
 	target := filepath.Join(s.baseDir, intentID.String()+blobSuffix)
