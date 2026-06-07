@@ -21,6 +21,8 @@ import (
 //	PATCH  /{id}/resolve      → failed_intents:resolver → svc.Resolver
 //	POST   /{id}/replay       → failed_intents:resolver → svc.Replay
 //	POST   /{id}/replay-with  → failed_intents:resolver → svc.ReplayWith
+//	POST   /{id}/replay-with-multipart
+//	                          → failed_intents:resolver → svc.ReplayWithMultipart
 func MountRouter(r chi.Router, svc *Service) {
 	r.With(authhttp.RequirePermission(auth.PermFailedIntentsVer)).
 		Get("/", svc.Listar)
@@ -42,6 +44,9 @@ func MountRouter(r chi.Router, svc *Service) {
 
 	r.With(authhttp.RequirePermission(auth.PermFailedIntentsResolver)).
 		Post("/{id}/replay-with", svc.ReplayWith)
+
+	r.With(authhttp.RequirePermission(auth.PermFailedIntentsResolver)).
+		Post("/{id}/replay-with-multipart", svc.ReplayWithMultipart)
 }
 
 // MountMeRouter mounts the end-user self-service endpoints. The caller must

@@ -2,8 +2,10 @@ package failedintenthttp_test
 
 import (
 	"bytes"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"strconv"
 	"strings"
 	"testing"
@@ -74,9 +76,72 @@ func TestBlobPartDownload_StreamsJSONFieldAsWell(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
-	assert.Empty(t, rec.Header().Get("Content-Disposition"),
-		"field parts have no filename so no Content-Disposition header is set")
+	// XSS defense: every download is forced to `attachment` so the
+	// browser never renders a captured part inline, regardless of
+	// content type.
+	assert.Equal(t, "attachment", rec.Header().Get("Content-Disposition"),
+		"all downloads are forced to attachment, even fields without a filename")
+	assert.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
 	assert.Equal(t, partBodies[0], rec.Body.Bytes())
+}
+
+// TestBlobPartDownload_ForcesAttachmentAndAllowlistsContentType is the
+// XSS-defense regression guard. A captured part with an attacker-chosen
+// Content-Type (text/html, image/svg+xml, etc.) must never render
+// inline in the admin's browser. The handler:
+//
+//   - Always sets Content-Disposition: attachment.
+//   - Forces non-allowlisted content types to application/octet-stream.
+//   - Sets X-Content-Type-Options: nosniff so browsers don't override.
+//   - Sets a tight CSP sandbox.
+func TestBlobPartDownload_ForcesAttachmentAndAllowlistsContentType(t *testing.T) {
+	t.Parallel()
+
+	store := newMemoryStore()
+	blobs := newMemoryBlobs()
+	id := uuid.New()
+
+	// Forge a captured blob with a malicious Content-Type on the first part.
+	bodyBytes, ct := buildMultipartWithContentType(t, "text/html",
+		[]byte("<script>alert(1)</script>"))
+	intent := makeIntent(id, time.Now().UTC())
+	intent.BodyBlobPath = "/blob/xss"
+	intent.BodyContentType = ct
+	seedIntent(t, store, intent)
+	blobs.put("/blob/xss", bodyBytes)
+
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil)
+	cu := defaultCU()
+	r := newRouter(t, svc, &cu)
+
+	req := httptest.NewRequest(http.MethodGet, "/"+id.String()+"/blob-parts/0/download", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, "application/octet-stream", rec.Header().Get("Content-Type"),
+		"non-allowlisted content type must be forced to octet-stream")
+	assert.Equal(t, "attachment", rec.Header().Get("Content-Disposition"))
+	assert.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
+	assert.Contains(t, rec.Header().Get("Content-Security-Policy"), "sandbox")
+}
+
+// buildMultipartWithContentType writes a single-part multipart body
+// using an attacker-controlled Content-Type for the part. The handler
+// must defang this on the way out.
+func buildMultipartWithContentType(t *testing.T, contentType string, body []byte) ([]byte, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	hdr := textproto.MIMEHeader{}
+	hdr.Set("Content-Disposition", `form-data; name="evil"`)
+	hdr.Set("Content-Type", contentType)
+	pw, err := w.CreatePart(hdr)
+	require.NoError(t, err)
+	_, err = pw.Write(body)
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+	return buf.Bytes(), "multipart/form-data; boundary=" + w.Boundary()
 }
 
 func TestBlobPartDownload_NegativeIndex_Returns422(t *testing.T) {

@@ -303,6 +303,7 @@ func newRouter(t *testing.T, svc *failedintenthttp.Service, cu *auth.CurrentUser
 	r.Patch("/{id}/resolve", svc.Resolver)
 	r.Post("/{id}/replay", svc.Replay)
 	r.Post("/{id}/replay-with", svc.ReplayWith)
+	r.Post("/{id}/replay-with-multipart", svc.ReplayWithMultipart)
 	return r
 }
 

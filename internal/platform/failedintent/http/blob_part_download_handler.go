@@ -74,23 +74,32 @@ func (s *Service) BlobPartDownload(w http.ResponseWriter, r *http.Request) {
 
 	// Set headers eagerly: once the inspector starts streaming, response
 	// status is fixed. onLocated captures the part's headers from the
-	// original multipart and applies them to the response so the operator
-	// downloads with the right MIME + filename.
+	// original multipart and applies them to the response with hardening
+	// against stored-XSS via attacker-controlled content type/filename:
+	//
+	//   - Content-Disposition is ALWAYS `attachment` (with quoted
+	//     filename param when known), so a captured text/html or
+	//     image/svg+xml part can never render inline.
+	//   - Content-Type is forced to application/octet-stream unless the
+	//     part's reported type is in a small known-safe allowlist.
+	//   - X-Content-Type-Options: nosniff prevents the browser from
+	//     guessing a richer type than what we sent.
+	//   - Content-Security-Policy: sandbox; default-src 'none' nukes
+	//     any script execution if a browser does try to render.
+	//   - Cache-Control: no-store because blobs can be deleted by the
+	//     janitor or resolver at any moment.
 	headersSet := false
 	onLocated := func(p failedintent.BlobPart) {
+		dispParams := map[string]string{}
 		if p.Filename != "" {
-			disp := mime.FormatMediaType(
-				"attachment",
-				map[string]string{"filename": p.Filename},
-			)
-			w.Header().Set("Content-Disposition", disp)
+			dispParams["filename"] = p.Filename
 		}
-		w.Header().Set("Content-Type", p.ContentType)
-		// Discourage caches: the blob can be deleted by the janitor or the
-		// resolver flow at any moment.
+		w.Header().Set("Content-Disposition",
+			mime.FormatMediaType("attachment", dispParams))
+		w.Header().Set("Content-Type", safeDownloadContentType(p.ContentType))
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
 		w.Header().Set("Cache-Control", "no-store")
-		// Once we set status the response is committed; from here on
-		// errors can only manifest as a short body.
 		w.WriteHeader(http.StatusOK)
 		headersSet = true
 	}
@@ -108,7 +117,8 @@ func (s *Service) BlobPartDownload(w http.ResponseWriter, r *http.Request) {
 	// been written yet. Once they have, the only safe move is to log and
 	// drop the connection — the body is already partial.
 	if headersSet {
-		slog.WarnContext(r.Context(),
+		slog.WarnContext(
+			r.Context(),
 			"failedintent: blob part download interrupted mid-stream",
 			"intent_id", id.String(),
 			"part_index", index,
@@ -117,6 +127,45 @@ func (s *Service) BlobPartDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.Error(w, r, mapBlobDownloadError(downloadErr))
+}
+
+// octetStreamContentType is the inert media type we fall back to whenever
+// the captured part's reported Content-Type is missing, unparseable, or
+// outside the small allowlist below.
+const octetStreamContentType = "application/octet-stream"
+
+// safeDownloadContentTypes is the small allowlist of media types we let
+// pass through unchanged. Everything else is forced to
+// application/octet-stream so a captured part with a hostile
+// Content-Type (text/html, image/svg+xml, etc.) cannot be rendered
+// inline by the operator's browser — defense in depth on top of the
+// `attachment` Content-Disposition and `nosniff` header.
+var safeDownloadContentTypes = map[string]struct{}{
+	"image/jpeg":       {},
+	"image/png":        {},
+	"image/webp":       {},
+	"image/gif":        {},
+	"application/json": {},
+	"application/pdf":  {},
+	"text/plain":       {},
+}
+
+// safeDownloadContentType returns the part's content type if it's in the
+// allowlist, otherwise application/octet-stream. Parameters after the
+// media type (charset, boundary, etc.) are dropped because they don't
+// influence the safety decision.
+func safeDownloadContentType(raw string) string {
+	if raw == "" {
+		return octetStreamContentType
+	}
+	mediaType, _, err := mime.ParseMediaType(raw)
+	if err != nil {
+		return octetStreamContentType
+	}
+	if _, ok := safeDownloadContentTypes[mediaType]; ok {
+		return mediaType
+	}
+	return octetStreamContentType
 }
 
 // mapBlobDownloadError translates inspector errors into apperror
