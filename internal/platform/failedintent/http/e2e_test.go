@@ -392,6 +392,91 @@ func TestE2E_MeFailedIntents_ScopedToCurrentUser(t *testing.T) {
 	assert.Len(t, listA.Items, 1, "user A must see exactly their own captured intent")
 }
 
+// TestE2E_Admin_BlobIntent_DTORevealsHasBlob is the regression guard for the
+// IntentDTO contract that the sistema-cobro-web UI depends on to distinguish
+// JSON intents (replay-with allowed) from multipart intents (replay-with
+// forbidden by the backend). The UI relies on `has_blob` and
+// `body_content_type` to disable the structured-edit form for blob captures.
+//
+// The test seeds an intent with BodyBlobPath + BodyContentType populated,
+// drives the real admin chain (authn + per-route permission), and asserts
+// both fields surface in the JSON projection.
+func TestE2E_Admin_BlobIntent_DTORevealsHasBlob(t *testing.T) {
+	t.Parallel()
+
+	const fbUID = "e2e-blob-dto-uid"
+	usuarioID := uuid.MustParse("dddddddd-dddd-dddd-dddd-dddddddddddd")
+
+	intentStore := newE2EIntentStore()
+	const expectedContentType = "multipart/form-data; boundary=----WebKitFormBoundaryE2E"
+	const expectedBlobPath = "/var/blobs/intents/dd/e2e-blob.bin"
+	seedID := uuid.New()
+	seeded := failedintent.Intent{
+		ID:              seedID,
+		ReceivedAt:      time.Now().UTC(),
+		Method:          http.MethodPost,
+		Path:            "/v2/ventas",
+		Body:            nil,
+		BodyBlobPath:    expectedBlobPath,
+		BodyContentType: expectedContentType,
+		HTTPStatus:      http.StatusConflict,
+		ErrorCode:       "idempotency_key_mismatch",
+		Status:          failedintent.StatusNew,
+		UsuarioID:       &usuarioID,
+		IdempotencyKey:  "blob-dto-idem-key",
+		RequestID:       uuid.New(),
+	}
+	require.NoError(t, intentStore.Save(t.Context(), seeded))
+
+	fakeFB := httptesting.NewFakeFirebase(fbUID)
+	fakeUsuarios := httptesting.NewFakeUsuarioRepo()
+	fakeUsuarios.AddUsuario(httptesting.AddUsuarioParams{
+		ID:          usuarioID,
+		FirebaseUID: fbUID,
+		Email:       "blob-dto@example.invalid",
+		Nombre:      "Blob DTO Tester",
+		Activo:      true,
+		Permissions: []authdomain.Permission{authdomain.PermFailedIntentsVer},
+	})
+
+	router := buildE2ERouter(t, e2eRouterDeps{
+		firebase:    fakeFB,
+		usuarios:    fakeUsuarios,
+		intentStore: intentStore,
+		idemStore:   httptesting.NewInMemoryIdempotencyStore(),
+		ventasStub:  newStubVentasHandler(),
+		usuarioID:   usuarioID,
+	})
+
+	// List path: has_blob must surface in the items.
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptesting.NewE2ERequest(http.MethodGet,
+		"/v2/_admin/failed-intents?status=new&page_size=10", ""))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var list struct {
+		Items []failedintenthttp.IntentDTO `json:"items"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
+	require.Len(t, list.Items, 1)
+	got := list.Items[0]
+	assert.Equal(t, seedID.String(), got.ID)
+	assert.True(t, got.HasBlob, "list DTO must expose has_blob=true for blob intents")
+	assert.Equal(t, expectedContentType, got.BodyContentType,
+		"list DTO must expose body_content_type so the UI can show the kind/boundary")
+
+	// Detail path: same fields surface on /{id}.
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptesting.NewE2ERequest(http.MethodGet,
+		"/v2/_admin/failed-intents/"+seedID.String(), ""))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var detail failedintenthttp.IntentDTO
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &detail))
+	assert.True(t, detail.HasBlob, "detail DTO must expose has_blob=true")
+	assert.Equal(t, expectedContentType, detail.BodyContentType)
+}
+
 // ─── helpers below ─────────────────────────────────────────────────────────────
 
 type e2eRouterDeps struct {

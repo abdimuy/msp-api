@@ -527,6 +527,64 @@ func TestObtener_Existing_ReturnsDTO(t *testing.T) {
 	assert.Equal(t, string(intent.Status), dto.Status)
 }
 
+func TestObtener_BlobIntent_ExposesHasBlobFlag(t *testing.T) {
+	t.Parallel()
+
+	store := newMemoryStore()
+	now := time.Now().UTC()
+	id := uuid.MustParse("33333333-3333-3333-3333-bbbbbbbbbbbb")
+	intent := makeIntent(id, now)
+	// Simulate a captured multipart upload: blob persisted, JSON body empty.
+	intent.Body = nil
+	intent.BodyBlobPath = "/var/blobs/intents/33/blob.bin"
+	intent.BodyContentType = "multipart/form-data; boundary=----WebKitFormBoundaryxyz"
+	seedIntent(t, store, intent)
+
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
+	cu := defaultCU()
+	r := newRouter(t, svc, &cu)
+
+	req := httptest.NewRequest(http.MethodGet, "/"+id.String(), nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var dto failedintenthttp.IntentDTO
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dto))
+	assert.True(t, dto.HasBlob, "blob intent must expose has_blob=true")
+	assert.Equal(t, intent.BodyContentType, dto.BodyContentType,
+		"blob intent must expose body_content_type to the UI")
+}
+
+func TestObtener_JSONIntent_HasBlobFalse(t *testing.T) {
+	t.Parallel()
+
+	store := newMemoryStore()
+	now := time.Now().UTC()
+	id := uuid.MustParse("33333333-3333-3333-3333-cccccccccccc")
+	intent := makeIntent(id, now)
+	require.Empty(t, intent.BodyBlobPath)
+	require.Empty(t, intent.BodyContentType)
+	seedIntent(t, store, intent)
+
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
+	cu := defaultCU()
+	r := newRouter(t, svc, &cu)
+
+	req := httptest.NewRequest(http.MethodGet, "/"+id.String(), nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var dto failedintenthttp.IntentDTO
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dto))
+	assert.False(t, dto.HasBlob, "JSON intent must report has_blob=false")
+	assert.Empty(t, dto.BodyContentType,
+		"JSON intent must not expose body_content_type")
+}
+
 func TestObtener_NotFound_Returns404(t *testing.T) {
 	t.Parallel()
 

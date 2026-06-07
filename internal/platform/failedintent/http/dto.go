@@ -21,24 +21,26 @@ var errCursorFormat = errors.New("decodeCursor: unexpected format")
 
 // IntentDTO is the JSON projection of a failedintent.Intent.
 type IntentDTO struct {
-	ID             string  `json:"id"`
-	ReceivedAt     string  `json:"received_at"`
-	Method         string  `json:"method"`
-	Path           string  `json:"path"`
-	FirebaseUID    string  `json:"firebase_uid,omitempty"`
-	UsuarioID      *string `json:"usuario_id,omitempty"`
-	IdempotencyKey string  `json:"idempotency_key,omitempty"`
-	RequestID      string  `json:"request_id"`
-	Body           any     `json:"body"`
-	BodyTruncated  bool    `json:"body_truncated"`
-	HTTPStatus     int     `json:"http_status"`
-	ErrorCode      string  `json:"error_code,omitempty"`
-	ErrorMessage   string  `json:"error_message,omitempty"`
-	RetryCount     int     `json:"retry_count"`
-	Status         string  `json:"status"`
-	ResolvedAt     *string `json:"resolved_at,omitempty"`
-	ResolvedBy     *string `json:"resolved_by,omitempty"`
-	Notes          string  `json:"notes,omitempty"`
+	ID              string  `json:"id"`
+	ReceivedAt      string  `json:"received_at"`
+	Method          string  `json:"method"`
+	Path            string  `json:"path"`
+	FirebaseUID     string  `json:"firebase_uid,omitempty"`
+	UsuarioID       *string `json:"usuario_id,omitempty"`
+	IdempotencyKey  string  `json:"idempotency_key,omitempty"`
+	RequestID       string  `json:"request_id"`
+	Body            any     `json:"body"`
+	BodyTruncated   bool    `json:"body_truncated"`
+	HasBlob         bool    `json:"has_blob"`
+	BodyContentType string  `json:"body_content_type,omitempty"`
+	HTTPStatus      int     `json:"http_status"`
+	ErrorCode       string  `json:"error_code,omitempty"`
+	ErrorMessage    string  `json:"error_message,omitempty"`
+	RetryCount      int     `json:"retry_count"`
+	Status          string  `json:"status"`
+	ResolvedAt      *string `json:"resolved_at,omitempty"`
+	ResolvedBy      *string `json:"resolved_by,omitempty"`
+	Notes           string  `json:"notes,omitempty"`
 }
 
 // ListResponse is the cursor-paginated envelope returned by the list endpoint.
@@ -71,20 +73,22 @@ type ReplayWithRequest struct {
 // intentToDTO maps a domain Intent to its JSON projection.
 func intentToDTO(i failedintent.Intent) IntentDTO {
 	dto := IntentDTO{
-		ID:             i.ID.String(),
-		ReceivedAt:     i.ReceivedAt.UTC().Format(time.RFC3339Nano),
-		Method:         i.Method,
-		Path:           i.Path,
-		FirebaseUID:    i.FirebaseUID,
-		RequestID:      i.RequestID.String(),
-		BodyTruncated:  i.BodyTruncated,
-		HTTPStatus:     i.HTTPStatus,
-		ErrorCode:      i.ErrorCode,
-		ErrorMessage:   i.ErrorMessage,
-		RetryCount:     i.RetryCount,
-		Status:         string(i.Status),
-		Notes:          i.Notes,
-		IdempotencyKey: i.IdempotencyKey,
+		ID:              i.ID.String(),
+		ReceivedAt:      i.ReceivedAt.UTC().Format(time.RFC3339Nano),
+		Method:          i.Method,
+		Path:            i.Path,
+		FirebaseUID:     i.FirebaseUID,
+		RequestID:       i.RequestID.String(),
+		BodyTruncated:   i.BodyTruncated,
+		HasBlob:         i.BodyBlobPath != "",
+		BodyContentType: i.BodyContentType,
+		HTTPStatus:      i.HTTPStatus,
+		ErrorCode:       i.ErrorCode,
+		ErrorMessage:    i.ErrorMessage,
+		RetryCount:      i.RetryCount,
+		Status:          string(i.Status),
+		Notes:           i.Notes,
+		IdempotencyKey:  i.IdempotencyKey,
 	}
 
 	// Body is already json.RawMessage; embed as-is so it stays a JSON object
