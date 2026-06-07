@@ -27,8 +27,11 @@ const (
 // variables so callers can wrap and tests can errors.Is against them.
 var (
 	errBlobPartNegativeIndex = errors.New("failedintent: blob part index is negative")
-	errBlobPartOutOfRange    = errors.New("failedintent: blob part index out of range")
-	errBlobMissingBoundary   = errors.New("failedintent: missing boundary in content type")
+	// ErrBlobPartOutOfRange is returned by DownloadPart when the requested
+	// index exceeds the parts count in the multipart body. Exported so the
+	// HTTP layer can translate it into a 422 with a stable apperror code.
+	ErrBlobPartOutOfRange  = errors.New("failedintent: blob part index out of range")
+	errBlobMissingBoundary = errors.New("failedintent: missing boundary in content type")
 )
 
 // MaxInlineFieldBytes caps the inline `Value` returned for a field part.
@@ -134,12 +137,21 @@ func (i *BlobPartsInspector) ListParts(
 }
 
 // DownloadPart opens the blob and streams the bytes of the part at the
-// given index back through w. It returns the part's metadata (without
-// Value) so the caller can set Content-Type and Content-Disposition before
-// streaming begins. The implementation reads through earlier parts but
-// discards their bytes — multipart is not random-access.
+// given index back through w. onLocated, if non-nil, is invoked once the
+// target part has been found and its headers parsed but BEFORE any body
+// bytes flow through w — the HTTP handler uses it to set Content-Type
+// and Content-Disposition before the stream begins. The returned
+// BlobPart has SizeBytes populated only after the stream completes
+// (chunked transfer; no Content-Length is set up front).
+//
+// The implementation reads through earlier parts but discards their
+// bytes — multipart is not random-access.
 func (i *BlobPartsInspector) DownloadPart(
-	ctx context.Context, blobPath, contentType string, targetIndex int, w io.Writer,
+	ctx context.Context,
+	blobPath, contentType string,
+	targetIndex int,
+	onLocated func(BlobPart),
+	w io.Writer,
 ) (BlobPart, error) {
 	boundary, err := extractBoundary(contentType)
 	if err != nil {
@@ -159,7 +171,7 @@ func (i *BlobPartsInspector) DownloadPart(
 	for index := 0; ; index++ {
 		part, perr := mr.NextPart()
 		if errors.Is(perr, io.EOF) {
-			return BlobPart{}, fmt.Errorf("%w: %d", errBlobPartOutOfRange, targetIndex)
+			return BlobPart{}, fmt.Errorf("%w: %d", ErrBlobPartOutOfRange, targetIndex)
 		}
 		if perr != nil {
 			return BlobPart{}, fmt.Errorf("failedintent: parse part %d: %w", index, perr)
@@ -175,6 +187,9 @@ func (i *BlobPartsInspector) DownloadPart(
 		}
 		// Found the requested part. Stream it to w while computing size.
 		meta := partMeta(part, index)
+		if onLocated != nil {
+			onLocated(meta)
+		}
 		n, copyErr := io.Copy(w, part)
 		_ = part.Close()
 		if copyErr != nil {

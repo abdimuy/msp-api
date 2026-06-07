@@ -299,6 +299,7 @@ func newRouter(t *testing.T, svc *failedintenthttp.Service, cu *auth.CurrentUser
 	r.Get("/", svc.Listar)
 	r.Get("/{id}", svc.Obtener)
 	r.Get("/{id}/blob-parts", svc.BlobParts)
+	r.Get("/{id}/blob-parts/{index}/download", svc.BlobPartDownload)
 	r.Patch("/{id}/resolve", svc.Resolver)
 	r.Post("/{id}/replay", svc.Replay)
 	r.Post("/{id}/replay-with", svc.ReplayWith)

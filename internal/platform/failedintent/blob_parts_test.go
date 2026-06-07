@@ -252,7 +252,7 @@ func TestDownloadPart_StreamsRequestedPart(t *testing.T) {
 	insp := failedintent.NewBlobPartsInspector(store)
 
 	var out bytes.Buffer
-	meta, err := insp.DownloadPart(t.Context(), "/blob/d", ct, 1, &out)
+	meta, err := insp.DownloadPart(t.Context(), "/blob/d", ct, 1, nil, &out)
 	require.NoError(t, err)
 	assert.Equal(t, wantBytes, out.Bytes())
 	assert.Equal(t, "ine.jpg", meta.Filename)
@@ -270,16 +270,60 @@ func TestDownloadPart_OutOfRange_ReturnsError(t *testing.T) {
 	store.put("/blob/r", body)
 	insp := failedintent.NewBlobPartsInspector(store)
 
-	_, err := insp.DownloadPart(t.Context(), "/blob/r", ct, 5, io.Discard)
+	_, err := insp.DownloadPart(t.Context(), "/blob/r", ct, 5, nil, io.Discard)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "out of range")
+}
+
+func TestDownloadPart_OnLocated_FiresBeforeBodyWrite(t *testing.T) {
+	t.Parallel()
+
+	wantBytes := bytes.Repeat([]byte{0xAB}, 1024)
+	body, ct := buildMultipart(t, []multipartPart{
+		{name: "venta_json", contentType: "application/json", body: []byte(`{"a":1}`)},
+		{name: "ine", filename: "ine.jpg", contentType: "image/jpeg", body: wantBytes},
+	})
+	store := newMemoryBlobStorage()
+	store.put("/blob/cb", body)
+	insp := failedintent.NewBlobPartsInspector(store)
+
+	// observer logs the order in which onLocated and writes interleave.
+	var calls []string
+	observer := &observingWriter{
+		write: func(p []byte) {
+			calls = append(calls, "write")
+			_ = p
+		},
+	}
+	onLocated := func(p failedintent.BlobPart) {
+		calls = append(calls, "located:"+p.Filename)
+	}
+
+	_, err := insp.DownloadPart(t.Context(), "/blob/cb", ct, 1, onLocated, observer)
+	require.NoError(t, err)
+
+	require.NotEmpty(t, calls)
+	assert.Equal(t, "located:ine.jpg", calls[0],
+		"onLocated must fire before any write call so the HTTP handler can set headers")
+}
+
+// observingWriter is an io.Writer that records every Write call via a hook.
+type observingWriter struct {
+	write func(p []byte)
+}
+
+func (o *observingWriter) Write(p []byte) (int, error) {
+	if o.write != nil {
+		o.write(p)
+	}
+	return len(p), nil
 }
 
 func TestDownloadPart_NegativeIndex_Rejected(t *testing.T) {
 	t.Parallel()
 	insp := failedintent.NewBlobPartsInspector(newMemoryBlobStorage())
 	_, err := insp.DownloadPart(t.Context(), "x",
-		"multipart/form-data; boundary=---x", -1, io.Discard)
+		"multipart/form-data; boundary=---x", -1, nil, io.Discard)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "negative")
 }

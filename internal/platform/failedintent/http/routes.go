@@ -16,6 +16,8 @@ import (
 //	GET    /                  → failed_intents:ver      → svc.Listar
 //	GET    /{id}              → failed_intents:ver      → svc.Obtener
 //	GET    /{id}/blob-parts   → failed_intents:ver      → svc.BlobParts
+//	GET    /{id}/blob-parts/{index}/download
+//	                          → failed_intents:ver      → svc.BlobPartDownload
 //	PATCH  /{id}/resolve      → failed_intents:resolver → svc.Resolver
 //	POST   /{id}/replay       → failed_intents:resolver → svc.Replay
 //	POST   /{id}/replay-with  → failed_intents:resolver → svc.ReplayWith
@@ -28,6 +30,9 @@ func MountRouter(r chi.Router, svc *Service) {
 
 	r.With(authhttp.RequirePermission(auth.PermFailedIntentsVer)).
 		Get("/{id}/blob-parts", svc.BlobParts)
+
+	r.With(authhttp.RequirePermission(auth.PermFailedIntentsVer)).
+		Get("/{id}/blob-parts/{index}/download", svc.BlobPartDownload)
 
 	r.With(authhttp.RequirePermission(auth.PermFailedIntentsResolver)).
 		Patch("/{id}/resolve", svc.Resolver)
