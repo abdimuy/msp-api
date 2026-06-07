@@ -31,6 +31,9 @@ import (
 	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
 	"github.com/abdimuy/msp-api/internal/cobranza/infra/cobranzahttp"
 	cobranzaoutbound "github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
+
+	microsipapp "github.com/abdimuy/msp-api/internal/microsip/app"
+	"github.com/abdimuy/msp-api/internal/microsip/infra/microsiphttp"
 )
 
 // RootHandler is the assembled chi router exposed as an fx-typed dependency.
@@ -129,6 +132,7 @@ func provideRootHandler(
 	cobranzaBus *eventbus.Bus,
 	cobranzaPagosRepo cobranzaoutbound.PagosRepo,
 	cobranzaVentasRepo cobranzaoutbound.VentasRepo,
+	microsipSvc *microsipapp.Service,
 	logger *slog.Logger,
 ) RootHandler {
 	r := chi.NewRouter()
@@ -172,8 +176,24 @@ func provideRootHandler(
 		// (RequirePermission) is enforced inside each Huma handler against
 		// the planted CurrentUser.
 		r.Group(func(r chi.Router) {
-			r.Use(skipAuthForPublicDocs(authn.Handler), idem, capture)
+			// capture wraps idem so it observes 409 idempotency_key_mismatch
+			// and 400 idempotency_key_required — without this order the
+			// "venta-zombie" pattern (app reposts with a fresh body under the
+			// same key) escapes capture entirely. Capture skips its own work
+			// when idem responds with the Idempotent-Replay header, which
+			// signals "this 4xx/5xx was already captured on the original call".
+			r.Use(skipAuthForPublicDocs(authn.Handler), capture, idem)
 			venthttp.MountRouter(r, ventasSvc)
+		})
+
+		// Microsip catalog endpoints — read-only listings of almacenes,
+		// articulos y zonas-cliente. Authn only: no permission gate (any
+		// authenticated user reads catalogs), no idempotency (GET), no
+		// failed-intent capture (no writes). The Huma API mounts a sub-
+		// router so the docs-bypass skip still applies for /v2/docs etc.
+		r.Group(func(r chi.Router) {
+			r.Use(skipAuthForPublicDocs(authn.Handler))
+			microsiphttp.MountRouter(r, microsipSvc)
 		})
 
 		// Cobranza endpoints — authn only. Read (saldos, pagos, sync) plus

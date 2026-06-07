@@ -47,6 +47,13 @@ import (
 // the response, not the request, when an idempotent cache hit replays a body).
 const HeaderInternalReplay = "X-Internal-Replay"
 
+// HeaderIdempotentReplay is the response header the idempotency middleware
+// sets when it replays a cached response. When CaptureMiddleware wraps the
+// idempotency middleware (the venta-zombie order), it MUST skip saving on
+// replays — the underlying response was already captured on the original
+// 4xx/5xx call and saving again would duplicate the audit row.
+const HeaderIdempotentReplay = "Idempotent-Replay"
+
 // DefaultBodyCapBytes is the maximum request-body bytes captured per intent.
 // Anything past this point is discarded and Intent.BodyTruncated is set.
 const DefaultBodyCapBytes int64 = 256 * 1024
@@ -331,6 +338,12 @@ func handleJSON(cfg Config, next http.Handler, w http.ResponseWriter, r *http.Re
 	if cw.status < http.StatusBadRequest {
 		return
 	}
+	if isIdempotentReplay(cw) {
+		// Cached response from idempotency — the underlying intent was
+		// already captured on the original call. Skipping avoids duplicate
+		// rows on every retry.
+		return
+	}
 	intent := buildIntent(cfg, r, body, truncated, cw)
 	saveIntent(r.Context(), cfg, intent)
 }
@@ -378,9 +391,10 @@ func handleMultipart(cfg Config, next http.Handler, w http.ResponseWriter, r *ht
 
 	saveResult := <-saveDone
 
-	// 2xx/3xx: best-effort cleanup of the blob; the request succeeded so
-	// there is no failed-intent row to anchor it to.
-	if cw.status < http.StatusBadRequest {
+	// 2xx/3xx or idempotency cache replay: best-effort cleanup of the blob;
+	// the request either succeeded or was already captured on the original
+	// call, so there is no audit row to anchor the blob to.
+	if cw.status < http.StatusBadRequest || isIdempotentReplay(cw) {
 		if saveResult.err == nil && saveResult.path != "" {
 			//nolint:contextcheck // detached so a client disconnect does not abort cleanup.
 			_ = cfg.Blob.Delete(saveCtx, saveResult.path)
@@ -390,6 +404,14 @@ func handleMultipart(cfg Config, next http.Handler, w http.ResponseWriter, r *ht
 
 	intent := buildMultipartIntent(cfg, r, intentID, contentType, saveResult, cw)
 	saveIntent(r.Context(), cfg, intent)
+}
+
+// isIdempotentReplay reports whether the captured response was emitted by
+// the idempotency middleware replaying a cached entry. Capture must skip
+// such responses because the original 4xx/5xx call already produced an
+// Intent.
+func isIdempotentReplay(cw *captureWriter) bool {
+	return cw.Header().Get(HeaderIdempotentReplay) == "true"
 }
 
 // multipartSaveResult is the outcome of the blob-save goroutine.

@@ -640,6 +640,65 @@ func TestCaptureMiddleware_NoRequestID_GeneratesOne(t *testing.T) {
 	assert.NotEqual(t, uuid.Nil, got.RequestID, "request id must be auto-generated when missing")
 }
 
+// TestCaptureMiddleware_SkipsIdempotencyReplays verifies the audit row is
+// NOT duplicated when the response is an idempotency cache replay (handler
+// sets Idempotent-Replay: true). Without this guard, every legitimate
+// client retry would land another failed_intent.
+func TestCaptureMiddleware_SkipsIdempotencyReplays(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeStore{}
+	cfg := newTestConfig(store, 1024)
+	mw := failedintent.CaptureMiddleware(cfg)
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Idempotent-Replay", "true")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = io.WriteString(w, problemBody422)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v2/ventas", strings.NewReader(`{"x":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	rw := httptest.NewRecorder()
+
+	mw(inner).ServeHTTP(rw, req)
+
+	assert.Equal(t, 0, store.count(),
+		"replays must not be re-captured; original 4xx is already in failed_intents")
+}
+
+// TestCaptureMiddleware_CapturesIdempotencyKeyMismatch verifies the core
+// venta-zombie fix: a 409 idempotency_key_mismatch (same key, different
+// body) is captured even though it never reaches the venta handler.
+func TestCaptureMiddleware_CapturesIdempotencyKeyMismatch(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeStore{}
+	cfg := newTestConfig(store, 1024)
+	mw := failedintent.CaptureMiddleware(cfg)
+
+	// Simulate the idempotency middleware short-circuiting with 409
+	// (no Idempotent-Replay header — that's only on cache hits).
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json; charset=utf-8")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = io.WriteString(w,
+			`{"code":"idempotency_key_mismatch","detail":"el Idempotency-Key fue reutilizado","title":"Conflict"}`)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v2/ventas", strings.NewReader(`{"x":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	rw := httptest.NewRecorder()
+
+	mw(inner).ServeHTTP(rw, req)
+
+	require.Equal(t, 1, store.count(),
+		"idempotency_key_mismatch must produce an audit row")
+	got := store.first()
+	assert.Equal(t, http.StatusConflict, got.HTTPStatus)
+	assert.Equal(t, "idempotency_key_mismatch", got.ErrorCode)
+}
+
 // TestCaptureMiddleware_NoBody_DoesNotPanic covers the readCappedBody nil
 // branch when the request was constructed with http.NoBody.
 func TestCaptureMiddleware_NoBody_DoesNotPanic(t *testing.T) {

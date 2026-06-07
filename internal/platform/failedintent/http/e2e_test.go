@@ -405,7 +405,7 @@ type e2eRouterDeps struct {
 
 // buildE2ERouter assembles a chi router that mirrors the production
 // composition for the routes this test exercises: /v2/ventas under
-// (authn, idem, capture); /v2/_admin/failed-intents under (authn) and
+// (authn, capture, idem); /v2/_admin/failed-intents under (authn) and
 // dispatching back through the same root router.
 func buildE2ERouter(t *testing.T, d e2eRouterDeps) *chi.Mux {
 	t.Helper()
@@ -428,7 +428,7 @@ func buildE2ERouter(t *testing.T, d e2eRouterDeps) *chi.Mux {
 	r := chi.NewRouter()
 	r.Route("/v2", func(r chi.Router) {
 		r.Group(func(r chi.Router) {
-			r.Use(authn.Handler, idemMW, captureMW)
+			r.Use(authn.Handler, captureMW, idemMW)
 			r.Post("/ventas", d.ventasStub.ServeHTTP)
 		})
 
