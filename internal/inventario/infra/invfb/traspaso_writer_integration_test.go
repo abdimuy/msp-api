@@ -29,6 +29,37 @@ func defaultCfg() config.Inventario {
 	}
 }
 
+// findArticuloWithClave returns any ARTICULO_ID that has a CLAVES_ARTICULOS row
+// with ROL_CLAVE_ART_ID = 17 (the rol Microsip uses for the canonical clave the
+// inventario writer needs). Returns ok=false when none exist — the caller
+// should t.Skip the test in that case, since the dev DB doesn't have the
+// minimum seed to exercise the writer.
+func findArticuloWithClave(ctx context.Context, q firebird.Querier) (int, bool) {
+	var id int
+	err := q.QueryRowContext(ctx,
+		`SELECT FIRST 1 ARTICULO_ID FROM CLAVES_ARTICULOS WHERE ROL_CLAVE_ART_ID = 17`,
+	).Scan(&id)
+	if err != nil {
+		return 0, false
+	}
+	return id, true
+}
+
+// findAlmacenIDOtherThan returns any ALMACEN_ID different from excludeID so
+// integration tests can build a source-vs-destination pair that resolves the
+// FK on DOCTOS_IN.ALMACEN_ID. Returns ok=false when only the excluded almacén
+// exists in the dev DB.
+func findAlmacenIDOtherThan(ctx context.Context, q firebird.Querier, excludeID int) (int, bool) {
+	var id int
+	err := q.QueryRowContext(ctx,
+		`SELECT FIRST 1 ALMACEN_ID FROM ALMACENES WHERE ALMACEN_ID <> ?`, excludeID,
+	).Scan(&id)
+	if err != nil {
+		return 0, false
+	}
+	return id, true
+}
+
 // buildTestTraspaso creates a minimal domain.Traspaso for use in integration
 // tests. articuloID must exist in ARTICULOS + CLAVES_ARTICULOS with rol=17 in
 // the dev DB. almacenOrigen / almacenDestino must be valid ALMACENES rows.
@@ -61,15 +92,37 @@ func buildTestTraspaso(t *testing.T, ventaID uuid.UUID, almacenOrigen, almacenDe
 	return tr
 }
 
+// seedUsuarioRow inserts a minimal MSP_USUARIOS row so the FK from
+// MSP_VENTAS.CREATED_BY/UPDATED_BY resolves. Returns the inserted ID so
+// tests can reuse it as CreatedBy across MSP_VENTAS and traspaso entities.
+func seedUsuarioRow(ctx context.Context, tb testing.TB, q firebird.Querier) uuid.UUID {
+	tb.Helper()
+	id := uuid.New()
+	now := firebird.ToWallClock(time.Now().UTC())
+	suffix := id.String()
+	_, err := q.ExecContext(ctx,
+		`INSERT INTO MSP_USUARIOS
+		 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO, ESTATUS,
+		  CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY)
+		 VALUES (?, ?, ?, 'inventario-test', TRUE, 'FIREBASE_USER', ?, ?, ?, ?)`,
+		id.String(), "fb-inv-"+suffix, "inv-"+suffix+"@example.invalid",
+		now, now, id.String(), id.String(),
+	)
+	if err != nil {
+		tb.Fatalf("seedUsuarioRow: %v", err)
+	}
+	return id
+}
+
 // seedVentaRow inserts a minimal MSP_VENTAS row so FK constraints pass.
 // Must be called inside an active test transaction.
 //
 //nolint:dupword // NULL repetitions in VALUES are intentional SQL syntax.
-func seedVentaRow(ctx context.Context, tb testing.TB, q firebird.Querier, ventaID uuid.UUID) {
+func seedVentaRow(ctx context.Context, tb testing.TB, q firebird.Querier, ventaID, createdBy uuid.UUID) {
 	tb.Helper()
 	now := time.Now().UTC()
 	wc := firebird.ToWallClock(now)
-	by := uuid.New().String()
+	by := createdBy.String()
 	_, err := q.ExecContext(ctx,
 		`INSERT INTO MSP_VENTAS (
 			ID, NOMBRE_CLIENTE, TELEFONO, AVAL_O_RESPONSABLE,
@@ -90,15 +143,15 @@ func seedVentaRow(ctx context.Context, tb testing.TB, q firebird.Querier, ventaI
 			?, 'Test Cliente', NULL, NULL,
 			'Calle Test', NULL, 'Colonia', 'Puebla', 'Puebla', NULL,
 			0, 0,
-			?, 'contado',
+			?, 'CONTADO',
 			0, 0, 100,
 			NULL, NULL, NULL,
 			NULL, NULL, NULL,
 			NULL,
 			?, ?, ?, ?,
 			NULL, NULL, NULL,
-			NULL, 'borrador', NULL, NULL,
-			'normal', 'pendiente',
+			NULL, 'active', NULL, NULL,
+			'borrador', 'pendiente',
 			NULL, NULL, NULL,
 			NULL
 		)`,
@@ -115,15 +168,22 @@ func TestTraspasoWriter_Save_HappyPath(t *testing.T) {
 	cfg := defaultCfg()
 	repo := invfb.NewTraspasoRepo(cfg, pool)
 
-	almacenOrigen := 1
 	almacenDestino := 11058 // INVENTARIO_ALMACEN_DESTINO_VENTAS_ID
-	articuloID := 1         // must exist in ARTICULOS + CLAVES_ARTICULOS rol=17
 
 	ventaID := uuid.New()
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		q := firebird.GetQuerier(ctx, pool.DB)
-		seedVentaRow(ctx, t, q, ventaID)
+		articuloID, ok := findArticuloWithClave(ctx, q)
+		if !ok {
+			t.Skip("no ARTICULOS row with CLAVES_ARTICULOS rol=17 in dev DB — skipping writer integration test")
+		}
+		almacenOrigen, ok := findAlmacenIDOtherThan(ctx, q, almacenDestino)
+		if !ok {
+			t.Skip("no ALMACENES row other than destino in dev DB — skipping writer integration test")
+		}
+		createdBy := seedUsuarioRow(ctx, t, q)
+		seedVentaRow(ctx, t, q, ventaID, createdBy)
 
 		tr := buildTestTraspaso(t, ventaID, almacenOrigen, almacenDestino, articuloID)
 		doctoInID, err := repo.Save(ctx, tr)
@@ -322,9 +382,14 @@ func TestCrossModuleAtomicity_RollbackBothOnError(t *testing.T) {
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		q := firebird.GetQuerier(ctx, pool.DB)
-		seedVentaRow(ctx, t, q, ventaID)
+		createdBy := seedUsuarioRow(ctx, t, q)
+		seedVentaRow(ctx, t, q, ventaID, createdBy)
 
-		// Attempt a traspaso with an invalid articuloID to provoke a mid-flow error.
+		// Attempt a traspaso with an articulo that has no CLAVES_ARTICULOS row
+		// with rol=17. The writer's clave lookup fails mid-flow AFTER it has
+		// already inserted the venta row above, proving the ambient tx wraps
+		// both writes as a unit. We pick a very high articulo id that is
+		// unlikely to exist in any real Microsip dataset.
 		folio := domain.HydrateFolio("MST000002")
 		cant, _ := domain.NewCantidad(decimal.NewFromInt(1))
 		now := time.Now().UTC()
@@ -337,7 +402,7 @@ func TestCrossModuleAtomicity_RollbackBothOnError(t *testing.T) {
 			Descripcion:    "atomicity test",
 			VentaID:        &ventaID,
 			Detalles: []domain.CrearTraspasoDetalleInput{
-				{ID: uuid.New(), ArticuloID: -99999, Cantidad: cant},
+				{ID: uuid.New(), ArticuloID: 999999999, Cantidad: cant},
 			},
 			CreatedBy: uuid.New(),
 			Now:       now,

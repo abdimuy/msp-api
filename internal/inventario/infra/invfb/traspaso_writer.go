@@ -73,7 +73,14 @@ func (r *TraspasoRepo) Save(ctx context.Context, t *domain.Traspaso) (int, error
 	fechaWC := firebird.ToWallClock(t.Fecha())
 	audit := t.Audit()
 	createdAtWC := firebird.ToWallClock(audit.CreatedAt())
+	// MSP_VENTAS_TRASPASOS.CREATED_BY is CHAR(36) — holds the real UUID.
 	createdBy := audit.CreatedBy().String()
+	// DOCTOS_IN.USUARIO_CREADOR is Microsip's narrower user-name column
+	// (~31 chars) and rejects a 36-char UUID with "string truncation". We
+	// stamp the stable service identity used by the legacy Node API
+	// (USUARIO_DEFAULT="SYSDBA") and capture the real actor in
+	// MSP_VENTAS_TRASPASOS instead.
+	const microsipUsuarioCreador = "SYSDBA"
 
 	// ── Step 1: INSERT DOCTOS_IN ──────────────────────────────────────────────
 	var doctoInID int
@@ -87,9 +94,9 @@ func (r *TraspasoRepo) Save(ctx context.Context, t *domain.Traspaso) (int, error
 		// FORMA_EMITIDA, CONTABILIZADO, SISTEMA_ORIGEN
 		flagNo, flagNo, sistemaOrigen,
 		// USUARIO_CREADOR, FECHA_HORA_CREACION
-		createdBy, createdAtWC,
+		microsipUsuarioCreador, createdAtWC,
 		// USUARIO_ULT_MODIF, FECHA_HORA_ULT_MODIF
-		createdBy, createdAtWC,
+		microsipUsuarioCreador, createdAtWC,
 	).Scan(&doctoInID)
 	if err != nil {
 		return 0, fmt.Errorf("invfb Save: insert DOCTOS_IN: %w", firebird.MapError(err))
