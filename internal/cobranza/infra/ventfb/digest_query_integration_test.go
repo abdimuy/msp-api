@@ -382,7 +382,10 @@ func insertCommittedPagoWithConcepto(t *testing.T, pool *firebird.Pool, clienteI
 		        'CC', 'S', 'N', 'N',
 		        'N', 'N', 'N', 'N', 'N',
 		        'N', 'N', 'N')`,
-		abonoID, conceptoCCID, fmt.Sprintf("CC%d-%X", conceptoCCID, now.UnixNano()&0xFFFF), now, clienteID)
+		// FOLIO is CHAR(9): "CC" prefix + 7 hex digits derived from the nano
+		// timestamp (uniqueness within a test run). conceptoCCID lives in its
+		// own column, no need to encode it here.
+		abonoID, conceptoCCID, fmt.Sprintf("CC%07X", now.UnixNano()&0xFFFFFFF), now, clienteID)
 	require.NoError(t, err, "insertCommittedPagoWithConcepto: INSERT DOCTOS_CC abono")
 
 	var impteID int
