@@ -34,6 +34,9 @@ import (
 
 	microsipapp "github.com/abdimuy/msp-api/internal/microsip/app"
 	"github.com/abdimuy/msp-api/internal/microsip/infra/microsiphttp"
+
+	inventarioapp "github.com/abdimuy/msp-api/internal/inventario/app"
+	"github.com/abdimuy/msp-api/internal/inventario/infra/invhttp"
 )
 
 // RootHandler is the assembled chi router exposed as an fx-typed dependency.
@@ -116,6 +119,8 @@ func (s *httpServer) Stop(ctx context.Context) error {
 // /v2/_admin/failed-intents endpoints. The returned http.Handler is then
 // wrapped by provideHTTPServer; splitting the two lets the failedintent
 // replay dispatcher receive the router via fx.Invoke.
+//
+//nolint:funlen // wiring function — splitting it would just hide the structural mount order from one obvious place.
 func provideRootHandler(
 	cfg *config.Config,
 	health *healthcheck.Service,
@@ -133,6 +138,7 @@ func provideRootHandler(
 	cobranzaPagosRepo cobranzaoutbound.PagosRepo,
 	cobranzaVentasRepo cobranzaoutbound.VentasRepo,
 	microsipSvc *microsipapp.Service,
+	inventarioSvc *inventarioapp.Service,
 	logger *slog.Logger,
 ) RootHandler {
 	r := chi.NewRouter()
@@ -194,6 +200,15 @@ func provideRootHandler(
 		r.Group(func(r chi.Router) {
 			r.Use(skipAuthForPublicDocs(authn.Handler))
 			microsiphttp.MountRouter(r, microsipSvc)
+		})
+
+		// Inventario admin endpoints — GET /traspasos/{id}, GET /traspasos?venta_id=,
+		// GET /inventario/stock, GET /inventario/almacenes. Authn + per-route
+		// permission inside the handler (mirrors venthttp). No idempotency
+		// (read-only). No failed-intent capture (no writes).
+		r.Group(func(r chi.Router) {
+			r.Use(skipAuthForPublicDocs(authn.Handler))
+			invhttp.MountRouter(r, inventarioSvc)
 		})
 
 		// Cobranza endpoints — authn only. Read (saldos, pagos, sync) plus

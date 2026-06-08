@@ -64,9 +64,12 @@ func provideVentasAplicarConfig(p *firebird.Pool) ventasoutbound.AplicarConfig {
 }
 
 // provideVentasMicrosipWriter builds the Firebird-backed MicrosipVentaWriter
-// that materializes approved ventas into Microsip's DOCTOS_PV family.
-func provideVentasMicrosipWriter(p *firebird.Pool) ventasoutbound.MicrosipVentaWriter {
-	return microsip.NewVentaWriter(p)
+// that materializes approved ventas into Microsip's DOCTOS_PV family. When
+// the inventario module is wired (the typical production case), the writer
+// is parameterized with AlmacenDestinoVentasID so DOCTOS_PV references the
+// reserved-stock pool the inventario traspaso has already populated.
+func provideVentasMicrosipWriter(p *firebird.Pool, cfg *config.Config) ventasoutbound.MicrosipVentaWriter {
+	return microsip.NewVentaWriter(p).WithAlmacenDestinoVentas(cfg.Inventario.AlmacenDestinoVentasID)
 }
 
 // provideVentasMicrosipClienteWriter builds the Firebird-backed
@@ -78,6 +81,8 @@ func provideVentasMicrosipClienteWriter(p *firebird.Pool) ventasoutbound.Microsi
 
 // provideVentasService assembles the ventas application service. Multi-step
 // writes are coordinated through the supplied Firebird transaction manager.
+// The inventario adapter is attached via WithInventario so CrearVenta /
+// CancelarVenta exercise stock validation + automatic traspaso.
 func provideVentasService(
 	repo ventasoutbound.VentaRepo,
 	clientes ventasoutbound.ClienteExistenceChecker,
@@ -90,6 +95,8 @@ func provideVentasService(
 	aplicarCfg ventasoutbound.AplicarConfig,
 	microsipWriter ventasoutbound.MicrosipVentaWriter,
 	microsipCliente ventasoutbound.MicrosipClienteWriter,
+	inv ventasoutbound.InventarioService,
 ) *ventasapp.Service {
-	return ventasapp.NewService(repo, clientes, usuarios, store, clock, outbox, imageProc, fbTxMgr, aplicarCfg, microsipWriter, microsipCliente)
+	return ventasapp.NewService(repo, clientes, usuarios, store, clock, outbox, imageProc, fbTxMgr, aplicarCfg, microsipWriter, microsipCliente).
+		WithInventario(inv)
 }
