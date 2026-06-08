@@ -13,8 +13,29 @@ import (
 //
 // Tests in this file do NOT call t.Parallel(): t.Setenv mutates process-wide
 // state and must not race with other tests in the same package.
+//
+// clearAmbientEnv blanks out every env var the loader reads so a test starts
+// from a known-empty baseline regardless of what was inherited from the
+// caller's shell (typical when developers source .env before `go test`).
+// Vars are restored to their previous values automatically at test end via
+// t.Setenv's cleanup hook.
+func clearAmbientEnv(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{
+		"APP_ENV", "APP_LOG_LEVEL", "APP_LOG_FORMAT", "APP_PORT",
+		"HTTP_MAX_BODY_SIZE_MB", "HTTP_CORS_ORIGINS",
+		"PG_USER", "PG_PASSWORD", "PG_DATABASE", "PG_HOST", "PG_PORT",
+		"FB_DATABASE", "FB_HOST", "FB_PORT", "FB_USER", "FB_PASSWORD", "FB_CHARSET",
+		"FIREBASE_PROJECT_ID", "FIREBASE_DEV_MODE", "FIREBASE_ALLOW_UNCONFIGURED",
+		"STORAGE_DIR",
+	} {
+		t.Setenv(k, "")
+	}
+}
+
 func setMinimal(t *testing.T) {
 	t.Helper()
+	clearAmbientEnv(t)
 	t.Setenv("PG_USER", "msp")
 	t.Setenv("PG_PASSWORD", "msp")
 	t.Setenv("PG_DATABASE", "msp_dev")
@@ -32,6 +53,7 @@ func TestLoad_MinimalEnv_Succeeds(t *testing.T) { //nolint:paralleltest // uses 
 }
 
 func TestLoad_MissingRequired_Fails(t *testing.T) { //nolint:paralleltest // env-dependent
+	clearAmbientEnv(t)
 	_, err := config.Load()
 	require.Error(t, err)
 }
@@ -121,6 +143,7 @@ func TestFirebird_DSN(t *testing.T) {
 // FIREBASE_PROJECT_ID unset so the conditional Firebase rules drive the test.
 func setMinimalNoFirebase(t *testing.T) {
 	t.Helper()
+	clearAmbientEnv(t)
 	t.Setenv("PG_USER", "msp")
 	t.Setenv("PG_PASSWORD", "msp")
 	t.Setenv("PG_DATABASE", "msp_dev")
