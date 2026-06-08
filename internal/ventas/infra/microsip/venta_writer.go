@@ -252,11 +252,26 @@ const updateDoctoCCAplicar = `UPDATE DOCTOS_CC SET APLICADO = 'S' WHERE DOCTO_CC
 // Firebird database.
 type VentaWriter struct {
 	pool *firebird.Pool
+	// almacenDestinoVentas, when > 0, overrides the per-producto ALMACEN_ID
+	// resolution so DOCTOS_PV writes against the inventario module's
+	// reserved-stock pool (typically 11058). When 0, the writer keeps its
+	// legacy behavior of using the first producto's AlmacenOrigen — the
+	// expected default when the inventario module is not wired.
+	almacenDestinoVentas int
 }
 
 // NewVentaWriter builds a VentaWriter wired to the given Firebird pool.
 func NewVentaWriter(pool *firebird.Pool) *VentaWriter {
 	return &VentaWriter{pool: pool}
+}
+
+// WithAlmacenDestinoVentas configures the ALMACEN_ID that DOCTOS_PV / DOCTOS_PV_DET
+// rows reference. Call this when the inventario module's automatic traspaso
+// is wired so the stock has already moved to the configured destino almacén
+// by the time Aplicar runs. Returns w for fluent wiring.
+func (w *VentaWriter) WithAlmacenDestinoVentas(id int) *VentaWriter {
+	w.almacenDestinoVentas = id
+	return w
 }
 
 // Compile-time check.
@@ -286,9 +301,18 @@ func (w *VentaWriter) Aplicar(ctx context.Context, in outbound.MicrosipVentaInpu
 	}
 
 	// ── Resolve ALMACEN_ID ────────────────────────────────────────────────
-	almacenID, err := resolveAlmacenID(v)
-	if err != nil {
-		return outbound.MicrosipVentaResult{}, fmt.Errorf("microsip aplicar: almacen_id: %w", err)
+	// When the inventario module is wired, the automatic traspaso has moved
+	// the productos to almacenDestinoVentas — that is the almacén Microsip
+	// must discharge from. Otherwise fall back to the legacy resolution that
+	// picks the first producto's origen.
+	var almacenID int
+	if w.almacenDestinoVentas > 0 {
+		almacenID = w.almacenDestinoVentas
+	} else {
+		almacenID, err = resolveAlmacenID(v)
+		if err != nil {
+			return outbound.MicrosipVentaResult{}, fmt.Errorf("microsip aplicar: almacen_id: %w", err)
+		}
 	}
 
 	// ── Read folio BEFORE inserting (claim it; increment after flip) ──────
