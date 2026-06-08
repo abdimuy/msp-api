@@ -60,9 +60,9 @@ func TestIntegration_FirebirdEncoding(t *testing.T) {
 
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO MSP_USUARIOS
-		 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO,
+		 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO, ESTATUS,
 		  CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, 'FIREBASE_USER', ?, ?, ?, ?)`,
 		sentinel,
 		"integration-root-"+sentinel,
 		"enc-root-"+sentinel+"@muebleriamsp.mx",
@@ -83,9 +83,9 @@ func TestIntegration_FirebirdEncoding(t *testing.T) {
 
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO MSP_USUARIOS
-		 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO,
+		 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO, ESTATUS,
 		  CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, 'FIREBASE_USER', ?, ?, ?, ?)`,
 		testSentinel,
 		"integration-enc-"+testSentinel,
 		"enc-test-"+testSentinel+"@muebleriamsp.mx",

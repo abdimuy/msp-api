@@ -45,9 +45,9 @@ func TestWithTestTransaction_RollsBackEverythingFn_Writes(t *testing.T) {
 
 		_, err := q.ExecContext(ctx,
 			`INSERT INTO MSP_USUARIOS
-			 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO,
+			 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO, ESTATUS,
 			  CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY)
-			 VALUES (?, ?, ?, 'rollback-regression', TRUE,
+			 VALUES (?, ?, ?, 'rollback-regression', TRUE, 'FIREBASE_USER',
 			         ?, ?, ?, ?)`,
 			id, "fbtest-"+id, "fbtest-"+id+"@example.invalid",
 			now, now, id, id,

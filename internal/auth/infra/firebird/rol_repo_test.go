@@ -423,9 +423,9 @@ func TestRolRepo_FindByNombre_MalformedCreatedBy(t *testing.T) {
 		_, err := q.ExecContext(
 			ctx,
 			`INSERT INTO MSP_USUARIOS
-			 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO,
+			 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO, ESTATUS,
 			  CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY)
-			 VALUES (?, ?, ?, 'rol-anchor', TRUE, ?, ?, ?, ?)`,
+			 VALUES (?, ?, ?, 'rol-anchor', TRUE, 'FIREBASE_USER', ?, ?, ?, ?)`,
 			badAnchor, "fb-rolanchor-"+uuid.NewString(),
 			"rolanchor-"+uuid.NewString()+"@example.invalid",
 			now, now, badAnchor, badAnchor,
@@ -468,9 +468,9 @@ func TestRolRepo_FindByNombre_MalformedUpdatedBy(t *testing.T) {
 		_, err := q.ExecContext(
 			ctx,
 			`INSERT INTO MSP_USUARIOS
-			 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO,
+			 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO, ESTATUS,
 			  CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY)
-			 VALUES (?, ?, ?, 'rol-ub-anchor', TRUE, ?, ?, ?, ?)`,
+			 VALUES (?, ?, ?, 'rol-ub-anchor', TRUE, 'FIREBASE_USER', ?, ?, ?, ?)`,
 			badAnchor, "fb-roluban-"+uuid.NewString(),
 			"roluban-"+uuid.NewString()+"@example.invalid",
 			now, now, badAnchor, badAnchor,
