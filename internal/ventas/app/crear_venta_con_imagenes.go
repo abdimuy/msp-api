@@ -64,6 +64,9 @@ func (s *Service) CrearVentaConImagenes(
 	if err := s.validateVendedorUsuarios(ctx, in.Vendedores); err != nil {
 		return nil, err
 	}
+	if err := s.validateStockParaProductos(ctx, in.Productos); err != nil {
+		return nil, err
+	}
 	params, err := in.intoDomain(by, now)
 	if err != nil {
 		return nil, err
@@ -85,7 +88,10 @@ func (s *Service) CrearVentaConImagenes(
 	}
 
 	if err := s.runInTx(ctx, func(ctx context.Context) error {
-		return s.ventas.Save(ctx, venta)
+		if saveErr := s.ventas.Save(ctx, venta); saveErr != nil {
+			return saveErr
+		}
+		return s.crearTraspasoParaVenta(ctx, venta, in.Productos, by, now)
 	}); err != nil {
 		s.cleanupBlobs(ctx, storedKeys)
 		return nil, err
