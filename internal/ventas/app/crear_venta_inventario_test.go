@@ -156,3 +156,32 @@ func TestCrearVenta_NilInventario_StillWorks(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, venta)
 }
+
+func TestCancelarVenta_WithInventario_PendienteCallsReverso(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	inv := &fakeInventarioService{nextCreatedID: 100}
+	h.svc.WithInventario(inv)
+
+	// Create a pendiente venta first.
+	venta, err := h.svc.CrearVenta(t.Context(), validContadoInput(), uuid.New())
+	require.NoError(t, err)
+	require.False(t, venta.IsAplicada(), "freshly created venta is not aplicada")
+
+	// Then cancel — reverso should fire.
+	cancelados := inv.reversoCalls.Load()
+	_, err = h.svc.CancelarVenta(t.Context(), venta.ID(), "cliente arrepentido", uuid.New())
+	require.NoError(t, err)
+	assert.Equal(t, cancelados+1, inv.reversoCalls.Load(), "CrearTraspasoReverso must be invoked when a pendiente venta is canceled")
+}
+
+func TestCancelarVenta_NilInventario_NoReverso(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	// Cancel without inventario wired — must not crash, must not panic.
+	venta, err := h.svc.CrearVenta(t.Context(), validContadoInput(), uuid.New())
+	require.NoError(t, err)
+
+	_, err = h.svc.CancelarVenta(t.Context(), venta.ID(), "cliente arrepentido", uuid.New())
+	require.NoError(t, err)
+}
