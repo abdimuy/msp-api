@@ -37,6 +37,19 @@ type Service struct {
 	aplicarCfg      outbound.AplicarConfig
 	microsipWriter  outbound.MicrosipVentaWriter
 	microsipCliente outbound.MicrosipClienteWriter
+	// inventario is optional. Tests omit it; production wires it via
+	// WithInventario. When nil, the venta lifecycle skips the stock-validation
+	// + automatic-traspaso steps — the legacy behavior before the inventario
+	// module existed.
+	inventario outbound.InventarioService
+}
+
+// WithInventario attaches an InventarioService so CrearVenta validates stock
+// + emits the automatic traspaso, and CancelarVenta reverses it. Returns
+// s for fluent wiring at the composition root.
+func (s *Service) WithInventario(inv outbound.InventarioService) *Service {
+	s.inventario = inv
+	return s
 }
 
 // NewService builds a Service wired against the given ports. The

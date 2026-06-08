@@ -12,6 +12,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/platform/apperror"
 	platform "github.com/abdimuy/msp-api/internal/platform/domain"
 	"github.com/abdimuy/msp-api/internal/ventas/domain"
+	"github.com/abdimuy/msp-api/internal/ventas/ports/outbound"
 )
 
 // CrearVentaProductoInput is one producto line in the create-venta request.
@@ -99,12 +100,29 @@ type CrearVentaInput struct {
 // CrearVenta validates the input, builds the aggregate, persists it inside
 // a Firebird transaction, and best-effort emits the buffered events to the
 // outbox. Returns the persisted aggregate on success.
+//
+// When an InventarioService is wired (s.inventario != nil), the flow also:
+//
+//  1. Validates that every producto has sufficient existencia in its origin
+//     almacén BEFORE the venta is persisted. The validation runs in its own
+//     READ COMMITTED NO WAIT transaction so simultaneous "last item" sales
+//     fail fast with apperror.NewValidation("articulo_sin_existencia").
+//  2. Emits an automatic traspaso INSIDE the same Firebird transaction that
+//     persists the venta. Both writes commit or roll back as a unit (the
+//     inventario module's RunInTx is re-entrant via ctx).
+//
+// When s.inventario is nil (legacy / test code that does not exercise
+// inventario), both steps are skipped and CrearVenta keeps its previous
+// behavior.
 func (s *Service) CrearVenta(ctx context.Context, in CrearVentaInput, by uuid.UUID) (*domain.Venta, error) {
 	now := s.clock.Now()
 	if err := s.validateClienteID(ctx, in.ClienteID); err != nil {
 		return nil, err
 	}
 	if err := s.validateVendedorUsuarios(ctx, in.Vendedores); err != nil {
+		return nil, err
+	}
+	if err := s.validateStockParaProductos(ctx, in.Productos); err != nil {
 		return nil, err
 	}
 	params, err := in.intoDomain(by, now)
@@ -116,12 +134,91 @@ func (s *Service) CrearVenta(ctx context.Context, in CrearVentaInput, by uuid.UU
 		return nil, err
 	}
 	if err := s.runInTx(ctx, func(ctx context.Context) error {
-		return s.ventas.Save(ctx, venta)
+		if saveErr := s.ventas.Save(ctx, venta); saveErr != nil {
+			return saveErr
+		}
+		return s.crearTraspasoParaVenta(ctx, venta, in.Productos, by, now)
 	}); err != nil {
 		return nil, err
 	}
 	s.drainEvents(ctx, venta)
 	return venta, nil
+}
+
+// validateStockParaProductos delegates to the configured InventarioService
+// (if any) so callers see "articulo_sin_existencia" before the venta is
+// persisted. Productos that omit AlmacenOrigen are skipped — they belong to
+// combos that carry their own origen at the combo level (combos are
+// validated separately in a future iteration).
+func (s *Service) validateStockParaProductos(ctx context.Context, productos []CrearVentaProductoInput) error {
+	if s.inventario == nil || len(productos) == 0 {
+		return nil
+	}
+	items := make([]outbound.InventarioStockItem, 0, len(productos))
+	for _, p := range productos {
+		if p.AlmacenOrigen == nil {
+			continue
+		}
+		items = append(items, outbound.InventarioStockItem{
+			ArticuloID:    p.ArticuloID,
+			AlmacenOrigen: *p.AlmacenOrigen,
+			Cantidad:      p.Cantidad,
+		})
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	return s.inventario.ValidarStockParaVenta(ctx, items)
+}
+
+// crearTraspasoParaVenta emits the automatic traspaso that reserves the
+// venta's productos in the configured destino almacén. Skips when no
+// InventarioService is wired or when no producto carries an AlmacenOrigen.
+//
+// For v1 we group all productos under their common AlmacenOrigen and reject
+// ventas whose productos span multiple origenes. Splitting into N traspasos
+// is left for a follow-up if real-world data ever needs it.
+func (s *Service) crearTraspasoParaVenta(
+	ctx context.Context,
+	venta *domain.Venta,
+	productos []CrearVentaProductoInput,
+	by uuid.UUID,
+	now time.Time,
+) error {
+	if s.inventario == nil {
+		return nil
+	}
+	almacenOrigen := 0
+	detalles := make([]outbound.InventarioTraspasoDetalle, 0, len(productos))
+	for _, p := range productos {
+		if p.AlmacenOrigen == nil {
+			continue
+		}
+		if almacenOrigen == 0 {
+			almacenOrigen = *p.AlmacenOrigen
+		} else if almacenOrigen != *p.AlmacenOrigen {
+			return apperror.NewValidation(
+				"productos_multiples_almacenes_origen",
+				"los productos de la venta tienen distintos almacenes de origen; no se puede generar un traspaso único",
+			)
+		}
+		detalles = append(detalles, outbound.InventarioTraspasoDetalle{
+			ArticuloID: p.ArticuloID,
+			Cantidad:   p.Cantidad,
+		})
+	}
+	if len(detalles) == 0 {
+		return nil
+	}
+	_, err := s.inventario.CrearTraspasoParaVenta(ctx, outbound.InventarioCrearTraspasoParams{
+		VentaID:       venta.ID(),
+		AlmacenOrigen: almacenOrigen,
+		Fecha:         now,
+		Descripcion:   "Traspaso automático por venta " + venta.ID().String(),
+		Detalles:      detalles,
+		CreatedBy:     by,
+	})
+	return err
 }
 
 // intoDomain translates the request DTO into a domain.CrearVentaParams,
