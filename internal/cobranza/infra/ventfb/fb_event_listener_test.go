@@ -269,7 +269,7 @@ func newListenerWithRepos(
 //
 //nolint:paralleltest // test uses goroutine-based fake clock with shared state.
 func TestFbEventListener_Start_Idempotent(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer goleak.VerifyNone(t, probeLeakIgnores()...)
 
 	bus := eventbus.New()
 	defer bus.Close()
@@ -300,7 +300,7 @@ func TestFbEventListener_Start_Idempotent(t *testing.T) {
 //
 //nolint:paralleltest // test uses shared goroutine-leak checker.
 func TestFbEventListener_Stop_WithoutStart(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer goleak.VerifyNone(t, probeLeakIgnores()...)
 
 	bus := eventbus.New()
 	defer bus.Close()
@@ -317,7 +317,7 @@ func TestFbEventListener_Stop_WithoutStart(t *testing.T) {
 //
 //nolint:paralleltest // test uses shared mock state.
 func TestFbEventListener_PublishesToBus(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer goleak.VerifyNone(t, probeLeakIgnores()...)
 
 	bus := eventbus.New()
 	defer bus.Close()
@@ -366,7 +366,7 @@ func TestFbEventListener_PublishesToBus(t *testing.T) {
 //
 //nolint:paralleltest // test uses fake clock with shared trigger channel.
 func TestFbEventListener_ReconnectBackoff(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer goleak.VerifyNone(t, probeLeakIgnores()...)
 
 	bus := eventbus.New()
 	defer bus.Close()
@@ -427,7 +427,7 @@ func TestFbEventListener_ReconnectBackoff(t *testing.T) {
 //
 //nolint:paralleltest // test uses fake clock with shared trigger channel.
 func TestFbEventListener_SyntheticPublishAfterReconnect(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer goleak.VerifyNone(t, probeLeakIgnores()...)
 
 	bus := eventbus.New()
 	defer bus.Close()
@@ -496,7 +496,7 @@ func TestFbEventListener_SyntheticPublishAfterReconnect(t *testing.T) {
 //
 //nolint:paralleltest // test uses shared mock state.
 func TestFbEventListener_StopGracefully(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer goleak.VerifyNone(t, probeLeakIgnores()...)
 
 	bus := eventbus.New()
 	defer bus.Close()
@@ -565,7 +565,7 @@ func TestFbEventListener_Stop_DeadlineExceeded(t *testing.T) {
 	// Clean up the goroutine: close blockCh so drain() unblocks and the goroutine exits.
 	close(blockCh)
 	time.Sleep(50 * time.Millisecond)
-	goleak.VerifyNone(t)
+	goleak.VerifyNone(t, probeLeakIgnores()...)
 }
 
 // blockingSource is a minimal FbEventSource that returns a channel the test
@@ -628,7 +628,7 @@ func TestFbEventListener_CtxCancelDuringBackoff(t *testing.T) {
 	// no leaks. We yield briefly so the goroutine has time to exit.
 	fc.stop()
 	time.Sleep(20 * time.Millisecond)
-	goleak.VerifyNone(t)
+	goleak.VerifyNone(t, probeLeakIgnores()...)
 }
 
 // TestFbEventListener_BackoffCapAtLastEntry verifies that once the attempt
@@ -636,7 +636,7 @@ func TestFbEventListener_CtxCancelDuringBackoff(t *testing.T) {
 //
 //nolint:paralleltest // test uses fake clock with shared trigger channel; goleak called manually.
 func TestFbEventListener_BackoffCapAtLastEntry(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer goleak.VerifyNone(t, probeLeakIgnores()...)
 
 	bus := eventbus.New()
 	defer bus.Close()
@@ -688,7 +688,7 @@ func TestFbEventListener_BackoffCapAtLastEntry(t *testing.T) {
 	require.NoError(t, l.Stop(stopCtx))
 
 	fc.stop()
-	goleak.VerifyNone(t)
+	goleak.VerifyNone(t, probeLeakIgnores()...)
 }
 
 // ─── Changelog-path tests ─────────────────────────────────────────────────────
@@ -699,7 +699,7 @@ func TestFbEventListener_BackoffCapAtLastEntry(t *testing.T) {
 //
 //nolint:paralleltest
 func TestListener_OnPostEvent_QueriesChangelogWithLastSeen(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer goleak.VerifyNone(t, probeLeakIgnores()...)
 
 	bus := eventbus.New()
 	defer bus.Close()
@@ -772,7 +772,7 @@ func TestListener_OnPostEvent_QueriesChangelogWithLastSeen(t *testing.T) {
 //
 //nolint:paralleltest
 func TestListener_AdvancesLastSeenToMaxReturned(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer goleak.VerifyNone(t, probeLeakIgnores()...)
 
 	bus := eventbus.New()
 	defer bus.Close()
@@ -858,7 +858,7 @@ func TestListener_AdvancesLastSeenToMaxReturned(t *testing.T) {
 //
 //nolint:paralleltest
 func TestListener_EmptyChangelog_DoesNotPublish(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer goleak.VerifyNone(t, probeLeakIgnores()...)
 
 	bus := eventbus.New()
 	defer bus.Close()
@@ -917,7 +917,7 @@ func TestListener_EmptyChangelog_DoesNotPublish(t *testing.T) {
 //
 //nolint:paralleltest
 func TestListener_WatermarkFailure_PublishesEmptyAsWakeup(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer goleak.VerifyNone(t, probeLeakIgnores()...)
 
 	bus := eventbus.New()
 	defer bus.Close()
@@ -1006,7 +1006,7 @@ func TestListener_WatermarkFailure_PublishesEmptyAsWakeup(t *testing.T) {
 //
 //nolint:paralleltest
 func TestListener_ChangelogFailure_PublishesEmpty(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer goleak.VerifyNone(t, probeLeakIgnores()...)
 
 	bus := eventbus.New()
 	defer bus.Close()
@@ -1058,7 +1058,7 @@ func TestListener_ChangelogFailure_PublishesEmpty(t *testing.T) {
 //
 //nolint:paralleltest
 func TestListener_Start_InitializesLastSeenFromMaxSeqID(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer goleak.VerifyNone(t, probeLeakIgnores()...)
 
 	bus := eventbus.New()
 	defer bus.Close()
@@ -1124,7 +1124,7 @@ func TestListener_Start_InitializesLastSeenFromMaxSeqID(t *testing.T) {
 //
 //nolint:paralleltest
 func TestListener_Start_MaxSeqIDFailure_ReturnsError(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer goleak.VerifyNone(t, probeLeakIgnores()...)
 
 	bus := eventbus.New()
 	defer bus.Close()
@@ -1156,7 +1156,7 @@ func TestListener_Start_MaxSeqIDFailure_ReturnsError(t *testing.T) {
 //
 //nolint:paralleltest
 func TestListener_ReconnectSyntheticPublish_IsEmpty(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer goleak.VerifyNone(t, probeLeakIgnores()...)
 
 	bus := eventbus.New()
 	defer bus.Close()
@@ -1227,7 +1227,7 @@ func TestListener_ReconnectSyntheticPublish_IsEmpty(t *testing.T) {
 //
 //nolint:paralleltest
 func TestListener_HonorsLimit500(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer goleak.VerifyNone(t, probeLeakIgnores()...)
 
 	bus := eventbus.New()
 	defer bus.Close()
@@ -1301,7 +1301,7 @@ func TestListener_HonorsLimit500(t *testing.T) {
 //
 //nolint:paralleltest
 func TestProperty_Listener_LastSeenMonotonic(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer goleak.VerifyNone(t, probeLeakIgnores()...)
 
 	rapid.Check(t, func(rt *rapid.T) {
 		bus := eventbus.New()
@@ -1426,7 +1426,7 @@ func TestProperty_Listener_LastSeenMonotonic(t *testing.T) {
 //
 //nolint:paralleltest
 func TestProperty_Listener_NoIdLoss(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer goleak.VerifyNone(t, probeLeakIgnores()...)
 
 	rapid.Check(t, func(rt *rapid.T) {
 		bus := eventbus.New()
@@ -1556,14 +1556,24 @@ func TestProperty_Listener_NoIdLoss(t *testing.T) {
 
 // ─── Watermark probe tests ─────────────────────────────────────────────────────
 
-// probeLeakIgnores returns goleak options that filter out background goroutines
-// created by the integration tests in this package (database/sql pool). Those
-// goroutines are created by tests that run before the unit tests in the same
-// binary and are unrelated to the listener lifecycle.
+// probeLeakIgnores returns goleak options that filter out background
+// goroutines spawned by integration tests in this package (the shared
+// firebird.Pool and the firebirdsql event-subscription used by
+// requireFBEventReachable). The goroutines persist for the lifetime of the
+// test binary by design — the pool is sync.Once-cached, and the FbEvent
+// subscription writer keeps a goroutine pumping the wire — so unit tests
+// that run after an integration test see them as "leaked" without these
+// ignores. They are unrelated to the listener under test.
 func probeLeakIgnores() []goleak.Option {
 	return []goleak.Option{
+		// Shared *sql.DB lifecycle goroutines.
 		goleak.IgnoreTopFunction("database/sql.(*DB).connectionCleaner"),
 		goleak.IgnoreTopFunction("database/sql.(*DB).connectionOpener"),
+		// firebirdsql event-subscription background workers.
+		goleak.IgnoreTopFunction("github.com/nakagami/firebirdsql.(*FbEvent).run"),
+		goleak.IgnoreTopFunction("github.com/nakagami/firebirdsql.newSubscription"),
+		// Wire-channel read blocks on socket recv while the event subscription is alive.
+		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 	}
 }
 
