@@ -23,6 +23,12 @@ import (
 var approvedPlantCurrentUserCallers = []string{
 	"internal/auth/infra/authhttp/authn.go",
 	"internal/platform/failedintent/http/handlers.go",
+	// replay_with_multipart_handler.go is the multipart variant of the
+	// same single-request replay flow handled by handlers.go: it plants
+	// the original requester's CurrentUser onto the synthetic replay
+	// request so downstream authorization sees the right principal.
+	// Same trust boundary, same justification as handlers.go.
+	"internal/platform/failedintent/http/replay_with_multipart_handler.go",
 }
 
 // TestPlantCurrentUser_TrustedCallers enforces the trust-boundary
