@@ -1,3 +1,4 @@
+//nolint:misspell // ventas vocabulary is Spanish (productos, almacén, etc.) per project convention.
 package app
 
 import (
