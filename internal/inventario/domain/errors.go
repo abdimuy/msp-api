@@ -93,4 +93,9 @@ var (
 		"traspaso_no_encontrado",
 		"traspaso no encontrado",
 	)
+	// ErrAlmacenNoEncontrado is returned when an almacén lookup misses.
+	ErrAlmacenNoEncontrado = apperror.NewNotFound(
+		"almacen_no_encontrado",
+		"almacén no encontrado",
+	)
 )
