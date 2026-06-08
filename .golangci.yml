@@ -117,6 +117,15 @@ linters:
         - switch
         - map
 
+    # ── Misspell ─────────────────────────────────────────────────────
+    # Spanish vocabulary used as module/package/identifier names that the
+    # default misspell dictionary would otherwise correct to English words
+    # (e.g. "inventario" → "inventor"). Listed individually so genuine
+    # typos in surrounding English prose still get caught.
+    misspell:
+      ignore-rules:
+        - inventario
+
     # ── revive ───────────────────────────────────────────────────────
     revive:
       enable-all-rules: false
