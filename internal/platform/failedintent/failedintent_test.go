@@ -668,7 +668,7 @@ func TestCaptureMiddleware_SkipsIdempotencyReplays(t *testing.T) {
 }
 
 // TestCaptureMiddleware_CapturesIdempotencyKeyMismatch verifies the core
-// venta-zombie fix: a 409 idempotency_key_mismatch (same key, different
+// venta-zombie fix: a 422 idempotency_key_mismatch (same key, different
 // body) is captured even though it never reaches the venta handler.
 func TestCaptureMiddleware_CapturesIdempotencyKeyMismatch(t *testing.T) {
 	t.Parallel()
@@ -677,13 +677,14 @@ func TestCaptureMiddleware_CapturesIdempotencyKeyMismatch(t *testing.T) {
 	cfg := newTestConfig(store, 1024)
 	mw := failedintent.CaptureMiddleware(cfg)
 
-	// Simulate the idempotency middleware short-circuiting with 409
+	// Simulate the idempotency middleware short-circuiting with 422
 	// (no Idempotent-Replay header — that's only on cache hits).
+	// IETF Idempotency-Key draft §2.7: body-fingerprint mismatch is 422.
 	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/problem+json; charset=utf-8")
-		w.WriteHeader(http.StatusConflict)
+		w.WriteHeader(http.StatusUnprocessableEntity)
 		_, _ = io.WriteString(w,
-			`{"code":"idempotency_key_mismatch","detail":"el Idempotency-Key fue reutilizado","title":"Conflict"}`)
+			`{"code":"idempotency_key_mismatch","detail":"el Idempotency-Key fue reutilizado","title":"Unprocessable Entity"}`)
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/v2/ventas", strings.NewReader(`{"x":1}`))
@@ -695,7 +696,7 @@ func TestCaptureMiddleware_CapturesIdempotencyKeyMismatch(t *testing.T) {
 	require.Equal(t, 1, store.count(),
 		"idempotency_key_mismatch must produce an audit row")
 	got := store.first()
-	assert.Equal(t, http.StatusConflict, got.HTTPStatus)
+	assert.Equal(t, http.StatusUnprocessableEntity, got.HTTPStatus)
 	assert.Equal(t, "idempotency_key_mismatch", got.ErrorCode)
 }
 

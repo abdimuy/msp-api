@@ -54,7 +54,7 @@ import (
 // 5-fix sweep addressed would cause a different status:
 //   - chi RouteContext leak → step 3 returns 404
 //   - authn unconditional bearer requirement → step 3 returns 401
-//   - idempotency-key reuse → step 4 returns 409 idempotency_key_mismatch
+//   - idempotency-key reuse → step 4 returns 422 idempotency_key_mismatch
 func TestE2E_ReplayCycle_FullMiddlewareChain(t *testing.T) {
 	t.Parallel()
 
@@ -419,7 +419,7 @@ func TestE2E_Admin_BlobIntent_DTORevealsHasBlob(t *testing.T) {
 		Body:            nil,
 		BodyBlobPath:    expectedBlobPath,
 		BodyContentType: expectedContentType,
-		HTTPStatus:      http.StatusConflict,
+		HTTPStatus:      http.StatusUnprocessableEntity,
 		ErrorCode:       "idempotency_key_mismatch",
 		Status:          failedintent.StatusNew,
 		UsuarioID:       &usuarioID,

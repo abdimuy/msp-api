@@ -1,14 +1,25 @@
 // Package idempotency implements an Idempotency-Key middleware so retries of
 // non-idempotent requests (POST, PATCH) do not produce duplicate side effects.
 //
+// Caching policy: only 2xx responses are persisted. 4xx are not cached so a
+// client that fixes its request and retries with the same key sees the new
+// outcome (not a fossilized validation error). 5xx are not cached so transient
+// infrastructure failures don't pin a key to a failure for 24h. This is the
+// pattern used by Google Standard Payments and aligns with Stripe's "do not
+// cache pre-execution validation errors" carve-out. The IETF Idempotency-Key
+// draft (-07) §2.6 phrases caching as SHOULD, not MUST.
+//
 // Flow:
 //
 //  1. Client sends `Idempotency-Key: <opaque>` along with the request.
 //  2. Middleware computes a SHA-256 of the request body and looks up the key.
-//  3. If a record exists with the SAME hash and a stored response, replay it.
-//  4. If the hash MISMATCHES, return 422: keys must be reused with the same
-//     payload (per Stripe convention).
-//  5. If the key is new, run the handler, capture the response, store it.
+//  3. If a 2xx record exists with the SAME hash, replay it.
+//  4. If a 2xx record exists with a DIFFERENT hash, return 422 (per IETF
+//     draft §2.7: "key is already being used for a different request
+//     payload"). 409 is reserved for in-flight concurrency, not for body
+//     mismatch — that was the prior buggy behavior.
+//  5. If the key is new (or the prior response was 4xx/5xx and therefore not
+//     cached), run the handler. Capture and store the response only if 2xx.
 package idempotency
 
 import (
@@ -148,7 +159,10 @@ func tryReplay(store Store, key, hash string, w http.ResponseWriter, r *http.Req
 		return false
 	}
 	if rec.RequestHash != hash || rec.Method != r.Method || rec.Path != r.URL.Path {
-		response.Error(w, r, apperror.NewConflict(
+		// 422 (not 409) per IETF Idempotency-Key draft §2.7: this is a payload
+		// mismatch, not in-flight concurrency. The body the client just sent
+		// does not match the body that produced the cached 2xx response.
+		response.Error(w, r, apperror.NewValidation(
 			"idempotency_key_mismatch",
 			"el Idempotency-Key fue reutilizado con una solicitud distinta",
 		))
@@ -158,11 +172,19 @@ func tryReplay(store Store, key, hash string, w http.ResponseWriter, r *http.Req
 	return true
 }
 
-// captureAndSave runs the inner handler with a capturing writer and persists
-// the captured response keyed by the idempotency key.
+// captureAndSave runs the inner handler with a capturing writer. The captured
+// response is persisted only when 2xx — see the package doc for the rationale.
 func captureAndSave(cfg Config, key, hash string, next http.Handler, w http.ResponseWriter, r *http.Request) {
 	rec := newCapture(w)
 	next.ServeHTTP(rec, r)
+
+	if !isSuccess(rec.status) {
+		slog.DebugContext(r.Context(),
+			"idempotency: response not cached (non-2xx)",
+			"key", key, "status", rec.status,
+		)
+		return
+	}
 
 	toStore := Record{
 		Key:            key,
@@ -177,6 +199,9 @@ func captureAndSave(cfg Config, key, hash string, next http.Handler, w http.Resp
 		slog.ErrorContext(r.Context(), "idempotency: store save failed", "error", err, "key", key)
 	}
 }
+
+// isSuccess reports whether the status code is a 2xx success.
+func isSuccess(status int) bool { return status >= 200 && status < 300 }
 
 func sha256Hex(b []byte) string {
 	sum := sha256.Sum256(b)

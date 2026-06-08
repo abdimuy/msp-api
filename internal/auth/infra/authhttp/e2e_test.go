@@ -83,7 +83,9 @@ func TestE2E_Auth_LoginIdempotency(t *testing.T) {
 		"replay must return identical bytes; mismatch implies a JSONB-style "+
 			"renormalisation regression on idempotency_keys.response_body")
 
-	// ── 3. Different body + same key → 409 idempotency_key_mismatch ───────
+	// ── 3. Different body + same key → 422 idempotency_key_mismatch ───────
+	// Per IETF Idempotency-Key draft §2.7, body-fingerprint mismatch is 422
+	// (not 409). 409 is reserved for in-flight concurrent retries only.
 	body3 := `{"id_token":"raw-token-DIFFERENT"}`
 	rec3 := httptest.NewRecorder()
 	router.ServeHTTP(rec3, httptesting.NewE2ERequest(
@@ -91,8 +93,8 @@ func TestE2E_Auth_LoginIdempotency(t *testing.T) {
 		httptesting.NoBearer(),
 		httptesting.WithIdempotencyKey(idemKey),
 	))
-	assert.Equal(t, http.StatusConflict, rec3.Code,
-		"key reuse with a different payload must be 409 idempotency_key_mismatch; body=%s",
+	assert.Equal(t, http.StatusUnprocessableEntity, rec3.Code,
+		"key reuse with a different payload must be 422 idempotency_key_mismatch; body=%s",
 		rec3.Body.String())
 	assert.Contains(t, rec3.Body.String(), "idempotency_key_mismatch")
 }

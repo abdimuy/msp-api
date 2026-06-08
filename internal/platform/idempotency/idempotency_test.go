@@ -167,7 +167,7 @@ func TestMiddleware_SecondCall_SamePayload_Replays(t *testing.T) {
 	assert.Equal(t, `{"first":true}`, strings.TrimSpace(second.Body.String()))
 }
 
-func TestMiddleware_SecondCall_DifferentPayload_Conflict(t *testing.T) {
+func TestMiddleware_SecondCall_DifferentPayload_Returns422Mismatch(t *testing.T) {
 	t.Parallel()
 	store := newMemoryStore()
 	mw := idempotency.Middleware(idempotency.Config{Store: store})
@@ -183,11 +183,139 @@ func TestMiddleware_SecondCall_DifferentPayload_Conflict(t *testing.T) {
 	r2.Header.Set(idempotency.HeaderKey, "k")
 	h.ServeHTTP(rec2, r2)
 
-	assert.Equal(t, http.StatusConflict, rec2.Code)
+	// IETF Idempotency-Key draft §2.7: body-fingerprint mismatch is 422,
+	// not 409. 409 is reserved for in-flight concurrent retries.
+	assert.Equal(t, http.StatusUnprocessableEntity, rec2.Code)
 	assert.Equal(t, "application/problem+json; charset=utf-8", rec2.Header().Get("Content-Type"))
 
 	var p struct{ Code string }
 	require.NoError(t, json.NewDecoder(rec2.Body).Decode(&p))
+	assert.Equal(t, "idempotency_key_mismatch", p.Code)
+}
+
+func TestMiddleware_4xxResponse_NotCached(t *testing.T) {
+	t.Parallel()
+	store := newMemoryStore()
+	mw := idempotency.Middleware(idempotency.Config{Store: store, TTL: time.Hour})
+
+	calls := 0
+	validationFailing := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"code":"plazo_invalido","message":"el plazo en meses debe ser mayor a cero"}`))
+	})
+	h := mw(validationFailing)
+
+	r1 := httptest.NewRequest(http.MethodPost, "/v2/ventas", strings.NewReader(`{"plazo":0}`))
+	r1.Header.Set(idempotency.HeaderKey, "sale-abc")
+	first := httptest.NewRecorder()
+	h.ServeHTTP(first, r1)
+	require.Equal(t, http.StatusUnprocessableEntity, first.Code)
+
+	// Store must NOT have a record — 4xx is not cached.
+	store.mu.Lock()
+	_, present := store.records["sale-abc"]
+	store.mu.Unlock()
+	assert.False(t, present, "4xx responses must not be cached")
+
+	// Second call with the same key + same body re-runs the handler instead
+	// of replaying a stale error — the client always sees the current error.
+	r2 := httptest.NewRequest(http.MethodPost, "/v2/ventas", strings.NewReader(`{"plazo":0}`))
+	r2.Header.Set(idempotency.HeaderKey, "sale-abc")
+	second := httptest.NewRecorder()
+	h.ServeHTTP(second, r2)
+
+	assert.Equal(t, http.StatusUnprocessableEntity, second.Code)
+	assert.Equal(t, 2, calls, "handler must re-execute when prior was 4xx")
+	assert.Empty(t, second.Header().Get("Idempotent-Replay"),
+		"4xx replay must not be flagged as idempotent — it was a fresh execution")
+}
+
+func TestMiddleware_4xxThenFixedRetry_Succeeds(t *testing.T) {
+	t.Parallel()
+	store := newMemoryStore()
+	mw := idempotency.Middleware(idempotency.Config{Store: store})
+
+	// Handler returns 422 if the body says "bad", 201 otherwise.
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), "bad") {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+
+	// First attempt: bad payload → 422 → NOT cached.
+	r1 := httptest.NewRequest(http.MethodPost, "/v2/x", strings.NewReader(`{"v":"bad"}`))
+	r1.Header.Set(idempotency.HeaderKey, "k-fix")
+	first := httptest.NewRecorder()
+	h.ServeHTTP(first, r1)
+	require.Equal(t, http.StatusUnprocessableEntity, first.Code)
+
+	// Second attempt: same key, fixed payload → 201. No 422 mismatch because
+	// the prior 4xx was never cached, so there's no record to compare against.
+	r2 := httptest.NewRequest(http.MethodPost, "/v2/x", strings.NewReader(`{"v":"good"}`))
+	r2.Header.Set(idempotency.HeaderKey, "k-fix")
+	second := httptest.NewRecorder()
+	h.ServeHTTP(second, r2)
+
+	assert.Equal(t, http.StatusCreated, second.Code,
+		"after a 4xx (not cached), the same key with a fixed body must succeed")
+}
+
+func TestMiddleware_5xxResponse_NotCached(t *testing.T) {
+	t.Parallel()
+	store := newMemoryStore()
+	mw := idempotency.Middleware(idempotency.Config{Store: store})
+
+	calls := 0
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+
+	r1 := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{}`))
+	r1.Header.Set(idempotency.HeaderKey, "k5")
+	h.ServeHTTP(httptest.NewRecorder(), r1)
+
+	store.mu.Lock()
+	_, present := store.records["k5"]
+	store.mu.Unlock()
+	assert.False(t, present, "5xx responses must not be cached")
+
+	r2 := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{}`))
+	r2.Header.Set(idempotency.HeaderKey, "k5")
+	h.ServeHTTP(httptest.NewRecorder(), r2)
+
+	assert.Equal(t, 2, calls, "handler must re-execute when prior was 5xx")
+}
+
+func TestMiddleware_2xxCached_DifferentBody_Returns422(t *testing.T) {
+	t.Parallel()
+	store := newMemoryStore()
+	mw := idempotency.Middleware(idempotency.Config{Store: store})
+
+	// First request succeeds and is cached.
+	h := mw(okHandler())
+	r1 := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{"v":1}`))
+	r1.Header.Set(idempotency.HeaderKey, "k2")
+	first := httptest.NewRecorder()
+	h.ServeHTTP(first, r1)
+	require.Equal(t, http.StatusCreated, first.Code)
+
+	// Second request: same key, different body → genuine mismatch against a
+	// stored success. This is the only path that should ever produce 422
+	// idempotency_key_mismatch in the new model.
+	r2 := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{"v":2}`))
+	r2.Header.Set(idempotency.HeaderKey, "k2")
+	second := httptest.NewRecorder()
+	h.ServeHTTP(second, r2)
+
+	assert.Equal(t, http.StatusUnprocessableEntity, second.Code)
+	var p struct{ Code string }
+	require.NoError(t, json.NewDecoder(second.Body).Decode(&p))
 	assert.Equal(t, "idempotency_key_mismatch", p.Code)
 }
 
