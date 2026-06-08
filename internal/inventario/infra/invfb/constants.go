@@ -25,6 +25,12 @@ const (
 	tipoTraspasoDirecto = "directo"
 	tipoTraspasoReverso = "reverso"
 
-	// existenciaScale is the NUMERIC scale for SALDOS_IN stock figures.
-	existenciaScale = 4
+	// existenciaScale is the NUMERIC scale for SALDOS_IN.ENTRADAS_UNIDADES /
+	// SALIDAS_UNIDADES, DOCTOS_IN_DET.UNIDADES and DOCTOS_PV_DET.UNIDADES —
+	// all of them declared as NUMERIC(18,5) in Microsip's schema (verified
+	// against RDB$FIELDS on the dev DB). Using a different scale here causes
+	// stock readings to drift by a factor of 10 per unit of mismatch, since
+	// the driver returns the unscaled integer (e.g. 300000 for 3.00000) and
+	// ScanDecimal recovers the decimal point via 10^-scale.
+	existenciaScale = 5
 )
