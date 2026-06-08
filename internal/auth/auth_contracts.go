@@ -104,4 +104,11 @@ const (
 	PermCobranzaReconciliar = domain.PermCobranzaReconciliar
 	// PermCobranzaBackfill — see domain.PermCobranzaBackfill.
 	PermCobranzaBackfill = domain.PermCobranzaBackfill
+
+	// PermInventarioVer — see domain.PermInventarioVer.
+	PermInventarioVer = domain.PermInventarioVer
+	// PermTraspasosVer — see domain.PermTraspasosVer.
+	PermTraspasosVer = domain.PermTraspasosVer
+	// PermStockConsultar — see domain.PermStockConsultar.
+	PermStockConsultar = domain.PermStockConsultar
 )

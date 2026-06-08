@@ -84,6 +84,13 @@ const (
 	PermCobranzaReconciliar Permission = "cobranza:reconciliar"
 	// PermCobranzaBackfill grants triggering an admin backfill of the balances cache.
 	PermCobranzaBackfill Permission = "cobranza:backfill"
+
+	// PermInventarioVer grants reading inventario admin endpoints (almacenes catalog).
+	PermInventarioVer Permission = "inventario:ver"
+	// PermTraspasosVer grants reading traspaso records linked to ventas.
+	PermTraspasosVer Permission = "traspasos:ver"
+	// PermStockConsultar grants querying current stock for an articulo/almacen pair.
+	PermStockConsultar Permission = "stock:consultar"
 )
 
 // PermissionMeta is a catalog entry pairing a permission code with the
@@ -105,6 +112,7 @@ const (
 	categoriaVentas        = "ventas"
 	categoriaFailedIntents = "failed_intents"
 	categoriaCobranza      = "cobranza"
+	categoriaInventario    = "inventario"
 )
 
 // AllPermissions returns every permission known to the auth module, sorted
@@ -143,6 +151,10 @@ func AllPermissions() []PermissionMeta {
 		{PermCobranzaVerPagos, "ver pagos materializados (detalle por importe)", categoriaCobranza},
 		{PermCobranzaReconciliar, "disparar reconcile y ver errores del cache de saldos", categoriaCobranza},
 		{PermCobranzaBackfill, "disparar backfill manual del cache de saldos", categoriaCobranza},
+
+		{PermInventarioVer, "ver el catálogo de almacenes y endpoints administrativos de inventario", categoriaInventario},
+		{PermTraspasosVer, "ver traspasos asociados a una venta", categoriaInventario},
+		{PermStockConsultar, "consultar existencia de un artículo en un almacén", categoriaInventario},
 	}
 	sort.Slice(perms, func(i, j int) bool { return perms[i].Code < perms[j].Code })
 	return perms
