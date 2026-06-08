@@ -62,6 +62,33 @@ type Config struct {
 	ImageProcessor ImageProcessor
 	Microsip       Microsip
 	FailedIntent   FailedIntent
+	Inventario     Inventario
+}
+
+// Inventario holds the Microsip configuration knobs used by the inventario
+// module when creating traspasos (DOCTOS_IN) and resolving the destination
+// almacén for aplicada ventas.
+//
+// Defaults mirror the legacy Node API (sys_msp_backend) so production
+// behavior is identical when the Go module replaces it. Changing any of
+// these requires a coordinated cutover — see docs/ops/inventario-cutover.md.
+type Inventario struct {
+	// AlmacenDestinoVentasID is the Microsip ALMACEN_ID where stock is held
+	// once a venta has been created but not yet aplicada. The crear_venta
+	// flow transfers the inventory here from each producto's origin almacén
+	// (reservation effect); aplicar_venta then writes DOCTOS_PV_DET rows
+	// pointing at this almacén so Microsip discharges from the reserved
+	// pool. Legacy default: 11058 ("almacén de ventas en tránsito").
+	AlmacenDestinoVentasID int `env:"INVENTARIO_ALMACEN_DESTINO_VENTAS_ID" envDefault:"11058"`
+	// ConceptoInSalidaID is the Microsip CONCEPTO_IN_ID for the outbound
+	// (salida) leg of an automatic traspaso. Legacy default: 36.
+	ConceptoInSalidaID int `env:"INVENTARIO_CONCEPTO_IN_SALIDA_ID" envDefault:"36"`
+	// ConceptoInEntradaID is the Microsip CONCEPTO_IN_ID for the inbound
+	// (entrada) leg of an automatic traspaso. Legacy default: 25.
+	ConceptoInEntradaID int `env:"INVENTARIO_CONCEPTO_IN_ENTRADA_ID" envDefault:"25"`
+	// SucursalID is the Microsip SUCURSAL_ID stamped on every DOCTOS_IN
+	// header created by the module. Legacy default: 225490.
+	SucursalID int `env:"INVENTARIO_SUCURSAL_ID" envDefault:"225490"`
 }
 
 // FailedIntent holds blob-store knobs for the failedintent capture pipeline.
