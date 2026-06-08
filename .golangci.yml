@@ -236,6 +236,12 @@ linters:
           alias: microsipapp
         - pkg: github.com/abdimuy/msp-api/internal/microsip/ports/outbound
           alias: microsipoutbound
+        - pkg: github.com/abdimuy/msp-api/internal/inventario/app
+          alias: inventarioapp
+        - pkg: github.com/abdimuy/msp-api/internal/inventario/domain
+          alias: inventariodomain
+        - pkg: github.com/abdimuy/msp-api/internal/inventario/ports/outbound
+          alias: inventariooutbound
         - pkg: github.com/go-playground/validator/v10
           alias: pv
         - pkg: firebase.google.com/go/v4
