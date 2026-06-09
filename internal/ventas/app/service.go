@@ -51,6 +51,11 @@ type Service struct {
 	// empty — actor labels are best-effort and their absence must not break
 	// the timeline.
 	usuarioResolver outbound.UsuarioNombreResolver
+	// almacenResolver is optional. Tests omit it; production wires it via
+	// WithAlmacenResolver. When nil, EventosDeVenta leaves traspaso events'
+	// almacén names unresolved — the route labels are best-effort and their
+	// absence must not break the timeline.
+	almacenResolver outbound.AlmacenNombreResolver
 }
 
 // WithInventario attaches an InventarioService so CrearVenta validates stock
@@ -74,6 +79,14 @@ func (s *Service) WithEventReader(r outbound.VentaEventReader) *Service {
 // wiring at the composition root.
 func (s *Service) WithUsuarioResolver(r outbound.UsuarioNombreResolver) *Service {
 	s.usuarioResolver = r
+	return s
+}
+
+// WithAlmacenResolver attaches an AlmacenNombreResolver so EventosDeVenta can
+// resolve traspaso events' almacén ids to names (origen → destino route).
+// Returns s for fluent wiring at the composition root.
+func (s *Service) WithAlmacenResolver(r outbound.AlmacenNombreResolver) *Service {
+	s.almacenResolver = r
 	return s
 }
 
@@ -127,6 +140,23 @@ func NewService(
 		microsipWriter:  microsipWriter,
 		microsipCliente: microsipCliente,
 	}
+}
+
+// NombresDeUsuarios resolves usuario display names for the given ids,
+// best-effort. A nil resolver, an empty input, or a lookup error all yield an
+// empty map rather than failing — these names decorate the venta-detail audit
+// panel (created_by / updated_by / aprobada_by) and their absence must not
+// break the read. Ids without a matching MSP_USUARIOS row are simply absent
+// from the returned map.
+func (s *Service) NombresDeUsuarios(ctx context.Context, ids []uuid.UUID) map[uuid.UUID]string {
+	if s.usuarioResolver == nil || len(ids) == 0 {
+		return map[uuid.UUID]string{}
+	}
+	nombres, err := s.usuarioResolver.NombresPorID(ctx, ids)
+	if err != nil {
+		return map[uuid.UUID]string{}
+	}
+	return nombres
 }
 
 // validateClienteID consults the configured checker to ensure clienteID

@@ -51,6 +51,27 @@ func (f *fakeUsuarioResolver) NombresPorID(_ context.Context, ids []uuid.UUID) (
 	return out, nil
 }
 
+// fakeAlmacenResolver maps a fixed set of almacén ids to names.
+type fakeAlmacenResolver struct {
+	nombres map[int]string
+	err     error
+	calls   int
+}
+
+func (f *fakeAlmacenResolver) NombresPorID(_ context.Context, ids []int) (map[int]string, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	out := make(map[int]string, len(ids))
+	for _, id := range ids {
+		if n, ok := f.nombres[id]; ok {
+			out[id] = n
+		}
+	}
+	return out, nil
+}
+
 func eventoConPayload(eventType, payload string, at time.Time) outbound.VentaEvento {
 	return outbound.VentaEvento{
 		ID:         uuid.New(),
@@ -176,5 +197,118 @@ func TestEventosDeVenta(t *testing.T) {
 
 		_, err := h.svc.EventosDeVenta(t.Context(), *ventaID)
 		require.ErrorIs(t, err, boom)
+	})
+
+	t.Run("canceled_by_resolves_actor", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		ventaID := h.seedVenta(t)
+
+		cancelador := uuid.New()
+		reader := &fakeEventReader{eventos: []outbound.VentaEvento{
+			eventoConPayload(
+				"venta.cancelada",
+				`{"canceled_by":"`+cancelador.String()+`","reason":"duplicada"}`,
+				time.Now().UTC(),
+			),
+		}}
+		resolver := &fakeUsuarioResolver{nombres: map[uuid.UUID]string{
+			cancelador: "Dani Cancelador",
+		}}
+		h.svc.WithEventReader(reader).WithUsuarioResolver(resolver)
+
+		eventos, err := h.svc.EventosDeVenta(t.Context(), *ventaID)
+		require.NoError(t, err)
+		require.Len(t, eventos, 1)
+		require.NotNil(t, eventos[0].ActorID)
+		assert.Equal(t, cancelador, *eventos[0].ActorID)
+		assert.Equal(t, "Dani Cancelador", eventos[0].ActorNombre)
+	})
+
+	t.Run("traspaso_event_injects_almacen_nombres", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		ventaID := h.seedVenta(t)
+
+		reader := &fakeEventReader{eventos: []outbound.VentaEvento{
+			eventoConPayload(
+				"traspaso.creado",
+				`{"folio":"MST000123","almacen_origen":7,"almacen_destino":1,"detalles_count":3,"tipo_reverso":false}`,
+				time.Now().UTC(),
+			),
+		}}
+		almacenes := &fakeAlmacenResolver{nombres: map[int]string{
+			7: "CAMIONETA NISSAN 2000 - JUEVES",
+			1: "TIENDA DE EXHIBICION",
+		}}
+		h.svc.WithEventReader(reader).WithAlmacenResolver(almacenes)
+
+		eventos, err := h.svc.EventosDeVenta(t.Context(), *ventaID)
+		require.NoError(t, err)
+		require.Len(t, eventos, 1)
+		assert.Equal(t, 1, almacenes.calls)
+
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal(eventos[0].Payload, &payload))
+		assert.Equal(t, "CAMIONETA NISSAN 2000 - JUEVES", payload["almacen_origen_nombre"])
+		assert.Equal(t, "TIENDA DE EXHIBICION", payload["almacen_destino_nombre"])
+		// Original fields survive the re-marshal.
+		assert.Equal(t, "MST000123", payload["folio"])
+		assert.EqualValues(t, 3, payload["detalles_count"])
+	})
+
+	t.Run("traspaso_enrichment_skips_non_traspaso_events", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		ventaID := h.seedVenta(t)
+
+		reader := &fakeEventReader{eventos: []outbound.VentaEvento{
+			eventoConPayload("venta.creada", `{"created_by":"`+uuid.New().String()+`"}`, time.Now().UTC()),
+		}}
+		almacenes := &fakeAlmacenResolver{nombres: map[int]string{1: "TIENDA"}}
+		h.svc.WithEventReader(reader).WithAlmacenResolver(almacenes)
+
+		eventos, err := h.svc.EventosDeVenta(t.Context(), *ventaID)
+		require.NoError(t, err)
+		require.Len(t, eventos, 1)
+		// No traspaso event → resolver never consulted, payload untouched.
+		assert.Equal(t, 0, almacenes.calls)
+		assert.NotContains(t, string(eventos[0].Payload), "almacen")
+	})
+
+	t.Run("nil_almacen_resolver_leaves_traspaso_payload_intact", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		ventaID := h.seedVenta(t)
+
+		raw := `{"folio":"MST000123","almacen_origen":7,"almacen_destino":1}`
+		reader := &fakeEventReader{eventos: []outbound.VentaEvento{
+			eventoConPayload("traspaso.creado", raw, time.Now().UTC()),
+		}}
+		// No almacén resolver wired.
+		h.svc.WithEventReader(reader)
+
+		eventos, err := h.svc.EventosDeVenta(t.Context(), *ventaID)
+		require.NoError(t, err)
+		require.Len(t, eventos, 1)
+		assert.JSONEq(t, raw, string(eventos[0].Payload))
+	})
+
+	t.Run("almacen_resolver_error_degrades_without_breaking", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		ventaID := h.seedVenta(t)
+
+		raw := `{"folio":"MST000123","almacen_origen":7,"almacen_destino":1}`
+		reader := &fakeEventReader{eventos: []outbound.VentaEvento{
+			eventoConPayload("traspaso.creado", raw, time.Now().UTC()),
+		}}
+		almacenes := &fakeAlmacenResolver{err: errors.New("almacenes down")}
+		h.svc.WithEventReader(reader).WithAlmacenResolver(almacenes)
+
+		eventos, err := h.svc.EventosDeVenta(t.Context(), *ventaID)
+		require.NoError(t, err)
+		require.Len(t, eventos, 1)
+		assert.JSONEq(t, raw, string(eventos[0].Payload))
 	})
 }

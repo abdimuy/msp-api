@@ -88,6 +88,50 @@ func TestReadByAggregateID_OnlyReturnsMatchingAggregate(t *testing.T) {
 	})
 }
 
+func TestReadByAggregateAndPayloadContaining_MatchesByPayload(t *testing.T) {
+	requireFBEnv(t)
+	t.Parallel()
+
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	requireOutboxTable(t, pool)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		ventaID := uuid.New()
+		base := time.Date(2026, 6, 9, 3, 0, 0, 0, time.UTC)
+
+		// A traspaso event for our venta (linked only via payload), a traspaso
+		// for a different venta, and a non-traspaso event — only the first must
+		// match.
+		mine := `{"folio":"MST1","almacen_origen":7,"venta_id":"` + ventaID.String() + `"}`
+		insertEventFull(ctx, t, pool, "traspaso", uuid.New(), "traspaso.creado", mine, base)
+		other := `{"folio":"MST2","venta_id":"` + uuid.New().String() + `"}`
+		insertEventFull(ctx, t, pool, "traspaso", uuid.New(), "traspaso.creado", other, base)
+		insertEventFull(ctx, t, pool, "venta", ventaID, "venta.creada", `{}`, base)
+
+		needle := `"venta_id":"` + ventaID.String() + `"`
+		events, err := outboxfb.ReadByAggregateAndPayloadContaining(ctx, pool.DB, "traspaso", needle)
+		require.NoError(t, err)
+		require.Len(t, events, 1)
+		assert.Equal(t, "traspaso.creado", events[0].EventType)
+		assert.Equal(t, "traspaso", events[0].Aggregate)
+		assert.JSONEq(t, mine, string(events[0].Payload))
+	})
+}
+
+func TestReadByAggregateAndPayloadContaining_EmptyWhenNoMatch(t *testing.T) {
+	requireFBEnv(t)
+	t.Parallel()
+
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	requireOutboxTable(t, pool)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		events, err := outboxfb.ReadByAggregateAndPayloadContaining(
+			ctx, pool.DB, "traspaso", `"venta_id":"`+uuid.New().String()+`"`,
+		)
+		require.NoError(t, err)
+		assert.Empty(t, events)
+	})
+}
+
 // insertEventAt inserts one outbox row with an explicit CREATED_AT so tests
 // can control ordering. It bypasses outboxfb.Enqueue (which stamps now())
 // precisely because we need deterministic timestamps.
@@ -100,6 +144,21 @@ func insertEventAt(
 	createdAt time.Time,
 ) {
 	t.Helper()
+	insertEventFull(ctx, t, pool, "venta", aggregateID, eventType, payload, createdAt)
+}
+
+// insertEventFull is insertEventAt with an explicit AGGREGATE so tests can
+// seed traspaso-aggregate rows linked to a venta only through their payload.
+func insertEventFull(
+	ctx context.Context,
+	t *testing.T,
+	pool *firebird.Pool,
+	aggregate string,
+	aggregateID uuid.UUID,
+	eventType, payload string,
+	createdAt time.Time,
+) {
+	t.Helper()
 	q := firebird.GetQuerier(ctx, pool.DB)
 	_, err := q.ExecContext(
 		ctx,
@@ -107,7 +166,7 @@ func insertEventAt(
 		   (ID, AGGREGATE, AGGREGATE_ID, EVENT_TYPE, PAYLOAD, CREATED_AT, ATTEMPTS)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		uuid.New().String(),
-		"venta",
+		aggregate,
 		aggregateID.String(),
 		eventType,
 		json.RawMessage(payload),

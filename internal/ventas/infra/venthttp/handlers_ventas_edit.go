@@ -31,7 +31,7 @@ func (h *Handlers) ActualizarHeader(ctx context.Context, in *ActualizarHeaderInp
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	return &ActualizarHeaderOutput{Body: toVentaDTO(v)}, nil
+	return &ActualizarHeaderOutput{Body: toVentaDTO(v, nil)}, nil
 }
 
 // ActualizarCliente handles PATCH /v2/ventas/{id}/cliente.
@@ -57,7 +57,7 @@ func (h *Handlers) ActualizarCliente(ctx context.Context, in *ActualizarClienteI
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	return &ActualizarClienteOutput{Body: toVentaDTO(v)}, nil
+	return &ActualizarClienteOutput{Body: toVentaDTO(v, nil)}, nil
 }
 
 // ReemplazarProductos handles PUT /v2/ventas/{id}/productos.
@@ -83,7 +83,7 @@ func (h *Handlers) ReemplazarProductos(ctx context.Context, in *ReemplazarProduc
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	return &ReemplazarProductosOutput{Body: toVentaDTO(v)}, nil
+	return &ReemplazarProductosOutput{Body: toVentaDTO(v, nil)}, nil
 }
 
 // ReemplazarCombos handles PUT /v2/ventas/{id}/combos.
@@ -109,7 +109,7 @@ func (h *Handlers) ReemplazarCombos(ctx context.Context, in *ReemplazarCombosInp
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	return &ReemplazarCombosOutput{Body: toVentaDTO(v)}, nil
+	return &ReemplazarCombosOutput{Body: toVentaDTO(v, nil)}, nil
 }
 
 // ReemplazarVendedores handles PUT /v2/ventas/{id}/vendedores.
@@ -135,7 +135,7 @@ func (h *Handlers) ReemplazarVendedores(ctx context.Context, in *ReemplazarVende
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	return &ReemplazarVendedoresOutput{Body: toVentaDTO(v)}, nil
+	return &ReemplazarVendedoresOutput{Body: toVentaDTO(v, nil)}, nil
 }
 
 // actualizarHeaderBodyToAppInput translates the JSON body for the header

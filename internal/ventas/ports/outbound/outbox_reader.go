@@ -50,3 +50,13 @@ type VentaEventReader interface {
 type UsuarioNombreResolver interface {
 	NombresPorID(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error)
 }
+
+// AlmacenNombreResolver maps Microsip almacén ids to their display names. Used
+// by the venta query service to surface WHERE a traspaso moved stock (origen →
+// destino) on the event timeline, turning opaque ALMACEN_IDs into the camioneta
+// / tienda names operators recognize. ALMACENES is a Microsip table readable
+// from any fb adapter, so this needs no cross-module dependency. Ids with no
+// matching row are simply absent from the returned map.
+type AlmacenNombreResolver interface {
+	NombresPorID(ctx context.Context, ids []int) (map[int]string, error)
+}

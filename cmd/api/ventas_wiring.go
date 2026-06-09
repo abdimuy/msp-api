@@ -64,6 +64,14 @@ func provideVentasUsuarioResolver(p *firebird.Pool) ventasoutbound.UsuarioNombre
 	return ventfb.NewUsuarioNombreRepo(p)
 }
 
+// provideVentasAlmacenResolver builds the almacén name resolver used to label
+// traspaso timeline events with the stock route (origen → destino) instead of
+// opaque ALMACEN_IDs. ALMACENES is a Microsip table readable from the ventas
+// fb adapter, so this needs no cross-module dependency.
+func provideVentasAlmacenResolver(p *firebird.Pool) ventasoutbound.AlmacenNombreResolver {
+	return ventfb.NewAlmacenNombreRepo(p)
+}
+
 // provideVentasImageProcessor selects the image-processing implementation
 // for the ventas module. When IMAGEPROCESSOR_ENABLED=false the factory
 // returns the NoOp passthrough so uploads land verbatim on disk.
@@ -112,9 +120,11 @@ func provideVentasService(
 	inv ventasoutbound.InventarioService,
 	eventReader ventasoutbound.VentaEventReader,
 	usuarioResolver ventasoutbound.UsuarioNombreResolver,
+	almacenResolver ventasoutbound.AlmacenNombreResolver,
 ) *ventasapp.Service {
 	return ventasapp.NewService(repo, clientes, usuarios, store, clock, outbox, imageProc, fbTxMgr, aplicarCfg, microsipWriter, microsipCliente).
 		WithInventario(inv).
 		WithEventReader(eventReader).
-		WithUsuarioResolver(usuarioResolver)
+		WithUsuarioResolver(usuarioResolver).
+		WithAlmacenResolver(almacenResolver)
 }

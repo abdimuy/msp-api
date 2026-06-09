@@ -113,15 +113,17 @@ type ImagenDTO struct {
 
 // CancelacionDTO mirrors the cancellation record on a venta.
 type CancelacionDTO struct {
-	At     string `json:"at"`
-	By     string `json:"by" format:"uuid"`
-	Reason string `json:"reason"`
+	At       string `json:"at"`
+	By       string `json:"by" format:"uuid"`
+	ByNombre string `json:"by_nombre,omitempty" doc:"Nombre del usuario que canceló; ausente cuando no se pudo resolver"`
+	Reason   string `json:"reason"`
 }
 
 // AprobacionDTO mirrors the optional approval record on a venta.
 type AprobacionDTO struct {
-	At string `json:"at"`
-	By string `json:"by" format:"uuid"`
+	At       string `json:"at"`
+	By       string `json:"by" format:"uuid"`
+	ByNombre string `json:"by_nombre,omitempty" doc:"Nombre del usuario que aprobó; ausente cuando no se pudo resolver"`
 }
 
 // VentaDTO is the full projection of a domain.Venta.
@@ -151,7 +153,9 @@ type VentaDTO struct {
 	CreatedAt          string             `json:"created_at"`
 	UpdatedAt          string             `json:"updated_at"`
 	CreatedBy          string             `json:"created_by"            format:"uuid"`
+	CreatedByNombre    string             `json:"created_by_nombre,omitempty" doc:"Nombre del usuario que creó la venta; ausente cuando no se pudo resolver"`
 	UpdatedBy          string             `json:"updated_by"            format:"uuid"`
+	UpdatedByNombre    string             `json:"updated_by_nombre,omitempty" doc:"Nombre del usuario que actualizó la venta por última vez; ausente cuando no se pudo resolver"`
 }
 
 // ─── Request bodies ─────────────────────────────────────────────────────────

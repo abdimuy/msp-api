@@ -82,7 +82,7 @@ func (h *Handlers) CrearVenta(ctx context.Context, in *CrearVentaInput) (*CrearV
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	return &CrearVentaOutput{Body: toVentaDTO(v)}, nil
+	return &CrearVentaOutput{Body: toVentaDTO(v, nil)}, nil
 }
 
 // decodeCrearVentaDatos validates that `datos` was supplied and parses it
@@ -121,7 +121,11 @@ func (h *Handlers) ObtenerVenta(ctx context.Context, in *ObtenerVentaInput) (*Ob
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	return &ObtenerVentaOutput{Body: toVentaDTO(v)}, nil
+	// Resolve the audit actors (created_by / updated_by / aprobada_by /
+	// cancelada_by) to display names so the detail panel shows people, not
+	// UUIDs. Best-effort: an unresolved id leaves its *_nombre field empty.
+	nombres := h.svc.NombresDeUsuarios(ctx, ventaActorIDs(v))
+	return &ObtenerVentaOutput{Body: toVentaDTO(v, nombres)}, nil
 }
 
 // ObtenerEventosVenta is the handler for GET /v2/ventas/{id}/eventos. It
@@ -179,7 +183,7 @@ func (h *Handlers) CancelarVenta(ctx context.Context, in *CancelarVentaInput) (*
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	return &CancelarVentaOutput{Body: toVentaDTO(v)}, nil
+	return &CancelarVentaOutput{Body: toVentaDTO(v, nil)}, nil
 }
 
 // ListarVentas is the handler for GET /v2/ventas.
@@ -204,7 +208,7 @@ func (h *Handlers) ListarVentas(ctx context.Context, in *ListarVentasInput) (*Li
 	}
 	items := make([]VentaDTO, 0, len(page.Items))
 	for _, v := range page.Items {
-		items = append(items, toVentaDTO(v))
+		items = append(items, toVentaDTO(v, nil))
 	}
 	return &ListarVentasOutput{Body: ListResponse[VentaDTO]{Items: items, NextCursor: page.NextCursor}}, nil
 }
@@ -536,7 +540,7 @@ func (h *Handlers) RevisarVenta(ctx context.Context, in *RevisarVentaInput) (*Re
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	return &RevisarVentaOutput{Body: toVentaDTO(v)}, nil
+	return &RevisarVentaOutput{Body: toVentaDTO(v, nil)}, nil
 }
 
 // AprobarVenta is the handler for POST /v2/ventas/{id}/aprobar.
@@ -556,7 +560,7 @@ func (h *Handlers) AprobarVenta(ctx context.Context, in *AprobarVentaInput) (*Ap
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	return &AprobarVentaOutput{Body: toVentaDTO(v)}, nil
+	return &AprobarVentaOutput{Body: toVentaDTO(v, nil)}, nil
 }
 
 // RegresarBorradorVenta is the handler for POST /v2/ventas/{id}/regresar-borrador.
@@ -576,7 +580,7 @@ func (h *Handlers) RegresarBorradorVenta(ctx context.Context, in *RegresarBorrad
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	return &RegresarBorradorVentaOutput{Body: toVentaDTO(v)}, nil
+	return &RegresarBorradorVentaOutput{Body: toVentaDTO(v, nil)}, nil
 }
 
 // AplicarVenta is the handler for POST /v2/ventas/{id}/aplicar.
@@ -596,7 +600,7 @@ func (h *Handlers) AplicarVenta(ctx context.Context, in *AplicarVentaInput) (*Ap
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	return &AplicarVentaOutput{Body: toVentaDTO(v)}, nil
+	return &AplicarVentaOutput{Body: toVentaDTO(v, nil)}, nil
 }
 
 // Compile-time assertions: handler signatures match Huma's expected shape.

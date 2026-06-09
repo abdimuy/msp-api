@@ -30,9 +30,7 @@ func ReadByAggregateID(
 	ctx context.Context,
 	q firebird.Querier,
 	aggregateID uuid.UUID,
-) (_ []Event, err error) {
-	querier := firebird.GetQuerier(ctx, q)
-
+) ([]Event, error) {
 	const query = `
 		SELECT ID, AGGREGATE, AGGREGATE_ID, EVENT_TYPE, PAYLOAD,
 		       CREATED_AT, PROCESSED_AT, FAILED_AT, LAST_ERROR, ATTEMPTS
@@ -40,9 +38,56 @@ func ReadByAggregateID(
 		 WHERE AGGREGATE_ID = ?
 		 ORDER BY CREATED_AT ASC`
 
-	rows, err := querier.QueryContext(ctx, query, aggregateID.String())
+	events, err := queryEvents(ctx, q, query, aggregateID.String())
 	if err != nil {
-		return nil, fmt.Errorf("outboxfb: read by aggregate %s: %w", aggregateID, firebird.MapError(err))
+		return nil, fmt.Errorf("outboxfb: read by aggregate %s: %w", aggregateID, err)
+	}
+	return events, nil
+}
+
+// ReadByAggregateAndPayloadContaining returns events for the given AGGREGATE
+// whose PAYLOAD contains needle, oldest first. It complements
+// ReadByAggregateID for the case where an entity's timeline must also include
+// events emitted by a *different* aggregate that merely reference the entity
+// inside their JSON payload — e.g. a traspaso event (AGGREGATE='traspaso')
+// carrying the venta_id it was created for. The match uses Firebird's
+// CONTAINING (case-insensitive substring), so callers should pass a
+// discriminating fragment such as `"venta_id":"<uuid>"` to avoid accidental
+// hits. Returns an empty slice (not an error) when nothing matches.
+func ReadByAggregateAndPayloadContaining(
+	ctx context.Context,
+	q firebird.Querier,
+	aggregate, needle string,
+) ([]Event, error) {
+	const query = `
+		SELECT ID, AGGREGATE, AGGREGATE_ID, EVENT_TYPE, PAYLOAD,
+		       CREATED_AT, PROCESSED_AT, FAILED_AT, LAST_ERROR, ATTEMPTS
+		  FROM MSP_OUTBOX_EVENTS
+		 WHERE AGGREGATE = ?
+		   AND PAYLOAD CONTAINING ?
+		 ORDER BY CREATED_AT ASC`
+
+	events, err := queryEvents(ctx, q, query, aggregate, needle)
+	if err != nil {
+		return nil, fmt.Errorf("outboxfb: read aggregate %q by payload: %w", aggregate, err)
+	}
+	return events, nil
+}
+
+// queryEvents runs an outbox SELECT (the canonical column projection above)
+// and decodes every row into an Event. It prefers the ambient tx querier so
+// reads join an open transaction when one exists.
+func queryEvents(
+	ctx context.Context,
+	q firebird.Querier,
+	query string,
+	args ...any,
+) (_ []Event, err error) {
+	querier := firebird.GetQuerier(ctx, q)
+
+	rows, err := querier.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, firebird.MapError(err)
 	}
 	defer func() {
 		if closeErr := rows.Close(); closeErr != nil && err == nil {

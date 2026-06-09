@@ -4,6 +4,8 @@ package venthttp
 import (
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/abdimuy/msp-api/internal/ventas/domain"
 )
 
@@ -21,7 +23,12 @@ const cantidadScale int32 = 4
 // toVentaDTO projects a domain.Venta into its JSON DTO. Decimal values use
 // StringFixed so the response carries a stable, scale-correct representation
 // every time — clients parsing "1234.56" never see the value drift to "1234".
-func toVentaDTO(v *domain.Venta) VentaDTO {
+//
+// nombres maps usuario ids to display names for the audit fields (created_by /
+// updated_by / aprobacion.by / cancelacion.by). It may be nil — callers that
+// do not resolve names (edits, creación) pass nil and the *_nombre fields stay
+// empty, so the JSON encoder omits them.
+func toVentaDTO(v *domain.Venta, nombres map[uuid.UUID]string) VentaDTO {
 	a := v.Audit()
 	dto := VentaDTO{
 		ID:                 v.ID().String(),
@@ -44,14 +51,32 @@ func toVentaDTO(v *domain.Venta) VentaDTO {
 		Productos:          toProductosDTO(v),
 		Vendedores:         toVendedoresDTO(v),
 		Imagenes:           toImagenesDTO(v),
-		Cancelacion:        toCancelacionDTO(v.Cancelacion()),
-		Aprobacion:         toAprobacionDTO(v.Aprobacion()),
+		Cancelacion:        toCancelacionDTO(v.Cancelacion(), nombres),
+		Aprobacion:         toAprobacionDTO(v.Aprobacion(), nombres),
 		CreatedAt:          formatTime(a.CreatedAt()),
 		UpdatedAt:          formatTime(a.UpdatedAt()),
 		CreatedBy:          a.CreatedBy().String(),
+		CreatedByNombre:    nombres[a.CreatedBy()],
 		UpdatedBy:          a.UpdatedBy().String(),
+		UpdatedByNombre:    nombres[a.UpdatedBy()],
 	}
 	return dto
+}
+
+// ventaActorIDs collects the distinct usuario ids referenced by the venta's
+// audit fields (created_by, updated_by) plus the optional aprobación and
+// cancelación records, so the handler can resolve them all in a single batch
+// before projecting the DTO.
+func ventaActorIDs(v *domain.Venta) []uuid.UUID {
+	a := v.Audit()
+	ids := []uuid.UUID{a.CreatedBy(), a.UpdatedBy()}
+	if ap := v.Aprobacion(); ap != nil {
+		ids = append(ids, ap.By())
+	}
+	if c := v.Cancelacion(); c != nil {
+		ids = append(ids, c.By())
+	}
+	return ids
 }
 
 // toClienteSnapshotDTO projects the embedded cliente snapshot together with
@@ -230,26 +255,30 @@ func toImagenDTO(i *domain.Imagen) ImagenDTO {
 	}
 }
 
-// toCancelacionDTO projects the optional cancellation record.
-func toCancelacionDTO(c *domain.Cancelacion) *CancelacionDTO {
+// toCancelacionDTO projects the optional cancellation record. nombres may be
+// nil; a missing key leaves ByNombre empty so the JSON encoder omits it.
+func toCancelacionDTO(c *domain.Cancelacion, nombres map[uuid.UUID]string) *CancelacionDTO {
 	if c == nil {
 		return nil
 	}
 	return &CancelacionDTO{
-		At:     formatTime(c.At()),
-		By:     c.By().String(),
-		Reason: c.Reason(),
+		At:       formatTime(c.At()),
+		By:       c.By().String(),
+		ByNombre: nombres[c.By()],
+		Reason:   c.Reason(),
 	}
 }
 
-// toAprobacionDTO projects the optional approval record.
-func toAprobacionDTO(a *domain.Aprobacion) *AprobacionDTO {
+// toAprobacionDTO projects the optional approval record. nombres may be nil;
+// a missing key leaves ByNombre empty so the JSON encoder omits it.
+func toAprobacionDTO(a *domain.Aprobacion, nombres map[uuid.UUID]string) *AprobacionDTO {
 	if a == nil {
 		return nil
 	}
 	return &AprobacionDTO{
-		At: formatTime(a.At()),
-		By: a.By().String(),
+		At:       formatTime(a.At()),
+		By:       a.By().String(),
+		ByNombre: nombres[a.By()],
 	}
 }
 

@@ -234,6 +234,9 @@ func fullPerms(id uuid.UUID) auth.CurrentUser {
 			string(authdomain.PermVentasEditar),
 			string(authdomain.PermVentasSubirImagenes),
 			string(authdomain.PermVentasEliminarImagenes),
+			string(authdomain.PermVentasRevisar),
+			string(authdomain.PermVentasAprobar),
+			string(authdomain.PermVentasAplicar),
 		},
 	}
 }
@@ -605,6 +608,82 @@ func TestObtenerVenta_AfterCancel_PreservesAudit(t *testing.T) {
 	assert.Equal(t, "audit-roundtrip", got.Cancelacion.Reason)
 	assert.NotEmpty(t, got.Cancelacion.At)
 	assert.NotEmpty(t, got.Cancelacion.By)
+}
+
+// fakeNombreResolver maps usuario ids to display names for the audit-panel
+// resolution exercised by GET /ventas/{id}.
+type fakeNombreResolver struct{ nombres map[uuid.UUID]string }
+
+func (f fakeNombreResolver) NombresPorID(_ context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error) {
+	out := make(map[uuid.UUID]string, len(ids))
+	for _, id := range ids {
+		if n, ok := f.nombres[id]; ok {
+			out[id] = n
+		}
+	}
+	return out, nil
+}
+
+// TestObtenerVenta_ResolvesAuditActorNombres verifies GET resolves the audit
+// actors (created_by / updated_by) to display names so the detail panel shows
+// people, not raw UUIDs. The created venta's created_by and updated_by are the
+// creating user, so both *_nombre fields carry that user's name.
+func TestObtenerVenta_ResolvesAuditActorNombres(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _ := testService()
+	creador := uuid.New()
+	cu := fullPerms(creador)
+	svc.WithUsuarioResolver(fakeNombreResolver{nombres: map[uuid.UUID]string{
+		creador: "Ana Vendedora",
+	}})
+	r := buildRouter(t, svc, cu)
+
+	body := validCreateBody()
+	createReq := crearVentaMultipartRequest(t, body)
+	createRec := httptest.NewRecorder()
+	r.ServeHTTP(createRec, createReq)
+	require.Equal(t, http.StatusCreated, createRec.Code, createRec.Body.String())
+
+	getReq := httptest.NewRequest(http.MethodGet, "/ventas/"+body.ID, nil)
+	getRec := httptest.NewRecorder()
+	r.ServeHTTP(getRec, getReq)
+	require.Equal(t, http.StatusOK, getRec.Code, getRec.Body.String())
+
+	var got venthttp.VentaDTO
+	require.NoError(t, json.Unmarshal(getRec.Body.Bytes(), &got))
+	assert.Equal(t, creador.String(), got.CreatedBy)
+	assert.Equal(t, "Ana Vendedora", got.CreatedByNombre)
+	assert.Equal(t, "Ana Vendedora", got.UpdatedByNombre)
+}
+
+// TestObtenerVenta_OmitsActorNombresWithoutResolver verifies the *_nombre
+// fields stay absent (omitempty) when no resolver is wired — the panel falls
+// back to the raw UUIDs rather than breaking.
+func TestObtenerVenta_OmitsActorNombresWithoutResolver(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _ := testService()
+	cu := fullPerms(uuid.New())
+	r := buildRouter(t, svc, cu)
+
+	body := validCreateBody()
+	createReq := crearVentaMultipartRequest(t, body)
+	createRec := httptest.NewRecorder()
+	r.ServeHTTP(createRec, createReq)
+	require.Equal(t, http.StatusCreated, createRec.Code, createRec.Body.String())
+
+	getReq := httptest.NewRequest(http.MethodGet, "/ventas/"+body.ID, nil)
+	getRec := httptest.NewRecorder()
+	r.ServeHTTP(getRec, getReq)
+	require.Equal(t, http.StatusOK, getRec.Code, getRec.Body.String())
+
+	assert.NotContains(t, getRec.Body.String(), "created_by_nombre")
+
+	var got venthttp.VentaDTO
+	require.NoError(t, json.Unmarshal(getRec.Body.Bytes(), &got))
+	assert.Empty(t, got.CreatedByNombre)
+	assert.NotEmpty(t, got.CreatedBy)
 }
 
 // TestCrearVenta_WithCombo_RoundTrip verifies the combo + producto-with-combo
@@ -1039,4 +1118,211 @@ func TestOpenAPI_PathsRegistered(t *testing.T) {
 	} {
 		assert.Contains(t, doc, want, "expected openapi to contain %q", want)
 	}
+}
+
+// ─── RegresarBorradorVenta ─────────────────────────────────────────────────
+//
+// These tests pin the HTTP surface of the extended transition
+// (revisada OR aprobada → borrador, NEVER aplicada → borrador). The "aplicada"
+// rejection is the dollar-stakes one: a successful regress on an aplicada venta
+// would orphan the DOCTOS_PV row in Microsip.
+
+// seedRegresable drives a venta from create → revisar (→ aprobar). Used by the
+// regresar-borrador handler tests to set up the prereq situación through the
+// real HTTP surface.
+func seedRegresable(t *testing.T, r http.Handler, untilAprobada bool) string {
+	t.Helper()
+	body := validCreateBody()
+	createReq := crearVentaMultipartRequest(t, body)
+	createRec := httptest.NewRecorder()
+	r.ServeHTTP(createRec, createReq)
+	require.Equal(t, http.StatusCreated, createRec.Code, createRec.Body.String())
+
+	revisarReq := jsonRequest(t, http.MethodPost, "/ventas/"+body.ID+"/revisar", struct{}{})
+	revisarRec := httptest.NewRecorder()
+	r.ServeHTTP(revisarRec, revisarReq)
+	require.Equal(t, http.StatusOK, revisarRec.Code, revisarRec.Body.String())
+
+	if untilAprobada {
+		aprobarReq := jsonRequest(t, http.MethodPost, "/ventas/"+body.ID+"/aprobar", struct{}{})
+		aprobarRec := httptest.NewRecorder()
+		r.ServeHTTP(aprobarRec, aprobarReq)
+		require.Equal(t, http.StatusOK, aprobarRec.Code, aprobarRec.Body.String())
+	}
+	return body.ID
+}
+
+// TestRegresarBorradorVenta_FromAprobada_OK is the new happy path: an aprobada
+// venta can regress to borrador and the response surfaces situacion=borrador
+// with a cleared aprobacion (rendered as JSON null).
+func TestRegresarBorradorVenta_FromAprobada_OK(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _ := testService()
+	cu := fullPerms(uuid.New())
+	r := buildRouter(t, svc, cu)
+
+	ventaID := seedRegresable(t, r, true)
+
+	req := jsonRequest(t, http.MethodPost, "/ventas/"+ventaID+"/regresar-borrador", struct{}{})
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"situacion":"borrador"`)
+	// The DTO marks Aprobacion as omitempty, so a cleared aprobacion is absent
+	// from the response (NOT rendered as "aprobacion":null).
+	assert.NotContains(t, rec.Body.String(), `"aprobacion"`)
+}
+
+// TestRegresarBorradorVenta_FromRevisada_OK is the regression coverage for the
+// original (pre-extension) path.
+func TestRegresarBorradorVenta_FromRevisada_OK(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _ := testService()
+	cu := fullPerms(uuid.New())
+	r := buildRouter(t, svc, cu)
+
+	ventaID := seedRegresable(t, r, false)
+
+	req := jsonRequest(t, http.MethodPost, "/ventas/"+ventaID+"/regresar-borrador", struct{}{})
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"situacion":"borrador"`)
+}
+
+// TestRegresarBorradorVenta_FromBorrador_Returns409 verifies the handler
+// refuses a regress on a venta still in borrador.
+func TestRegresarBorradorVenta_FromBorrador_Returns409(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _ := testService()
+	cu := fullPerms(uuid.New())
+	r := buildRouter(t, svc, cu)
+
+	body := validCreateBody()
+	createReq := crearVentaMultipartRequest(t, body)
+	createRec := httptest.NewRecorder()
+	r.ServeHTTP(createRec, createReq)
+	require.Equal(t, http.StatusCreated, createRec.Code)
+
+	req := jsonRequest(t, http.MethodPost, "/ventas/"+body.ID+"/regresar-borrador", struct{}{})
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "venta_no_regresable_a_borrador")
+}
+
+// TestRegresarBorradorVenta_FromAprobadaAplicada_Returns409 is the critical
+// guardrail: a venta already materialized in Microsip must never regress. The
+// fakeRepo doesn't expose MarcarAplicada via HTTP (no /aplicar in unit fakes),
+// so we hydrate the venta into the "aplicada" state directly and verify the
+// handler returns 409.
+func TestRegresarBorradorVenta_FromAprobadaAplicada_Returns409(t *testing.T) {
+	t.Parallel()
+
+	svc, repo, _ := testService()
+	cu := fullPerms(uuid.New())
+	r := buildRouter(t, svc, cu)
+
+	body := validCreateBody()
+	createReq := crearVentaMultipartRequest(t, body)
+	createRec := httptest.NewRecorder()
+	r.ServeHTTP(createRec, createReq)
+	require.Equal(t, http.StatusCreated, createRec.Code)
+
+	ventaUUID, err := uuid.Parse(body.ID)
+	require.NoError(t, err)
+
+	// Drive the venta to aprobada through the public surface...
+	revisar := jsonRequest(t, http.MethodPost, "/ventas/"+body.ID+"/revisar", struct{}{})
+	require.Equal(t, http.StatusOK, do(t, r, revisar).Code)
+	aprobar := jsonRequest(t, http.MethodPost, "/ventas/"+body.ID+"/aprobar", struct{}{})
+	require.Equal(t, http.StatusOK, do(t, r, aprobar).Code)
+
+	// ... then forcibly mark it aplicada via the domain (the fake repo handler
+	// stack does not wire the AplicarVenta machinery).
+	repo.mu.Lock()
+	v := repo.store[ventaUUID]
+	repo.mu.Unlock()
+	require.NotNil(t, v)
+	require.NoError(t, v.MarcarAplicada(15239197, "Y00099999", time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC), cu.ID))
+
+	req := jsonRequest(t, http.MethodPost, "/ventas/"+body.ID+"/regresar-borrador", struct{}{})
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "venta_no_regresable_a_borrador")
+}
+
+// TestRegresarBorradorVenta_FromCancelada_Returns409 verifies a cancelled
+// venta cannot regress.
+func TestRegresarBorradorVenta_FromCancelada_Returns409(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _ := testService()
+	cu := fullPerms(uuid.New())
+	r := buildRouter(t, svc, cu)
+
+	body := validCreateBody()
+	createReq := crearVentaMultipartRequest(t, body)
+	createRec := httptest.NewRecorder()
+	r.ServeHTTP(createRec, createReq)
+	require.Equal(t, http.StatusCreated, createRec.Code)
+
+	cancelReq := jsonRequest(t, http.MethodPatch, "/ventas/"+body.ID+"/cancel",
+		venthttp.CancelarVentaBody{Reason: "cliente no localizable"})
+	require.Equal(t, http.StatusOK, do(t, r, cancelReq).Code)
+
+	req := jsonRequest(t, http.MethodPost, "/ventas/"+body.ID+"/regresar-borrador", struct{}{})
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "venta_no_regresable_a_borrador")
+}
+
+// TestRegresarBorradorVenta_NotFound_Returns404 verifies the handler returns
+// 404 on a missing venta — not 500 (leaks DB shape) or 409 (wrong semantic).
+func TestRegresarBorradorVenta_NotFound_Returns404(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _ := testService()
+	cu := fullPerms(uuid.New())
+	r := buildRouter(t, svc, cu)
+
+	req := jsonRequest(t, http.MethodPost, "/ventas/"+uuid.NewString()+"/regresar-borrador", struct{}{})
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+}
+
+// TestRegresarBorradorVenta_InvalidUUID_Returns422 verifies Huma's path-param
+// validation rejects a non-UUID id before it reaches the handler.
+func TestRegresarBorradorVenta_InvalidUUID_Returns422(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _ := testService()
+	cu := fullPerms(uuid.New())
+	r := buildRouter(t, svc, cu)
+
+	req := jsonRequest(t, http.MethodPost, "/ventas/not-a-uuid/regresar-borrador", struct{}{})
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+}
+
+// do executes an HTTP request against the router and returns the recorder.
+func do(t *testing.T, r http.Handler, req *http.Request) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	return rec
 }
