@@ -54,7 +54,6 @@ type Config struct {
 	App            App
 	Cobranza       Cobranza
 	HTTP           HTTP
-	Postgres       Postgres
 	Firebird       Firebird
 	Firebase       Firebase
 	Sync           Sync
@@ -204,25 +203,6 @@ type HTTP struct {
 	ShutdownTimeout time.Duration `env:"HTTP_SHUTDOWN_TIMEOUT" envDefault:"30s"`
 	MaxBodySizeMB   int           `env:"HTTP_MAX_BODY_SIZE_MB" envDefault:"10"`
 	CORSOrigins     []string      `env:"CORS_ALLOWED_ORIGINS" envSeparator:"," envDefault:"http://localhost:3000"`
-}
-
-// Postgres holds Postgres connection settings.
-type Postgres struct {
-	Host         string `env:"PG_HOST" envDefault:"localhost"`
-	Port         int    `env:"PG_PORT" envDefault:"5432"`
-	User         string `env:"PG_USER,required"`
-	Password     string `env:"PG_PASSWORD,required"`
-	Database     string `env:"PG_DATABASE,required"`
-	SSLMode      string `env:"PG_SSLMODE" envDefault:"disable"`
-	MaxOpenConns int32  `env:"PG_MAX_OPEN_CONNS" envDefault:"25"`
-	MaxIdleConns int32  `env:"PG_MAX_IDLE_CONNS" envDefault:"5"`
-}
-
-// DSN returns the connection string for pgx.
-func (p Postgres) DSN() string {
-	hostPort := net.JoinHostPort(p.Host, strconv.Itoa(p.Port))
-	return fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=%s",
-		p.User, p.Password, hostPort, p.Database, p.SSLMode)
 }
 
 // Firebird holds Firebird connection settings (Microsip database).

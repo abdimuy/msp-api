@@ -24,7 +24,6 @@ func clearAmbientEnv(t *testing.T) {
 	for _, k := range []string{
 		"APP_ENV", "APP_LOG_LEVEL", "APP_LOG_FORMAT", "APP_PORT",
 		"HTTP_MAX_BODY_SIZE_MB", "HTTP_CORS_ORIGINS",
-		"PG_USER", "PG_PASSWORD", "PG_DATABASE", "PG_HOST", "PG_PORT",
 		"FB_DATABASE", "FB_HOST", "FB_PORT", "FB_USER", "FB_PASSWORD", "FB_CHARSET",
 		"FIREBASE_PROJECT_ID", "FIREBASE_DEV_MODE", "FIREBASE_ALLOW_UNCONFIGURED",
 		"STORAGE_DIR",
@@ -36,9 +35,6 @@ func clearAmbientEnv(t *testing.T) {
 func setMinimal(t *testing.T) {
 	t.Helper()
 	clearAmbientEnv(t)
-	t.Setenv("PG_USER", "msp")
-	t.Setenv("PG_PASSWORD", "msp")
-	t.Setenv("PG_DATABASE", "msp_dev")
 	t.Setenv("FIREBASE_PROJECT_ID", "test-project")
 }
 
@@ -48,7 +44,6 @@ func TestLoad_MinimalEnv_Succeeds(t *testing.T) { //nolint:paralleltest // uses 
 	require.NoError(t, err)
 	assert.Equal(t, config.EnvDevelopment, cfg.App.Env)
 	assert.Equal(t, 3001, cfg.HTTP.Port)
-	assert.Equal(t, "msp", cfg.Postgres.User)
 	assert.Equal(t, "test-project", cfg.Firebase.ProjectID)
 }
 
@@ -112,15 +107,6 @@ func TestEnvironment_IsValid(t *testing.T) {
 			assert.Equal(t, tc.want, tc.env.IsValid())
 		})
 	}
-}
-
-func TestPostgres_DSN(t *testing.T) {
-	t.Parallel()
-	pg := config.Postgres{
-		Host: "db.local", Port: 5432, User: "u", Password: "p",
-		Database: "msp", SSLMode: "require",
-	}
-	assert.Equal(t, "postgres://u:p@db.local:5432/msp?sslmode=require", pg.DSN())
 }
 
 func TestFirebird_DSN(t *testing.T) {
@@ -287,14 +273,4 @@ func TestLoad_ImageProcessor_AcceptsPNGCompressionNoCompression(t *testing.T) { 
 	cfg, err := config.Load()
 	require.NoError(t, err)
 	assert.Equal(t, 0, cfg.ImageProcessor.PNGCompression)
-}
-
-func TestPostgres_DSN_IPv6Host(t *testing.T) {
-	t.Parallel()
-	pg := config.Postgres{
-		Host: "::1", Port: 5432, User: "u", Password: "p",
-		Database: "msp", SSLMode: "disable",
-	}
-	// net.JoinHostPort wraps IPv6 in brackets.
-	assert.Equal(t, "postgres://u:p@[::1]:5432/msp?sslmode=disable", pg.DSN())
 }
