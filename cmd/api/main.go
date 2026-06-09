@@ -93,6 +93,7 @@ func appOptions() []fx.Option {
 			provideVentasClock,
 			provideVentasOutboxEnqueuer,
 			provideVentasEventReader,
+			provideVentasUsuarioResolver,
 			provideVentasImageProcessor,
 			provideVentasAplicarConfig,
 			provideVentasMicrosipWriter,

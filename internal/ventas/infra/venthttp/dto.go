@@ -258,13 +258,20 @@ type ObtenerVentaOutput struct {
 
 // VentaEventoDTO is one entry in the venta event timeline. Payload is the
 // raw event JSON so the frontend can surface event-type-specific fields
-// (actor, folio, …) without the backend hard-coding a shape per event type.
+// (folio, size, …) without the backend hard-coding a shape per event type.
 // OccurredAt is RFC3339 UTC, matching the rest of the venta DTOs.
+//
+// ActorID / ActorNombre identify the usuario who triggered the event,
+// resolved server-side from the payload's *_by field. Both are omitted
+// when the event carries no actor (e.g. venta.imagen_adjuntada) or the
+// usuario could not be resolved.
 type VentaEventoDTO struct {
-	ID         string          `json:"id"          format:"uuid"`
-	EventType  string          `json:"event_type"  example:"venta.aprobada"`
-	Payload    json.RawMessage `json:"payload"`
-	OccurredAt string          `json:"occurred_at" format:"date-time"`
+	ID          string          `json:"id"                     format:"uuid"`
+	EventType   string          `json:"event_type"             example:"venta.aprobada"`
+	Payload     json.RawMessage `json:"payload"`
+	OccurredAt  string          `json:"occurred_at"            format:"date-time"`
+	ActorID     string          `json:"actor_id,omitempty"     format:"uuid"`
+	ActorNombre string          `json:"actor_nombre,omitempty"`
 }
 
 // ObtenerEventosVentaInput carries the venta id path parameter.

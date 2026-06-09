@@ -58,6 +58,12 @@ func provideVentasEventReader(p *firebird.Pool) ventasoutbound.VentaEventReader 
 	return ventfb.NewEventoRepo(p)
 }
 
+// provideVentasUsuarioResolver builds the usuario name resolver used to label
+// each timeline event with the usuario who triggered it.
+func provideVentasUsuarioResolver(p *firebird.Pool) ventasoutbound.UsuarioNombreResolver {
+	return ventfb.NewUsuarioNombreRepo(p)
+}
+
 // provideVentasImageProcessor selects the image-processing implementation
 // for the ventas module. When IMAGEPROCESSOR_ENABLED=false the factory
 // returns the NoOp passthrough so uploads land verbatim on disk.
@@ -105,8 +111,10 @@ func provideVentasService(
 	microsipCliente ventasoutbound.MicrosipClienteWriter,
 	inv ventasoutbound.InventarioService,
 	eventReader ventasoutbound.VentaEventReader,
+	usuarioResolver ventasoutbound.UsuarioNombreResolver,
 ) *ventasapp.Service {
 	return ventasapp.NewService(repo, clientes, usuarios, store, clock, outbox, imageProc, fbTxMgr, aplicarCfg, microsipWriter, microsipCliente).
 		WithInventario(inv).
-		WithEventReader(eventReader)
+		WithEventReader(eventReader).
+		WithUsuarioResolver(usuarioResolver)
 }

@@ -147,12 +147,17 @@ func (h *Handlers) ObtenerEventosVenta(ctx context.Context, in *ObtenerEventosVe
 	out := &ObtenerEventosVentaOutput{}
 	out.Body.Items = make([]VentaEventoDTO, 0, len(eventos))
 	for _, e := range eventos {
-		out.Body.Items = append(out.Body.Items, VentaEventoDTO{
-			ID:         e.ID.String(),
-			EventType:  e.EventType,
-			Payload:    e.Payload,
-			OccurredAt: e.OccurredAt.UTC().Format(time.RFC3339),
-		})
+		dto := VentaEventoDTO{
+			ID:          e.ID.String(),
+			EventType:   e.EventType,
+			Payload:     e.Payload,
+			OccurredAt:  e.OccurredAt.UTC().Format(time.RFC3339),
+			ActorNombre: e.ActorNombre,
+		}
+		if e.ActorID != nil {
+			dto.ActorID = e.ActorID.String()
+		}
+		out.Body.Items = append(out.Body.Items, dto)
 	}
 	return out, nil
 }

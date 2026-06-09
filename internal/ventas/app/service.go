@@ -46,6 +46,11 @@ type Service struct {
 	// WithEventReader. When nil, EventosDeVenta returns an empty timeline
 	// rather than failing — the read is purely informational.
 	eventReader outbound.VentaEventReader
+	// usuarioResolver is optional. Tests omit it; production wires it via
+	// WithUsuarioResolver. When nil, EventosDeVenta leaves event ActorNombre
+	// empty — actor labels are best-effort and their absence must not break
+	// the timeline.
+	usuarioResolver outbound.UsuarioNombreResolver
 }
 
 // WithInventario attaches an InventarioService so CrearVenta validates stock
@@ -61,6 +66,14 @@ func (s *Service) WithInventario(inv outbound.InventarioService) *Service {
 // composition root.
 func (s *Service) WithEventReader(r outbound.VentaEventReader) *Service {
 	s.eventReader = r
+	return s
+}
+
+// WithUsuarioResolver attaches a UsuarioNombreResolver so EventosDeVenta can
+// label each event with the usuario who triggered it. Returns s for fluent
+// wiring at the composition root.
+func (s *Service) WithUsuarioResolver(r outbound.UsuarioNombreResolver) *Service {
+	s.usuarioResolver = r
 	return s
 }
 
