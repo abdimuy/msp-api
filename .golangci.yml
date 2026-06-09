@@ -206,6 +206,8 @@ linters:
           alias: idempotencypg
         - pkg: github.com/abdimuy/msp-api/internal/platform/idempotency/firebird
           alias: idempotencyfb
+        - pkg: github.com/abdimuy/msp-api/internal/platform/failedintent/firebird
+          alias: failedintentfb
         - pkg: github.com/abdimuy/msp-api/internal/platform/failedintent/http
           alias: failedintenthttp
         - pkg: github.com/abdimuy/msp-api/internal/platform/failedintent/postgres
