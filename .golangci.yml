@@ -202,16 +202,12 @@ linters:
           alias: apperror
         - pkg: github.com/abdimuy/msp-api/internal/platform/domain
           alias: platform
-        - pkg: github.com/abdimuy/msp-api/internal/platform/idempotency/postgres
-          alias: idempotencypg
         - pkg: github.com/abdimuy/msp-api/internal/platform/idempotency/firebird
           alias: idempotencyfb
         - pkg: github.com/abdimuy/msp-api/internal/platform/failedintent/firebird
           alias: failedintentfb
         - pkg: github.com/abdimuy/msp-api/internal/platform/failedintent/http
           alias: failedintenthttp
-        - pkg: github.com/abdimuy/msp-api/internal/platform/failedintent/postgres
-          alias: failedintentpg
         - pkg: github.com/abdimuy/msp-api/internal/platform/failedintent/blobfs
           alias: failedintentblobfs
         - pkg: github.com/abdimuy/msp-api/internal/auth/ports/outbound
