@@ -5,7 +5,6 @@ import (
 	"github.com/abdimuy/msp-api/internal/platform/config"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 	"github.com/abdimuy/msp-api/internal/platform/imageprocessor"
-	"github.com/abdimuy/msp-api/internal/platform/transaction"
 	ventasapp "github.com/abdimuy/msp-api/internal/ventas/app"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/microsip"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/storage"
@@ -45,9 +44,11 @@ func provideVentasStorage(cfg *config.Config) (ventasoutbound.StorageProvider, e
 func provideVentasClock() ventasoutbound.Clock { return ventasoutbound.ProductionClock{} }
 
 // provideVentasOutboxEnqueuer builds the ventas-module wrapper around the
-// platform outbox, using the Postgres transaction manager.
-func provideVentasOutboxEnqueuer(txMgr *transaction.Manager) ventasoutbound.OutboxEnqueuer {
-	return ventoutbox.NewEnqueuer(txMgr)
+// platform outbox. Backed by Firebird per ADR-0008: the event row is
+// INSERTed into MSP_OUTBOX_EVENTS inside the same firebird tx as the
+// business write, so a tx rollback takes the event with it atomically.
+func provideVentasOutboxEnqueuer(p *firebird.Pool) ventasoutbound.OutboxEnqueuer {
+	return ventoutbox.NewEnqueuer(p)
 }
 
 // provideVentasImageProcessor selects the image-processing implementation

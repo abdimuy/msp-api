@@ -1,77 +1,100 @@
 // Package ventoutbox is the ventas module's adapter to the platform outbox.
 //
-// Per docs/adr/0001-outbox-strategy.md the ventas module's enqueuer is
-// BEST-EFFORT: the business write commits first to Firebird and the outbox
-// row is appended afterwards to Postgres in its own transaction. When the
-// Postgres write fails the failure is logged with the full payload so the
-// event can be replayed from log archives, and Enqueue returns nil so the
-// caller's success path is not perturbed.
+// Per ADR-0008 the enqueuer is now ATOMIC: the outbox row is inserted into
+// MSP_OUTBOX_EVENTS inside the same Firebird transaction as the business
+// write. firebird.TxManager.RunInTx is re-entrant, so when the caller is
+// already inside a transaction the INSERT joins it and the COMMIT covers
+// both; when the caller is not inside a transaction the manager opens one
+// just for the event row. Errors propagate to the caller so the outer tx
+// can roll back — there is no longer any "best-effort log-and-swallow"
+// recovery path.
 package ventoutbox
 
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
+	"fmt"
 
 	"github.com/google/uuid"
 
-	"github.com/abdimuy/msp-api/internal/platform/outbox"
-	"github.com/abdimuy/msp-api/internal/platform/transaction"
+	"github.com/abdimuy/msp-api/internal/platform/firebird"
+	"github.com/abdimuy/msp-api/internal/platform/outboxfb"
 	"github.com/abdimuy/msp-api/internal/ventas/ports/outbound"
 )
 
-// txRunner is the subset of transaction.Manager the Enqueuer depends on.
-// Exposing it as an interface lets tests inject a fake runner that simulates
-// transaction-open failures without needing a live database.
+// txRunner is the subset of firebird.TxManager the Enqueuer depends on.
+// Exposing it as an interface lets tests inject a fake runner without
+// rebuilding the manager.
 type txRunner interface {
 	RunInTx(ctx context.Context, fn func(context.Context) error) error
 }
 
 // Enqueuer wraps the platform outbox so the ventas module can drop events on
-// the queue without owning a *pgxpool.Pool reference directly.
+// the queue without owning a *firebird.Pool reference directly.
 type Enqueuer struct {
-	runner txRunner
+	runner   txRunner
+	fallback firebird.Querier
 }
 
-// NewEnqueuer builds an Enqueuer that uses the supplied Postgres transaction
-// manager. The manager opens its own tx for every Enqueue call so the outbox
-// write is durable even when the business operation that triggered it had to
-// commit elsewhere (Firebird).
-func NewEnqueuer(txMgr *transaction.Manager) *Enqueuer {
-	return &Enqueuer{runner: txMgr}
+// NewEnqueuer builds an Enqueuer backed by the given Firebird pool. The
+// internal TxManager is re-entrant, so when callers already hold an open
+// transaction the event row joins it; otherwise the manager opens its own.
+func NewEnqueuer(pool *firebird.Pool) *Enqueuer {
+	return &Enqueuer{
+		runner:   firebird.NewTxManager(pool.DB),
+		fallback: pool.DB,
+	}
 }
 
 // newEnqueuerWithRunner is the test-only constructor that injects a stub
-// transaction runner. Kept unexported so production callers stay on the
-// concrete *transaction.Manager path.
-func newEnqueuerWithRunner(r txRunner) *Enqueuer {
-	return &Enqueuer{runner: r}
+// transaction runner and a fallback querier.
+func newEnqueuerWithRunner(r txRunner, fallback firebird.Querier) *Enqueuer {
+	return &Enqueuer{runner: r, fallback: fallback}
 }
 
 // Compile-time check: Enqueuer satisfies the outbound port.
 var _ outbound.OutboxEnqueuer = (*Enqueuer)(nil)
 
-// Enqueue opens a Postgres transaction via the runner, inserts the event row
-// through platformoutbox.Enqueue, and commits. On any failure the payload is
-// serialized into a structured log entry and nil is returned so the caller's
-// success path is preserved (best-effort contract).
-func (e *Enqueuer) Enqueue(ctx context.Context, aggregate string, aggregateID uuid.UUID, eventType string, payload any) error {
-	err := e.runner.RunInTx(ctx, func(ctx context.Context) error {
-		return outbox.Enqueue(ctx, aggregate, aggregateID, eventType, payload)
-	})
+// Enqueue inserts an event row into MSP_OUTBOX_EVENTS. When ctx already
+// carries a Firebird transaction the INSERT joins it; otherwise the runner
+// opens a fresh transaction for the event row only. Errors propagate so an
+// outer transaction can roll back atomically with the business write —
+// the dual-write guarantee that drove ADR-0008.
+func (e *Enqueuer) Enqueue(
+	ctx context.Context,
+	aggregate string,
+	aggregateID uuid.UUID,
+	eventType string,
+	payload any,
+) error {
+	body, err := marshalPayload(payload)
 	if err != nil {
-		body, marshalErr := json.Marshal(payload)
-		if marshalErr != nil {
-			body = []byte(`"<unmarshalable>"`)
-		}
-		slog.ErrorContext(ctx, "ventas.outbox_enqueue_failed",
-			"aggregate", aggregate,
-			"aggregate_id", aggregateID.String(),
-			"event_type", eventType,
-			"payload", string(body),
-			"error", err,
-		)
-		return nil
+		return err
 	}
-	return nil
+	return e.runner.RunInTx(ctx, func(ctx context.Context) error {
+		return outboxfb.Enqueue(ctx, e.fallback, outboxfb.Event{
+			Aggregate:   aggregate,
+			AggregateID: aggregateID,
+			EventType:   eventType,
+			Payload:     body,
+		})
+	})
+}
+
+// marshalPayload encodes the caller's payload to JSON. A json.RawMessage is
+// passed through unchanged so callers that already hold raw bytes do not
+// re-encode (which would double-quote string payloads). nil yields an
+// explicit JSON null so downstream NOT NULL constraints are honoured.
+func marshalPayload(payload any) (json.RawMessage, error) {
+	if payload == nil {
+		return json.RawMessage("null"), nil
+	}
+	if raw, ok := payload.(json.RawMessage); ok {
+		return raw, nil
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("ventoutbox: marshal payload: %w", err)
+	}
+	return body, nil
 }

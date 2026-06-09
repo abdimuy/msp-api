@@ -1,10 +1,9 @@
 package ventoutbox
 
 import (
-	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
-	"log/slog"
 	"testing"
 
 	"github.com/google/uuid"
@@ -33,54 +32,65 @@ func TestEnqueuer_ImplementsPort(t *testing.T) {
 	var _ outbound.OutboxEnqueuer = (*Enqueuer)(nil)
 }
 
-func TestEnqueuer_RunnerFailure_LogsAndReturnsNil(t *testing.T) { //nolint:paralleltest // mutates slog.Default
-	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
-
-	boom := errors.New("simulated postgres tx open failure")
+func TestEnqueuer_RunnerFailure_PropagatesError(t *testing.T) {
+	t.Parallel()
+	boom := errors.New("simulated firebird tx open failure")
 	runner := &fakeRunner{err: boom}
-	enq := newEnqueuerWithRunner(runner)
+	enq := newEnqueuerWithRunner(runner, nil)
 
-	err := enq.Enqueue(context.Background(), "venta", uuid.New(), "venta.creada", map[string]any{"k": "v"})
-	require.NoError(t, err, "best-effort: Enqueue must not surface the runner error")
+	err := enq.Enqueue(
+		context.Background(),
+		"venta",
+		uuid.New(),
+		"venta.creada",
+		map[string]any{"k": "v"},
+	)
+	require.Error(t, err, "atomicity: enqueue errors must propagate so the outer tx can roll back")
+	assert.ErrorIs(t, err, boom)
 	assert.Equal(t, 1, runner.called)
-	assert.Contains(t, buf.String(), "ventas.outbox_enqueue_failed")
-	assert.Contains(t, buf.String(), "venta.creada")
 }
 
-func TestEnqueuer_RunnerFailure_WithUnmarshalablePayload_LogsPlaceholder(t *testing.T) { //nolint:paralleltest // mutates slog.Default
-	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
-
-	boom := errors.New("simulated postgres tx open failure")
-	runner := &fakeRunner{err: boom}
-	enq := newEnqueuerWithRunner(runner)
+func TestEnqueuer_PayloadMarshalFailure_PropagatesError(t *testing.T) {
+	t.Parallel()
+	runner := &fakeRunner{}
+	enq := newEnqueuerWithRunner(runner, nil)
 
 	unmarshalable := make(chan int)
-	err := enq.Enqueue(context.Background(), "venta", uuid.New(), "venta.creada", unmarshalable)
-	require.NoError(t, err, "best-effort: Enqueue must not surface the runner error")
-	assert.Equal(t, 1, runner.called)
-	assert.Contains(t, buf.String(), "ventas.outbox_enqueue_failed")
-	assert.Contains(t, buf.String(), "<unmarshalable>",
-		"the payload field must record a placeholder when json.Marshal fails")
+	err := enq.Enqueue(
+		context.Background(),
+		"venta",
+		uuid.New(),
+		"venta.creada",
+		unmarshalable,
+	)
+	require.Error(t, err)
+	assert.Equal(t, 0, runner.called, "runner must not be invoked when the payload can't marshal")
 }
 
-func TestEnqueuer_RunnerSuccess_StillReturnsNil_OnInnerEnqueueFailure(t *testing.T) { //nolint:paralleltest // mutates slog.Default
-	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
-
-	runner := &fakeRunner{}
-	enq := newEnqueuerWithRunner(runner)
-
-	err := enq.Enqueue(context.Background(), "venta", uuid.New(), "venta.creada", "payload")
+func TestMarshalPayload_PassesRawMessageThrough(t *testing.T) {
+	t.Parallel()
+	raw := json.RawMessage(`{"already":"encoded"}`)
+	got, err := marshalPayload(raw)
 	require.NoError(t, err)
-	assert.Equal(t, 1, runner.called)
-	assert.Contains(t, buf.String(), "ventas.outbox_enqueue_failed",
-		"inner enqueue should fail without an active tx and be logged")
+	assert.Equal(t, []byte(raw), []byte(got))
+}
+
+func TestMarshalPayload_NilYieldsJSONNull(t *testing.T) {
+	t.Parallel()
+	got, err := marshalPayload(nil)
+	require.NoError(t, err)
+	assert.Equal(t, `null`, string(got))
+}
+
+func TestMarshalPayload_StructEncodes(t *testing.T) {
+	t.Parallel()
+	got, err := marshalPayload(map[string]any{"hello": "world"})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"hello":"world"}`, string(got))
+}
+
+func TestMarshalPayload_ChannelFailsToMarshal(t *testing.T) {
+	t.Parallel()
+	_, err := marshalPayload(make(chan int))
+	require.Error(t, err)
 }
