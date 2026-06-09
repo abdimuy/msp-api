@@ -106,4 +106,4 @@ For HTTP POST/PATCH endpoints we apply the platform `idempotency.Middleware` at 
 ## Tx boundaries
 
 - **Firebird** business writes happen inside `runInTx`. Multi-table Save (header + children) is one transaction because the repo uses `firebird.GetQuerier(ctx, pool.DB)` which honors the ambient tx installed by `firebird.TxManager`.
-- **Postgres** outbox writes happen OUTSIDE the Firebird tx. The `{module}outbox.Enqueuer` opens its own Postgres tx via `transaction.Manager.RunInTx`. If that write fails, the failure is logged with the payload and the command's business path proceeds — best-effort dual-write, per ADR-0001.
+- **Outbox** writes happen inside the SAME Firebird tx as the business write. The `{module}outbox.Enqueuer` calls `firebird.TxManager.RunInTx` which is re-entrant — when the caller is already inside a transaction the INSERT into `MSP_OUTBOX_EVENTS` joins it and the COMMIT covers both. Errors propagate so a failed event INSERT rolls back the entire write. See ADR-0008 (which supersedes ADR-0001's best-effort dual-write pattern).

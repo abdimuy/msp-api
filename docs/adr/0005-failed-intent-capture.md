@@ -4,6 +4,14 @@
 - **Date:** 2026-05-14
 - **Decision drivers:** legal discovery for disputed offline-sync sales; ops debuggability when requests are lost silently; replay capability without requiring a separate event store.
 
+> **Storage moved to Firebird (2026-06-08).** This ADR originally specified a
+> Postgres `failed_intents` table. Per [ADR-0008](0008-firebird-as-single-source-of-truth.md)
+> the capture now writes to `MSP_FAILED_INTENTS` in Firebird via
+> `internal/platform/failedintent/firebird`. The middleware contract,
+> capture semantics, replay flow, blob-storage handling and retention
+> rules described below are unchanged — only the underlying store
+> implementation moved.
+
 ## Context
 
 The Android client queues sales offline and drains the queue over a sync connection when it comes back online. On each sync a subset of `POST /v2/ventas` requests fail — validation rejections, foreign-key violations, expired Firebase tokens, or transient server bugs. Today the server records only an access-log line: method, path, status code, latency. The original request payload is discarded after the handler returns.

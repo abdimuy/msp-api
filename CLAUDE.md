@@ -8,30 +8,28 @@ This file is loaded by Claude Code (and any AI/agent reading the repo) on every 
 
 **The database is a dummy store.** All behavior — ID generation, timestamps, defaults, validation, derived fields, computed columns — lives in Go. The schema is structural only.
 
-> **Scope:** this rule governs our **own Postgres app schema** (`migrations/`). The **Firebird adapter** (`migrations-firebird/`) is exempt — Microsip's `MUEBLERA.FDB` is trigger-driven by construction, so the read-model caches there are materialized with triggers + procedures + `POST_EVENT` and we follow that idiom. See [ADR 0006](docs/adr/0006-firebird-adapter-trigger-rule-exemption.md) for the rationale and what is still forbidden in the Firebird adapter (business rules in triggers, large bodies, mirroring API-owned data). See [ADR 0007](docs/adr/0007-cobranza-push-watermark.md) for the cobranza push channel + xmin watermark architecture that builds on this exemption (changelog tables + `MON$TRANSACTIONS` watermark + by-ids endpoints).
+> **Scope:** this rule governs every `MSP_*` table we own in `migrations-firebird/`. Per [ADR-0008](docs/adr/0008-firebird-as-single-source-of-truth.md) Firebird is now the single source of truth for both Microsip-mirrored tables and our own operational tables (`MSP_OUTBOX_EVENTS`, `MSP_IDEMPOTENCY_KEYS`, `MSP_FAILED_INTENTS`, etc.). The Microsip read-model caches (`mirror_*` style) remain exempt under [ADR 0006](docs/adr/0006-firebird-adapter-trigger-rule-exemption.md) because Microsip's `MUEBLERA.FDB` is trigger-driven by construction. See [ADR 0007](docs/adr/0007-cobranza-push-watermark.md) for the cobranza push channel + watermark architecture that builds on that exemption. The exemption does NOT extend to the new `MSP_*` operational tables — they follow this rule strictly.
 
-Forbidden in migrations:
-- `DEFAULT gen_random_uuid()`, `DEFAULT uuid_generate_v4()`, or any UUID generator default. UUIDs are always created in Go via `uuid.New()`.
-- `DEFAULT now()`, `DEFAULT CURRENT_TIMESTAMP`. Timestamps are always set in Go via `time.Now()` (or carried in from a domain method like `audit.MarkUpdated()`).
-- `CREATE TRIGGER` of any kind.
-- `CREATE FUNCTION` / stored procedures / `LANGUAGE plpgsql`.
-- `SERIAL`, `BIGSERIAL`, identity columns, sequences exposed to writes. (Sequences for internal Postgres use are fine; we just never depend on them for app logic.)
-- `GENERATED ALWAYS AS (...)` columns.
-- `CHECK` constraints that encode business rules. Simple structural checks (`amount >= 0`) are tolerated as guardrails but the canonical rule lives in the domain entity/VO.
-- Extensions whose only purpose is to add logic (`pgcrypto` for `gen_random_uuid()`, etc.). Extensions that provide *index types* or *data types* (e.g. `btree_gin`, `uuid-ossp` for the column type only) are fine.
+Forbidden in migrations (`migrations-firebird/`):
+- Any UUID generator default — UUIDs are created in Go via `uuid.New()`.
+- `DEFAULT CURRENT_TIMESTAMP`. Timestamps are always set in Go via `time.Now()` (or carried in from a domain method like `audit.MarkUpdated()`), then bound via `firebird.ToWallClock(t)`.
+- `CREATE TRIGGER` on our `MSP_*` tables (the ADR-0006 exemption is scoped to `mirror_*` and Microsip-projection caches only).
+- `CREATE PROCEDURE` / stored procedures encoding business rules.
+- Identity columns, sequences exposed to writes. (Internal Firebird generators backing `GEN_MST_FOLIO` for atomic folio assignment are fine — they are infrastructure, not business logic.)
+- `CHECK` constraints that encode business rules. Simple structural checks (`AMOUNT >= 0`, state-machine guardrails like `STATUS IN ('new', 'retried_ok', ...)`) are tolerated as defence in depth but the canonical rule lives in the domain entity/VO.
 
 Allowed and encouraged in migrations:
 - `PRIMARY KEY`, `UNIQUE`, `FOREIGN KEY`, `NOT NULL`, `REFERENCES`.
-- Indexes (including partial, expression, GIN, BRIN).
-- Column types, including `uuid`, `timestamptz`, `numeric`, `jsonb`.
+- Indexes (including DESCENDING, expression, composite).
+- Column types, including `CHAR(36)` for UUIDs (ASCII charset), `TIMESTAMP`, `NUMERIC`, `BLOB SUB_TYPE TEXT CHARACTER SET UTF8` for JSON payloads.
 
-Why: portability (we may swap Postgres later, even if unlikely), determinism (one source of truth in Go), testability (unit tests don't need a DB to know what an entity will look like), and AI-safety (an agent generating code can never produce a half-defined entity that "works in Postgres but not in tests").
+Why: determinism (one source of truth in Go), testability (unit tests don't need a DB to know what an entity will look like), and AI-safety (an agent generating code can never produce a half-defined entity that "works in Firebird but not in tests").
 
 How to apply this rule:
-- Every `INSERT` statement passes `id`, `created_at`, `updated_at` (and any nullable timestamp columns) explicitly.
+- Every `INSERT` statement passes `ID`, `CREATED_AT`, `UPDATED_AT` (and any nullable timestamp columns) explicitly.
 - Every entity's `New{Entity}` constructor in Go calls `uuid.New()` and `time.Now()`.
-- Every `UPDATE` that touches `updated_at` passes the new value as a parameter, not via a SQL function.
-- The outbox dispatcher passes `processed_at` / `failed_at` as parameters from Go time.
+- Every `UPDATE` that touches `UPDATED_AT` passes the new value as a parameter, not via a SQL function.
+- The outbox dispatcher passes `PROCESSED_AT` / `FAILED_AT` as parameters from Go time wrapped with `firebird.ToWallClock`.
 
 ### 2. Vertical slices
 
@@ -85,7 +83,7 @@ This project does **not** use GitHub Actions, GitLab CI, or any other remote CI 
 - `pre-commit`: gofmt, go vet, golangci-lint (on staged), build, secrets check, no-debug, mod tidy.
 - `pre-push`: full `golangci-lint run ./...` + `go test -race -short ./...`.
 
-Integration tests (`make test-integration`) run on demand on the developer's machine — they require Docker Desktop locally for the testcontainers Postgres. Do not write GitHub Actions workflows, do not add `.github/`, do not document CI badges.
+Integration tests (`make test-firebird-all`) run on demand on the developer's machine — they require the local `mueblera-firebird` container reachable via `FB_DATABASE`. Each test is wrapped in `fbtestutil.WithTestTransaction` so writes roll back at the end and the shared dev DB never accumulates state. Do not write GitHub Actions workflows, do not add `.github/`, do not document CI badges.
 
 If we ever add coverage gates, mutation testing, or scheduled benchmarks, they go into Make targets and lefthook hooks, not into a remote pipeline.
 
@@ -99,10 +97,10 @@ internal/{module}/
     inbound/       ← interfaces the module exposes to drive it (rare; usually handlers call services directly).
     outbound/      ← interfaces the module needs from outside (e.g. ClientesClient when consuming clientes module).
   infra/
-    postgres/      ← repositories, sqlc-generated code wrappers.
-    firebird/      ← Microsip pull/push adapters.
+    {module}fb/    ← Firebird repositories (e.g. ventfb, invfb, authfb) — read AND write our MSP_* tables and Microsip.
     http/          ← handlers + routes.
-    clients/       ← implementations of outbound ports (cross-module clients).
+    {module}outbox/← outbox enqueuer adapter (Firebird-backed per ADR-0008).
+    clients/      ← implementations of outbound ports (cross-module clients).
   {module}_contracts.go         ← types this module exposes to other modules.
   {module}_contracts_mapper.go  ← entity → contract mapping. Called only from infra/clients of other modules.
 ```

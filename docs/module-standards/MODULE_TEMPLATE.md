@@ -15,7 +15,8 @@ internal/{module}/
                                               (e.g. authfb, ventfb) to avoid collisions with
                                               platform packages.
     {module}http/                           ← HTTP transport (Huma over chi).
-    {module}outbox/                         ← Best-effort outbox enqueuer (mirrors auth pattern).
+    {module}outbox/                         ← Atomic outbox enqueuer over firebird.TxManager
+                                              (mirrors auth pattern; see ADR-0008).
     storage/                                ← Only when blobs are needed (see ventas).
   {module}_contracts.go                     ← Re-exports + cross-module types. Only file other
                                               modules may import.
@@ -43,7 +44,7 @@ The `internal/{module}` root package is the **only** import-allowed surface for 
 6. **Infra**:
    - `{module}fb/` — `VentaRepo` + queries + rowmappers + pagination. Multi-table writes happen in one tx by using `firebird.GetQuerier(ctx, pool.DB)` which honors the ambient tx installed by `firebird.TxManager`. **Every `time.Time` passed to `q.ExecContext` must be wrapped in `firebird.ToWallClock(t)`; every `TIMESTAMP` column read must use `firebird.ScanUTCTime`. See `DATETIME_HANDLING.md`.**
    - `{module}http/` — Huma over chi. See `HUMA_WIRING.md`. **Date fields are RFC3339 UTC strings on both request and response — see `DATETIME_HANDLING.md` for the frontend contract.**
-   - `{module}outbox/` — wraps `transaction.Manager` for best-effort Postgres outbox writes. Copy `internal/auth/infra/authoutbox/enqueuer.go` verbatim and change the log key + import path.
+   - `{module}outbox/` — wraps `firebird.TxManager` for atomic outbox writes per ADR-0008. The INSERT into `MSP_OUTBOX_EVENTS` joins the caller's tx (re-entrant) so the COMMIT covers both the business write and the event row. Copy `internal/auth/infra/authoutbox/enqueuer.go` verbatim and change the package name + payload package + ports import.
    - `storage/` (if applicable) — see `internal/ventas/infra/storage/` for the filesystem + R2-stub split.
 
 7. **Wiring** (`cmd/api/{module}_wiring.go`):
