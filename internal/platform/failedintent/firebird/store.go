@@ -225,6 +225,41 @@ func (s *Store) UpdateStatus(
 	return nil
 }
 
+// TransitionAfterReplay updates only STATUS. It deliberately does NOT touch
+// RESOLVED_AT, RESOLVED_BY or NOTES so the operator-resolution fields stay
+// reserved for the operator-driven Resolver endpoint. The replay
+// retry_count lives in RETRY_COUNT and is bumped separately by IncrementRetry.
+func (s *Store) TransitionAfterReplay(
+	ctx context.Context,
+	id uuid.UUID,
+	expected, next failedintent.Status,
+) error {
+	const q = `
+		UPDATE MSP_FAILED_INTENTS
+		SET STATUS = ?
+		WHERE ID = ? AND STATUS = ?`
+	q2 := firebird.GetQuerier(ctx, s.pool.DB)
+	res, err := q2.ExecContext(
+		ctx, q,
+		string(next),
+		id.String(),
+		string(expected),
+	)
+	if err != nil {
+		return fmt.Errorf("failedintent.firebird: transition after replay %s: %w", id, firebird.MapError(err))
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return apperror.NewConflict(
+			"failed_intent_status_conflict",
+			"el intento fallido ya no se encuentra en el estado esperado",
+		).WithError(failedintent.ErrStatusConflict).
+			WithField("intent_id", id.String()).
+			WithField("expected_status", string(expected))
+	}
+	return nil
+}
+
 // IncrementRetry bumps RETRY_COUNT by 1 without changing STATUS. Used on each
 // replay attempt start so the count reflects attempts, not outcomes.
 func (s *Store) IncrementRetry(ctx context.Context, id uuid.UUID) error {

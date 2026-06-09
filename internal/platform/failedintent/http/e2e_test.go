@@ -639,6 +639,22 @@ func (s *e2eIntentStore) UpdateStatus(
 	return nil
 }
 
+// TransitionAfterReplay mirrors the firebird.Store contract: only STATUS is
+// updated, the operator-resolution fields stay exactly as they were.
+func (s *e2eIntentStore) TransitionAfterReplay(
+	_ context.Context, id uuid.UUID, expected, next failedintent.Status,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	intent, ok := s.intents[id]
+	if !ok || intent.Status != expected {
+		return errors.New("status conflict")
+	}
+	intent.Status = next
+	s.intents[id] = intent
+	return nil
+}
+
 func (s *e2eIntentStore) IncrementRetry(_ context.Context, id uuid.UUID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

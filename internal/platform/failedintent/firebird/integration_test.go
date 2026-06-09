@@ -519,6 +519,110 @@ func TestUpdateStatus_Conflict_WhenIDMissing(t *testing.T) {
 	})
 }
 
+// TestTransitionAfterReplay_OnlyTouchesStatus is the regression for the bug
+// where the Resolver-shaped UpdateStatus was being used after replays,
+// stamping ResolvedAt / ResolvedBy / Notes on intents that no operator had
+// actually resolved. The new TransitionAfterReplay method writes ONLY the
+// STATUS column.
+func TestTransitionAfterReplay_OnlyTouchesStatus(t *testing.T) {
+	t.Parallel()
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	requireFailedIntentsTable(t, pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		s := failedintentfb.New(pool)
+
+		intent := newIntent(uuid.New(), time.Now().UTC(), failedintent.StatusNew)
+		intent.ResolvedAt = nil
+		intent.ResolvedBy = nil
+		intent.Notes = ""
+		require.NoError(t, s.Save(ctx, intent))
+
+		require.NoError(t, s.TransitionAfterReplay(
+			ctx, intent.ID,
+			failedintent.StatusNew, failedintent.StatusRetriedOK,
+		))
+
+		got, err := s.Get(ctx, intent.ID)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, failedintent.StatusRetriedOK, got.Status)
+		assert.Nil(t, got.ResolvedAt, "ResolvedAt must stay nil")
+		assert.Nil(t, got.ResolvedBy, "ResolvedBy must stay nil")
+		assert.Empty(t, got.Notes, "Notes must stay empty")
+	})
+}
+
+// TestTransitionAfterReplay_PreservesPrePopulatedResolverFields verifies that
+// even when a row already has ResolvedAt / ResolvedBy / Notes (e.g. an
+// operator previously marked it as ignored, then the system reopened it
+// somehow — defensive scenario), the replay transition still does NOT
+// overwrite those fields.
+func TestTransitionAfterReplay_PreservesPrePopulatedResolverFields(t *testing.T) {
+	t.Parallel()
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	requireFailedIntentsTable(t, pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		s := failedintentfb.New(pool)
+
+		// Seed an intent already carrying operator-resolution metadata.
+		originalResolver := uuid.New()
+		originalResolvedAt := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Millisecond)
+		intent := newIntent(uuid.New(), time.Now().UTC().Add(-3*time.Hour), failedintent.StatusRetriedFail)
+		intent.ResolvedAt = &originalResolvedAt
+		intent.ResolvedBy = &originalResolver
+		intent.Notes = "nota del operador original"
+		require.NoError(t, s.Save(ctx, intent))
+
+		require.NoError(t, s.TransitionAfterReplay(
+			ctx, intent.ID,
+			failedintent.StatusRetriedFail, failedintent.StatusRetriedOK,
+		))
+
+		got, err := s.Get(ctx, intent.ID)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, failedintent.StatusRetriedOK, got.Status)
+		require.NotNil(t, got.ResolvedAt)
+		assert.WithinDuration(t, originalResolvedAt, *got.ResolvedAt, time.Second,
+			"ResolvedAt must be preserved exactly")
+		require.NotNil(t, got.ResolvedBy)
+		assert.Equal(t, originalResolver, *got.ResolvedBy,
+			"ResolvedBy must be preserved exactly")
+		assert.Equal(t, "nota del operador original", got.Notes,
+			"Notes must be preserved exactly")
+	})
+}
+
+// TestTransitionAfterReplay_Conflict_WhenExpectedDoesntMatch verifies the
+// conflict apperror is returned with the same shape as UpdateStatus when the
+// current status differs from the expected.
+func TestTransitionAfterReplay_Conflict_WhenExpectedDoesntMatch(t *testing.T) {
+	t.Parallel()
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	requireFailedIntentsTable(t, pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		s := failedintentfb.New(pool)
+
+		intent := newIntent(uuid.New(), time.Now().UTC(), failedintent.StatusNew)
+		require.NoError(t, s.Save(ctx, intent))
+
+		// Expected says retried_fail but actual is new — must conflict.
+		err := s.TransitionAfterReplay(
+			ctx, intent.ID,
+			failedintent.StatusRetriedFail, failedintent.StatusRetriedOK,
+		)
+		require.Error(t, err)
+
+		appErr, ok := apperror.As(err)
+		require.True(t, ok)
+		assert.Equal(t, apperror.KindConflict, appErr.Kind)
+		assert.Equal(t, "failed_intent_status_conflict", appErr.Code)
+	})
+}
+
 // TestIncrementRetry_BumpsCount verifies two increments land at retry_count=2.
 func TestIncrementRetry_BumpsCount(t *testing.T) {
 	t.Parallel()

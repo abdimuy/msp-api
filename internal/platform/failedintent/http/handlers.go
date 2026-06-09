@@ -309,7 +309,7 @@ func (s *Service) executeReplay(
 	s.dispatcher.Dispatch(rw, replayReq)
 
 	outcome := outcomeFor(rw.status)
-	s.tryUpdateStatus(ctx, id, originalStatus, outcome, cu.ID)
+	s.tryUpdateStatus(ctx, id, originalStatus, outcome)
 
 	return replayResult{
 		outcome:    outcome,
@@ -517,22 +517,56 @@ func (s *Service) resolveReplayBody(
 	return bytes.NewReader(intent.Body), "application/json", nil
 }
 
-// tryUpdateStatus transitions the intent after a replay. Conflict errors and
-// terminal-status skips are logged at warn level and discarded — the replay
-// outcome is still returned to the caller.
+// tryUpdateStatus transitions the intent after a replay. The transition rules:
+//
+//  1. Any state → retried_ok: ALWAYS allowed. The last replay outcome wins —
+//     when a previously terminal intent finally succeeds, that success must be
+//     visible (otherwise it never moves out of "Reintento fallido" in the UI
+//     even though the venta did go through).
+//  2. new → retried_fail: allowed. First failure is recorded.
+//  3. retried_fail → retried_fail (or any other terminal → terminal-fail):
+//     skipped. The first failure already documents the issue; piling more
+//     fail transitions adds no information and would mask the case where one
+//     of the intermediate replays actually succeeded.
+//  4. ignored / resolved_manual → anything: skipped via the conflict path on
+//     UpdateStatus. The operator already closed it explicitly.
+//
+// RESOLVED_AT / RESOLVED_BY / NOTES are NEVER touched here — those columns
+// are reserved for the operator-driven Resolver endpoint. The replay outcome
+// is still returned to the caller regardless of whether the status changed.
 func (s *Service) tryUpdateStatus(
 	ctx context.Context,
 	id uuid.UUID,
 	originalStatus failedintent.Status,
 	outcome failedintent.Status,
-	resolvedBy uuid.UUID,
 ) {
-	if originalStatus != failedintent.StatusNew {
-		// Re-replay of a terminal intent — do not mutate status.
-		return
+	switch {
+	case outcome == failedintent.StatusRetriedOK:
+		// Rule 1 — last success wins from any prior state.
+		s.transitionAndLog(ctx, id, originalStatus, outcome)
+	case originalStatus == failedintent.StatusNew:
+		// Rule 2 — first failure recorded from new.
+		s.transitionAndLog(ctx, id, originalStatus, outcome)
+	default:
+		// Rules 3 + 4 — no-op, leave the existing terminal state untouched.
+		slog.DebugContext(
+			ctx, "failedintent: skip status transition (terminal state, non-success outcome)",
+			"intent_id", id.String(),
+			"original_status", string(originalStatus),
+			"attempted_outcome", string(outcome),
+		)
 	}
-	err := s.store.UpdateStatus(ctx, id, failedintent.StatusNew, outcome, resolvedBy, "", s.clock())
-	if err != nil {
+}
+
+// transitionAndLog wraps TransitionAfterReplay with the same warn/log shape
+// that tryUpdateStatus used before, so the caller-facing observability is
+// unchanged.
+func (s *Service) transitionAndLog(
+	ctx context.Context,
+	id uuid.UUID,
+	originalStatus, outcome failedintent.Status,
+) {
+	if err := s.store.TransitionAfterReplay(ctx, id, originalStatus, outcome); err != nil {
 		ae, isApp := apperror.As(err)
 		if isApp && ae.Code == "failed_intent_status_conflict" {
 			slog.WarnContext(

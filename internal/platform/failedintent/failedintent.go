@@ -182,7 +182,7 @@ type PurgeResult struct {
 
 // Store persists and retrieves Intent records.
 //
-//nolint:interfacebloat // 7 methods, within the 8-method cap.
+//nolint:interfacebloat // 8 methods, at the 8-method cap.
 type Store interface {
 	// Save inserts an intent. Implementations should treat (id) as a
 	// uniqueness constraint and silently no-op on duplicate primary key.
@@ -194,9 +194,14 @@ type Store interface {
 	// List returns a page of intents ordered by received_at DESC, id DESC.
 	List(ctx context.Context, p ListParams) (Page[Intent], error)
 
-	// UpdateStatus moves the intent from expected → next in a single
-	// statement. Returns an apperror.NewConflict("failed_intent_status_conflict",
-	// ...) when 0 rows match (i.e. the row's status no longer equals expected).
+	// UpdateStatus moves the intent from expected → next AND records the
+	// operator (ResolvedAt + ResolvedBy + Notes). This signature is reserved
+	// for the operator-driven Resolver endpoint (PATCH /{id}/resolve) where
+	// next is StatusIgnored or StatusResolvedManual. Do NOT use this for
+	// replay outcomes — call TransitionAfterReplay instead.
+	//
+	// Returns an apperror.NewConflict("failed_intent_status_conflict", ...)
+	// when 0 rows match (i.e. the row's status no longer equals expected).
 	UpdateStatus(
 		ctx context.Context,
 		id uuid.UUID,
@@ -204,6 +209,20 @@ type Store interface {
 		resolvedBy uuid.UUID,
 		notes string,
 		now time.Time,
+	) error
+
+	// TransitionAfterReplay updates STATUS only, leaving ResolvedAt /
+	// ResolvedBy / Notes unchanged. Used by Service.tryUpdateStatus after a
+	// replay so the operator-resolution fields stay reserved for explicit
+	// "marked as ignored or resolved_manual" actions.
+	//
+	// Returns failed_intent_status_conflict (same shape as UpdateStatus) when
+	// 0 rows match — the id is gone or the current status differs from
+	// expected.
+	TransitionAfterReplay(
+		ctx context.Context,
+		id uuid.UUID,
+		expected, next Status,
 	) error
 
 	// IncrementRetry bumps retry_count by 1 without changing status. Used on
@@ -323,7 +342,8 @@ func handleJSON(cfg Config, next http.Handler, w http.ResponseWriter, r *http.Re
 		// Reading the body failed before we even reached the handler — log
 		// and pass through with an empty body (caller will see EOF and
 		// likely produce a 400, which we then capture as best-effort).
-		slog.WarnContext(r.Context(),
+		slog.WarnContext(
+			r.Context(),
 			"failedintent: body read failed before capture",
 			"error", err, "path", r.URL.Path,
 		)
@@ -486,7 +506,8 @@ func buildMultipartIntent(
 	if save.err != nil {
 		// Don't leave a dangling path on the row when Save failed.
 		intent.BodyBlobPath = ""
-		slog.WarnContext(r.Context(),
+		slog.WarnContext(
+			r.Context(),
 			"failedintent: multipart blob save failed; persisting intent without body",
 			"error", save.err, "intent_id", intentID.String(),
 		)
@@ -508,7 +529,8 @@ func saveIntent(parentCtx context.Context, cfg Config, intent Intent) {
 	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(parentCtx), 5*time.Second)
 	defer cancel()
 	if saveErr := cfg.Store.Save(saveCtx, intent); saveErr != nil {
-		slog.ErrorContext(parentCtx,
+		slog.ErrorContext(
+			parentCtx,
 			"failedintent: store save failed",
 			"error", saveErr,
 			"intent_id", intent.ID,
@@ -717,7 +739,8 @@ func parseProblemJSON(body []byte) (string, string) {
 // emitCapturedLog records the capture as a structured event. Never logs the
 // body — only metadata that's safe for support staff to see.
 func emitCapturedLog(ctx context.Context, i Intent) {
-	slog.InfoContext(ctx, "failedintent.captured",
+	slog.InfoContext(
+		ctx, "failedintent.captured",
 		"intent_id", i.ID,
 		"firebase_uid", i.FirebaseUID,
 		"http_status", i.HTTPStatus,

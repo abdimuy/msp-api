@@ -62,6 +62,14 @@ func (f *fakeStore) UpdateStatus(
 	return nil
 }
 
+func (f *fakeStore) TransitionAfterReplay(
+	_ context.Context,
+	_ uuid.UUID,
+	_, _ failedintent.Status,
+) error {
+	return nil
+}
+
 func (f *fakeStore) IncrementRetry(_ context.Context, _ uuid.UUID) error {
 	return nil
 }

@@ -248,7 +248,7 @@ func (s *Service) executeReplayWithBody(
 	s.dispatcher.Dispatch(rw, req)
 
 	outcome := outcomeFor(rw.status)
-	s.tryUpdateStatus(ctx, id, originalStatus, outcome, cu.ID)
+	s.tryUpdateStatus(ctx, id, originalStatus, outcome)
 
 	return replayResult{
 		outcome:    outcome,

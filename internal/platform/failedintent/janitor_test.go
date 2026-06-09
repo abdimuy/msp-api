@@ -76,6 +76,14 @@ func (m *memStore) UpdateStatus(
 	return nil
 }
 
+func (m *memStore) TransitionAfterReplay(
+	_ context.Context,
+	_ uuid.UUID,
+	_, _ failedintent.Status,
+) error {
+	return nil
+}
+
 func (m *memStore) IncrementRetry(_ context.Context, _ uuid.UUID) error {
 	return nil
 }

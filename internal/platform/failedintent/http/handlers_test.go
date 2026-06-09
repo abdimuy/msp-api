@@ -171,6 +171,35 @@ func (m *memoryStore) UpdateStatus(
 	return nil
 }
 
+// TransitionAfterReplay mirrors the firebird.Store implementation: only the
+// STATUS field changes; ResolvedAt / ResolvedBy / Notes are preserved exactly
+// as they were before the call. The same conflict apperror is returned when
+// the current status does not match expected.
+func (m *memoryStore) TransitionAfterReplay(
+	_ context.Context,
+	id uuid.UUID,
+	expected, next failedintent.Status,
+) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.updErr != nil {
+		return m.updErr
+	}
+
+	i, ok := m.intents[id]
+	if !ok {
+		return apperror.NewConflict("failed_intent_status_conflict", "el estado del intento no coincide")
+	}
+	if i.Status != expected {
+		return apperror.NewConflict("failed_intent_status_conflict", "el estado del intento no coincide")
+	}
+
+	i.Status = next
+	m.intents[id] = i
+	return nil
+}
+
 func (m *memoryStore) IncrementRetry(_ context.Context, id uuid.UUID) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -990,13 +1019,18 @@ func TestReplay_UsuarioLookupError_Surfaces(t *testing.T) {
 	assert.Equal(t, "user_inactive", p.Code)
 }
 
-func TestReplay_TerminalIntent_DoesNotMutateStatus(t *testing.T) {
+// TestReplay_TerminalRetriedFail_TransitionsToRetriedOK_OnSuccess is the
+// regression that closed the "no aparece en Resueltos" bug. An intent that
+// previously ended in retried_fail must move to retried_ok when a later
+// replay finally succeeds — otherwise the venta is in the database but the
+// admin UI still shows it as failed.
+func TestReplay_TerminalRetriedFail_TransitionsToRetriedOK_OnSuccess(t *testing.T) {
 	t.Parallel()
 
 	store := newMemoryStore()
 	id := uuid.MustParse("f6f6f6f6-f6f6-f6f6-f6f6-f6f6f6f6f6f6")
 	intent := makeIntent(id, time.Now().UTC())
-	intent.Status = failedintent.StatusRetriedFail // Terminal state.
+	intent.Status = failedintent.StatusRetriedFail
 	seedIntent(t, store, intent)
 
 	expectedCU := auth.CurrentUser{ID: *intent.UsuarioID}
@@ -1012,16 +1046,57 @@ func TestReplay_TerminalIntent_DoesNotMutateStatus(t *testing.T) {
 	r.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-
-	// Dispatcher was called.
 	assert.Equal(t, 1, dispatcher.callCount())
 
-	// Status must NOT have changed from terminal.
+	stored, err := store.Get(context.Background(), id)
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Equal(t, failedintent.StatusRetriedOK, stored.Status,
+		"terminal retried_fail must transition to retried_ok when a later replay finally succeeds")
+
+	// RESOLVED_AT / RESOLVED_BY / NOTES must stay untouched — those are
+	// reserved for the operator-driven Resolver endpoint.
+	assert.Nil(t, stored.ResolvedAt,
+		"ResolvedAt must NOT be populated by a replay-success transition")
+	assert.Nil(t, stored.ResolvedBy,
+		"ResolvedBy must NOT be populated by a replay-success transition")
+	assert.Empty(t, stored.Notes,
+		"Notes must NOT be populated by a replay-success transition")
+}
+
+// TestReplay_TerminalRetriedFail_StaysTerminal_OnAnotherFailure documents the
+// rule: piling more retried_fail transitions on a terminal intent is a no-op,
+// because the first failure already documents the issue and overwriting it
+// would mask the intermediate replay that may have succeeded.
+func TestReplay_TerminalRetriedFail_StaysTerminal_OnAnotherFailure(t *testing.T) {
+	t.Parallel()
+
+	store := newMemoryStore()
+	id := uuid.MustParse("f5f5f5f5-f5f5-f5f5-f5f5-f5f5f5f5f5f5")
+	intent := makeIntent(id, time.Now().UTC())
+	intent.Status = failedintent.StatusRetriedFail
+	seedIntent(t, store, intent)
+
+	expectedCU := auth.CurrentUser{ID: *intent.UsuarioID}
+	lookup := &stubUsuarioLookup{user: expectedCU}
+	dispatcher := &fakeDispatcher{respondStatus: http.StatusUnprocessableEntity}
+
+	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil, nil)
+	cu := defaultCU()
+	r := newRouter(t, svc, &cu)
+
+	req := httptest.NewRequest(http.MethodPost, "/"+id.String()+"/replay", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, 1, dispatcher.callCount())
+
 	stored, err := store.Get(context.Background(), id)
 	require.NoError(t, err)
 	require.NotNil(t, stored)
 	assert.Equal(t, failedintent.StatusRetriedFail, stored.Status,
-		"terminal intent status must not be mutated by re-replay")
+		"retried_fail → retried_fail must be a no-op so the original failure stays visible")
 }
 
 // TestReplay_AlwaysGeneratesFreshIdempotencyKey enforces that every
@@ -1648,15 +1723,20 @@ func TestReplayWith_IntentNotFound_Returns404(t *testing.T) {
 	assert.Equal(t, "failed_intent_not_found", p.Code)
 }
 
-// TestReplayWith_TerminalIntent_DoesNotMutateStatus verifies that re-replaying
-// a terminal intent with ReplayWith still dispatches but does not change status.
-func TestReplayWith_TerminalIntent_DoesNotMutateStatus(t *testing.T) {
+// TestReplayWith_TerminalRetriedFail_TransitionsToRetriedOK_OnSuccess is the
+// regression for the desktop-edit case: the operator corrected the JSON body
+// of a previously failed intent via /replay-with and the venta finally went
+// through (201). The intent must transition from retried_fail to retried_ok
+// so the admin UI moves it out of "Reintento fallido" and into "Resueltos".
+// RESOLVED_AT / RESOLVED_BY / NOTES must NOT be populated — those are reserved
+// for the operator Resolver endpoint (PATCH /{id}/resolve).
+func TestReplayWith_TerminalRetriedFail_TransitionsToRetriedOK_OnSuccess(t *testing.T) {
 	t.Parallel()
 
 	store := newMemoryStore()
 	id := uuid.MustParse("aa000006-0000-0000-0000-000000000006")
 	intent := makeIntent(id, time.Now().UTC())
-	intent.Status = failedintent.StatusRetriedFail // terminal
+	intent.Status = failedintent.StatusRetriedFail
 	seedIntent(t, store, intent)
 
 	expectedCU := auth.CurrentUser{ID: *intent.UsuarioID}
@@ -1674,16 +1754,56 @@ func TestReplayWith_TerminalIntent_DoesNotMutateStatus(t *testing.T) {
 	r.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-
-	// Dispatch must have been called.
 	assert.Equal(t, 1, dispatcher.callCount())
 
-	// Status must remain terminal (retried_fail).
+	stored, err := store.Get(context.Background(), id)
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Equal(t, failedintent.StatusRetriedOK, stored.Status,
+		"replay-with success from terminal must transition to retried_ok")
+	assert.Nil(t, stored.ResolvedAt,
+		"ResolvedAt must NOT be populated by a replay-with-success transition")
+	assert.Nil(t, stored.ResolvedBy,
+		"ResolvedBy must NOT be populated by a replay-with-success transition")
+	assert.Empty(t, stored.Notes,
+		"Notes must NOT be populated by a replay-with-success transition")
+}
+
+// TestReplayWith_TerminalRetriedFail_StaysTerminal_OnAnotherFailure is the
+// counterpart to the success test: if the corrected body also fails, we do
+// NOT pile another retried_fail on top — the first failure already documents
+// the issue and overwriting it would mask the case where an intermediate
+// replay had succeeded.
+func TestReplayWith_TerminalRetriedFail_StaysTerminal_OnAnotherFailure(t *testing.T) {
+	t.Parallel()
+
+	store := newMemoryStore()
+	id := uuid.MustParse("ab000006-0000-0000-0000-000000000006")
+	intent := makeIntent(id, time.Now().UTC())
+	intent.Status = failedintent.StatusRetriedFail
+	seedIntent(t, store, intent)
+
+	expectedCU := auth.CurrentUser{ID: *intent.UsuarioID}
+	lookup := &stubUsuarioLookup{user: expectedCU}
+	dispatcher := &fakeDispatcher{respondStatus: http.StatusUnprocessableEntity}
+
+	svc := failedintenthttp.NewService(store, dispatcher, lookup, nil, nil, nil)
+	cu := defaultCU()
+	r := newRouter(t, svc, &cu)
+
+	req := httptest.NewRequest(http.MethodPost, "/"+id.String()+"/replay-with",
+		strings.NewReader(`{"body":{"still":"broken"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
 	stored, err := store.Get(context.Background(), id)
 	require.NoError(t, err)
 	require.NotNil(t, stored)
 	assert.Equal(t, failedintent.StatusRetriedFail, stored.Status,
-		"terminal intent status must not be mutated by re-replay-with")
+		"retried_fail → retried_fail must remain a no-op on replay-with too")
 }
 
 // ─── MeListar ─────────────────────────────────────────────────────────────────
