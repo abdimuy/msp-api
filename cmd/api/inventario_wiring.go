@@ -13,7 +13,6 @@ import (
 	inventariooutbound "github.com/abdimuy/msp-api/internal/inventario/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/config"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
-	"github.com/abdimuy/msp-api/internal/platform/transaction"
 	ventasoutbound "github.com/abdimuy/msp-api/internal/ventas/ports/outbound"
 )
 
@@ -45,9 +44,12 @@ func provideInventarioClock() inventariooutbound.Clock {
 }
 
 // provideInventarioOutboxEnqueuer builds the inventario-module wrapper
-// around the platform outbox.
-func provideInventarioOutboxEnqueuer(txMgr *transaction.Manager) inventariooutbound.OutboxEnqueuer {
-	return invoutbox.NewEnqueuer(txMgr)
+// around the platform outbox. Backed by Firebird per ADR-0008: the event
+// row is INSERTed into MSP_OUTBOX_EVENTS inside the same firebird tx as
+// the business write, so a tx rollback takes the traspaso.creado event
+// with it atomically — the exact gap that motivated this ADR.
+func provideInventarioOutboxEnqueuer(p *firebird.Pool) inventariooutbound.OutboxEnqueuer {
+	return invoutbox.NewEnqueuer(p)
 }
 
 // provideInventarioService assembles the inventario application service.
