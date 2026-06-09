@@ -1,8 +1,18 @@
 # ADR 0001 — Outbox event strategy for cross-DB writes
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR 0008](0008-firebird-as-single-source-of-truth.md) (2026-06-08)
 - **Date:** 2026-05-10
 - **Decision drivers:** auth module emits audit events from Firebird writes; the outbox table lives in Postgres.
+
+> **Superseded.** Option 2 from the original analysis (Firebird-side outbox)
+> has been adopted in ADR-0008. The "best-effort dual-write" strategy
+> described below was correct for the auth-only event volume in May 2026 but
+> stopped being acceptable once the inventario and ventas modules began
+> emitting events whose loss corrupted operator-visible state. The
+> implementation rules in §"Implementation rules" no longer apply; the
+> `outbox.OutboxEnqueuer` port survives but is now backed by
+> `internal/platform/outboxfb`. The rest of this ADR is preserved verbatim
+> for historical context.
 
 ## Context
 
