@@ -22,6 +22,7 @@ import (
 //	FB_FIRESTORE_TEST_UID=<a uid that has a users/{uid}.NOMBRE doc> \
 //	go test -run TestIntegration_NombreResolver_ReadsFirestore ./internal/auth/infra/firebase/...
 func TestIntegration_NombreResolver_ReadsFirestore(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("FB_FIRESTORE_INTEGRATION") == "" {
 		t.Skip("FB_FIRESTORE_INTEGRATION not set; skipping Firestore integration test")
 	}
