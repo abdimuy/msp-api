@@ -109,6 +109,23 @@ type Handler interface {
 // ErrTransient signals a temporary failure; the dispatcher will retry the event.
 var ErrTransient = errors.New("outboxfb: transient failure")
 
+// Registry is the interface the Dispatcher uses to look up handlers and
+// determine which event types to claim from the outbox table.
+//
+// The concrete implementation is [HandlerRegistry]. Tests may supply a
+// custom implementation to exercise edge cases (e.g. simulating a missing
+// handler for a specific event type while still claiming its rows).
+type Registry interface {
+	// Lookup returns the handler for the given event type, or nil if none
+	// is registered.
+	Lookup(eventType string) Handler
+	// KnownTypes returns the event types claimed by this dispatcher. The
+	// dispatcher uses this set to build the EVENT_TYPE IN (...) filter on
+	// every poll. An empty slice causes the dispatcher to skip the poll
+	// entirely (nothing to claim).
+	KnownTypes() []string
+}
+
 // HandlerRegistry maps event types to handlers.
 type HandlerRegistry struct{ handlers map[string]Handler }
 
@@ -131,3 +148,17 @@ func (r *HandlerRegistry) Register(h Handler) {
 func (r *HandlerRegistry) Lookup(eventType string) Handler {
 	return r.handlers[eventType]
 }
+
+// KnownTypes returns the set of event types registered in this registry.
+// The dispatcher uses this to filter the fetch query and avoid claiming
+// rows that belong to other dispatcher instances.
+func (r *HandlerRegistry) KnownTypes() []string {
+	types := make([]string, 0, len(r.handlers))
+	for t := range r.handlers {
+		types = append(types, t)
+	}
+	return types
+}
+
+// Verify HandlerRegistry satisfies Registry at compile time.
+var _ Registry = (*HandlerRegistry)(nil)
