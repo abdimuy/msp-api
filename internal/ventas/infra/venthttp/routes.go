@@ -92,6 +92,17 @@ func registerOperations(api huma.API, h *Handlers) {
 	}, h.ObtenerVenta)
 
 	huma.Register(api, huma.Operation{
+		OperationID:   "obtener-eventos-venta",
+		Method:        http.MethodGet,
+		Path:          "/ventas/{id}/eventos",
+		Summary:       "Obtener historial de eventos",
+		Description:   "Devuelve la línea de tiempo de eventos de la venta (creada, aprobada, aplicada, imágenes, traspasos, ...) ordenada del más antiguo al más reciente.",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+	}, h.ObtenerEventosVenta)
+
+	huma.Register(api, huma.Operation{
 		OperationID:   "crear-venta",
 		Method:        http.MethodPost,
 		Path:          "/ventas",
@@ -140,7 +151,7 @@ func registerOperations(api huma.API, h *Handlers) {
 		Method:        http.MethodPost,
 		Path:          "/ventas/{id}/regresar-borrador",
 		Summary:       "Regresar venta a borrador",
-		Description:   "Regresa la venta de revisada a borrador, limpiando el registro de aprobación. Solo permitido mientras la venta esté en situación 'revisada'.",
+		Description:   "Regresa la venta a borrador desde 'revisada' o 'aprobada', limpiando el registro de aprobación para que el header vuelva a ser editable. Rechazado si la venta ya fue aplicada en Microsip (sincronizacion='aplicada').",
 		Tags:          tags,
 		Security:      security,
 		DefaultStatus: http.StatusOK,

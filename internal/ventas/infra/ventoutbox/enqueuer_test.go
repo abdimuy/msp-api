@@ -46,7 +46,7 @@ func TestEnqueuer_RunnerFailure_PropagatesError(t *testing.T) {
 		map[string]any{"k": "v"},
 	)
 	require.Error(t, err, "atomicity: enqueue errors must propagate so the outer tx can roll back")
-	assert.ErrorIs(t, err, boom)
+	require.ErrorIs(t, err, boom)
 	assert.Equal(t, 1, runner.called)
 }
 

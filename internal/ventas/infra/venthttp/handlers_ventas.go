@@ -124,6 +124,39 @@ func (h *Handlers) ObtenerVenta(ctx context.Context, in *ObtenerVentaInput) (*Ob
 	return &ObtenerVentaOutput{Body: toVentaDTO(v)}, nil
 }
 
+// ObtenerEventosVenta is the handler for GET /v2/ventas/{id}/eventos. It
+// returns the venta's outbox event timeline (oldest first) so the detail
+// screen can render a "Historial". Requires the same read permission as
+// ObtenerVenta — anyone who can see the venta can see its history.
+func (h *Handlers) ObtenerEventosVenta(ctx context.Context, in *ObtenerEventosVentaInput) (*ObtenerEventosVentaOutput, error) {
+	cu, err := currentUserOrError(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := requirePerm(cu, auth.PermVentasVer); err != nil {
+		return nil, err
+	}
+	id, err := parseUUIDField(in.ID, "id")
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+	eventos, err := h.svc.EventosDeVenta(ctx, id)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+	out := &ObtenerEventosVentaOutput{}
+	out.Body.Items = make([]VentaEventoDTO, 0, len(eventos))
+	for _, e := range eventos {
+		out.Body.Items = append(out.Body.Items, VentaEventoDTO{
+			ID:         e.ID.String(),
+			EventType:  e.EventType,
+			Payload:    e.Payload,
+			OccurredAt: e.OccurredAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return out, nil
+}
+
 // CancelarVenta is the handler for PATCH /v2/ventas/{id}/cancel.
 func (h *Handlers) CancelarVenta(ctx context.Context, in *CancelarVentaInput) (*CancelarVentaOutput, error) {
 	cu, err := currentUserOrError(ctx)

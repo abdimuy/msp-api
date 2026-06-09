@@ -6,6 +6,8 @@
 package venthttp
 
 import (
+	"encoding/json"
+
 	"github.com/danielgtaylor/huma/v2"
 )
 
@@ -252,6 +254,29 @@ type ObtenerVentaInput struct {
 // ObtenerVentaOutput is the response wrapper.
 type ObtenerVentaOutput struct {
 	Body VentaDTO
+}
+
+// VentaEventoDTO is one entry in the venta event timeline. Payload is the
+// raw event JSON so the frontend can surface event-type-specific fields
+// (actor, folio, …) without the backend hard-coding a shape per event type.
+// OccurredAt is RFC3339 UTC, matching the rest of the venta DTOs.
+type VentaEventoDTO struct {
+	ID         string          `json:"id"          format:"uuid"`
+	EventType  string          `json:"event_type"  example:"venta.aprobada"`
+	Payload    json.RawMessage `json:"payload"`
+	OccurredAt string          `json:"occurred_at" format:"date-time"`
+}
+
+// ObtenerEventosVentaInput carries the venta id path parameter.
+type ObtenerEventosVentaInput struct {
+	ID string `path:"id" format:"uuid"`
+}
+
+// ObtenerEventosVentaOutput wraps the chronological timeline, oldest-first.
+type ObtenerEventosVentaOutput struct {
+	Body struct {
+		Items []VentaEventoDTO `json:"items"`
+	}
 }
 
 // CancelarVentaInput carries the path parameter and reason body.

@@ -51,6 +51,13 @@ func provideVentasOutboxEnqueuer(p *firebird.Pool) ventasoutbound.OutboxEnqueuer
 	return ventoutbox.NewEnqueuer(p)
 }
 
+// provideVentasEventReader builds the read side of the outbox for the venta
+// detail timeline. It reads MSP_OUTBOX_EVENTS by aggregate_id and projects
+// each row into a ventas-owned VentaEvento.
+func provideVentasEventReader(p *firebird.Pool) ventasoutbound.VentaEventReader {
+	return ventfb.NewEventoRepo(p)
+}
+
 // provideVentasImageProcessor selects the image-processing implementation
 // for the ventas module. When IMAGEPROCESSOR_ENABLED=false the factory
 // returns the NoOp passthrough so uploads land verbatim on disk.
@@ -97,7 +104,9 @@ func provideVentasService(
 	microsipWriter ventasoutbound.MicrosipVentaWriter,
 	microsipCliente ventasoutbound.MicrosipClienteWriter,
 	inv ventasoutbound.InventarioService,
+	eventReader ventasoutbound.VentaEventReader,
 ) *ventasapp.Service {
 	return ventasapp.NewService(repo, clientes, usuarios, store, clock, outbox, imageProc, fbTxMgr, aplicarCfg, microsipWriter, microsipCliente).
-		WithInventario(inv)
+		WithInventario(inv).
+		WithEventReader(eventReader)
 }

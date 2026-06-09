@@ -42,6 +42,10 @@ type Service struct {
 	// + automatic-traspaso steps — the legacy behavior before the inventario
 	// module existed.
 	inventario outbound.InventarioService
+	// eventReader is optional. Tests omit it; production wires it via
+	// WithEventReader. When nil, EventosDeVenta returns an empty timeline
+	// rather than failing — the read is purely informational.
+	eventReader outbound.VentaEventReader
 }
 
 // WithInventario attaches an InventarioService so CrearVenta validates stock
@@ -49,6 +53,14 @@ type Service struct {
 // s for fluent wiring at the composition root.
 func (s *Service) WithInventario(inv outbound.InventarioService) *Service {
 	s.inventario = inv
+	return s
+}
+
+// WithEventReader attaches a VentaEventReader so EventosDeVenta can surface
+// the venta's outbox event timeline. Returns s for fluent wiring at the
+// composition root.
+func (s *Service) WithEventReader(r outbound.VentaEventReader) *Service {
+	s.eventReader = r
 	return s
 }
 
