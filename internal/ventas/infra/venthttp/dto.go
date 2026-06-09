@@ -48,7 +48,10 @@ type MontosDTO struct {
 
 // PlanCreditoDTO mirrors the optional credit-plan VO.
 type PlanCreditoDTO struct {
-	PlazoMeses  int    `json:"plazo_meses"  minimum:"1"`
+	// PlazoMeses es el plazo del crédito en meses. La app de campo no lo
+	// captura (lo asigna la oficina); cuando llega en 0 la API aplica el
+	// plazo por defecto y la oficina lo ajusta después si es necesario.
+	PlazoMeses  int    `json:"plazo_meses"  minimum:"0" doc:"Plazo del crédito en meses; 0 = usar el valor por defecto (lo asigna la oficina)"`
 	Enganche    string `json:"enganche"`
 	Parcialidad string `json:"parcialidad"`
 	FrecPago    string `json:"frec_pago"    enum:"SEMANAL,QUINCENAL,MENSUAL"`

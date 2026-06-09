@@ -2,6 +2,13 @@ package domain
 
 import "github.com/shopspring/decimal"
 
+// DefaultPlazoMeses is the credit term (in months) assigned to a CREDITO venta
+// when the originating client does not supply one. The field-sales Android app
+// does not capture the term — the office assigns it — so a venta arriving
+// without plazo_meses is created with this default and the office overrides it
+// later when needed, instead of being rejected and queued as a failed intent.
+const DefaultPlazoMeses = 12
+
 // PlanCredito models the credit plan attached to a CREDITO venta. All fields
 // are required and validated by the constructor.
 type PlanCredito struct {

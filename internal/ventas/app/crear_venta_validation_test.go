@@ -141,15 +141,10 @@ func TestCrearVentaInputValidation(t *testing.T) {
 		require.ErrorIs(t, err, domain.ErrFrecPagoInvalida)
 	})
 
-	t.Run("plan_credito_invalid_plazo_rejected", func(t *testing.T) {
-		t.Parallel()
-		h := newHarness(t)
-		in := validCreditoInput()
-		in.PlanCredito.PlazoMeses = 0
-
-		_, err := h.svc.CrearVenta(t.Context(), in, uuid.New())
-		require.ErrorIs(t, err, domain.ErrPlazoNoPositivo)
-	})
+	// plazo_meses = 0 is NOT a rejection at the service level: the office
+	// assigns the term, so the API defaults it. See
+	// TestCrearVenta_PlazoMesesDefault. The domain VO still rejects plazo <= 0
+	// directly (TestNewPlanCredito_Invalid) — that invariant is unchanged.
 
 	t.Run("dia_cobranza_semanal_accepted", func(t *testing.T) {
 		t.Parallel()

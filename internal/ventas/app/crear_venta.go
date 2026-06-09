@@ -370,7 +370,15 @@ func buildOptionalPlanCredito(in *CrearVentaPlanCreditoInput) (*domain.PlanCredi
 	if err != nil {
 		return nil, err
 	}
-	plan, err := domain.NewPlanCredito(in.PlazoMeses, in.Enganche, in.Parcialidad, frec)
+	// The Android app does not capture the credit term — the office assigns it.
+	// A venta arriving with plazo_meses unset (0, or a stray negative) takes the
+	// default term so it is created as a borrador the office can complete, rather
+	// than being rejected and queued as a failed intent.
+	plazoMeses := in.PlazoMeses
+	if plazoMeses <= 0 {
+		plazoMeses = domain.DefaultPlazoMeses
+	}
+	plan, err := domain.NewPlanCredito(plazoMeses, in.Enganche, in.Parcialidad, frec)
 	if err != nil {
 		return nil, err
 	}
