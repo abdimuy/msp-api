@@ -18,7 +18,6 @@ import (
 	idempotencypg "github.com/abdimuy/msp-api/internal/platform/idempotency/postgres"
 	"github.com/abdimuy/msp-api/internal/platform/outbox"
 	"github.com/abdimuy/msp-api/internal/platform/postgres"
-	"github.com/abdimuy/msp-api/internal/platform/transaction"
 )
 
 // provideAuthUsuarioRepo builds the Firebird-backed UsuarioRepo.
@@ -53,9 +52,12 @@ func provideIdempotencyStore(p *postgres.Pool) idempotency.Store {
 }
 
 // provideAuthOutboxEnqueuer builds the auth-module wrapper around the platform
-// outbox, using the Postgres transaction manager.
-func provideAuthOutboxEnqueuer(txMgr *transaction.Manager) outbound.OutboxEnqueuer {
-	return authoutbox.NewEnqueuer(txMgr)
+// outbox. Backed by Firebird per ADR-0008: the event row is INSERTed into
+// MSP_OUTBOX_EVENTS inside the same firebird tx as the business write, so
+// the COMMIT covers both atomically and a tx rollback takes the event with
+// it.
+func provideAuthOutboxEnqueuer(p *firebird.Pool) outbound.OutboxEnqueuer {
+	return authoutbox.NewEnqueuer(p)
 }
 
 // provideAuthService assembles the auth application service.
