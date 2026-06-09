@@ -16,14 +16,14 @@ import (
 
 	"github.com/abdimuy/msp-api/internal/auth/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/apperror"
-	"github.com/abdimuy/msp-api/internal/platform/outbox"
+	"github.com/abdimuy/msp-api/internal/platform/outboxfb"
 )
 
 // ---------------------------------------------------------------------------
 // Compile-time interface assertion (redundant with handlers.go but explicit).
 // ---------------------------------------------------------------------------
 
-var _ outbox.Handler = (*UserDeactivatedHandler)(nil)
+var _ outboxfb.Handler = (*UserDeactivatedHandler)(nil)
 
 // ---------------------------------------------------------------------------
 // fakeFirebaseClient
@@ -57,12 +57,12 @@ func (f *fakeFirebaseClient) EnableUser(_ context.Context, uid string) error {
 // helpers
 // ---------------------------------------------------------------------------
 
-// makeEvent builds an outbox.Event with a JSON-marshaled payload.
-func makeEvent(t *testing.T, eventType string, payload any) outbox.Event {
+// makeEvent builds an outboxfb.Event with a JSON-marshaled payload.
+func makeEvent(t *testing.T, eventType string, payload any) outboxfb.Event {
 	t.Helper()
 	body, err := json.Marshal(payload)
 	require.NoError(t, err, "makeEvent: marshal payload")
-	return outbox.Event{
+	return outboxfb.Event{
 		ID:          uuid.New(),
 		Aggregate:   "usuario",
 		AggregateID: uuid.New(),
@@ -165,7 +165,7 @@ func TestUserDeactivatedHandler_MalformedPayload_ReturnsPermanentError(t *testin
 	fb := &fakeFirebaseClient{}
 	h := NewUserDeactivatedHandler(fb)
 
-	evt := outbox.Event{
+	evt := outboxfb.Event{
 		ID:          uuid.New(),
 		Aggregate:   "usuario",
 		AggregateID: uuid.New(),
@@ -176,7 +176,7 @@ func TestUserDeactivatedHandler_MalformedPayload_ReturnsPermanentError(t *testin
 
 	err := h.Handle(context.Background(), evt)
 	require.Error(t, err)
-	require.NotErrorIs(t, err, outbox.ErrTransient, "malformed payload must be a permanent error, not transient")
+	require.NotErrorIs(t, err, outboxfb.ErrTransient, "malformed payload must be a permanent error, not transient")
 
 	ae, ok := apperror.As(err)
 	require.True(t, ok, "error must be an *apperror.Error")
@@ -207,7 +207,7 @@ func TestUserDeactivatedHandler_FirebaseUserNotFound_IsIdempotent(t *testing.T) 
 }
 
 // TestUserDeactivatedHandler_FirebaseTransient_ReturnsOutboxTransient: wrapped
-// ErrFirebaseTransient → outbox.ErrTransient is returned so the dispatcher
+// ErrFirebaseTransient → outboxfb.ErrTransient is returned so the dispatcher
 // retries.
 func TestUserDeactivatedHandler_FirebaseTransient_ReturnsOutboxTransient(t *testing.T) { //nolint:paralleltest // mutates slog.Default
 	buf := captureSlog(t)
@@ -223,7 +223,7 @@ func TestUserDeactivatedHandler_FirebaseTransient_ReturnsOutboxTransient(t *test
 
 	err := h.Handle(context.Background(), evt)
 	require.Error(t, err)
-	require.ErrorIs(t, err, outbox.ErrTransient, "transient firebase error must surface as outbox.ErrTransient")
+	require.ErrorIs(t, err, outboxfb.ErrTransient, "transient firebase error must surface as outboxfb.ErrTransient")
 	assert.Contains(t, buf.String(), "auth.firebase_user_disable_transient")
 }
 
@@ -243,7 +243,7 @@ func TestUserDeactivatedHandler_FirebaseUnknownError_PropagatesAsPermanent(t *te
 	err := h.Handle(context.Background(), evt)
 	require.Error(t, err)
 	require.ErrorIs(t, err, weirdErr, "unknown error must be propagated as-is")
-	assert.NotErrorIs(t, err, outbox.ErrTransient, "unknown error must NOT be transient")
+	assert.NotErrorIs(t, err, outboxfb.ErrTransient, "unknown error must NOT be transient")
 }
 
 // TestUserDeactivatedHandler_FirebaseInternalApperror_PropagatesAsPermanent:
@@ -263,7 +263,7 @@ func TestUserDeactivatedHandler_FirebaseInternalApperror_PropagatesAsPermanent(t
 	err := h.Handle(context.Background(), evt)
 	require.Error(t, err)
 	require.ErrorIs(t, err, internalErr, "internal apperror must be propagated as-is")
-	require.NotErrorIs(t, err, outbox.ErrTransient, "internal apperror must NOT be transient")
+	require.NotErrorIs(t, err, outboxfb.ErrTransient, "internal apperror must NOT be transient")
 
 	ae, ok := apperror.As(err)
 	require.True(t, ok)

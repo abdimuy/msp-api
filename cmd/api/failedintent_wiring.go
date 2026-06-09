@@ -15,10 +15,10 @@ import (
 	"github.com/abdimuy/msp-api/internal/platform/config"
 	"github.com/abdimuy/msp-api/internal/platform/failedintent"
 	failedintentblobfs "github.com/abdimuy/msp-api/internal/platform/failedintent/blobfs"
+	failedintentfb "github.com/abdimuy/msp-api/internal/platform/failedintent/firebird"
 	failedintenthttp "github.com/abdimuy/msp-api/internal/platform/failedintent/http"
-	failedintentpg "github.com/abdimuy/msp-api/internal/platform/failedintent/postgres"
+	"github.com/abdimuy/msp-api/internal/platform/firebird"
 	"github.com/abdimuy/msp-api/internal/platform/lifecycle"
-	"github.com/abdimuy/msp-api/internal/platform/postgres"
 	"github.com/abdimuy/msp-api/internal/platform/response"
 )
 
@@ -93,17 +93,17 @@ func (u *usuarioLookup) BuildCurrentUserByID(
 
 var _ failedintenthttp.UsuarioLookup = (*usuarioLookup)(nil)
 
-// provideFailedIntentStore builds the Postgres-backed Store. The concrete
+// provideFailedIntentStore builds the Firebird-backed Store. The concrete
 // type is exposed alongside the interface so the orphan-sweep wiring can
 // consume the ReferencedPaths method without dragging it into the Store
 // interface from cross-package callers.
-func provideFailedIntentStore(p *postgres.Pool) *failedintentpg.Store {
-	return failedintentpg.New(p.Pool)
+func provideFailedIntentStore(p *firebird.Pool) *failedintentfb.Store {
+	return failedintentfb.New(p)
 }
 
-// provideFailedIntentStoreInterface narrows the concrete *postgres.Store to
+// provideFailedIntentStoreInterface narrows the concrete *firebird.Store to
 // the Store interface that consumers depend on.
-func provideFailedIntentStoreInterface(s *failedintentpg.Store) failedintent.Store {
+func provideFailedIntentStoreInterface(s *failedintentfb.Store) failedintent.Store {
 	return s
 }
 
@@ -194,7 +194,7 @@ func registerFailedIntentJanitorLifecycle(lc fx.Lifecycle, j *failedintent.Janit
 // service still boots when the sweep cannot run.
 func invokeFailedIntentOrphanSweep(
 	lc fx.Lifecycle,
-	store *failedintentpg.Store,
+	store *failedintentfb.Store,
 	blobs *failedintentblobfs.Store,
 ) {
 	lc.Append(fx.Hook{

@@ -17,11 +17,10 @@ import (
 	"github.com/abdimuy/msp-api/internal/platform/config"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 	"github.com/abdimuy/msp-api/internal/platform/healthcheck"
+	idempotencyfb "github.com/abdimuy/msp-api/internal/platform/idempotency/firebird"
 	"github.com/abdimuy/msp-api/internal/platform/lifecycle"
 	"github.com/abdimuy/msp-api/internal/platform/logger"
-	"github.com/abdimuy/msp-api/internal/platform/outbox"
-	"github.com/abdimuy/msp-api/internal/platform/postgres"
-	"github.com/abdimuy/msp-api/internal/platform/transaction"
+	"github.com/abdimuy/msp-api/internal/platform/outboxfb"
 )
 
 // Build metadata, populated via -ldflags at compile time. See Makefile.
@@ -71,8 +70,6 @@ func appOptions() []fx.Option {
 		fx.Provide(
 			config.Load,
 			provideLogger,
-			providePostgresPool,
-			providePostgresTxManager,
 			provideFirebirdPool,
 			provideFirebirdTxManager,
 			provideHealthService,
@@ -87,6 +84,8 @@ func appOptions() []fx.Option {
 			provideAuthOutboxEnqueuer,
 			provideAuthService,
 			provideIdempotencyStore,
+			provideIdempotencyStoreConcrete,
+			provideIdempotencyJanitor,
 			provideVentasRepo,
 			provideVentasClienteChecker,
 			provideVentasUsuarioChecker,
@@ -151,10 +150,10 @@ func appOptions() []fx.Option {
 			provideHTTPServer,
 		),
 		fx.Invoke(
-			registerPostgresLifecycle,
 			registerFirebirdLifecycle,
 			registerAuthOutboxHandlers,
 			registerOutboxLifecycle,
+			registerIdempotencyJanitorLifecycle,
 			invokeAuthCatalogSync,
 			wireReplayDispatcher,
 			registerFailedIntentJanitorLifecycle,
@@ -180,16 +179,6 @@ func provideLogger(cfg *config.Config) *slog.Logger {
 	return l
 }
 
-// providePostgresPool builds the pgx pool from config.
-func providePostgresPool(cfg *config.Config) (*postgres.Pool, error) {
-	return postgres.New(cfg.Postgres)
-}
-
-// providePostgresTxManager wraps the pool with the application tx manager.
-func providePostgresTxManager(p *postgres.Pool) *transaction.Manager {
-	return transaction.NewManager(p.Pool)
-}
-
 // provideFirebirdPool builds the Firebird connection pool from config.
 func provideFirebirdPool(cfg *config.Config) (*firebird.Pool, error) {
 	return firebird.New(cfg.Firebird)
@@ -207,19 +196,15 @@ func provideHealthService() *healthcheck.Service {
 
 // provideOutboxRegistry returns an empty handler registry. Modules add their
 // handlers via fx.Invoke when they're wired in.
-func provideOutboxRegistry() *outbox.HandlerRegistry {
-	return outbox.NewHandlerRegistry()
+func provideOutboxRegistry() *outboxfb.HandlerRegistry {
+	return outboxfb.NewHandlerRegistry()
 }
 
 // provideOutboxDispatcher builds the outbox dispatcher. Defaults are applied
-// inside NewDispatcher when fields are zero.
-func provideOutboxDispatcher(p *postgres.Pool, reg *outbox.HandlerRegistry) *outbox.Dispatcher {
-	return outbox.NewDispatcher(p.Pool, reg, outbox.DispatcherConfig{})
-}
-
-// registerPostgresLifecycle hooks the pool into the fx lifecycle.
-func registerPostgresLifecycle(lc fx.Lifecycle, p *postgres.Pool) {
-	lifecycle.Append(lc, "postgres", p)
+// inside NewDispatcher when fields are zero. Single worker per process: see
+// ADR-0008 for the rationale and the CLAIMED_AT upgrade recipe.
+func provideOutboxDispatcher(p *firebird.Pool, reg *outboxfb.HandlerRegistry) *outboxfb.Dispatcher {
+	return outboxfb.NewDispatcher(p, reg, outboxfb.DispatcherConfig{})
 }
 
 // registerFirebirdLifecycle hooks the Firebird pool into the fx lifecycle.
@@ -228,17 +213,19 @@ func registerFirebirdLifecycle(lc fx.Lifecycle, p *firebird.Pool) {
 }
 
 // registerOutboxLifecycle hooks the dispatcher into the fx lifecycle.
-func registerOutboxLifecycle(lc fx.Lifecycle, d *outbox.Dispatcher) {
-	lifecycle.Append(lc, "outbox-dispatcher", d)
+func registerOutboxLifecycle(lc fx.Lifecycle, d *outboxfb.Dispatcher) {
+	lifecycle.Append(lc, "outboxfb-dispatcher", d)
+}
+
+// registerIdempotencyJanitorLifecycle hooks the idempotency janitor into the
+// fx lifecycle so expired MSP_IDEMPOTENCY_KEYS rows are purged hourly.
+func registerIdempotencyJanitorLifecycle(lc fx.Lifecycle, j *idempotencyfb.Janitor) {
+	lifecycle.Append(lc, "idempotency-janitor", j)
 }
 
 // registerProbes registers the readiness probes for the dependencies the
 // API needs to declare itself healthy.
-func registerProbes(svc *healthcheck.Service, pgPool *postgres.Pool, fbPool *firebird.Pool) {
-	svc.Register(healthcheck.ProbeFunc{
-		N: "postgres",
-		F: pgPool.HealthCheck,
-	})
+func registerProbes(svc *healthcheck.Service, fbPool *firebird.Pool) {
 	svc.Register(healthcheck.ProbeFunc{
 		N: "firebird",
 		F: fbPool.HealthCheck,

@@ -15,9 +15,8 @@ import (
 	"github.com/abdimuy/msp-api/internal/platform/config"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 	"github.com/abdimuy/msp-api/internal/platform/idempotency"
-	idempotencypg "github.com/abdimuy/msp-api/internal/platform/idempotency/postgres"
-	"github.com/abdimuy/msp-api/internal/platform/outbox"
-	"github.com/abdimuy/msp-api/internal/platform/postgres"
+	idempotencyfb "github.com/abdimuy/msp-api/internal/platform/idempotency/firebird"
+	"github.com/abdimuy/msp-api/internal/platform/outboxfb"
 )
 
 // provideAuthUsuarioRepo builds the Firebird-backed UsuarioRepo.
@@ -44,11 +43,26 @@ func provideAuthFirebase(cfg *config.Config) (outbound.FirebaseClient, error) {
 	return firebase.NewFirebaseClient(cfg.Firebase, cfg.App.Env)
 }
 
-// provideIdempotencyStore builds the Postgres-backed idempotency.Store. The
-// store is shared by every module's HTTP middleware so a single table tracks
-// keys across the whole API surface.
-func provideIdempotencyStore(p *postgres.Pool) idempotency.Store {
-	return idempotencypg.New(p.Pool)
+// provideIdempotencyStore builds the Firebird-backed idempotency.Store. The
+// store is shared by every module's HTTP middleware so a single table
+// (MSP_IDEMPOTENCY_KEYS) tracks keys across the whole API surface. Per
+// ADR-0008 the store lives in Firebird so a snapshot/restore captures
+// idempotency state alongside business data.
+func provideIdempotencyStore(p *firebird.Pool) idempotency.Store {
+	return idempotencyfb.New(p)
+}
+
+// provideIdempotencyStoreConcrete exposes the concrete *idempotencyfb.Store
+// so the janitor wiring can call its PurgeExpired method without widening
+// the idempotency.Store interface.
+func provideIdempotencyStoreConcrete(p *firebird.Pool) *idempotencyfb.Store {
+	return idempotencyfb.New(p)
+}
+
+// provideIdempotencyJanitor wires the background purge of expired
+// MSP_IDEMPOTENCY_KEYS rows.
+func provideIdempotencyJanitor(s *idempotencyfb.Store) *idempotencyfb.Janitor {
+	return idempotencyfb.NewJanitor(idempotencyfb.JanitorConfig{Store: s})
 }
 
 // provideAuthOutboxEnqueuer builds the auth-module wrapper around the platform
@@ -80,9 +94,9 @@ func provideUserDeactivatedHandler(fb outbound.FirebaseClient) *authoutbox.UserD
 }
 
 // registerAuthOutboxHandlers registers every auth-module outbox handler
-// on the shared registry. Must run before registerOutboxLifecycle so
-// the dispatcher sees the handlers when it starts.
-func registerAuthOutboxHandlers(reg *outbox.HandlerRegistry, h *authoutbox.UserDeactivatedHandler) {
+// on the shared registry. Must run before registerOutboxLifecycle so the
+// dispatcher sees the handlers when it starts.
+func registerAuthOutboxHandlers(reg *outboxfb.HandlerRegistry, h *authoutbox.UserDeactivatedHandler) {
 	reg.Register(h)
 }
 

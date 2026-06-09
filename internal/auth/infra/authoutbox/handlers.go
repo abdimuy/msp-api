@@ -9,7 +9,7 @@ import (
 
 	"github.com/abdimuy/msp-api/internal/auth/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/apperror"
-	"github.com/abdimuy/msp-api/internal/platform/outbox"
+	"github.com/abdimuy/msp-api/internal/platform/outboxfb"
 )
 
 // EventTypeUserDeactivated is the outbox event type this handler consumes.
@@ -32,7 +32,7 @@ const handlerCallTimeout = 10 * time.Second
 //   - Firebase user-not-found → log warn, return nil (idempotent: account
 //     already gone from Firebase).
 //   - errors.Is(err, outbound.ErrFirebaseTransient) → return
-//     outbox.ErrTransient so the dispatcher retries with backoff.
+//     outboxfb.ErrTransient so the dispatcher retries with backoff.
 //   - Other errors → return as-is (permanent failure, dispatcher marks
 //     the row failed).
 type UserDeactivatedHandler struct {
@@ -46,7 +46,7 @@ func NewUserDeactivatedHandler(fb outbound.FirebaseClient) *UserDeactivatedHandl
 }
 
 // Compile-time check.
-var _ outbox.Handler = (*UserDeactivatedHandler)(nil)
+var _ outboxfb.Handler = (*UserDeactivatedHandler)(nil)
 
 // EventType returns the routing key for the outbox dispatcher.
 func (h *UserDeactivatedHandler) EventType() string { return EventTypeUserDeactivated }
@@ -59,7 +59,7 @@ type userDeactivatedPayload struct {
 
 // Handle is invoked by the outbox dispatcher for each pending event of
 // type EventTypeUserDeactivated. See the type godoc for behavior.
-func (h *UserDeactivatedHandler) Handle(ctx context.Context, e outbox.Event) error {
+func (h *UserDeactivatedHandler) Handle(ctx context.Context, e outboxfb.Event) error {
 	var payload userDeactivatedPayload
 	if err := json.Unmarshal(e.Payload, &payload); err != nil {
 		return apperror.NewInternal(
@@ -106,7 +106,7 @@ func (h *UserDeactivatedHandler) classifyHandlerError(ctx context.Context, err e
 			"uid", uid,
 			"event_id", eventID,
 			"error", err.Error())
-		return outbox.ErrTransient
+		return outboxfb.ErrTransient
 	}
 	return err
 }

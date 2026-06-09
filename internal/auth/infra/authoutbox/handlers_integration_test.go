@@ -37,7 +37,7 @@ import (
 
 	"github.com/abdimuy/msp-api/internal/auth/infra/firebase"
 	"github.com/abdimuy/msp-api/internal/platform/config"
-	"github.com/abdimuy/msp-api/internal/platform/outbox"
+	"github.com/abdimuy/msp-api/internal/platform/outboxfb"
 )
 
 const (
@@ -175,15 +175,15 @@ func ensureTestUser(t *testing.T, fbauth *auth.Client, email string) string {
 }
 
 // ---------------------------------------------------------------------------
-// makeDeactivatedEvent builds an outbox.Event with the user.deactivated type
+// makeDeactivatedEvent builds an outboxfb.Event with the user.deactivated type
 // and a payload carrying the given Firebase UID.
 // ---------------------------------------------------------------------------
 
-func makeDeactivatedEvent(t *testing.T, firebaseUID string) outbox.Event {
+func makeDeactivatedEvent(t *testing.T, firebaseUID string) outboxfb.Event {
 	t.Helper()
 	payload, err := json.Marshal(map[string]string{"firebase_uid": firebaseUID})
 	require.NoError(t, err)
-	return outbox.Event{
+	return outboxfb.Event{
 		ID:          uuid.New(),
 		Aggregate:   "usuario",
 		AggregateID: uuid.New(),
