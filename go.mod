@@ -3,6 +3,7 @@ module github.com/abdimuy/msp-api
 go 1.25.0
 
 require (
+	cloud.google.com/go/firestore v1.18.0
 	firebase.google.com/go/v4 v4.19.0
 	github.com/XSAM/otelsql v0.42.0
 	github.com/caarlos0/env/v11 v11.4.1
@@ -23,6 +24,7 @@ require (
 	golang.org/x/image v0.40.0
 	golang.org/x/text v0.37.0
 	google.golang.org/api v0.231.0
+	google.golang.org/grpc v1.74.2
 	pgregory.net/rapid v1.3.0
 )
 
@@ -32,7 +34,6 @@ require (
 	cloud.google.com/go/auth v0.16.1 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.7.0 // indirect
-	cloud.google.com/go/firestore v1.18.0 // indirect
 	cloud.google.com/go/iam v1.5.2 // indirect
 	cloud.google.com/go/longrunning v0.6.7 // indirect
 	cloud.google.com/go/monitoring v1.24.2 // indirect
@@ -101,7 +102,6 @@ require (
 	google.golang.org/genproto v0.0.0-20250505200425-f936aa4a68b2 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250528174236-200df99c418a // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250818200422-3122310a409c // indirect
-	google.golang.org/grpc v1.74.2 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/mathutil v1.4.2-0.20220822142738-b13e5b564332 // indirect

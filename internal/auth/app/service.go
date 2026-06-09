@@ -21,6 +21,20 @@ type Service struct {
 	outbox   outbound.OutboxEnqueuer
 	firebase outbound.FirebaseClient
 	txMgr    *firebird.TxManager
+	// nombreResolver is optional. Tests omit it; production wires it via
+	// WithNombreResolver. When nil, first-login user creation derives the
+	// name from the token claim / email exactly as before — actor names
+	// stay best-effort.
+	nombreResolver outbound.NombreResolver
+}
+
+// WithNombreResolver attaches a NombreResolver so first-login user creation
+// prefers the canonical name from Firestore (users/{uid}.NOMBRE) over the
+// frequently-empty token name claim. Returns s for fluent wiring at the
+// composition root.
+func (s *Service) WithNombreResolver(r outbound.NombreResolver) *Service {
+	s.nombreResolver = r
+	return s
 }
 
 // NewService builds a Service wired against the given ports. The

@@ -43,6 +43,14 @@ func provideAuthFirebase(cfg *config.Config) (outbound.FirebaseClient, error) {
 	return firebase.NewFirebaseClient(cfg.Firebase, cfg.App.Env)
 }
 
+// provideAuthNombreResolver builds the Firestore-backed resolver that reads
+// users/{uid}.NOMBRE so first-login user creation gets the canonical name
+// instead of the email. Returns a noop resolver in dev mode / unconfigured
+// deployments (no Firestore to read).
+func provideAuthNombreResolver(cfg *config.Config) (outbound.NombreResolver, error) {
+	return firebase.NewNombreResolver(context.Background(), cfg.Firebase)
+}
+
 // provideIdempotencyStore builds the Firebird-backed idempotency.Store. The
 // store is shared by every module's HTTP middleware so a single table
 // (MSP_IDEMPOTENCY_KEYS) tracks keys across the whole API surface. Per
@@ -83,8 +91,10 @@ func provideAuthService(
 	outboxEnq outbound.OutboxEnqueuer,
 	fb outbound.FirebaseClient,
 	fbTxMgr *firebird.TxManager,
+	nombreResolver outbound.NombreResolver,
 ) *app.Service {
-	return app.NewService(usuarios, roles, permisos, clock, outboxEnq, fb, fbTxMgr)
+	return app.NewService(usuarios, roles, permisos, clock, outboxEnq, fb, fbTxMgr).
+		WithNombreResolver(nombreResolver)
 }
 
 // provideUserDeactivatedHandler constructs the outbox handler that

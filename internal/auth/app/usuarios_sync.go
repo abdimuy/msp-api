@@ -189,11 +189,43 @@ func (s *Service) promoteVendedorOnly(ctx context.Context, uid, email string) (*
 	if vErr != nil {
 		return nil, false, vErr
 	}
+	// Now that we have a Firebase uid, prefer the canonical Firestore name
+	// over the email-derived placeholder the vendedor row was created with.
+	s.applyFirestoreNombre(ctx, byEmail, uid)
 	byEmail.PromoteToFirebaseUser(fuid, byEmail.ID(), s.clock.Now())
 	if updErr := s.usuarios.Update(ctx, byEmail); updErr != nil {
 		return nil, false, updErr
 	}
 	return byEmail, true, nil
+}
+
+// applyFirestoreNombre mutates u's name in place when Firestore holds a
+// canonical NOMBRE that differs from the current value. Best-effort: a nil
+// resolver, a lookup error, an empty/identical result, or a name that fails
+// domain validation all leave u untouched. The mutation is folded into the
+// caller's existing Update write, so no extra round-trip is incurred.
+func (s *Service) applyFirestoreNombre(ctx context.Context, u *domain.Usuario, uid string) {
+	if s.nombreResolver == nil {
+		return
+	}
+	fromStore, err := s.nombreResolver.ResolveNombre(ctx, uid)
+	if err != nil {
+		return
+	}
+	trimmed := strings.TrimSpace(fromStore)
+	if trimmed == "" || trimmed == u.Nombre().Value() {
+		return
+	}
+	nombre, err := domain.NewNombre(trimmed)
+	if err != nil {
+		return
+	}
+	u.Update(domain.UsuarioUpdate{
+		Email:     u.Email(),
+		Nombre:    nombre,
+		Telefono:  u.Telefono(),
+		AlmacenID: u.AlmacenID(),
+	}, u.ID(), s.clock.Now())
 }
 
 // createFromToken builds and saves a brand-new FIREBASE_USER usuario from the
@@ -208,7 +240,7 @@ func (s *Service) createFromToken(ctx context.Context, uid, email, name string) 
 	if vErr != nil {
 		return nil, vErr
 	}
-	nombre, vErr := domain.NewNombre(deriveNombreFromToken(name, email))
+	nombre, vErr := domain.NewNombre(s.resolveNombre(ctx, uid, name, email))
 	if vErr != nil {
 		return nil, vErr
 	}
@@ -219,6 +251,28 @@ func (s *Service) createFromToken(ctx context.Context, uid, email, name string) 
 		return nil, saveErr
 	}
 	return fresh, nil
+}
+
+// resolveNombre picks the best available display name for a usuario, in
+// priority order:
+//
+//  1. the canonical NOMBRE from Firestore (users/{uid}.NOMBRE), when a
+//     resolver is wired and returns a non-empty value;
+//  2. the token's display-name claim;
+//  3. the local-part of the email.
+//
+// Steps 2-3 are deriveNombreFromToken. The Firestore lookup is best-effort:
+// any error or empty result silently falls through to the token-based
+// derivation so a Firestore hiccup never blocks a first login.
+func (s *Service) resolveNombre(ctx context.Context, uid, tokenName, email string) string {
+	if s.nombreResolver != nil {
+		if fromStore, err := s.nombreResolver.ResolveNombre(ctx, uid); err == nil {
+			if trimmed := strings.TrimSpace(fromStore); trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return deriveNombreFromToken(tokenName, email)
 }
 
 // deriveNombreFromToken returns the token's display name when present,

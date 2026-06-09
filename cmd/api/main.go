@@ -80,6 +80,7 @@ func appOptions() []fx.Option {
 			provideAuthPermisoRepo,
 			provideAuthClock,
 			provideAuthFirebase,
+			provideAuthNombreResolver,
 			provideUserDeactivatedHandler,
 			provideAuthOutboxEnqueuer,
 			provideAuthService,
