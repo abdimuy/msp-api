@@ -105,7 +105,7 @@ func TestVentaRepo_ReplaceVendedores_DuplicateUsuarioID_SurfacesConflict(t *test
 		v := buildVenta(t, newVentaInput{createdBy: root, vendedor: root})
 		require.NoError(t, repo.Save(ctx, v))
 
-		// Same usuario assigned twice → UQ_MSP_VENTAS_VENDEDORES_VENTA_USR.
+		// Same usuario assigned twice → UQ_VTA_VEND_VENTA_USR.
 		err := v.ReemplazarVendedores(domain.ReemplazarVendedoresParams{
 			Vendedores: []domain.CrearVentaVendedorInput{
 				{ID: uuid.New(), UsuarioID: root, Email: "a-" + uuid.NewString() + "@x.com", Nombre: "A"},

@@ -25,7 +25,7 @@
 -- ASCENDING por defecto. CREATE INDEX es atómico en Firebird; no requiere lock
 -- exclusivo de la tabla.
 
-CREATE INDEX IDX_MSP_PAGOS_RECIBIDOS_DOCTO_CC ON MSP_PAGOS_RECIBIDOS (DOCTO_CC_ID);
+CREATE INDEX IDX_PAGOS_REC_DOCTO_CC ON MSP_PAGOS_RECIBIDOS (DOCTO_CC_ID);
 COMMIT;
 
 -- ─── 2. Cambiar tipo de FECHA_ULT_PAGO de DATE a TIMESTAMP ───────────────────

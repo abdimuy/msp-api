@@ -17,7 +17,7 @@ import (
 )
 
 // errVendedorDuplicado is the apperror surfaced when an INSERT into
-// MSP_VENTAS_VENDEDORES hits the UQ_MSP_VENTAS_VENDEDORES_VENTA_USR unique
+// MSP_VENTAS_VENDEDORES hits the UQ_VTA_VEND_VENTA_USR unique
 // constraint, i.e. the same (venta_id, vendedor_usuario_id) pair is inserted
 // twice.
 var errVendedorDuplicado = apperror.NewConflict(
@@ -50,7 +50,7 @@ var _ outbound.VentaRepo = (*VentaRepo)(nil)
 // later row fails (Firebird treats statement-level errors as recoverable
 // inside a tx, so production paths should always wrap Save in a TxManager).
 //
-// Unique violations on UQ_MSP_VENTAS_VENDEDORES_VENTA_USR are mapped to the
+// Unique violations on UQ_VTA_VEND_VENTA_USR are mapped to the
 // domain-meaningful errVendedorDuplicado apperror.
 func (r *VentaRepo) Save(ctx context.Context, v *domain.Venta) error {
 	return r.pool.ExecRetry(ctx, func(ctx context.Context) error {
