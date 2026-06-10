@@ -133,8 +133,8 @@ github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826 h1:RWengNIwukTxcDr9
 github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826/go.mod h1:TaXosZuwdSHYgviHp1DAtfrULt5eUgsSMsZf+YrPgl8=
 github.com/nakagami/chacha20 v0.1.0 h1:2fbf5KeVUw7oRpAe6/A7DqvBJLYYu0ka5WstFbnkEVo=
 github.com/nakagami/chacha20 v0.1.0/go.mod h1:xpoujepNFA7MvYLvX5xKHzlOHimDrLI9Ll8zfOJ0l2E=
-github.com/nakagami/firebirdsql v0.9.18 h1:f/wh+RJqDMmaV83ftX/mEMqYCVXfgGTKS4IfvUqs0ts=
-github.com/nakagami/firebirdsql v0.9.18/go.mod h1:l3bG682R481NkM9CMlXz7zGaO2VTWnX5oTRReb3SAA0=
+github.com/nakagami/firebirdsql v0.9.19 h1:57YhaeTYp6ul6h2th+R5yZRSJqOL7/P8L7OO3U4ewTc=
+github.com/nakagami/firebirdsql v0.9.19/go.mod h1:l3bG682R481NkM9CMlXz7zGaO2VTWnX5oTRReb3SAA0=
 github.com/oasdiff/yaml v0.0.9 h1:zQOvd2UKoozsSsAknnWoDJlSK4lC0mpmjfDsfqNwX48=
 github.com/oasdiff/yaml v0.0.9/go.mod h1:8lvhgJG4xiKPj3HN5lDow4jZHPlx1i7dIwzkdAo6oAM=
 github.com/oasdiff/yaml3 v0.0.12 h1:75urAtPeDg2/iDEWwzNrLOWxI9N/dCh81nTTJtokt2M=
