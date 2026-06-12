@@ -4,6 +4,7 @@ package ventfb_test
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -555,7 +556,8 @@ func TestVentaRepo_Save_RoundTrip_RichVenta(t *testing.T) {
 		assert.Equal(t, 1, got.ImagenesCount())
 		for ig := range got.Imagenes() {
 			require.NotNil(t, ig.Descripcion())
-			assert.Equal(t, desc, *ig.Descripcion())
+			// El dominio pliega el texto capturado a MAYÚSCULAS (commit 35c8394).
+			assert.Equal(t, strings.ToUpper(desc), *ig.Descripcion())
 		}
 	})
 }
