@@ -104,13 +104,13 @@ WHERE DOCTO_IN_ID = ?`
 // ─── SALDOS_IN (existencia queries) ──────────────────────────────────────────
 
 // selectExistencia returns the net stock for one article in one warehouse.
-const selectExistencia = `SELECT COALESCE(SUM(ENTRADAS_UNIDADES - SALIDAS_UNIDADES), 0)
+const selectExistencia = `SELECT CAST(COALESCE(SUM(ENTRADAS_UNIDADES - SALIDAS_UNIDADES), 0) AS NUMERIC(18,5))
 FROM SALDOS_IN
 WHERE ALMACEN_ID = ? AND ARTICULO_ID = ?`
 
 // selectExistenciasPorAlmacen returns stock for every article in a warehouse.
 const selectExistenciasPorAlmacen = `SELECT ARTICULO_ID,
-  COALESCE(SUM(ENTRADAS_UNIDADES - SALIDAS_UNIDADES), 0) AS EXISTENCIA
+  CAST(COALESCE(SUM(ENTRADAS_UNIDADES - SALIDAS_UNIDADES), 0) AS NUMERIC(18,5)) AS EXISTENCIA
 FROM SALDOS_IN
 WHERE ALMACEN_ID = ?
 GROUP BY ARTICULO_ID`

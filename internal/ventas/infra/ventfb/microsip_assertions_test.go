@@ -43,7 +43,7 @@ func assertSaldoVenta(t *testing.T, q firebird.Querier, doctoPVID int, want sald
 	var cargoRaw any
 	err := q.QueryRowContext(
 		ctx, `
-		SELECT COALESCE(SUM(IDC.IMPORTE), 0)
+		SELECT CAST(COALESCE(SUM(IDC.IMPORTE), 0) AS NUMERIC(18,2))
 		FROM DOCTOS_ENTRE_SIS DES
 		JOIN IMPORTES_DOCTOS_CC IDC ON IDC.DOCTO_CC_ID = DES.DOCTO_DEST_ID
 		WHERE DES.CLAVE_SIS_FTE = 'PV'
@@ -57,7 +57,7 @@ func assertSaldoVenta(t *testing.T, q firebird.Querier, doctoPVID int, want sald
 	var pagoRaw any
 	err = q.QueryRowContext(
 		ctx, `
-		SELECT COALESCE(SUM(IDC.IMPORTE), 0)
+		SELECT CAST(COALESCE(SUM(IDC.IMPORTE), 0) AS NUMERIC(18,2))
 		FROM DOCTOS_ENTRE_SIS DES
 		JOIN DOCTOS_CC DC ON DC.DOCTO_CC_ID = DES.DOCTO_DEST_ID
 		JOIN IMPORTES_DOCTOS_CC IDC ON IDC.DOCTO_CC_ACR_ID = DC.DOCTO_CC_ID

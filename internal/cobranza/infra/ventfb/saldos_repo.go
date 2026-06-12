@@ -188,7 +188,7 @@ func (r *SaldosRepo) ResumenZonas(ctx context.Context) ([]domain.ResumenZona, er
 	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
 		q := firebird.GetQuerier(ctx, r.pool.DB)
 		rows, qerr := q.QueryContext(ctx, `
-SELECT ZONA_CLIENTE_ID, COUNT(*), SUM(SALDO)
+SELECT ZONA_CLIENTE_ID, COUNT(*), CAST(SUM(SALDO) AS NUMERIC(18,2))
 FROM MSP_SALDOS_VENTAS
 WHERE SALDO > 0
   AND ZONA_CLIENTE_ID IS NOT NULL
