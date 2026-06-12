@@ -60,19 +60,131 @@ func TestVenta_AprobarOnlyFromRevisada(t *testing.T) {
 	assert.Equal(t, by, v.Aprobacion().By())
 }
 
-func TestVenta_RegresarABorrador(t *testing.T) {
+func TestVenta_RegresarABorrador_FromRevisada(t *testing.T) {
 	t.Parallel()
 	by := uuid.New()
 	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
 
 	v := newBorradorVenta(t)
-	// Not from borrador.
-	require.ErrorIs(t, v.RegresarABorrador(by, now), domain.ErrVentaNoRegresableABorrador)
-
 	require.NoError(t, v.EnviarARevision(by, now))
 	require.NoError(t, v.RegresarABorrador(by, now))
 	assert.Equal(t, domain.SituacionBorrador, v.Situacion())
 	assert.Nil(t, v.Aprobacion())
+}
+
+func TestVenta_RegresarABorrador_FromAprobada_HappyPath(t *testing.T) {
+	t.Parallel()
+	by := uuid.New()
+	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
+
+	v := newBorradorVenta(t)
+	require.NoError(t, v.EnviarARevision(by, now))
+	require.NoError(t, v.Aprobar(by, now))
+	require.NotNil(t, v.Aprobacion())
+
+	// Drain events emitted up to here so we can assert only the regresar event.
+	v.ClearPendingEvents()
+
+	regresadoBy := uuid.New()
+	regresadoAt := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, v.RegresarABorrador(regresadoBy, regresadoAt))
+
+	assert.Equal(t, domain.SituacionBorrador, v.Situacion())
+	assert.Equal(t, domain.SincronizacionPendiente, v.Sincronizacion())
+	assert.Nil(t, v.Aprobacion(), "aprobacion debe limpiarse al regresar a borrador")
+	a := v.Audit()
+	assert.Equal(t, regresadoBy, a.UpdatedBy())
+
+	events := v.PendingEvents()
+	require.Len(t, events, 1)
+	_, ok := events[0].(domain.VentaRegresadaABorradorEvent)
+	assert.True(t, ok, "se debe emitir VentaRegresadaABorradorEvent")
+}
+
+func TestVenta_RegresarABorrador_FromAprobada_RejectsWhenAplicada(t *testing.T) {
+	t.Parallel()
+	by := uuid.New()
+	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
+
+	v := newBorradorVenta(t)
+	require.NoError(t, v.EnviarARevision(by, now))
+	require.NoError(t, v.Aprobar(by, now))
+	require.NoError(t, v.MarcarAplicada(123, "Y00002262", now, by))
+	require.True(t, v.IsAplicada())
+
+	aprobacionAntes := v.Aprobacion()
+	v.ClearPendingEvents()
+
+	err := v.RegresarABorrador(by, now)
+	require.ErrorIs(t, err, domain.ErrVentaNoRegresableABorrador,
+		"una venta ya aplicada en Microsip NUNCA puede regresar a borrador")
+
+	// Nada debe haberse mutado.
+	assert.Equal(t, domain.SituacionAprobada, v.Situacion())
+	assert.Equal(t, domain.SincronizacionAplicada, v.Sincronizacion())
+	assert.Equal(t, aprobacionAntes, v.Aprobacion())
+	assert.Empty(t, v.PendingEvents(), "no se debe emitir ningún evento cuando la transición es rechazada")
+}
+
+func TestVenta_RegresarABorrador_RejectsBorrador(t *testing.T) {
+	t.Parallel()
+	by := uuid.New()
+	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
+
+	v := newBorradorVenta(t)
+	require.ErrorIs(t, v.RegresarABorrador(by, now), domain.ErrVentaNoRegresableABorrador)
+	assert.Equal(t, domain.SituacionBorrador, v.Situacion())
+}
+
+func TestVenta_RegresarABorrador_RejectsCancelada(t *testing.T) {
+	t.Parallel()
+	by := uuid.New()
+	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
+
+	v := newBorradorVenta(t)
+	require.NoError(t, v.Cancelar("error de captura", by, now))
+	require.ErrorIs(t, v.RegresarABorrador(by, now), domain.ErrVentaNoRegresableABorrador)
+	assert.Equal(t, domain.SituacionCancelada, v.Situacion())
+}
+
+func TestVenta_RegresarABorrador_RejectsDeleted(t *testing.T) {
+	t.Parallel()
+	by := uuid.New()
+	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
+
+	// Hidratamos una venta soft-deleted que estaba en aprobada antes del delete —
+	// defensa en profundidad por si llega un caso así por la persistencia.
+	src := newBorradorVenta(t)
+	require.NoError(t, src.EnviarARevision(by, now))
+	require.NoError(t, src.Aprobar(by, now))
+	srcAudit := src.Audit()
+
+	p := domain.HydrateVentaParams{
+		ID:             src.ID(),
+		ClienteID:      src.ClienteID(),
+		Cliente:        src.Cliente(),
+		Direccion:      src.Direccion(),
+		GPS:            src.GPS(),
+		FechaVenta:     src.FechaVenta(),
+		TipoVenta:      src.TipoVenta(),
+		Montos:         src.Montos(),
+		PlanCredito:    src.PlanCredito(),
+		DiaCobranza:    src.DiaCobranza(),
+		Nota:           src.Nota(),
+		Estado:         domain.EstadoDeleted,
+		Situacion:      domain.SituacionAprobada,
+		Sincronizacion: domain.SincronizacionPendiente,
+		Aprobacion:     src.Aprobacion(),
+		CreatedAt:      srcAudit.CreatedAt(),
+		UpdatedAt:      srcAudit.UpdatedAt(),
+		CreatedBy:      srcAudit.CreatedBy(),
+		UpdatedBy:      srcAudit.UpdatedBy(),
+	}
+	v := domain.HydrateVenta(p)
+
+	require.ErrorIs(t, v.RegresarABorrador(by, now), domain.ErrVentaNoRegresableABorrador)
+	assert.Equal(t, domain.EstadoDeleted, v.Estado())
+	assert.Equal(t, domain.SituacionAprobada, v.Situacion())
 }
 
 func TestVenta_MarcarAplicada(t *testing.T) {

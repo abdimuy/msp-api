@@ -89,10 +89,11 @@ var (
 		"la venta solo se puede aprobar desde revisada",
 	)
 	// ErrVentaNoRegresableABorrador is returned when RegresarABorrador is
-	// called on a venta whose situación is not 'revisada'.
+	// called on a venta that is not in 'revisada' or 'aprobada', or that has
+	// already been materialized in Microsip (sincronizacion=aplicada).
 	ErrVentaNoRegresableABorrador = apperror.NewConflict(
 		"venta_no_regresable_a_borrador",
-		"la venta solo se puede regresar a borrador desde revisada",
+		"la venta solo se puede regresar a borrador desde revisada o aprobada, y nunca cuando ya fue aplicada en microsip",
 	)
 	// ErrVentaNoAplicable is returned when MarcarAplicada is called on a venta
 	// that is not active+aprobada+pendiente.

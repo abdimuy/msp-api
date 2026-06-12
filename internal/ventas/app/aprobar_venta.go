@@ -49,10 +49,12 @@ func (s *Service) Aprobar(ctx context.Context, ventaID, by uuid.UUID) (*domain.V
 	return venta, nil
 }
 
-// RegresarABorrador transitions the venta identified by ventaID from revisada
-// back to borrador, clearing the approval record. The aggregate is loaded,
-// mutated, the header row is updated, and the resulting domain event is
-// best-effort enqueued onto the outbox.
+// RegresarABorrador transitions the venta identified by ventaID back to
+// borrador from either revisada or aprobada, clearing any recorded
+// Aprobacion so the header becomes editable again. Rejected if the venta has
+// already been materialized in Microsip (sincronizacion=aplicada). The
+// aggregate is loaded, mutated, the header row is updated, and the resulting
+// domain event is best-effort enqueued onto the outbox.
 func (s *Service) RegresarABorrador(ctx context.Context, ventaID, by uuid.UUID) (*domain.Venta, error) {
 	venta, err := s.ventas.FindByID(ctx, ventaID)
 	if err != nil {

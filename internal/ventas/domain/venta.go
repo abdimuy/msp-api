@@ -651,7 +651,9 @@ func (v *Venta) Aprobar(by uuid.UUID, now time.Time) error {
 // (review rejection) and clears any pending Aprobacion. Returns
 // ErrVentaNoRegresableABorrador from any other situación.
 func (v *Venta) RegresarABorrador(by uuid.UUID, now time.Time) error {
-	if v.estado != EstadoActive || v.situacion != SituacionRevisada {
+	if v.estado != EstadoActive ||
+		(v.situacion != SituacionRevisada && v.situacion != SituacionAprobada) ||
+		v.sincroniza == SincronizacionAplicada {
 		return ErrVentaNoRegresableABorrador
 	}
 	v.situacion = SituacionBorrador
