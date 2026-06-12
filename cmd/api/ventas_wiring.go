@@ -91,14 +91,17 @@ func provideVentasAplicarConfig(p *firebird.Pool) ventasoutbound.AplicarConfig {
 // is parameterized with AlmacenDestinoVentasID so DOCTOS_PV references the
 // reserved-stock pool the inventario traspaso has already populated.
 func provideVentasMicrosipWriter(p *firebird.Pool, cfg *config.Config) ventasoutbound.MicrosipVentaWriter {
-	return microsip.NewVentaWriter(p).WithAlmacenDestinoVentas(cfg.Inventario.AlmacenDestinoVentasID)
+	return microsip.NewVentaWriter(p).
+		WithAlmacenDestinoVentas(cfg.Inventario.AlmacenDestinoVentasID).
+		WithTiempoCortoPlazoMeses(cfg.MicrosipVenta.TiempoCortoPlazoMeses).
+		WithFormaCobroEnganche(cfg.MicrosipVenta.FormaCobroEnganche)
 }
 
 // provideVentasMicrosipClienteWriter builds the Firebird-backed
 // MicrosipClienteWriter that auto-creates a Microsip cliente when AplicarVenta
 // runs on a venta whose ClienteID is nil.
-func provideVentasMicrosipClienteWriter(p *firebird.Pool) ventasoutbound.MicrosipClienteWriter {
-	return microsip.NewClienteWriter(p)
+func provideVentasMicrosipClienteWriter(p *firebird.Pool, cfg *config.Config) ventasoutbound.MicrosipClienteWriter {
+	return microsip.NewClienteWriter(p).WithLimiteCredito(cfg.MicrosipVenta.ClienteLimiteCredito)
 }
 
 // provideVentasService assembles the ventas application service. Multi-step

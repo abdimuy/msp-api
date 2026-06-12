@@ -18,9 +18,16 @@ type MicrosipVentaInput struct {
 	CajaID int
 	// CajeroID is the cajero for this zona de cliente.
 	CajeroID int
-	// VendedorID is the Microsip ruta vendedor (-1 when no vendedor is mapped).
-	// Written to LIBRES_CARGOS_CC.VENDEDOR_1 for CREDITO ventas.
+	// VendedorID is the Microsip ruta vendedor for the zona (-1 when none).
+	// Kept for reference/diagnostics; LIBRES_CARGOS_CC.VENDEDOR_1/2/3 now use
+	// the per-vendedor LISTA_ATRIB_ID mapping in VendedorListaIDs.
 	VendedorID int
+	// VendedorListaIDs holds the resolved LISTA_ATRIB_ID written to
+	// LIBRES_CARGOS_CC.VENDEDOR_1 / VENDEDOR_2 / VENDEDOR_3 respectively. Each
+	// position is the seller in that slot mapped through atributos
+	// 19985/19986/19987 (see MSP_CFG_VENDEDOR_MICROSIP); a slot with no seller
+	// or no mapping is the sentinel -1.
+	VendedorListaIDs [3]int
 	// SucursalID is the Microsip sucursal for the sale (usually 225490 Matriz).
 	SucursalID int
 

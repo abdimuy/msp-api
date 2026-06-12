@@ -60,6 +60,7 @@ type Config struct {
 	Storage        Storage
 	ImageProcessor ImageProcessor
 	Microsip       Microsip
+	MicrosipVenta  MicrosipVenta
 	FailedIntent   FailedIntent
 	Inventario     Inventario
 }
@@ -118,6 +119,23 @@ type Microsip struct {
 	// list configurable means a future business decision to swap price
 	// lists does not require a recompile.
 	PriceListIDs []int `env:"MICROSIP_PRICE_LIST_IDS" envSeparator:"," envDefault:"42,8437,6925"`
+}
+
+// MicrosipVenta holds runtime knobs for materializing an aplicada venta into
+// Microsip's cliente / DOCTOS_PV / DOCTOS_CC families (the write path in
+// internal/ventas/infra/microsip). These are catalog-derived constants that a
+// business decision could change without a recompile.
+type MicrosipVenta struct {
+	// ClienteLimiteCredito is the LIMITE_CREDITO stamped on a cliente row when
+	// AplicarVenta auto-creates one in Microsip. Default 10000.
+	ClienteLimiteCredito int `env:"MICROSIP_CLIENTE_LIMITE_CREDITO" envDefault:"10000"`
+	// TiempoCortoPlazoMeses is the LIBRES_CARGOS_CC.TIEMPO_A_CORTO_PLAZOMESES
+	// value written for CREDITO ventas. Default 4.
+	TiempoCortoPlazoMeses int `env:"MICROSIP_TIEMPO_CORTO_PLAZO_MESES" envDefault:"4"`
+	// FormaCobroEnganche is the FORMA_COBRO_ID linked to the enganche document
+	// via FORMAS_COBRO_DOCTOS. Default 157 (the value used by the 66k real
+	// enganches in the production ledger).
+	FormaCobroEnganche int `env:"MICROSIP_FORMA_COBRO_ENGANCHE" envDefault:"157"`
 }
 
 // Cobranza holds cobranza-module-specific runtime knobs.

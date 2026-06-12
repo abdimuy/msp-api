@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"errors"
 
+	"github.com/google/uuid"
+
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 	"github.com/abdimuy/msp-api/internal/ventas/domain"
 	"github.com/abdimuy/msp-api/internal/ventas/ports/outbound"
@@ -37,6 +39,11 @@ const selectAplicarDefaults = `
 SELECT SUCURSAL_ID, FORMA_COBRO_CONTADO_ID, FORMA_COBRO_CREDITO_ID
 FROM MSP_CFG_APLICAR
 WHERE ID = 1`
+
+const selectVendedorListaIDs = `
+SELECT VENDEDOR_LISTA_ID_1, VENDEDOR_LISTA_ID_2, VENDEDOR_LISTA_ID_3
+FROM MSP_CFG_VENDEDOR_MICROSIP
+WHERE USUARIO_ID = ?`
 
 // ─── Repo ─────────────────────────────────────────────────────────────────────
 
@@ -114,6 +121,30 @@ func (r *AplicarConfigRepo) NumeroDeVendedoresID(ctx context.Context, n int) (in
 		return 0, firebird.MapError(err)
 	}
 	return id, nil
+}
+
+// VendedorListaIDs resolves the three Microsip LISTA_ATRIB_ID values mapped to
+// a vendedor usuario in MSP_CFG_VENDEDOR_MICROSIP. A missing row or a NULL
+// column maps to the sentinel -1 — an unmapped seller is not an error.
+func (r *AplicarConfigRepo) VendedorListaIDs(ctx context.Context, usuarioID uuid.UUID) ([3]int, error) {
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	var id1, id2, id3 sql.NullInt64
+	err := q.QueryRowContext(ctx, selectVendedorListaIDs, usuarioID.String()).Scan(&id1, &id2, &id3)
+	if errors.Is(err, sql.ErrNoRows) {
+		return [3]int{-1, -1, -1}, nil
+	}
+	if err != nil {
+		return [3]int{-1, -1, -1}, firebird.MapError(err)
+	}
+	return [3]int{nullIntOr(id1, -1), nullIntOr(id2, -1), nullIntOr(id3, -1)}, nil
+}
+
+// nullIntOr returns the int value of n, or def when n is NULL.
+func nullIntOr(n sql.NullInt64, def int) int {
+	if !n.Valid {
+		return def
+	}
+	return int(n.Int64)
 }
 
 // Defaults returns the singleton MSP_CFG_APLICAR row.

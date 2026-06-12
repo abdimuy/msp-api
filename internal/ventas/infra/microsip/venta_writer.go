@@ -192,6 +192,7 @@ WHERE E.CLAVE_SIS_FTE = 'PV' AND E.CLAVE_SIS_DEST = 'CC' AND E.DOCTO_FTE_ID = ?`
 const insertLibresCargosCC = `INSERT INTO LIBRES_CARGOS_CC
   (DOCTO_CC_ID,
    FORMA_DE_PAGO, PARCIALIDAD, CREDITO_EN_MESES,
+   TIEMPO_A_CORTO_PLAZOMESES, MONTO_A_CORTO_PLAZO,
    VENDEDOR_1, VENDEDOR_2, VENDEDOR_3,
    NUMERO_DE_VENDEDORES,
    ENGANCHE,
@@ -200,7 +201,8 @@ const insertLibresCargosCC = `INSERT INTO LIBRES_CARGOS_CC
    OBSERVACIONES)
 VALUES (?,
         ?, ?, ?,
-        ?, -1, -1,
+        ?, ?,
+        ?, ?, ?,
         ?,
         ?,
         ?,
@@ -246,6 +248,19 @@ VALUES (?, ?, ?,
 // updateDoctoCCAplicar flips the enganche document APLICADO N→S.
 const updateDoctoCCAplicar = `UPDATE DOCTOS_CC SET APLICADO = 'S' WHERE DOCTO_CC_ID = ?`
 
+// insertFormaCobroDocto links the enganche DOCTOS_CC document to its forma de
+// cobro. DOCTOS_CC carries no FORMA_COBRO_ID column — the forma de cobro lives
+// in FORMAS_COBRO_DOCTOS (NOM_TABLA_DOCTOS='DOCTOS_CC', DOCTO_ID=enganche).
+// IMPORTE is 0 to mirror the production enganches (the amount lives on the
+// IMPORTES_DOCTOS_CC link, not here).
+//
+//nolint:gosec // SQL constant, not user input.
+const insertFormaCobroDocto = `INSERT INTO FORMAS_COBRO_DOCTOS
+  (FORMA_COBRO_DOC_ID, NOM_TABLA_DOCTOS, DOCTO_ID,
+   FORMA_COBRO_ID, CLAVE_SIS_FORMA_COB, IMPORTE)
+VALUES (?, 'DOCTOS_CC', ?,
+        ?, 'CC', 0)`
+
 // ─── VentaWriter ──────────────────────────────────────────────────────────────
 
 // VentaWriter implements outbound.MicrosipVentaWriter against the Microsip
@@ -258,6 +273,13 @@ type VentaWriter struct {
 	// legacy behavior of using the first producto's AlmacenOrigen — the
 	// expected default when the inventario module is not wired.
 	almacenDestinoVentas int
+	// tiempoCortoPlazoMeses is written to LIBRES_CARGOS_CC.TIEMPO_A_CORTO_PLAZOMESES.
+	// Injected from config (MICROSIP_TIEMPO_CORTO_PLAZO_MESES, default 4).
+	tiempoCortoPlazoMeses int
+	// formaCobroEnganche is the FORMA_COBRO_ID linked to the enganche document
+	// via FORMAS_COBRO_DOCTOS. Injected from config
+	// (MICROSIP_FORMA_COBRO_ENGANCHE, default 157).
+	formaCobroEnganche int
 }
 
 // NewVentaWriter builds a VentaWriter wired to the given Firebird pool.
@@ -271,6 +293,20 @@ func NewVentaWriter(pool *firebird.Pool) *VentaWriter {
 // by the time Aplicar runs. Returns w for fluent wiring.
 func (w *VentaWriter) WithAlmacenDestinoVentas(id int) *VentaWriter {
 	w.almacenDestinoVentas = id
+	return w
+}
+
+// WithTiempoCortoPlazoMeses configures the LIBRES_CARGOS_CC.TIEMPO_A_CORTO_PLAZOMESES
+// value written for CREDITO ventas. Returns w for fluent wiring.
+func (w *VentaWriter) WithTiempoCortoPlazoMeses(meses int) *VentaWriter {
+	w.tiempoCortoPlazoMeses = meses
+	return w
+}
+
+// WithFormaCobroEnganche configures the FORMA_COBRO_ID linked to the enganche
+// document via FORMAS_COBRO_DOCTOS. Returns w for fluent wiring.
+func (w *VentaWriter) WithFormaCobroEnganche(formaCobroID int) *VentaWriter {
+	w.formaCobroEnganche = formaCobroID
 	return w
 }
 
@@ -471,7 +507,8 @@ func (w *VentaWriter) insertDatosCredito(
 	if _, err := q.ExecContext(ctx, insertLibresCargosCC,
 		cargoCCID,
 		*in.FormaDePagoID, plan.Parcialidad().StringFixed(2), *in.CreditoEnMesesID,
-		in.VendedorID,
+		w.tiempoCortoPlazoMeses, v.Montos().CortoPlazo().StringFixed(2),
+		in.VendedorListaIDs[0], in.VendedorListaIDs[1], in.VendedorListaIDs[2],
 		in.NumeroDeVendedoresID,
 		plan.Enganche().StringFixed(2),
 		v.Montos().Contado().StringFixed(2),
@@ -536,6 +573,18 @@ func (w *VentaWriter) insertEnganche(
 		sucursalID, wc, clienteID, claveCliente,
 	); err != nil {
 		return fmt.Errorf("insert doctos_cc enganche: %w", firebird.MapError(err))
+	}
+
+	// INSERT FORMAS_COBRO_DOCTOS (forma de cobro del enganche). Sin esta fila
+	// el enganche queda sin forma de cobro en Microsip.
+	formaCobroDocID, err := nextID(ctx, q)
+	if err != nil {
+		return fmt.Errorf("claim forma_cobro_doc_id: %w", err)
+	}
+	if _, err := q.ExecContext(ctx, insertFormaCobroDocto,
+		formaCobroDocID, engancheDoctoID, w.formaCobroEnganche,
+	); err != nil {
+		return fmt.Errorf("insert formas_cobro_doctos: %w", firebird.MapError(err))
 	}
 
 	// INSERT IMPORTES_DOCTOS_CC (liga enganche → cargo).

@@ -44,7 +44,7 @@ const insertCliente = `INSERT INTO CLIENTES
 VALUES
   (?, ?, 'A',
    'S', 'S', 'S', FALSE,
-   0, ?, ?, ?,
+   ?, ?, ?, ?,
    ?, ?, ?,
    'N', 'N')`
 
@@ -94,11 +94,22 @@ VALUES (?, ?, ?, ?, ?, ?, ?)`
 // Firebird database.
 type ClienteWriter struct {
 	pool *firebird.Pool
+	// limiteCredito is the LIMITE_CREDITO stamped on every auto-created CLIENTES
+	// row. Injected from config (MICROSIP_CLIENTE_LIMITE_CREDITO, default 10000)
+	// via WithLimiteCredito; zero when unset.
+	limiteCredito int
 }
 
 // NewClienteWriter builds a ClienteWriter wired to the given Firebird pool.
 func NewClienteWriter(pool *firebird.Pool) *ClienteWriter {
 	return &ClienteWriter{pool: pool}
+}
+
+// WithLimiteCredito configures the LIMITE_CREDITO assigned to auto-created
+// CLIENTES rows. Returns w for fluent wiring at the composition root.
+func (w *ClienteWriter) WithLimiteCredito(limite int) *ClienteWriter {
+	w.limiteCredito = limite
+	return w
 }
 
 // Compile-time check.
@@ -177,7 +188,7 @@ func (w *ClienteWriter) claimIDs(ctx context.Context, q firebird.Querier) (claim
 func (w *ClienteWriter) execInsertCliente(ctx context.Context, q firebird.Querier, clienteID int, in outbound.MicrosipClienteInput) error {
 	_, err := q.ExecContext(ctx, insertCliente,
 		clienteID, in.Nombre,
-		in.MonedaID, in.CondPagoID, in.TipoClienteID,
+		w.limiteCredito, in.MonedaID, in.CondPagoID, in.TipoClienteID,
 		in.ZonaClienteID, in.CobradorID, in.VendedorID,
 	)
 	if err != nil {

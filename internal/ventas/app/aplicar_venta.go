@@ -153,17 +153,44 @@ func (s *Service) buildWriterInput(ctx context.Context, v *domain.Venta) (outbou
 		return outbound.MicrosipVentaInput{}, err
 	}
 
+	vendedorListaIDs, err := s.resolveVendedorListaIDs(ctx, v)
+	if err != nil {
+		return outbound.MicrosipVentaInput{}, err
+	}
+
 	return outbound.MicrosipVentaInput{
 		Venta:                v,
 		CajaID:               cc.CajaID,
 		CajeroID:             cc.CajeroID,
 		VendedorID:           cc.VendedorID,
+		VendedorListaIDs:     vendedorListaIDs,
 		SucursalID:           defs.SucursalID,
 		FormaCobroID:         formaCobroID,
 		FormaDePagoID:        formaDePagoID,
 		CreditoEnMesesID:     creditoEnMesesID,
 		NumeroDeVendedoresID: numVendedoresID,
 	}, nil
+}
+
+// resolveVendedorListaIDs maps the venta's vendedores (in order) to the
+// LIBRES_CARGOS_CC.VENDEDOR_1/2/3 columns. The seller in slot k (0-based)
+// contributes its own LISTA_ATRIB_ID for atributo 19985+k. Slots beyond the
+// venta's seller count, or sellers without a mapping, stay at the sentinel -1.
+func (s *Service) resolveVendedorListaIDs(ctx context.Context, v *domain.Venta) ([3]int, error) {
+	listaIDs := [3]int{-1, -1, -1}
+	k := 0
+	for vd := range v.Vendedores() {
+		if k >= len(listaIDs) {
+			break
+		}
+		ids, err := s.aplicarCfg.VendedorListaIDs(ctx, vd.UsuarioID())
+		if err != nil {
+			return [3]int{-1, -1, -1}, err
+		}
+		listaIDs[k] = ids[k]
+		k++
+	}
+	return listaIDs, nil
 }
 
 // resolveCreditoIDs looks up the forma_de_pago and credito_en_meses list IDs

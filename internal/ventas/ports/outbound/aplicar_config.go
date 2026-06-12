@@ -1,7 +1,11 @@
 //nolint:misspell // ventas vocabulary is Spanish per project convention.
 package outbound
 
-import "context"
+import (
+	"context"
+
+	"github.com/google/uuid"
+)
 
 // CajaCajero is the caja + cajero + vendedor + cobrador assigned to a cliente
 // zona. The vendedor is the Microsip ruta vendedor (display/quick-reference
@@ -44,6 +48,13 @@ type AplicarConfig interface {
 	// NumeroDeVendedoresID maps a seller count to its Microsip list id.
 	// Returns domain.ErrNumVendedoresSinMapeo when unmapped.
 	NumeroDeVendedoresID(ctx context.Context, n int) (int, error)
+
+	// VendedorListaIDs resolves the three Microsip LISTA_ATRIB_ID values
+	// (atributos 19985 / 19986 / 19987) configured for a vendedor usuario in
+	// MSP_CFG_VENDEDOR_MICROSIP. Returns the sentinel [3]int{-1, -1, -1} when
+	// the usuario has no mapping row; individual unset ids are also -1. A miss
+	// is not an error — the seller slot simply stays unmapped.
+	VendedorListaIDs(ctx context.Context, usuarioID uuid.UUID) ([3]int, error)
 
 	// Defaults returns the singleton MSP_CFG_APLICAR row. Returns
 	// domain.ErrConfigAplicarFaltante when the row is absent.

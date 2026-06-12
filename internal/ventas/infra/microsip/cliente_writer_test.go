@@ -100,6 +100,40 @@ func TestClienteWriter_Crear_HappyPath(t *testing.T) { //nolint:paralleltest // 
 	})
 }
 
+func TestClienteWriter_Crear_LimiteCreditoYTelefono(t *testing.T) { //nolint:paralleltest // serial: Firebird MAX on CLAVES_CLIENTES would race across parallel txs
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	// WithLimiteCredito mirrors the production wiring (MICROSIP_CLIENTE_LIMITE_CREDITO=10000).
+	writer := microsip.NewClienteWriter(pool).WithLimiteCredito(10000)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		in := defaultInput("PEDRO RAMOS SANCHEZ TEST 20260611")
+		// Telefono ya viene canonizado a 10 dígitos por el VO upstream.
+		in.Telefono = ptr("2381863330")
+
+		result, err := writer.Crear(ctx, in)
+		require.NoError(t, err)
+
+		q := firebird.GetQuerier(ctx, pool.DB)
+
+		// LIMITE_CREDITO debe ser el configurado (10000), no 0.
+		var limite int
+		err = q.QueryRowContext(ctx,
+			`SELECT LIMITE_CREDITO FROM CLIENTES WHERE CLIENTE_ID = ?`, result.ClienteID,
+		).Scan(&limite)
+		require.NoError(t, err)
+		require.Equal(t, 10000, limite, "LIMITE_CREDITO debe ser el valor configurado")
+
+		// TELEFONO1 debe quedar en 10 dígitos (sin +52).
+		var telefono string
+		err = q.QueryRowContext(ctx,
+			`SELECT TELEFONO1 FROM DIRS_CLIENTES WHERE CLIENTE_ID = ?`, result.ClienteID,
+		).Scan(&telefono)
+		require.NoError(t, err)
+		require.Equal(t, "2381863330", telefono, "TELEFONO1 debe ser 10 dígitos")
+	})
+}
+
 func TestClienteWriter_Crear_ConGPS(t *testing.T) { //nolint:paralleltest // serial: Firebird MAX on CLAVES_CLIENTES would race across parallel txs
 	requireFBEnv(t)
 	pool := fbtestutil.NewTestFirebirdPool(t)

@@ -31,11 +31,13 @@ type fakeAplicarConfig struct {
 	fpIDs   map[string]int
 	cmIDs   map[int]int
 	numVIDs map[int]int
+	vlIDs   map[uuid.UUID][3]int
 	ccErr   error
 	defsErr error
 	fpErr   error
 	cmErr   error
 	numVErr error
+	vlErr   error
 }
 
 func newFakeAplicarConfig() *fakeAplicarConfig {
@@ -91,6 +93,18 @@ func (f *fakeAplicarConfig) NumeroDeVendedoresID(_ context.Context, n int) (int,
 		return id, nil
 	}
 	return 0, domain.ErrNumVendedoresSinMapeo
+}
+
+func (f *fakeAplicarConfig) VendedorListaIDs(_ context.Context, usuarioID uuid.UUID) ([3]int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.vlErr != nil {
+		return [3]int{-1, -1, -1}, f.vlErr
+	}
+	if ids, ok := f.vlIDs[usuarioID]; ok {
+		return ids, nil
+	}
+	return [3]int{-1, -1, -1}, nil
 }
 
 func (f *fakeAplicarConfig) Defaults(_ context.Context) (outbound.AplicarDefaults, error) {
