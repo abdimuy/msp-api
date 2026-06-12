@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+
 	// Embed the IANA tz database in the binary so business timezones like
 	// America/Mexico_City load on Windows Server, which ships no system
 	// zoneinfo. Without this, firebird.BusinessTZ panics at runtime.
