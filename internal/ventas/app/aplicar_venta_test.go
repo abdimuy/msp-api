@@ -508,7 +508,8 @@ func TestAplicarVenta_AutoCreaCliente_HappyPath(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, clienteWriter.callsCount(), "microsipCliente.Crear must be called once")
-	assert.Equal(t, "Juan Perez", clienteWriter.LastIn.Nombre)
+	// Cliente nombre is folded to ALL CAPS by the domain (Microsip convention).
+	assert.Equal(t, "JUAN PEREZ", clienteWriter.LastIn.Nombre)
 	assert.Equal(t, 21563, clienteWriter.LastIn.ZonaClienteID)
 	assert.Equal(t, 11502, clienteWriter.LastIn.CobradorID)
 	assert.Equal(t, 88266, clienteWriter.LastIn.VendedorID)

@@ -23,7 +23,8 @@ func TestActualizarCliente_Happy(t *testing.T) {
 		ClienteNombre: "Cliente Corregido",
 	}, uuid.New())
 	require.NoError(t, err)
-	assert.Equal(t, "Cliente Corregido", out.Cliente().Nombre().Value())
+	// Cliente nombre is folded to ALL CAPS by the domain (Microsip convention).
+	assert.Equal(t, "CLIENTE CORREGIDO", out.Cliente().Nombre().Value())
 }
 
 func TestActualizarCliente_ClienteIDInvalido(t *testing.T) {

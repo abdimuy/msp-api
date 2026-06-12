@@ -53,7 +53,8 @@ func TestClienteSnapshot_NewReferenciaTrimmed(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, snap.Referencia())
-	assert.Equal(t, "casa verde frente", *snap.Referencia())
+	// Referencia is trimmed and folded to ALL CAPS (Microsip convention).
+	assert.Equal(t, "CASA VERDE FRENTE", *snap.Referencia())
 }
 
 func TestClienteSnapshot_NewReferenciaBlankIsNil(t *testing.T) {

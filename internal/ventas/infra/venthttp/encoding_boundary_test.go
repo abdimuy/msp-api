@@ -9,9 +9,12 @@ package venthttp_test
 //
 // CONTRACT:
 //
-//  1. Any valid UTF-8 string round-trips byte-for-byte through POST → DB → GET.
-//     This includes Spanish accents, emoji, CJK, Cyrillic, em-dash, smart
-//     quotes, €, and combining characters in NFC form.
+//  1. Any valid UTF-8 string round-trips losslessly through POST → DB → GET,
+//     up to the domain's ALL-CAPS fold of user-captured text (Microsip
+//     convention). Expected values are therefore strings.ToUpper(input). This
+//     covers Spanish accents, emoji, CJK, Cyrillic, em-dash, smart quotes, €,
+//     and combining characters in NFC form — none of which the case fold may
+//     corrupt (only cased letters change, e.g. é→É; emoji/CJK are untouched).
 //
 //  2. NUL bytes and ASCII control characters (other than \t \n \r) are
 //     rejected at the domain layer with HTTP 422 and code "string_unsafe_chars".
@@ -136,8 +139,8 @@ func TestE2E_Encoding_UTF8_RoundTrip(t *testing.T) {
 
 				var created venthttp.VentaDTO
 				require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
-				assert.Equal(t, tc.clienteName, created.Cliente.Nombre,
-					"POST response must echo cliente.nombre verbatim")
+				assert.Equal(t, strings.ToUpper(tc.clienteName), created.Cliente.Nombre,
+					"POST response must echo cliente.nombre folded to ALL CAPS")
 
 				req = httptest.NewRequest(http.MethodGet, "/ventas/"+body.ID, nil)
 				rec = httptest.NewRecorder()
@@ -146,11 +149,11 @@ func TestE2E_Encoding_UTF8_RoundTrip(t *testing.T) {
 
 				var got venthttp.VentaDTO
 				require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
-				assert.Equal(t, tc.clienteName, got.Cliente.Nombre, "cliente.nombre must round-trip byte-equal")
-				assert.Equal(t, tc.calle, got.Direccion.Calle, "direccion.calle must round-trip byte-equal")
-				assert.Equal(t, tc.poblacion, got.Direccion.Poblacion, "direccion.poblacion must round-trip byte-equal")
+				assert.Equal(t, strings.ToUpper(tc.clienteName), got.Cliente.Nombre, "cliente.nombre must round-trip up to the ALL-CAPS fold")
+				assert.Equal(t, strings.ToUpper(tc.calle), got.Direccion.Calle, "direccion.calle must round-trip up to the ALL-CAPS fold")
+				assert.Equal(t, strings.ToUpper(tc.poblacion), got.Direccion.Poblacion, "direccion.poblacion must round-trip up to the ALL-CAPS fold")
 				require.NotNil(t, got.Nota, "nota must be present in GET response")
-				assert.Equal(t, tc.nota, *got.Nota, "nota must round-trip byte-equal")
+				assert.Equal(t, strings.ToUpper(tc.nota), *got.Nota, "nota must round-trip up to the ALL-CAPS fold")
 			})
 		})
 	}
@@ -256,7 +259,7 @@ func TestE2E_Encoding_LongUTF8MultibyteString(t *testing.T) {
 		var got venthttp.VentaDTO
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
 		require.NotNil(t, got.Nota)
-		assert.Equal(t, longNota, *got.Nota, "long UTF-8 nota must round-trip byte-equal")
+		assert.Equal(t, strings.ToUpper(longNota), *got.Nota, "long UTF-8 nota must round-trip up to the ALL-CAPS fold")
 	})
 }
 
@@ -292,7 +295,7 @@ func TestE2E_Encoding_PATCH_OnUnicodeFields(t *testing.T) {
 
 		var patched venthttp.VentaDTO
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &patched))
-		assert.Equal(t, "Cancún 🏖️", patched.Direccion.Poblacion)
+		assert.Equal(t, strings.ToUpper("Cancún 🏖️"), patched.Direccion.Poblacion)
 
 		req = httptest.NewRequest(http.MethodGet, "/ventas/"+body.ID, nil)
 		rec = httptest.NewRecorder()
@@ -301,8 +304,8 @@ func TestE2E_Encoding_PATCH_OnUnicodeFields(t *testing.T) {
 
 		var got venthttp.VentaDTO
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
-		assert.Equal(t, "Cancún 🏖️", got.Direccion.Poblacion,
-			"PATCH must round-trip emoji+accents byte-equal")
+		assert.Equal(t, strings.ToUpper("Cancún 🏖️"), got.Direccion.Poblacion,
+			"PATCH must round-trip emoji+accents up to the ALL-CAPS fold")
 	})
 }
 

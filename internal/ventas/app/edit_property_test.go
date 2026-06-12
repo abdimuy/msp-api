@@ -2,6 +2,7 @@
 package app_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -242,18 +243,20 @@ func TestProperty_ActualizarHeader(t *testing.T) {
 			rt.Fatalf("ActualizarHeader failed: %v", err)
 		}
 
-		// Header fields applied.
-		if out.Direccion().Calle() != calle {
-			rt.Fatalf("calle mismatch: got %q want %q", out.Direccion().Calle(), calle)
+		// Header fields applied. Address text is folded to ALL CAPS by the
+		// domain (Microsip convention); the generated input is ASCII-only, so
+		// strings.ToUpper is the sole transform to account for here.
+		if out.Direccion().Calle() != strings.ToUpper(calle) {
+			rt.Fatalf("calle mismatch: got %q want %q", out.Direccion().Calle(), strings.ToUpper(calle))
 		}
-		if out.Direccion().Colonia() != colonia {
-			rt.Fatalf("colonia mismatch: got %q want %q", out.Direccion().Colonia(), colonia)
+		if out.Direccion().Colonia() != strings.ToUpper(colonia) {
+			rt.Fatalf("colonia mismatch: got %q want %q", out.Direccion().Colonia(), strings.ToUpper(colonia))
 		}
-		if out.Direccion().Poblacion() != poblacion {
-			rt.Fatalf("poblacion mismatch: got %q want %q", out.Direccion().Poblacion(), poblacion)
+		if out.Direccion().Poblacion() != strings.ToUpper(poblacion) {
+			rt.Fatalf("poblacion mismatch: got %q want %q", out.Direccion().Poblacion(), strings.ToUpper(poblacion))
 		}
-		if out.Direccion().Ciudad() != ciudad {
-			rt.Fatalf("ciudad mismatch: got %q want %q", out.Direccion().Ciudad(), ciudad)
+		if out.Direccion().Ciudad() != strings.ToUpper(ciudad) {
+			rt.Fatalf("ciudad mismatch: got %q want %q", out.Direccion().Ciudad(), strings.ToUpper(ciudad))
 		}
 		if out.GPS().Latitud() != lat {
 			rt.Fatalf("latitud mismatch: got %v want %v", out.GPS().Latitud(), lat)
@@ -336,9 +339,10 @@ func TestProperty_ActualizarCliente(t *testing.T) {
 			rt.Fatalf("ActualizarCliente failed: %v", err)
 		}
 
-		// Cliente snapshot reflects input nombre.
-		if out.Cliente().Nombre().Value() != nombre {
-			rt.Fatalf("nombre mismatch: got %q want %q", out.Cliente().Nombre().Value(), nombre)
+		// Cliente snapshot reflects input nombre, folded to ALL CAPS by the
+		// domain (Microsip convention); generated input is ASCII-only.
+		if out.Cliente().Nombre().Value() != strings.ToUpper(nombre) {
+			rt.Fatalf("nombre mismatch: got %q want %q", out.Cliente().Nombre().Value(), strings.ToUpper(nombre))
 		}
 		// No clienteID was set — must remain nil.
 		if out.ClienteID() != nil {

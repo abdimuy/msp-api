@@ -207,10 +207,11 @@ func validateDiaCobranzaForFrec(frec FrecPago, dc *DiaCobranza) error {
 	return ErrFrecPagoInvalida
 }
 
-// validateNota normalizes the optional nota field. Returns the trimmed
-// pointer (nil when blank).
+// validateNota normalizes the optional nota field: folds to ALL CAPS
+// (Microsip convention for captured text), trims, and length-checks. Returns
+// the trimmed pointer (nil when blank).
 func validateNota(p *string) (*string, error) {
-	return trimOptionalBounded(p, maxNotaLength, ErrNotaDemasiadoLarga)
+	return trimOptionalBoundedUpper(p, maxNotaLength, ErrNotaDemasiadoLarga)
 }
 
 // validateProductoComboReferences ensures every Producto.ComboID points to

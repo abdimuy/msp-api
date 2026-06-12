@@ -19,10 +19,11 @@ const (
 type NombreCliente struct{ value string }
 
 // NewNombreCliente validates and constructs a NombreCliente. The input is
-// trimmed, normalized to Unicode NFC, length-checked (in codepoints, not
-// bytes), and screened for NUL / ASCII control characters.
+// trimmed, folded to ALL CAPS (Microsip stores person names uppercase),
+// normalized to Unicode NFC, length-checked (in codepoints, not bytes), and
+// screened for NUL / ASCII control characters.
 func NewNombreCliente(s string) (NombreCliente, error) {
-	v, err := requireBounded(s, maxNombreClienteLength, ErrNombreClienteRequerido, ErrNombreClienteDemasiadoLargo)
+	v, err := requireBoundedUpper(s, maxNombreClienteLength, ErrNombreClienteRequerido, ErrNombreClienteDemasiadoLargo)
 	if err != nil {
 		return NombreCliente{}, err
 	}
@@ -65,7 +66,8 @@ type NewClienteSnapshotParams struct {
 
 // NewClienteSnapshot validates and constructs a ClienteSnapshot. Required
 // VOs must already be valid; the aval is accepted as-is when non-nil.
-// Referencia is trimmed, NFC-normalized, and length-checked (max 99 runes).
+// Referencia is folded to ALL CAPS (Microsip convention), trimmed,
+// NFC-normalized, and length-checked (max 99 runes).
 func NewClienteSnapshot(p NewClienteSnapshotParams) (ClienteSnapshot, error) {
 	if p.Nombre.IsZero() {
 		return ClienteSnapshot{}, ErrNombreClienteRequerido
@@ -73,7 +75,7 @@ func NewClienteSnapshot(p NewClienteSnapshotParams) (ClienteSnapshot, error) {
 	if p.Aval != nil && len(p.Aval.Value()) > maxAvalLength {
 		return ClienteSnapshot{}, ErrAvalDemasiadoLargo
 	}
-	ref, err := trimOptionalBounded(p.Referencia, maxReferenciaLength, ErrClienteReferenciaDemasiadoLarga)
+	ref, err := trimOptionalBoundedUpper(p.Referencia, maxReferenciaLength, ErrClienteReferenciaDemasiadoLarga)
 	if err != nil {
 		return ClienteSnapshot{}, err
 	}

@@ -25,14 +25,16 @@ func TestNewNombreCliente_AcceptsEmoji(t *testing.T) {
 	t.Parallel()
 	n, err := domain.NewNombreCliente("José 🎉")
 	require.NoError(t, err)
-	assert.Equal(t, "José 🎉", n.Value())
+	// Folded to ALL CAPS (Microsip convention); emoji is left untouched.
+	assert.Equal(t, "JOSÉ 🎉", n.Value())
 }
 
 func TestNewNombreCliente_AcceptsEmDash(t *testing.T) {
 	t.Parallel()
 	n, err := domain.NewNombreCliente("Cliente — Histórico")
 	require.NoError(t, err)
-	assert.Equal(t, "Cliente — Histórico", n.Value())
+	// Folded to ALL CAPS (Microsip convention); em-dash is left untouched.
+	assert.Equal(t, "CLIENTE — HISTÓRICO", n.Value())
 }
 
 func TestNewNombreCliente_AcceptsExtendedLatin(t *testing.T) {

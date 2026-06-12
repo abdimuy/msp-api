@@ -77,9 +77,10 @@ func TestE2E_Firebird_EditarVentaHeader(t *testing.T) {
 
 		var out venthttp.VentaDTO
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
-		assert.Equal(t, "Av. Editada", out.Direccion.Calle)
+		// Folded to ALL CAPS by the domain (Microsip convention).
+		assert.Equal(t, "AV. EDITADA", out.Direccion.Calle)
 		require.NotNil(t, out.Nota)
-		assert.Equal(t, "corrección de campo", *out.Nota)
+		assert.Equal(t, "CORRECCIÓN DE CAMPO", *out.Nota)
 		// FechaVenta of the request body was 2026-05-01T09:00:00Z. With the
 		// BusinessTZ contract this round-trips exactly through Firebird.
 		assert.Equal(t, "2026-05-01T09:00:00Z", out.FechaVenta,
@@ -92,7 +93,7 @@ func TestE2E_Firebird_EditarVentaHeader(t *testing.T) {
 		require.Equal(t, http.StatusOK, rec.Code)
 		var got venthttp.VentaDTO
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
-		assert.Equal(t, "Av. Editada", got.Direccion.Calle)
+		assert.Equal(t, "AV. EDITADA", got.Direccion.Calle)
 		assert.Equal(t, "borrador", got.Situacion)
 		assert.Equal(t, "2026-05-01T09:00:00Z", got.FechaVenta)
 	})

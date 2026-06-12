@@ -32,25 +32,26 @@ type NewDireccionParams struct {
 }
 
 // NewDireccion validates and constructs a Direccion. String fields are
-// trimmed before validation.
+// trimmed and folded to ALL CAPS before validation, matching Microsip's
+// uppercase convention for captured address text.
 func NewDireccion(p NewDireccionParams) (Direccion, error) {
-	calle, err := requireBounded(p.Calle, maxCalleLength, ErrCalleRequerida, ErrCalleDemasiadoLarga)
+	calle, err := requireBoundedUpper(p.Calle, maxCalleLength, ErrCalleRequerida, ErrCalleDemasiadoLarga)
 	if err != nil {
 		return Direccion{}, err
 	}
-	colonia, err := requireBounded(p.Colonia, maxColoniaLength, ErrColoniaRequerida, ErrColoniaDemasiadoLarga)
+	colonia, err := requireBoundedUpper(p.Colonia, maxColoniaLength, ErrColoniaRequerida, ErrColoniaDemasiadoLarga)
 	if err != nil {
 		return Direccion{}, err
 	}
-	poblacion, err := requireBounded(p.Poblacion, maxPoblacionLength, ErrPoblacionRequerida, ErrPoblacionDemasiadoLarga)
+	poblacion, err := requireBoundedUpper(p.Poblacion, maxPoblacionLength, ErrPoblacionRequerida, ErrPoblacionDemasiadoLarga)
 	if err != nil {
 		return Direccion{}, err
 	}
-	ciudad, err := requireBounded(p.Ciudad, maxCiudadLength, ErrCiudadRequerida, ErrCiudadDemasiadoLarga)
+	ciudad, err := requireBoundedUpper(p.Ciudad, maxCiudadLength, ErrCiudadRequerida, ErrCiudadDemasiadoLarga)
 	if err != nil {
 		return Direccion{}, err
 	}
-	numExt, err := trimOptionalBounded(p.NumeroExterior, maxNumeroExteriorLength, ErrNumeroExteriorDemasiadoLargo)
+	numExt, err := trimOptionalBoundedUpper(p.NumeroExterior, maxNumeroExteriorLength, ErrNumeroExteriorDemasiadoLargo)
 	if err != nil {
 		return Direccion{}, err
 	}
@@ -111,6 +112,15 @@ func requireBounded(s string, maxLen int, errRequired, errTooLong error) (string
 	return s, nil
 }
 
+// requireBoundedUpper is requireBounded plus an ALL-CAPS fold. Used for the
+// person-name fields (cliente nombre, aval) that Microsip stores uppercase by
+// convention; folding at the domain boundary keeps the canon consistent from
+// the borrador onward instead of relying on the writer. strings.ToUpper uses
+// Unicode default case mapping, so accented letters (á→Á, ñ→Ñ) fold correctly.
+func requireBoundedUpper(s string, maxLen int, errRequired, errTooLong error) (string, error) {
+	return requireBounded(strings.ToUpper(s), maxLen, errRequired, errTooLong)
+}
+
 // trimOptionalBounded trims an optional pointer string, normalizes to NFC,
 // and applies the same length+safety checks as requireBounded. A nil input or
 // pointer to a blank string both yield nil output.
@@ -129,6 +139,21 @@ func trimOptionalBounded(p *string, maxLen int, errTooLong error) (*string, erro
 		return nil, err
 	}
 	return &trimmed, nil
+}
+
+// trimOptionalBoundedUpper is trimOptionalBounded plus an ALL-CAPS fold,
+// applied before the trim/NFC/length/safety pipeline. Used for the optional
+// user-captured text fields (numero_exterior, cliente referencia, venta nota,
+// imagen description) that Microsip stores uppercase by convention; folding at
+// the domain boundary keeps create and edit consistent. strings.ToUpper uses
+// Unicode default case mapping, so accented letters (á→Á, ñ→Ñ) fold correctly.
+// A nil input or pointer to a blank string both yield nil output.
+func trimOptionalBoundedUpper(p *string, maxLen int, errTooLong error) (*string, error) {
+	if p == nil {
+		return nil, nil //nolint:nilnil // optional pointer pattern: nil ptr + nil err means "not provided".
+	}
+	up := strings.ToUpper(*p)
+	return trimOptionalBounded(&up, maxLen, errTooLong)
 }
 
 // utf8RuneLen returns the number of Unicode codepoints in s. Used instead of

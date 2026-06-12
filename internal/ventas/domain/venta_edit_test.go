@@ -59,7 +59,8 @@ func TestVenta_ActualizarCliente_Happy(t *testing.T) {
 	require.NoError(t, v.ActualizarCliente(domain.ActualizarClienteParams{
 		ClienteID: &cid, Cliente: newSnap, By: uuid.New(), Now: time.Now(),
 	}))
-	assert.Equal(t, "Cliente Nuevo", v.Cliente().Nombre().Value())
+	// Cliente nombre is folded to ALL CAPS by the domain (Microsip convention).
+	assert.Equal(t, "CLIENTE NUEVO", v.Cliente().Nombre().Value())
 	require.NotNil(t, v.ClienteID())
 	assert.Equal(t, 12345, *v.ClienteID())
 	evs := v.PendingEvents()

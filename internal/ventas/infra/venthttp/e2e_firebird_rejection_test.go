@@ -121,7 +121,8 @@ func TestE2E_Firebird_Rejection(t *testing.T) {
 			recGet := httptest.NewRecorder()
 			r.ServeHTTP(recGet, req)
 			require.Equal(t, http.StatusOK, recGet.Code)
-			assert.Contains(t, recGet.Body.String(), nota, "500-char nota must round-trip exactly")
+			// Nota is folded to ALL CAPS by the domain (Microsip convention).
+			assert.Contains(t, recGet.Body.String(), strings.ToUpper(nota), "500-char nota must round-trip up to the ALL-CAPS fold")
 		})
 
 		t.Run("telefono_no_e164_422", func(t *testing.T) {

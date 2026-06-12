@@ -36,7 +36,9 @@ type NewImagenParams struct {
 	Now         time.Time
 }
 
-// newImagen validates and constructs an Imagen. Package-private.
+// newImagen validates and constructs an Imagen. Package-private. The
+// descripcion is folded to ALL CAPS (Microsip convention for captured text)
+// before the trim/NFC/length pipeline.
 func newImagen(p NewImagenParams) (*Imagen, error) {
 	if !IsAllowedMime(p.Mime) {
 		return nil, ErrMimeNoPermitido
@@ -44,7 +46,7 @@ func newImagen(p NewImagenParams) (*Imagen, error) {
 	if p.SizeBytes < 0 {
 		return nil, ErrSizeBytesNegativo
 	}
-	desc, err := trimOptionalBounded(p.Descripcion, maxImagenDescripcionLength, ErrImagenDescripcionDemasiadoLarga)
+	desc, err := trimOptionalBoundedUpper(p.Descripcion, maxImagenDescripcionLength, ErrImagenDescripcionDemasiadoLarga)
 	if err != nil {
 		return nil, err
 	}

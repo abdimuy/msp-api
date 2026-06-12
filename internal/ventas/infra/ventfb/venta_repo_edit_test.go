@@ -51,7 +51,8 @@ func TestVentaRepo_UpdateHeader_PersistsFields(t *testing.T) {
 
 		got, err := repo.FindByID(ctx, v.ID())
 		require.NoError(t, err)
-		assert.Equal(t, "Otra Calle", got.Direccion().Calle())
+		// Folded to ALL CAPS by the domain (Microsip convention).
+		assert.Equal(t, "OTRA CALLE", got.Direccion().Calle())
 		assert.InDelta(t, 20.0, got.GPS().Latitud(), 0.0001)
 		// With the BusinessTZ wall-clock contract the instant round-trips
 		// exactly (down to seconds — Firebird TIMESTAMP precision is 100µs).
@@ -59,7 +60,7 @@ func TestVentaRepo_UpdateHeader_PersistsFields(t *testing.T) {
 			"FechaVenta round-trip; want=%s got=%s", newFecha, got.FechaVenta())
 		assert.True(t, got.Montos().Anual().Equal(decimal.RequireFromString("3500.00")))
 		require.NotNil(t, got.Nota())
-		assert.Equal(t, "corrección posterior", *got.Nota())
+		assert.Equal(t, "CORRECCIÓN POSTERIOR", *got.Nota())
 		assert.Equal(t, domain.SituacionBorrador, got.Situacion())
 	})
 }
@@ -106,7 +107,8 @@ func TestVentaRepo_UpdateCliente_PersistsSnapshotAndID(t *testing.T) {
 
 		got, err := repo.FindByID(ctx, v.ID())
 		require.NoError(t, err)
-		assert.Equal(t, "Cliente Corregido", got.Cliente().Nombre().Value())
+		// Folded to ALL CAPS by the domain (Microsip convention).
+		assert.Equal(t, "CLIENTE CORREGIDO", got.Cliente().Nombre().Value())
 		require.NotNil(t, got.ClienteID())
 		assert.Equal(t, realID, *got.ClienteID())
 	})

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/textproto"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,9 +111,9 @@ func seedE2EUsuario(ctx context.Context, t *testing.T, pool *firebird.Pool) uuid
 	_, err := q.ExecContext(
 		ctx,
 		`INSERT INTO MSP_USUARIOS
-		 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO,
+		 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO, ESTATUS,
 		  CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY)
-		 VALUES (?, ?, ?, 'e2e-test', TRUE, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, 'e2e-test', TRUE, 'FIREBASE_USER', ?, ?, ?, ?)`,
 		id.String(), "fb-e2e-"+suffix, "e2e-"+suffix+"@example.invalid",
 		now, now, id.String(), id.String(),
 	)
@@ -192,7 +193,8 @@ func TestE2E_Firebird_CrearVenta(t *testing.T) { //nolint:paralleltest // see co
 		var got venthttp.VentaDTO
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
 		assert.Equal(t, body.ID, got.ID)
-		assert.Equal(t, body.Cliente.Nombre, got.Cliente.Nombre)
+		// Cliente nombre is folded to ALL CAPS by the domain (Microsip convention).
+		assert.Equal(t, strings.ToUpper(body.Cliente.Nombre), got.Cliente.Nombre)
 
 		// 3. POST /ventas/{id}/imagenes — multipart upload (must happen
 		// BEFORE cancel; the domain forbids attaching to a cancelled venta).

@@ -288,13 +288,14 @@ func TestSecurity_JSONInjection_NombreInResponse(t *testing.T) {
 	assert.Contains(t, ct, "application/json",
 		"response must be Content-Type: application/json (got %q)", ct)
 
-	// Contract 2: payload is inside a JSON string. Parsing succeeds and
-	// the nombre round-trips verbatim.
+	// Contract 2: payload is inside a JSON string. Parsing succeeds and the
+	// nombre round-trips as data (ALL-CAPS folded per Microsip convention) —
+	// the injected markup is preserved as a string, never executable HTML.
 	var got venthttp.VentaDTO
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got),
 		"response must be valid JSON (injected chars must not break parsing)")
-	assert.Equal(t, "<script>alert('xss')</script>", got.Cliente.Nombre,
-		"value must round-trip exactly — preserved as user input, not executable HTML")
+	assert.Equal(t, strings.ToUpper("<script>alert('xss')</script>"), got.Cliente.Nombre,
+		"value must round-trip as data, not executable HTML (case-folded to uppercase)")
 }
 
 // TestSecurity_SQLInjection_InNotaField verifies that string fields are

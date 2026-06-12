@@ -107,7 +107,8 @@ func TestConcurrency_PATCHHeader_LastWriteWins(t *testing.T) {
 	assert.True(t, decimal.NewFromInt(2222).Equal(final.Montos().Contado()),
 		"final contado must equal B's write (last-write-wins); A's changes were silently overwritten. got=%s",
 		final.Montos().Contado().String())
-	assert.Equal(t, "Av. B", final.Direccion().Calle(),
+	// Address text is folded to ALL CAPS by the domain (Microsip convention).
+	assert.Equal(t, "AV. B", final.Direccion().Calle(),
 		"final calle must equal B's write")
 	finalAudit := final.Audit()
 	assert.Equal(t, actorB, finalAudit.UpdatedBy(),

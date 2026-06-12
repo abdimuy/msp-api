@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -204,7 +205,8 @@ func TestE2E_Firebird_Diversity(t *testing.T) {
 
 			got := postAndGet(t, body)
 			require.NotNil(t, got.Nota, "nota must not be nil")
-			assert.Equal(t, nota, *got.Nota, "em-dash nota must round-trip without character substitution")
+			// Folded to ALL CAPS by the domain (Microsip convention).
+			assert.Equal(t, strings.ToUpper(nota), *got.Nota, "em-dash nota must round-trip without character substitution")
 		})
 
 		t.Run("acentos_pesados", func(t *testing.T) {
@@ -222,13 +224,14 @@ func TestE2E_Firebird_Diversity(t *testing.T) {
 			}
 
 			got := postAndGet(t, body)
-			assert.Equal(t, "María Núñez Ñañez", got.Cliente.Nombre, "heavy-accent nombre must round-trip")
+			// Folded to ALL CAPS by the domain (Microsip convention).
+			assert.Equal(t, "MARÍA NÚÑEZ ÑAÑEZ", got.Cliente.Nombre, "heavy-accent nombre must round-trip")
 			require.NotNil(t, got.Cliente.Aval)
-			assert.Equal(t, "Ángel Jiménez Ávila", *got.Cliente.Aval, "aval heavy-accent must round-trip")
-			assert.Equal(t, "Calle del Cañón", got.Direccion.Calle, "calle with heavy accents must round-trip")
-			assert.Equal(t, "Colonia Ñoños", got.Direccion.Colonia, "colonia with ñ must round-trip")
-			assert.Equal(t, "Población Güera", got.Direccion.Poblacion, "poblacion with heavy accents must round-trip")
-			assert.Equal(t, "Tláhuac", got.Direccion.Ciudad, "ciudad with accent must round-trip")
+			assert.Equal(t, "ÁNGEL JIMÉNEZ ÁVILA", *got.Cliente.Aval, "aval heavy-accent must round-trip")
+			assert.Equal(t, "CALLE DEL CAÑÓN", got.Direccion.Calle, "calle with heavy accents must round-trip")
+			assert.Equal(t, "COLONIA ÑOÑOS", got.Direccion.Colonia, "colonia with ñ must round-trip")
+			assert.Equal(t, "POBLACIÓN GÜERA", got.Direccion.Poblacion, "poblacion with heavy accents must round-trip")
+			assert.Equal(t, "TLÁHUAC", got.Direccion.Ciudad, "ciudad with accent must round-trip")
 		})
 	})
 }

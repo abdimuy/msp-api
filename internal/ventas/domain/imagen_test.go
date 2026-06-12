@@ -83,7 +83,8 @@ func TestImagen_AdjuntarValid(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "image/png", img.Mime())
 	require.NotNil(t, img.Descripcion())
-	assert.Equal(t, "descripcion", *img.Descripcion())
+	// Descripcion is trimmed and folded to ALL CAPS (Microsip convention).
+	assert.Equal(t, "DESCRIPCION", *img.Descripcion())
 }
 
 func strPtr(s string) *string { return &s }

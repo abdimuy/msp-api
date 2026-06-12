@@ -71,7 +71,8 @@ func TestAdjuntarImagen_OK(t *testing.T) {
 	assert.NotEmpty(t, img.ID)
 	assert.Equal(t, "image/png", img.Mime)
 	require.NotNil(t, img.Descripcion)
-	assert.Equal(t, "evidencia entrega", *img.Descripcion)
+	// Descripcion is folded to ALL CAPS by the domain (Microsip convention).
+	assert.Equal(t, "EVIDENCIA ENTREGA", *img.Descripcion)
 	assert.True(t, storage.has(img.StorageKey), "storage must hold the uploaded blob at the returned key")
 }
 

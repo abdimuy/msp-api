@@ -308,7 +308,8 @@ func TestCrearVenta_OK(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
 	assert.Equal(t, body.ID, out.ID)
 	assert.Equal(t, "CONTADO", out.TipoVenta)
-	assert.Equal(t, body.Cliente.Nombre, out.Cliente.Nombre)
+	// The domain folds user-captured text to ALL CAPS (Microsip convention).
+	assert.Equal(t, strings.ToUpper(body.Cliente.Nombre), out.Cliente.Nombre)
 	require.Len(t, out.Productos, 1)
 
 	// The aggregate must be persisted in the fake repo.
@@ -756,7 +757,8 @@ func TestCrearVenta_OptionalClienteFields_RoundTrip(t *testing.T) {
 	require.NotNil(t, out.Cliente.Telefono)
 	assert.Equal(t, tel, *out.Cliente.Telefono)
 	require.NotNil(t, out.Cliente.Aval)
-	assert.Equal(t, aval, *out.Cliente.Aval)
+	// Aval is a person name → folded to ALL CAPS by the domain.
+	assert.Equal(t, strings.ToUpper(aval), *out.Cliente.Aval)
 }
 
 // TestListarVentas_InvalidFilterDate_Returns422 verifies that a malformed

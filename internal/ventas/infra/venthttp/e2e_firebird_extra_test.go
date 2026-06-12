@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -381,7 +382,8 @@ func TestE2E_Firebird_ConcurrentEdit_LastWriteWins(t *testing.T) {
 		require.Equal(t, http.StatusOK, recG.Code)
 		var got venthttp.VentaDTO
 		require.NoError(t, json.Unmarshal(recG.Body.Bytes(), &got))
-		assert.Equal(t, "Calle de B", got.Direccion.Calle,
+		// Folded to ALL CAPS by the domain (Microsip convention).
+		assert.Equal(t, "CALLE DE B", got.Direccion.Calle,
 			"last-write-wins: B's value must clobber A's silently")
 	})
 }
@@ -655,8 +657,9 @@ func TestE2E_Firebird_FullLifecycle(t *testing.T) {
 		require.Equal(t, http.StatusOK, rec.Code)
 		var mid venthttp.VentaDTO
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &mid))
-		assert.Equal(t, "Calle Lifecycle", mid.Direccion.Calle)
-		assert.Equal(t, "Cliente Lifecycle", mid.Cliente.Nombre)
+		// Folded to ALL CAPS by the domain (Microsip convention).
+		assert.Equal(t, "CALLE LIFECYCLE", mid.Direccion.Calle)
+		assert.Equal(t, "CLIENTE LIFECYCLE", mid.Cliente.Nombre)
 		assert.Len(t, mid.Productos, 3)
 		assert.Len(t, mid.Combos, 1)
 		assert.Len(t, mid.Vendedores, 1)
@@ -1169,7 +1172,8 @@ func TestE2E_Firebird_UnicodeEdgeCases(t *testing.T) {
 				"emoji must be accepted by UTF-8 columns: %s", rec.Body.String())
 			var created venthttp.VentaDTO
 			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
-			assert.Equal(t, "José 🎉", created.Cliente.Nombre, "emoji must round-trip exactly")
+			// Folded to ALL CAPS by the domain (Microsip convention).
+			assert.Equal(t, "JOSÉ 🎉", created.Cliente.Nombre, "emoji must round-trip exactly")
 		})
 
 		t.Run("NUL byte rejected with 422", func(t *testing.T) {
@@ -1186,7 +1190,8 @@ func TestE2E_Firebird_UnicodeEdgeCases(t *testing.T) {
 				"WIN1252-representable accents must succeed: %s", rec.Body.String())
 			var created venthttp.VentaDTO
 			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
-			assert.Equal(t, nombre, created.Cliente.Nombre, "must round-trip exactly")
+			// Folded to ALL CAPS by the domain (Microsip convention).
+			assert.Equal(t, strings.ToUpper(nombre), created.Cliente.Nombre, "must round-trip exactly")
 		})
 	})
 }

@@ -547,7 +547,8 @@ func TestVenta_AccessorsRoundtrip(t *testing.T) {
 	assert.Equal(t, p.FechaVenta, v.FechaVenta())
 	assert.True(t, p.Montos.Equals(v.Montos()))
 	require.NotNil(t, v.Nota())
-	assert.Equal(t, "una nota", *v.Nota())
+	// Nota is folded to ALL CAPS by the domain (Microsip convention).
+	assert.Equal(t, "UNA NOTA", *v.Nota())
 }
 
 // ─── AsignarClienteMicrosip ────────────────────────────────────────────────

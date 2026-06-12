@@ -33,7 +33,8 @@ func TestActualizarHeader_Happy(t *testing.T) {
 		PrecioContado: decimal.NewFromInt(1500),
 	}, uuid.New())
 	require.NoError(t, err)
-	assert.Equal(t, "Av. Nueva", out.Direccion().Calle())
+	// Address text is folded to ALL CAPS by the domain (Microsip convention).
+	assert.Equal(t, "AV. NUEVA", out.Direccion().Calle())
 }
 
 func TestActualizarHeader_VentaNotFound(t *testing.T) {

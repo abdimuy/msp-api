@@ -116,7 +116,8 @@ func TestActualizarHeader_OK(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var out venthttp.VentaDTO
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
-	assert.Equal(t, "Av. Editada", out.Direccion.Calle)
+	// Address text is folded to ALL CAPS by the domain (Microsip convention).
+	assert.Equal(t, "AV. EDITADA", out.Direccion.Calle)
 }
 
 func TestActualizarHeader_Unauthenticated(t *testing.T) {
@@ -201,7 +202,8 @@ func TestActualizarCliente_OK(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var out venthttp.VentaDTO
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
-	assert.Equal(t, "Cliente Editado", out.Cliente.Nombre)
+	// Cliente nombre is folded to ALL CAPS by the domain (Microsip convention).
+	assert.Equal(t, "CLIENTE EDITADO", out.Cliente.Nombre)
 }
 
 func TestActualizarCliente_PermissionDenied(t *testing.T) {

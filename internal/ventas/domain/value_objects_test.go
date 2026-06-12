@@ -243,11 +243,12 @@ func TestNewDireccion_Valid(t *testing.T) {
 	t.Parallel()
 	d, err := domain.NewDireccion(validDireccionParams())
 	require.NoError(t, err)
-	assert.Equal(t, "Av. Reforma", d.Calle())
+	// Address text is folded to ALL CAPS by the domain (Microsip convention).
+	assert.Equal(t, "AV. REFORMA", d.Calle())
 	require.NotNil(t, d.NumeroExterior())
 	assert.Equal(t, "123", *d.NumeroExterior())
-	assert.Equal(t, "Centro", d.Colonia())
-	assert.Equal(t, "Cd. Mexico", d.Poblacion())
+	assert.Equal(t, "CENTRO", d.Colonia())
+	assert.Equal(t, "CD. MEXICO", d.Poblacion())
 	assert.Equal(t, "CDMX", d.Ciudad())
 	require.NotNil(t, d.ZonaClienteID())
 	assert.Equal(t, 7, *d.ZonaClienteID())
@@ -407,8 +408,10 @@ func TestNewNombreCliente_Valid(t *testing.T) {
 	t.Parallel()
 	n, err := domain.NewNombreCliente("  Juan Pérez Reyes  ")
 	require.NoError(t, err)
-	assert.Equal(t, "Juan Pérez Reyes", n.Value())
-	assert.Equal(t, "Juan Pérez Reyes", n.String())
+	// Person names are folded to ALL CAPS by the domain (Microsip convention);
+	// Unicode case mapping handles accents (é→É).
+	assert.Equal(t, "JUAN PÉREZ REYES", n.Value())
+	assert.Equal(t, "JUAN PÉREZ REYES", n.String())
 	assert.False(t, n.IsZero())
 }
 
@@ -452,7 +455,8 @@ func TestNewClienteSnapshot_Valid(t *testing.T) {
 		Nombre: nom, Telefono: &tel, Aval: &aval,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "Juan", c.Nombre().Value())
+	// Cliente nombre is folded to ALL CAPS by the domain (Microsip convention).
+	assert.Equal(t, "JUAN", c.Nombre().Value())
 	require.NotNil(t, c.Telefono())
 	require.NotNil(t, c.Aval())
 }

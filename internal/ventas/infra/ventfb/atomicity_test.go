@@ -89,9 +89,9 @@ func seedAtomicityUsuario(t *testing.T, db *sql.DB) uuid.UUID {
 	email := atomicityTestEmailPrefix + id.String() + "@example.invalid"
 	_, err := db.ExecContext(ctx,
 		`INSERT INTO MSP_USUARIOS
-		 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO,
+		 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO, ESTATUS,
 		  CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY)
-		 VALUES (?, ?, ?, 'atomicity-test', TRUE, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, 'atomicity-test', TRUE, 'FIREBASE_USER', ?, ?, ?, ?)`,
 		id.String(), "fb-atomicity-"+id.String(), email,
 		now, now, id.String(), id.String(),
 	)

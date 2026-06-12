@@ -36,9 +36,9 @@ func seedUsuarioRow(ctx context.Context, t *testing.T, pool *firebird.Pool) uuid
 	_, err := q.ExecContext(
 		ctx,
 		`INSERT INTO MSP_USUARIOS
-		 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO,
+		 (ID, FIREBASE_UID, EMAIL, NOMBRE, ACTIVO, ESTATUS,
 		  CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY)
-		 VALUES (?, ?, ?, 'venta-test', TRUE, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, 'venta-test', TRUE, 'FIREBASE_USER', ?, ?, ?, ?)`,
 		id.String(), "fb-venta-"+suffix, "venta-"+suffix+"@example.invalid",
 		now, now, id.String(), id.String(),
 	)
