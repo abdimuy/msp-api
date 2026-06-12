@@ -9,6 +9,8 @@ coverage-*.html
 .env
 .env.local
 .env.*.local
+# Env backups with real values (only .env.example templates are committed)
+.env.*-backup
 
 serviceAccountKey.json
 serviceAccountKey*.json
@@ -32,3 +34,9 @@ private_files/
 *.swp
 
 node_modules/
+
+# Compiled local binary built from cmd/seed-cobrador (build artifact, not shipped)
+/seed-cobrador
+
+# rapid (property-testing) failure reproductions — regenerated on demand, not committed
+**/testdata/rapid/
