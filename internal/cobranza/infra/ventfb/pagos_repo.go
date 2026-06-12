@@ -181,6 +181,12 @@ func (r *PagosRepo) SyncPorZona(
 //
 // Las columnas s.* del JOIN con MSP_SALDOS_VENTAS no se exponen; solo se
 // usan para filtrar `s.SALDO > 0` (ver queryPagoSyncPage).
+//
+// DOCTOS_CC.DESCRIPCION tiene CHARACTER SET NONE (bytes Win1252 crudos de
+// Microsip, a diferencia de CLIENTES.NOMBRE que es ISO8859_1). Leerla verbatim
+// sobre una conexión FB_CHARSET=UTF8 hace que el driver truene en filas con
+// acentos (firebird_error). El CAST a WIN1252 fuerza a Firebird a transcodificar
+// a UTF8 válido en el wire. CLIENTES.NOMBRE (ISO8859_1) no necesita el cast.
 const selectPagoColsP = `
 	p.IMPTE_DOCTO_CC_ID,
 	p.DOCTO_CC_ID,
@@ -197,7 +203,7 @@ const selectPagoColsP = `
 	p.CANCELADO,
 	p.APLICADO,
 	p.UPDATED_AT,
-	COALESCE(dc.DESCRIPCION, ''),
+	COALESCE(CAST(dc.DESCRIPCION AS VARCHAR(200) CHARACTER SET WIN1252), ''),
 	COALESCE(c.NOMBRE, ''),
 	dc.COBRADOR_ID,
 	fcd.FORMA_COBRO_ID`
