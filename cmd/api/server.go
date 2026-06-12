@@ -164,7 +164,7 @@ func provideRootHandler(
 	r.Get("/version", versionHandler)
 
 	// Shared chi middlewares for protected modules under /v2.
-	authn := authhttp.NewAuthnMiddleware(authFirebase, authUsuarios)
+	authn := authhttp.NewAuthnMiddleware(authFirebase, authUsuarios, authSvc)
 	idem := idempotency.Middleware(idempotency.Config{
 		Store:      idemStore,
 		TTL:        24 * time.Hour,

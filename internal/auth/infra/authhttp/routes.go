@@ -34,7 +34,7 @@ func MountRouter(
 	idemStore idempotency.Store,
 ) {
 	h := NewHandlers(svc, usuarios)
-	authn := NewAuthnMiddleware(fb, usuarios)
+	authn := NewAuthnMiddleware(fb, usuarios, svc)
 	idem := idempotency.Middleware(idempotency.Config{
 		Store:      idemStore,
 		TTL:        24 * time.Hour,

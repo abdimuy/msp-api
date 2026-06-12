@@ -499,7 +499,9 @@ func buildE2ERouter(t *testing.T, d e2eRouterDeps) *chi.Mux {
 	usuarioLookup := &e2eUsuarioLookup{repo: d.usuarios}
 	fiSvc := failedintenthttp.NewService(d.intentStore, dispatcher, usuarioLookup, nil, nil, nil)
 
-	authn := authhttp.NewAuthnMiddleware(d.firebase, d.usuarios)
+	// nil provisioner: this suite drives the dispatcher path (CurrentUser is
+	// planted directly) and never exercises lazy enrollment.
+	authn := authhttp.NewAuthnMiddleware(d.firebase, d.usuarios, nil)
 	idemMW := idempotency.Middleware(idempotency.Config{
 		Store:      d.idemStore,
 		Methods:    []string{http.MethodPost, http.MethodPatch},

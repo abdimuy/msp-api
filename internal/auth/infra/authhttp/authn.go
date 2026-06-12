@@ -1,10 +1,13 @@
 package authhttp
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/abdimuy/msp-api/internal/auth"
+	"github.com/abdimuy/msp-api/internal/auth/domain"
 	"github.com/abdimuy/msp-api/internal/auth/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/apperror"
 	"github.com/abdimuy/msp-api/internal/platform/response"
@@ -17,13 +20,25 @@ import (
 // Anonymous endpoints (POST /auth/login) bypass this middleware by virtue of
 // being registered outside the protected subgroup in MountRouter.
 type AuthnMiddleware struct {
-	firebase outbound.FirebaseClient
-	usuarios outbound.UsuarioRepo
+	firebase    outbound.FirebaseClient
+	usuarios    outbound.UsuarioRepo
+	provisioner usuarioProvisioner
 }
 
-// NewAuthnMiddleware constructs the middleware with its dependencies.
-func NewAuthnMiddleware(fb outbound.FirebaseClient, usuarios outbound.UsuarioRepo) *AuthnMiddleware {
-	return &AuthnMiddleware{firebase: fb, usuarios: usuarios}
+// usuarioProvisioner creates-or-updates a usuario from a Firebase ID token.
+// *app.Service satisfies it via SyncFromFirebase. Declared as a local
+// interface so the middleware depends on the behavior, not the concrete
+// service, and so it can be faked in tests.
+type usuarioProvisioner interface {
+	SyncFromFirebase(ctx context.Context, idToken string) (*domain.Usuario, error)
+}
+
+// NewAuthnMiddleware constructs the middleware with its dependencies. The
+// provisioner lazily enrolls valid Firebase users that have no MSP_USUARIOS
+// row yet; pass nil to disable that behavior (the middleware then returns
+// the original usuario_not_found error).
+func NewAuthnMiddleware(fb outbound.FirebaseClient, usuarios outbound.UsuarioRepo, provisioner usuarioProvisioner) *AuthnMiddleware {
+	return &AuthnMiddleware{firebase: fb, usuarios: usuarios, provisioner: provisioner}
 }
 
 // Handler is the chi-compatible middleware function.
@@ -51,6 +66,13 @@ func (m *AuthnMiddleware) Handler(next http.Handler) http.Handler {
 		}
 
 		u, err := m.usuarios.FindByFirebaseUID(r.Context(), ft.UID)
+		if err != nil && errors.Is(err, domain.ErrUsuarioNotFound) && m.provisioner != nil {
+			// First authenticated request from a valid Firebase user that has no
+			// MSP_USUARIOS row yet: enroll it lazily via the same sync the login
+			// endpoint uses, then continue. Any client (appdesk, app, future) is
+			// auto-provisioned without having to call POST /auth/login first.
+			u, err = m.provisioner.SyncFromFirebase(r.Context(), token)
+		}
 		if err != nil {
 			if _, ok := apperror.As(err); ok {
 				response.Error(w, r, err)
