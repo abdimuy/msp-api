@@ -1,0 +1,106 @@
+// Package microsipfb hosts the Firebird-backed implementations of the
+// microsip outbound ports. The SQL statements below are 1:1 with the legacy
+// Node API (sys_msp_backend/src/components/{almacenes,zonasCliente}) so the
+// migration is invisible to clients.
+//
+//nolint:misspell // Spanish SQL column names (CLIENTES, ZONAS_CLIENTES) per project convention.
+package microsipfb
+
+// selectAlmacenes mirrors sys_msp_backend QUERY_GET_ALMACENES. The
+// existencias column is wrapped in COALESCE so warehouses with no
+// SALDOS_IN rows surface as zero instead of NULL.
+const selectAlmacenes = `
+SELECT
+    ALMACENES.ALMACEN_ID,
+    ALMACENES.NOMBRE AS ALMACEN,
+    COALESCE(EXIS.EXISTENCIAS, 0) AS EXISTENCIAS
+FROM ALMACENES
+LEFT JOIN (
+    SELECT
+        SALDOS_IN.ALMACEN_ID,
+        SUM(ENTRADAS_UNIDADES) - SUM(SALIDAS_UNIDADES) AS EXISTENCIAS
+    FROM SALDOS_IN
+    GROUP BY ALMACEN_ID
+) EXIS ON ALMACENES.ALMACEN_ID = EXIS.ALMACEN_ID
+WHERE ALMACENES.OCULTO = 'N'
+ORDER BY EXISTENCIAS DESC`
+
+// selectAlmacenByID mirrors sys_msp_backend QUERY_GET_ALMACEN_BY_ID — the
+// single-almacen variant of selectAlmacenes.
+const selectAlmacenByID = `
+SELECT
+    ALMACENES.ALMACEN_ID,
+    ALMACENES.NOMBRE AS ALMACEN,
+    COALESCE(EXIS.EXISTENCIAS, 0) AS EXISTENCIAS
+FROM ALMACENES
+LEFT JOIN (
+    SELECT
+        SALDOS_IN.ALMACEN_ID,
+        SUM(ENTRADAS_UNIDADES) - SUM(SALIDAS_UNIDADES) AS EXISTENCIAS
+    FROM SALDOS_IN
+    GROUP BY ALMACEN_ID
+) EXIS ON ALMACENES.ALMACEN_ID = EXIS.ALMACEN_ID
+WHERE ALMACENES.OCULTO = 'N' AND ALMACENES.ALMACEN_ID = ?`
+
+// selectArticulosByAlmacenTpl is a printf template whose only substitution
+// is the price-list IN clause. The list comes from validated int IDs
+// (config.Microsip.PriceListIDs), never from request input, so the inline
+// expansion is safe — see almacen_repo.go for the formatter. The two ?
+// placeholders bind the almacen ID and the CONTAINING substring.
+const selectArticulosByAlmacenTpl = `
+SELECT
+    EXIS.ARTICULO_ID,
+    ARTICULOS.NOMBRE AS ARTICULO,
+    EXISTENCIAS,
+    ARTICULOS.LINEA_ARTICULO_ID,
+    LINEAS_ARTICULOS.NOMBRE AS LINEA_ARTICULO,
+    CAST(LIST(PRECIOS_EMPRESA.NOMBRE || ':' || PRECIOS_ARTICULOS.PRECIO) AS VARCHAR(500)) AS PRECIOS
+FROM (
+    SELECT
+        ARTICULO_ID,
+        SUM(ENTRADAS_UNIDADES) - SUM(SALIDAS_UNIDADES) AS EXISTENCIAS
+    FROM SALDOS_IN
+    WHERE ALMACEN_ID = ?
+    GROUP BY ARTICULO_ID
+    ORDER BY EXISTENCIAS DESC
+) EXIS
+INNER JOIN ARTICULOS ON ARTICULOS.ARTICULO_ID = EXIS.ARTICULO_ID
+INNER JOIN LINEAS_ARTICULOS ON LINEAS_ARTICULOS.LINEA_ARTICULO_ID = ARTICULOS.LINEA_ARTICULO_ID
+LEFT JOIN PRECIOS_ARTICULOS
+    ON PRECIOS_ARTICULOS.ARTICULO_ID = ARTICULOS.ARTICULO_ID
+    AND PRECIOS_ARTICULOS.PRECIO_EMPRESA_ID IN (%s)
+LEFT JOIN PRECIOS_EMPRESA
+    ON PRECIOS_EMPRESA.PRECIO_EMPRESA_ID = PRECIOS_ARTICULOS.PRECIO_EMPRESA_ID
+WHERE EXISTENCIAS > 0 AND ARTICULOS.NOMBRE CONTAINING ?
+GROUP BY
+    EXIS.ARTICULO_ID,
+    ARTICULOS.NOMBRE,
+    EXISTENCIAS,
+    ARTICULOS.LINEA_ARTICULO_ID,
+    LINEAS_ARTICULOS.NOMBRE
+ORDER BY ARTICULO`
+
+// selectZonasCliente mirrors sys_msp_backend GET_ZONAS_CLIENTE.
+const selectZonasCliente = `
+SELECT ZONA_CLIENTE_ID, NOMBRE AS ZONA_CLIENTE
+FROM ZONAS_CLIENTES
+ORDER BY NOMBRE`
+
+// selectCobradoresPorZona mirrors sys_msp_backend GET_COBRADORES_POR_ZONA.
+// Returns the top cobrador (by client count) for each zona.
+const selectCobradoresPorZona = `
+SELECT ZONA_CLIENTE_ID, COBRADOR_ID, COBRADOR
+FROM (
+    SELECT
+        CL.ZONA_CLIENTE_ID,
+        C.COBRADOR_ID,
+        C.NOMBRE AS COBRADOR,
+        COUNT(*) AS TOTAL_CLIENTES,
+        ROW_NUMBER() OVER (PARTITION BY CL.ZONA_CLIENTE_ID ORDER BY COUNT(*) DESC) AS RN
+    FROM CLIENTES CL
+    INNER JOIN COBRADORES C ON C.COBRADOR_ID = CL.COBRADOR_ID
+    WHERE CL.ZONA_CLIENTE_ID IS NOT NULL
+    GROUP BY CL.ZONA_CLIENTE_ID, C.COBRADOR_ID, C.NOMBRE
+)
+WHERE RN = 1
+ORDER BY ZONA_CLIENTE_ID`
