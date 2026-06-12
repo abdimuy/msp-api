@@ -64,13 +64,13 @@ func TestCrearVentaInputValidation(t *testing.T) {
 		t.Parallel()
 		h := newHarness(t)
 		in := validContadoInput()
-		tel := "+15512345678"
+		tel := "+524491234567"
 		in.ClienteTel = &tel
 
 		venta, err := h.svc.CrearVenta(t.Context(), in, uuid.New())
 		require.NoError(t, err)
 		require.NotNil(t, venta.Cliente().Telefono())
-		assert.Equal(t, "+15512345678", venta.Cliente().Telefono().Value())
+		assert.Equal(t, "4491234567", venta.Cliente().Telefono().Value())
 	})
 
 	t.Run("blank_telefono_treated_as_absent", func(t *testing.T) {

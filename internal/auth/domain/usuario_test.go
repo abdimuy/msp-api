@@ -52,7 +52,7 @@ func TestNewUsuario_InitializesFields(t *testing.T) {
 		mustFirebaseUID(t, "abc123"),
 		mustEmail(t, "foo@bar.com"),
 		mustNombre(t, "Foo Bar"),
-		mustTelefono(t, "+15551234567"),
+		mustTelefono(t, "+524491234567"),
 		&almacen,
 		creator,
 		now,
@@ -63,7 +63,7 @@ func TestNewUsuario_InitializesFields(t *testing.T) {
 	assert.Equal(t, "foo@bar.com", u.Email().Value())
 	assert.Equal(t, "Foo Bar", u.Nombre().Value())
 	require.NotNil(t, u.Telefono())
-	assert.Equal(t, "+15551234567", u.Telefono().Value())
+	assert.Equal(t, "4491234567", u.Telefono().Value())
 	require.NotNil(t, u.AlmacenID())
 	assert.Equal(t, 7, *u.AlmacenID())
 	assert.True(t, u.Activo())
@@ -139,14 +139,14 @@ func TestUsuario_Update(t *testing.T) {
 	u.Update(domain.UsuarioUpdate{
 		Email:     mustEmail(t, "new@x.com"),
 		Nombre:    mustNombre(t, "New"),
-		Telefono:  mustTelefono(t, "+15559998888"),
+		Telefono:  mustTelefono(t, "+524499998888"),
 		AlmacenID: &newAlmacen,
 	}, updater, time.Now())
 
 	assert.Equal(t, "new@x.com", u.Email().Value())
 	assert.Equal(t, "New", u.Nombre().Value())
 	require.NotNil(t, u.Telefono())
-	assert.Equal(t, "+15559998888", u.Telefono().Value())
+	assert.Equal(t, "4499998888", u.Telefono().Value())
 	require.NotNil(t, u.AlmacenID())
 	assert.Equal(t, 42, *u.AlmacenID())
 	assert.Equal(t, updater, u.UpdatedBy())

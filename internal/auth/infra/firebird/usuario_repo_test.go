@@ -338,7 +338,7 @@ func TestUsuarioRepo_Save_WithTelefonoAndAlmacen(t *testing.T) {
 		require.NoError(t, err)
 		nombre, err := domain.NewNombre("Con Telefono")
 		require.NoError(t, err)
-		tel, err := platform.NewTelefono("+15551234567")
+		tel, err := platform.NewTelefono("+524491234567")
 		require.NoError(t, err)
 		almacen := 42
 		u := domain.NewUsuario(uuid.New(), fuid, email, nombre, &tel, &almacen, root, testNow())
@@ -366,7 +366,7 @@ func TestUsuarioRepo_Update_WithTelefonoAndAlmacen(t *testing.T) {
 		u := newUsuario(t, root, "updopt-"+uuid.NewString())
 		require.NoError(t, repo.Save(ctx, u))
 
-		tel, err := platform.NewTelefono("+15559876543")
+		tel, err := platform.NewTelefono("+524499876543")
 		require.NoError(t, err)
 		almacen := 7
 		u.Update(domain.UsuarioUpdate{

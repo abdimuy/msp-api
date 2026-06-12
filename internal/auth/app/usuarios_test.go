@@ -39,7 +39,7 @@ func TestActualizar(t *testing.T) {
 		t.Parallel()
 		h := newHarness(t, false)
 		u := h.seedUsuario(t)
-		tel := "+15512345678"
+		tel := "+524491234567"
 		updated, err := h.svc.Actualizar(t.Context(), ActualizarParams{
 			ID:       u.ID(),
 			Email:    u.Email().Value(),
@@ -48,7 +48,7 @@ func TestActualizar(t *testing.T) {
 		}, uuid.New())
 		require.NoError(t, err)
 		require.NotNil(t, updated.Telefono())
-		assert.Equal(t, "+15512345678", updated.Telefono().Value())
+		assert.Equal(t, "4491234567", updated.Telefono().Value())
 	})
 
 	t.Run("blank_telefono_clears_field", func(t *testing.T) {

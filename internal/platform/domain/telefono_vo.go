@@ -4,47 +4,60 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 var (
 	errTelefonoRequired      = errors.New("telefono: required")
-	errTelefonoInvalidFormat = errors.New("telefono: invalid format, expected E.164")
+	errTelefonoInvalidFormat = errors.New("telefono: invalid format, expected 10-digit MX number")
 )
 
-// e164Pattern is the strict E.164 format used by Twilio, AWS SNS, and the
-// ITU-T E.164 spec: a leading '+', a country-code digit 1-9, and 1-14 more
-// digits. Total length 2-15 digits after the '+'. No spaces, separators, or
-// leading zero on the country code.
-//
-//	valid:   +15551234567, +524491234567, +447911123456
-//	invalid: 5551234567, +0123, +1-555-123-4567, (555) 123-4567
-var e164Pattern = regexp.MustCompile(`^\+[1-9]\d{1,14}$`)
+// nonDigit matches every character that is not an ASCII digit. NewTelefono
+// strips these (spaces, dashes, parentheses, dots, the '+' sign) before
+// validating, so callers may pass numbers in any human format.
+var nonDigit = regexp.MustCompile(`\D`)
 
-// Telefono is a phone number stored in canonical E.164 form (e.g. +524491234567).
+// mxCountryCode is the Mexican country code stripped from inputs that carry it
+// (e.g. "+52..." or "52..."). We store the national 10-digit number only.
+const mxCountryCode = "52"
+
+// telefonoLength is the canonical national length for Mexican phone numbers.
+const telefonoLength = 10
+
+// Telefono is a Mexican phone number stored in canonical 10-digit national
+// form (e.g. "4491234567"). The +52 country code and any separators are
+// removed at construction time. This is the form Microsip stores in its
+// address phone column and the form our own MSP_* snapshots carry.
 type Telefono struct{ value string }
 
-// NewTelefono builds a Telefono from a raw E.164 string. The constructor
-// does no normalization — callers must provide the number already formatted
-// per the ITU-T E.164 spec (leading '+', country code, subscriber digits,
-// nothing else). Inputs containing spaces, dashes, parentheses, or missing
-// the leading '+' are rejected.
+// NewTelefono canonicalizes a raw phone string to 10-digit MX national form.
+// It accepts input with an optional "+52"/"52" country-code prefix or 10 bare
+// digits, in any separator style (spaces, dashes, parentheses, dots). All
+// non-digit characters are stripped; an optional leading "52" country code is
+// removed; the result must be exactly 10 digits. Inputs that do not reduce to
+// 10 national digits are rejected.
 func NewTelefono(s string) (Telefono, error) {
 	if s == "" {
 		return Telefono{}, errTelefonoRequired
 	}
-	if !e164Pattern.MatchString(s) {
+	digits := nonDigit.ReplaceAllString(s, "")
+	// Strip the +52 country code when present (12 digits = 52 + 10 national).
+	if len(digits) == len(mxCountryCode)+telefonoLength && strings.HasPrefix(digits, mxCountryCode) {
+		digits = digits[len(mxCountryCode):]
+	}
+	if len(digits) != telefonoLength {
 		return Telefono{}, fmt.Errorf("%w: %q", errTelefonoInvalidFormat, s)
 	}
-	return Telefono{value: s}, nil
+	return Telefono{value: digits}, nil
 }
 
 // HydrateTelefono rebuilds a Telefono from persistence without validation.
 func HydrateTelefono(s string) Telefono { return Telefono{value: s} }
 
-// Value returns the canonical E.164 representation.
+// Value returns the canonical 10-digit MX national representation.
 func (t Telefono) Value() string { return t.value }
 
-// String returns the canonical E.164 representation.
+// String returns the canonical 10-digit MX national representation.
 func (t Telefono) String() string { return t.value }
 
 // Equals reports whether two phones are identical.
