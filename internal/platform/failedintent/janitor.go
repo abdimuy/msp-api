@@ -136,7 +136,8 @@ func (j *Janitor) purgeOnce(ctx context.Context) {
 		if errors.Is(err, context.Canceled) {
 			return
 		}
-		slog.ErrorContext(ctx, "failedintent.janitor: purge failed",
+		slog.ErrorContext(
+			ctx, "failedintent.janitor: purge failed",
 			"error", err, "cutoff", cutoff,
 		)
 		return
@@ -147,13 +148,15 @@ func (j *Janitor) purgeOnce(ctx context.Context) {
 	if j.cfg.Blob != nil {
 		for _, path := range result.BlobPaths {
 			if delErr := j.cfg.Blob.Delete(ctx, path); delErr != nil {
-				slog.WarnContext(ctx, "failedintent.janitor: blob delete failed",
+				slog.WarnContext(
+					ctx, "failedintent.janitor: blob delete failed",
 					"error", delErr, "path", path,
 				)
 			}
 		}
 	}
-	slog.InfoContext(ctx, "failedintent.janitor: purged",
+	slog.InfoContext(
+		ctx, "failedintent.janitor: purged",
 		"count", result.RowsDeleted,
 		"blobs_deleted", len(result.BlobPaths),
 		"cutoff", cutoff,

@@ -78,7 +78,8 @@ func SweepOrphans(ctx context.Context, store *Store, ref PathReferencer) (SweepR
 			continue
 		}
 		if rmErr := os.Remove(full); rmErr != nil {
-			slog.WarnContext(ctx,
+			slog.WarnContext(
+				ctx,
 				"failedintent.blobfs.sweep: unlink failed",
 				"error", rmErr, "path", full,
 			)
@@ -86,7 +87,8 @@ func SweepOrphans(ctx context.Context, store *Store, ref PathReferencer) (SweepR
 		}
 		report.Deleted++
 	}
-	slog.InfoContext(ctx,
+	slog.InfoContext(
+		ctx,
 		"failedintent.blobfs.sweep: complete",
 		"scanned", report.Scanned,
 		"deleted", report.Deleted,
