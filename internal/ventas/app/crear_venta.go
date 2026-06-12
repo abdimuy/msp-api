@@ -337,7 +337,7 @@ func optionalTelefono(s *string) (*platform.Telefono, error) {
 	if err != nil {
 		return nil, apperror.NewValidation(
 			"telefono_invalid",
-			"el teléfono debe estar en formato E.164 (p. ej. +524491234567)",
+			"el teléfono debe tener 10 dígitos (méxico), con o sin +52",
 		).WithError(err)
 	}
 	return &t, nil

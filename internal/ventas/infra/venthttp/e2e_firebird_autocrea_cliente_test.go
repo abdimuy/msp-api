@@ -78,7 +78,7 @@ func TestE2E_AplicarVenta_AutoCreaCliente_FullCycle(t *testing.T) {
 			autoCrearAlmDestID  = 11059 // destination warehouse
 		)
 		ref := "CASA AZUL ESQUINA - TEST E2E"
-		tel := "+5212381234567"
+		tel := "+522381234567"
 		numExt := "100"
 
 		body := validCreateBody()

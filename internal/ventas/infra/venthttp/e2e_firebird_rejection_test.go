@@ -125,14 +125,14 @@ func TestE2E_Firebird_Rejection(t *testing.T) {
 			assert.Contains(t, recGet.Body.String(), strings.ToUpper(nota), "500-char nota must round-trip up to the ALL-CAPS fold")
 		})
 
-		t.Run("telefono_no_e164_422", func(t *testing.T) {
+		t.Run("telefono_invalido_422", func(t *testing.T) {
 			body := validCreateBody()
 			body.Vendedores[0].UsuarioID = usuarioID.String()
-			tel := "449-123-4567" // Twilio-style — rejected by strict E.164 rule (commit 9470cef)
+			tel := "12345" // no reduce a 10 dígitos MX → rechazado por el VO
 			body.Cliente.Telefono = &tel
 
 			rec := post(t, body)
-			require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "non-E.164 telefono must be 422: %s", rec.Body.String())
+			require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "telefono inválido debe ser 422: %s", rec.Body.String())
 		})
 	})
 }

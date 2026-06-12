@@ -742,7 +742,7 @@ func TestCrearVenta_OptionalClienteFields_RoundTrip(t *testing.T) {
 	r := buildRouter(t, svc, cu)
 
 	body := validCreateBody()
-	tel := "+15551234567"
+	tel := "4491234567"
 	aval := "Avalista Test"
 	body.Cliente.Telefono = &tel
 	body.Cliente.Aval = &aval

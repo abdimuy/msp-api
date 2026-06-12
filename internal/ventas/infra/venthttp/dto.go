@@ -17,7 +17,7 @@ import (
 type ClienteSnapshotDTO struct {
 	ClienteID  *int    `json:"cliente_id,omitempty"  doc:"ID opcional del cliente en Microsip CLIENTES"`
 	Nombre     string  `json:"nombre"                doc:"Nombre del cliente"`
-	Telefono   *string `json:"telefono,omitempty"    doc:"Teléfono opcional en formato E.164 (p. ej. +524491234567): '+', código de país 1-9, y 1-14 dígitos. Sin separadores."`
+	Telefono   *string `json:"telefono,omitempty"    doc:"Teléfono opcional de México: 10 dígitos, con o sin prefijo +52. Se aceptan separadores (espacios, guiones); se normaliza a 10 dígitos."`
 	Aval       *string `json:"aval,omitempty"        doc:"Aval o responsable opcional"`
 	Referencia *string `json:"referencia,omitempty"  maxLength:"99" doc:"Referencia de ubicación opcional, máx 99 caracteres (p. ej. \"casa azul esquina\")"`
 }
