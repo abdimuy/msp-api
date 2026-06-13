@@ -59,13 +59,19 @@ para hacerlo en grande: "le pago por venta nueva comprobada, como a un vendedor.
 
 ## El guion, paso a paso
 
-**Paso 1 — Apertura con sus propios datos (10 segundos):**
-> "Saqué esto de su propia base de datos. El 78% del dinero que entra al negocio —$82
-> millones al año— pasa por el sistema que yo manejo. Quiero enseñarle algo que encontré ahí."
+**Paso 1 — El control que hoy no tiene (abrir con el alivio):**
+> "Antes de hablar de dinero, quiero hablar de algo que sé que le pesa más: usted no puede
+> vigilar a su gente de campo. No sabe si el vendedor fue, si el cobrador cobró de verdad,
+> si alguien se está aprovechando. Con el sistema, usted ve todo desde la oficina, en tiempo
+> real. Sin depender de que alguien le cuente. Eso es lo primero que le doy."
 
-**Paso 2 — La oportunidad, en pesos:**
-> "Tiene 5,617 clientes en Tehuacán que ya le compraron, ya le pagaron, y dejaron de
-> venir. Nadie los está trabajando. Son ventas que no están pasando."
+> "Y se acaba el fraude de prestanombres. Cada venta va a un cliente real y verificado —
+> el sistema lo confirma antes de que el vendedor cierre."
+
+**Paso 2 — La oportunidad, en pesos (el dinero como bonus):**
+> "Y encima de eso, hay dinero dormido. Saqué esto de su propia base de datos: tiene 5,617
+> clientes en Tehuacán que ya le compraron, ya le pagaron, y dejaron de venir. Nadie los
+> está trabajando. Son ventas que no están pasando."
 
 **Paso 3 — La calidad del crédito (bajar el miedo):**
 > "Y no es crédito riesgoso. Son sus mejores pagadores. Mire: un cliente de primera vez
@@ -77,26 +83,34 @@ para hacerlo en grande: "le pago por venta nueva comprobada, como a un vendedor.
 > "Por ejemplo, esta señora [Janneth]: le compró 6 veces — recámara, comedor, sala,
 > refrigerador —, $87,000, siempre pagó puntual, y ya casi termina de pagar. El sistema
 > la detecta justo en ese momento y le ofrece lo que le falta, con el mismo abono que
-> ya tiene. Eso, multiplicado por miles de clientes."
+> ya tiene. Le ofrece a cada cliente lo que le falta, justo cuando ya puede pagarlo.
+> Eso, multiplicado por miles de clientes."
 
 **Paso 5 — La solución, simple:**
 > "Un sistema que contacta a esos clientes por WhatsApp, les ofrece el producto correcto,
-> y se los pasa al vendedor para cerrar. Cientos a la vez, en automático. El vendedor
-> solo remata."
+> y se los pasa al vendedor para cerrar. Cientos a la vez, en automático. Y sus mejores
+> vendedores venden más, porque les paso clientes calientes en vez de mandarlos a la calle
+> a ciegas. El vendedor solo remata."
 
-**Paso 6 — La prueba, ya hecha (la carta más fuerte):**
+**Paso 6 — Por qué esto funciona (ya está probado):**
+> "Esto no es experimento. Es lo que hizo gigantes a Coppel y a Elektra: vivir de sus
+> propios clientes, que vuelven. Y su negocio ya funciona así — el 67% de sus ventas son
+> clientes que regresan. Yo lo vuelvo un sistema deliberado sobre su propia data, que
+> solo yo puedo leer y operar."
+
+**Paso 7 — La prueba, ya hecha (la carta más fuerte):**
 > "Y no se lo cuento en teoría — ya lo hice. Junto con mi papá trabajé una lista de
 > estos clientes dormidos. Mire: vendimos $[X] a gente que ya no compraba. Y para que
 > vea que fui yo y no la suerte: a estos otros, iguales, no los tocamos — y no compraron.
 > La diferencia es lo que el sistema hizo. Le di estas ventas sin pedirle nada, para que
 > lo vea con sus ojos."
 
-**Paso 7 — El trato, en su idioma:**
+**Paso 8 — El trato, en su idioma:**
 > "Ya que vio que funciona, quiero hacerlo en grande. Y solo me paga por las ventas nuevas
 > que le compruebe — como a un vendedor, por venta. Si no entra dinero, no me debe nada.
 > Usted nunca arriesga; solo comparte cuando ya ganó."
 
-**Paso 8 — El cierre:**
+**Paso 9 — El cierre:**
 > "¿Hacemos el trato para que lo haga con todos sus clientes, no solo los que ya probé?"
 
 ---
@@ -116,6 +130,11 @@ para hacerlo en grande: "le pago por venta nueva comprobada, como a un vendedor.
        Cliente de primera vez ......... 6% de riesgo de no pagar
        Estos clientes (4+ compras) .... menos de 2%
        (Tres veces más seguros — son su propia gente)
+
+  • CONTROL DESDE LA OFICINA:
+       Ve cada venta y cada cobro en tiempo real.
+       Sin depender de que alguien le reporte.
+       Se acaba el fraude de prestanombres.
 
   • YA LO PROBÉ (con mi papá, sin cobrarle nada):
        Vendimos $[X] a clientes que ya no compraban.
@@ -147,12 +166,17 @@ para hacerlo en grande: "le pago por venta nueva comprobada, como a un vendedor.
 | "Déjame pensarlo" | "Claro, piénselo. Pero el número ya está aquí — ventas reales que ya entraron. Mientras lo piensa, esos clientes se siguen enfriando. ¿Le parece si arranco con un grupo chico mientras decide?" |
 | "¿Y por qué lo hiciste sin avisarme?" | "Porque quería traerle algo real, no una idea. Preferí demostrárselo con ventas en la mano que pedirle permiso para algo que no sabía si iba a funcionar. Y le salió gratis." |
 | "¿Y si el cliente no quiere comprar por WhatsApp?" | "El sistema solo hace el contacto. El cierre lo hacemos como siempre — en persona, con el vendedor. WhatsApp es solo para recordarles que ya pueden volver." |
+| "¿Y los vendedores? ¿Se les quita trabajo?" | "Al revés: les paso clientes que ya quieren comprar, en vez de mandarlos a la calle a buscarlos a ciegas. Sus mejores vendedores venden más, con menos desgaste." |
+| "¿Y si esto ya no me funciona o es un riesgo?" | "Esto es lo que hizo gigantes a Coppel y Elektra: vivir de sus clientes que regresan. Su negocio ya funciona así — el 67% de sus ventas son clientes que vuelven. No es experimento; es el camino probado, a su escala, con su propia data." |
 
 ---
 
 ## La segunda palanca (solo si la junta va bien)
 
-Mencionar solo si hay confianza y la conversación fluye. En su idioma, sobre su dolor:
+> **Nota: esta conversación está pausada hasta que el programa de reactivación esté probado
+> con resultados reales. Mencionarla solo si hay confianza plena y la reunión va muy bien.**
+
+Mencionar en su idioma, sobre su dolor:
 > "Y con el mismo sistema, le doy control de su dinero: ve cada cobro en vivo desde la
 > oficina, y poco a poco menos efectivo pasa por manos de la gente. Pero eso lo vemos
 > después de que las ventas le demuestren que funciona."
@@ -165,6 +189,15 @@ Mencionar solo si hay confianza y la conversación fluye. En su idioma, sobre su
 - 16,015 ventas a crédito por $117.3M ese año.
 - $81.9M (78%) de su efectivo pasa por el sistema que opera el desarrollador.
 - Premio de financiamiento: 28% sobre lo que vende a crédito.
+
+**El negocio ya vive de la recompra:**
+- 67.2% de sus ventas son clientes que ya le habían comprado antes (69.6% del dinero).
+- Cada año, más de 6,000 ventas de recompra suceden solas, de forma orgánica — sin que
+  nadie las trabaje deliberadamente.
+- El cliente que regresa gasta en promedio $8,034 por venta; el cliente nuevo, $7,207.
+  Sus clientes leales valen 11.5% más por visita.
+- El sistema vuelve eso deliberado: en vez de esperar a que vuelvan solos, los buscamos
+  en el momento exacto en que ya pueden comprar.
 
 **La oportunidad en Tehuacán:**
 - 5,617 clientes buenos, sin deuda, con teléfono, que no compraron.
@@ -179,6 +212,10 @@ Mencionar solo si hay confianza y la conversación fluye. En su idioma, sobre su
 - Después de mercancía, cobrador, castigo, entrega y comisión del desarrollador:
   **~$3,000 netos por venta** que no existía.
 - El desarrollador recibe una fracción; el dueño se queda el resto.
+
+**El control que gana:**
+- Visibilidad en tiempo real de ventas y cobros desde la oficina.
+- Cero fraude de prestanombres: cada venta va a un cliente real y verificado.
 
 **El trato:**
 - Solo paga por venta nueva comprobada contra grupo de control.
