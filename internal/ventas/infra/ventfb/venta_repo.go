@@ -426,13 +426,19 @@ func (r *VentaRepo) ReplaceVendedores(ctx context.Context, v *domain.Venta) erro
 	return r.touchHeader(ctx, q, v)
 }
 
-// touchHeader writes the venta's updated_at/by so the audit trail reflects
-// the child-collection replacement.
+// touchHeader syncs the derived header fields (montos + audit trail) on
+// MSP_VENTAS after a child-collection replacement (productos, combos, or
+// vendedores). The three monto columns reflect the values recomputed by
+// domain.Venta.recomputarMontos() so the header row stays consistent with
+// the current child rows. For vendedores replacements the montos are
+// unchanged in the domain, so re-writing them is a harmless no-op.
 func (r *VentaRepo) touchHeader(ctx context.Context, q firebird.Querier, v *domain.Venta) error {
 	a := v.Audit()
-	res, err := q.ExecContext(ctx,
-		`UPDATE MSP_VENTAS SET UPDATED_AT = ?, UPDATED_BY = ? WHERE ID = ?`,
-		firebird.ToWallClock(a.UpdatedAt()), a.UpdatedBy().String(), v.ID().String(),
+	m := v.Montos()
+	res, err := q.ExecContext(ctx, touchVentaHeaderMontos,
+		m.Anual(), m.CortoPlazo(), m.Contado(),
+		firebird.ToWallClock(a.UpdatedAt()), a.UpdatedBy().String(),
+		v.ID().String(),
 	)
 	if err != nil {
 		return firebird.MapError(err)

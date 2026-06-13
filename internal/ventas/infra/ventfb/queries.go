@@ -182,6 +182,20 @@ ORDER BY POSICION`
 
 const deleteVendedoresByVenta = `DELETE FROM MSP_VENTAS_VENDEDORES WHERE VENTA_ID = ?`
 
+// touchVentaHeaderMontos syncs the derived montos and the audit trail on
+// MSP_VENTAS after a child-collection replacement (productos, combos, or
+// vendedores). The three monto columns mirror the values recomputed by
+// domain.Venta.recomputarMontos() so the header row stays consistent with the
+// current child rows.
+const touchVentaHeaderMontos = `
+UPDATE MSP_VENTAS
+SET MONTO_ANUAL        = ?,
+    MONTO_CORTO_PLAZO  = ?,
+    MONTO_CONTADO      = ?,
+    UPDATED_AT         = ?,
+    UPDATED_BY         = ?
+WHERE ID = ?`
+
 // ─── Imagen ─────────────────────────────────────────────────────────────────
 
 const imagenColumns = `ID, STORAGE_KIND, STORAGE_KEY, MIME, SIZE_BYTES, DESCRIPCION,
