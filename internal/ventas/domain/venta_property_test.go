@@ -146,7 +146,6 @@ func TestCrearVenta_RandomValidContado_Property(t *testing.T) {
 			GPS:        gps,
 			FechaVenta: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
 			TipoVenta:  domain.TipoVentaContado,
-			Montos:     montos,
 			Productos:  productos,
 			Vendedores: vendedores,
 			CreatedBy:  uuid.New(),

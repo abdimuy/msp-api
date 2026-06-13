@@ -220,24 +220,18 @@ func TestProperty_ActualizarHeader(t *testing.T) {
 		poblacion := genSafeASCII(30).Draw(rt, "poblacion")
 		ciudad := genSafeASCII(30).Draw(rt, "ciudad")
 		fecha := genFechaVenta(rt)
-		precioAnual := genNonNegativeDecimal2(rt, "header_anual")
-		precioCorto := genNonNegativeDecimal2(rt, "header_corto")
-		precioContado := genNonNegativeDecimal2(rt, "header_contado")
 
 		actor := uuid.New()
 
 		out, err := h.svc.ActualizarHeader(t.Context(), ventasapp.ActualizarHeaderInput{
-			VentaID:       preID,
-			Calle:         calle,
-			Colonia:       colonia,
-			Poblacion:     poblacion,
-			Ciudad:        ciudad,
-			Latitud:       lat,
-			Longitud:      lng,
-			FechaVenta:    fecha,
-			PrecioAnual:   precioAnual,
-			PrecioCorto:   precioCorto,
-			PrecioContado: precioContado,
+			VentaID:    preID,
+			Calle:      calle,
+			Colonia:    colonia,
+			Poblacion:  poblacion,
+			Ciudad:     ciudad,
+			Latitud:    lat,
+			Longitud:   lng,
+			FechaVenta: fecha,
 		}, actor)
 		if err != nil {
 			rt.Fatalf("ActualizarHeader failed: %v", err)
@@ -267,14 +261,11 @@ func TestProperty_ActualizarHeader(t *testing.T) {
 		if !out.FechaVenta().Equal(fecha) {
 			rt.Fatalf("fecha_venta mismatch: got %v want %v", out.FechaVenta(), fecha)
 		}
-		if !out.Montos().Anual().Equal(precioAnual) {
-			rt.Fatalf("precio_anual mismatch: got %v want %v", out.Montos().Anual(), precioAnual)
-		}
-		if !out.Montos().CortoPlazo().Equal(precioCorto) {
-			rt.Fatalf("precio_corto mismatch: got %v want %v", out.Montos().CortoPlazo(), precioCorto)
-		}
-		if !out.Montos().Contado().Equal(precioContado) {
-			rt.Fatalf("precio_contado mismatch: got %v want %v", out.Montos().Contado(), precioContado)
+		// Montos are derived from line items (not from header input) — verify
+		// they remain non-negative after header update.
+		if out.Montos().Anual().Sign() < 0 || out.Montos().CortoPlazo().Sign() < 0 || out.Montos().Contado().Sign() < 0 {
+			rt.Fatalf("montos must be non-negative after ActualizarHeader: anual=%v corto=%v contado=%v",
+				out.Montos().Anual(), out.Montos().CortoPlazo(), out.Montos().Contado())
 		}
 
 		// Immutable fields unchanged.

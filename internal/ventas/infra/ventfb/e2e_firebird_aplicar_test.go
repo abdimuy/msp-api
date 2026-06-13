@@ -69,12 +69,6 @@ func buildAplicarContadoConArticulo(t *testing.T, userID uuid.UUID, articuloID i
 	require.NoError(t, err)
 	gps, err := domain.NewGPSCoords(18.46, -97.39)
 	require.NoError(t, err)
-	montos, err := domain.NewMontoSnapshot(
-		decimal.RequireFromString("4320.00"),
-		decimal.RequireFromString("3900.00"),
-		decimal.RequireFromString("3500.00"),
-	)
-	require.NoError(t, err)
 	precioProducto, err := domain.NewMontoSnapshot(
 		decimal.RequireFromString("4320.00"),
 		decimal.RequireFromString("3900.00"),
@@ -93,7 +87,6 @@ func buildAplicarContadoConArticulo(t *testing.T, userID uuid.UUID, articuloID i
 		GPS:        gps,
 		FechaVenta: time.Now().UTC(),
 		TipoVenta:  domain.TipoVentaContado,
-		Montos:     montos,
 		Productos: []domain.CrearVentaProductoInput{{
 			ID:             uuid.New(),
 			ArticuloID:     articuloID,
@@ -162,12 +155,6 @@ func buildAplicarCredito(t *testing.T, userID uuid.UUID) *domain.Venta {
 	require.NoError(t, err)
 	gps, err := domain.NewGPSCoords(18.46, -97.38)
 	require.NoError(t, err)
-	montos, err := domain.NewMontoSnapshot(
-		decimal.RequireFromString("9100.00"),
-		decimal.RequireFromString("8200.00"),
-		decimal.RequireFromString("7000.00"),
-	)
-	require.NoError(t, err)
 	precioProducto, err := domain.NewMontoSnapshot(
 		decimal.RequireFromString("9100.00"),
 		decimal.RequireFromString("8200.00"),
@@ -197,7 +184,6 @@ func buildAplicarCredito(t *testing.T, userID uuid.UUID) *domain.Venta {
 		GPS:         gps,
 		FechaVenta:  time.Now().UTC(),
 		TipoVenta:   domain.TipoVentaCredito,
-		Montos:      montos,
 		PlanCredito: &plan,
 		DiaCobranza: &dc,
 		Nota:        &nota,

@@ -181,11 +181,12 @@ type CrearVentaBody struct {
 }
 
 // ActualizarHeaderBody is the JSON body for PATCH /v2/ventas/{id}.
+// Montos is intentionally absent — header totals are derived from line items;
+// to update pricing use the PUT /ventas/{id}/productos and /combos endpoints.
 type ActualizarHeaderBody struct {
 	Direccion   DireccionDTO    `json:"direccion"`
 	GPS         GPSDTO          `json:"gps"`
 	FechaVenta  string          `json:"fecha_venta"            format:"date-time"`
-	Montos      MontosDTO       `json:"montos"`
 	PlanCredito *PlanCreditoDTO `json:"plan_credito,omitempty"`
 	DiaCobranza *DiaCobranzaDTO `json:"dia_cobranza,omitempty"`
 	Nota        *string         `json:"nota,omitempty"         maxLength:"500" doc:"Nota libre, máximo 500 caracteres"`

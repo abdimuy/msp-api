@@ -31,11 +31,6 @@ func TestVentaRepo_UpdateHeader_PersistsFields(t *testing.T) {
 		require.NoError(t, repo.Save(ctx, v))
 
 		newFecha := v.FechaVenta().Add(48 * time.Hour)
-		newMontos, _ := domain.NewMontoSnapshot(
-			decimal.RequireFromString("3500.00"),
-			decimal.RequireFromString("3000.00"),
-			decimal.RequireFromString("2500.00"),
-		)
 		newDir, err := domain.NewDireccion(domain.NewDireccionParams{
 			Calle: "Otra Calle", Colonia: "Roma", Poblacion: "CDMX", Ciudad: "CDMX",
 		})
@@ -44,7 +39,7 @@ func TestVentaRepo_UpdateHeader_PersistsFields(t *testing.T) {
 		require.NoError(t, err)
 		nota := "corrección posterior"
 		require.NoError(t, v.ActualizarHeader(domain.ActualizarHeaderParams{
-			Direccion: newDir, GPS: newGPS, FechaVenta: newFecha, Montos: newMontos,
+			Direccion: newDir, GPS: newGPS, FechaVenta: newFecha,
 			Nota: &nota, By: root, Now: testNow().Add(time.Hour),
 		}))
 		require.NoError(t, repo.UpdateHeader(ctx, v))
@@ -58,7 +53,6 @@ func TestVentaRepo_UpdateHeader_PersistsFields(t *testing.T) {
 		// exactly (down to seconds — Firebird TIMESTAMP precision is 100µs).
 		assert.WithinDuration(t, newFecha, got.FechaVenta(), time.Second,
 			"FechaVenta round-trip; want=%s got=%s", newFecha, got.FechaVenta())
-		assert.True(t, got.Montos().Anual().Equal(decimal.RequireFromString("3500.00")))
 		require.NotNil(t, got.Nota())
 		assert.Equal(t, "CORRECCIÓN POSTERIOR", *got.Nota())
 		assert.Equal(t, domain.SituacionBorrador, got.Situacion())

@@ -39,8 +39,8 @@ func TestVenta_ActualizarHeader_RejectsIfAprobada(t *testing.T) {
 	v := rebuildVentaWithSituacion(t, buildValidVenta(t), domain.SituacionAprobada)
 	err := v.ActualizarHeader(domain.ActualizarHeaderParams{
 		Direccion: v.Direccion(), GPS: v.GPS(),
-		FechaVenta: v.FechaVenta(), Montos: v.Montos(),
-		By: uuid.New(), Now: time.Now(),
+		FechaVenta: v.FechaVenta(),
+		By:         uuid.New(), Now: time.Now(),
 	})
 	require.Error(t, err)
 	ae, ok := apperror.As(err)
@@ -102,7 +102,7 @@ func TestVenta_ActualizarHeader_PlanRequiredForCredito(t *testing.T) {
 	require.NoError(t, err)
 	err = v.ActualizarHeader(domain.ActualizarHeaderParams{
 		Direccion: v.Direccion(), GPS: v.GPS(),
-		FechaVenta: v.FechaVenta(), Montos: v.Montos(),
+		FechaVenta:  v.FechaVenta(),
 		PlanCredito: nil, DiaCobranza: nil, // CREDITO without plan → invalid
 		By: uuid.New(), Now: time.Now(),
 	})
@@ -119,7 +119,7 @@ func TestVenta_ActualizarHeader_PlanNotAllowedForContado(t *testing.T) {
 	dc, _ := domain.NewDiaCobranzaMes(10)
 	err := v.ActualizarHeader(domain.ActualizarHeaderParams{
 		Direccion: v.Direccion(), GPS: v.GPS(),
-		FechaVenta: v.FechaVenta(), Montos: v.Montos(),
+		FechaVenta:  v.FechaVenta(),
 		PlanCredito: &plan, DiaCobranza: &dc,
 		By: uuid.New(), Now: time.Now(),
 	})
@@ -134,8 +134,8 @@ func TestVenta_ActualizarHeader_FechaZeroRejected(t *testing.T) {
 	v := buildValidVenta(t)
 	err := v.ActualizarHeader(domain.ActualizarHeaderParams{
 		Direccion: v.Direccion(), GPS: v.GPS(),
-		FechaVenta: time.Time{}, Montos: v.Montos(),
-		By: uuid.New(), Now: time.Now(),
+		FechaVenta: time.Time{},
+		By:         uuid.New(), Now: time.Now(),
 	})
 	require.Error(t, err)
 	ae, ok := apperror.As(err)

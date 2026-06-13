@@ -19,7 +19,6 @@ func validHeaderParams(p domain.CrearVentaParams) domain.ActualizarHeaderParams 
 		Direccion:  p.Direccion,
 		GPS:        p.GPS,
 		FechaVenta: p.FechaVenta.Add(time.Hour),
-		Montos:     p.Montos,
 		Nota:       p.Nota,
 		By:         uuid.New(),
 		Now:        time.Now(),

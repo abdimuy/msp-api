@@ -93,7 +93,7 @@ func TestComboNombre_BoundaryLengths(t *testing.T) {
 		p.Combos = []domain.CrearVentaComboInput{{
 			ID:             uuid.New(),
 			Nombre:         nombre,
-			Precios:        p.Montos,
+			Precios:        domain.HydrateMontoSnapshot(decimal.NewFromInt(100), decimal.NewFromInt(80), decimal.NewFromInt(50)),
 			Cantidad:       decimal.NewFromInt(1),
 			AlmacenOrigen:  1,
 			AlmacenDestino: 2,

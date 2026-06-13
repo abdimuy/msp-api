@@ -21,17 +21,14 @@ import (
 // the status-matrix cells to specific field values.
 func validHeaderInput(ventaID uuid.UUID) ventasapp.ActualizarHeaderInput {
 	return ventasapp.ActualizarHeaderInput{
-		VentaID:       ventaID,
-		Calle:         "Av. Reforma",
-		Colonia:       "Centro",
-		Poblacion:     "Cuauhtemoc",
-		Ciudad:        "CDMX",
-		Latitud:       19.4326,
-		Longitud:      -99.1332,
-		FechaVenta:    time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
-		PrecioAnual:   decimal.NewFromInt(1200),
-		PrecioCorto:   decimal.NewFromInt(1100),
-		PrecioContado: decimal.NewFromInt(1000),
+		VentaID:    ventaID,
+		Calle:      "Av. Reforma",
+		Colonia:    "Centro",
+		Poblacion:  "Cuauhtemoc",
+		Ciudad:     "CDMX",
+		Latitud:    19.4326,
+		Longitud:   -99.1332,
+		FechaVenta: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
 	}
 }
 

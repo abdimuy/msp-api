@@ -63,7 +63,7 @@ func TestCrearVenta_RejectsComboCantidadScaleOver4(t *testing.T) {
 	p.Combos = []domain.CrearVentaComboInput{{
 		ID:             p.ID,
 		Nombre:         "C",
-		Precios:        p.Montos,
+		Precios:        domain.HydrateMontoSnapshot(decimal.NewFromInt(100), decimal.NewFromInt(80), decimal.NewFromInt(50)),
 		Cantidad:       decimal.RequireFromString("1.99999"),
 		AlmacenOrigen:  1,
 		AlmacenDestino: 2,

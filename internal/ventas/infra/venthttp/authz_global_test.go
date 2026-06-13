@@ -65,11 +65,6 @@ func TestAuthz_VentasEditar_IsGlobalNotPerOwnership(t *testing.T) {
 		Direccion:  createBody.Direccion,
 		GPS:        createBody.GPS,
 		FechaVenta: createBody.FechaVenta,
-		Montos: venthttp.MontosDTO{
-			Anual:      "1100",
-			CortoPlazo: "1000",
-			Contado:    "900",
-		},
 	}
 	editReq := jsonRequest(t, http.MethodPatch, "/ventas/"+createBody.ID, editBody)
 	editRec := httptest.NewRecorder()
@@ -83,7 +78,7 @@ func TestAuthz_VentasEditar_IsGlobalNotPerOwnership(t *testing.T) {
 
 	var updated venthttp.VentaDTO
 	require.NoError(t, json.Unmarshal(editRec.Body.Bytes(), &updated))
-	assert.Equal(t, "900.00", updated.Montos.Contado, "edit was applied")
+	assert.Equal(t, "AV. REFORMA 100", updated.Direccion.Calle, "edit was applied")
 	assert.NotEqual(t, editorUserID.String(), updated.Vendedores[0].UsuarioID,
 		"editor is not retroactively added as a vendedor")
 }
@@ -115,7 +110,6 @@ func TestAuthz_VentasEditar_WithoutPermission_Rejects(t *testing.T) {
 		Direccion:  createBody.Direccion,
 		GPS:        createBody.GPS,
 		FechaVenta: createBody.FechaVenta,
-		Montos:     createBody.Montos,
 	}
 	editReq := jsonRequest(t, http.MethodPatch, "/ventas/"+createBody.ID, editBody)
 	editRec := httptest.NewRecorder()

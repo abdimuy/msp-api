@@ -78,12 +78,6 @@ func buildVenta(t *testing.T, in newVentaInput) *domain.Venta {
 	require.NoError(t, err)
 	gps, err := domain.NewGPSCoords(19.4326, -99.1332)
 	require.NoError(t, err)
-	montos, err := domain.NewMontoSnapshot(
-		decimal.RequireFromString("1500.00"),
-		decimal.RequireFromString("1300.00"),
-		decimal.RequireFromString("1000.00"),
-	)
-	require.NoError(t, err)
 	productoPrecios, err := domain.NewMontoSnapshot(
 		decimal.RequireFromString("150.00"),
 		decimal.RequireFromString("130.00"),
@@ -100,7 +94,6 @@ func buildVenta(t *testing.T, in newVentaInput) *domain.Venta {
 		GPS:        gps,
 		FechaVenta: in.fecha,
 		TipoVenta:  in.tipoVenta,
-		Montos:     montos,
 		Productos: []domain.CrearVentaProductoInput{{
 			ID:             uuid.New(),
 			ArticuloID:     100,
@@ -220,7 +213,7 @@ func buildRichVenta(t *testing.T, createdBy, vendedor uuid.UUID, opts richVentaO
 	params := domain.CrearVentaParams{
 		ID: uuid.New(), Cliente: cliente, Direccion: dir, GPS: gps,
 		FechaVenta: testNow(),
-		TipoVenta:  domain.TipoVentaContado, Montos: montos, Nota: nota,
+		TipoVenta:  domain.TipoVentaContado, Nota: nota,
 		Combos: combos,
 		Productos: []domain.CrearVentaProductoInput{{
 			ID: uuid.New(), ArticuloID: 200, Articulo: "Mesa",

@@ -81,9 +81,12 @@ func TestActualizarHeader_EmitsEvent(t *testing.T) {
 	h := newHarness(t)
 	id := h.seedVenta(t)
 	_, err := h.svc.ActualizarHeader(t.Context(), ventasapp.ActualizarHeaderInput{
-		VentaID: *id, Calle: "X", Colonia: "X", Poblacion: "X", Ciudad: "X",
-		FechaVenta:  validContadoInput().FechaVenta,
-		PrecioAnual: decimal.NewFromInt(1), PrecioCorto: decimal.NewFromInt(1), PrecioContado: decimal.NewFromInt(1),
+		VentaID:    *id,
+		Calle:      "X",
+		Colonia:    "X",
+		Poblacion:  "X",
+		Ciudad:     "X",
+		FechaVenta: validContadoInput().FechaVenta,
 	}, uuid.New())
 	require.NoError(t, err)
 	assert.True(t, h.outbox.sawEventType("venta.header_actualizado"),

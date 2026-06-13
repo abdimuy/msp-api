@@ -6,14 +6,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 
 	"github.com/abdimuy/msp-api/internal/ventas/domain"
 )
 
 // ActualizarHeaderInput is the request DTO for editing a venta's header
 // fields. Mirrors the editable subset — TipoVenta, ClienteID, almacenes and
-// child collections are intentionally absent.
+// child collections are intentionally absent. Montos (header totals) are
+// excluded because they are derived automatically from line items by the
+// domain; callers must use the reemplazar endpoints to change prices.
 type ActualizarHeaderInput struct {
 	VentaID        uuid.UUID
 	Calle          string
@@ -25,9 +26,6 @@ type ActualizarHeaderInput struct {
 	Latitud        float64
 	Longitud       float64
 	FechaVenta     time.Time
-	PrecioAnual    decimal.Decimal
-	PrecioCorto    decimal.Decimal
-	PrecioContado  decimal.Decimal
 	PlanCredito    *CrearVentaPlanCreditoInput
 	DiaCobranza    *CrearVentaDiaCobranzaInput
 	Nota           *string
@@ -73,10 +71,6 @@ func (in ActualizarHeaderInput) intoDomain(by uuid.UUID, now time.Time) (domain.
 	if err != nil {
 		return domain.ActualizarHeaderParams{}, err
 	}
-	montos, err := domain.NewMontoSnapshot(in.PrecioAnual, in.PrecioCorto, in.PrecioContado)
-	if err != nil {
-		return domain.ActualizarHeaderParams{}, err
-	}
 	plan, err := buildOptionalPlanCredito(in.PlanCredito)
 	if err != nil {
 		return domain.ActualizarHeaderParams{}, err
@@ -89,7 +83,6 @@ func (in ActualizarHeaderInput) intoDomain(by uuid.UUID, now time.Time) (domain.
 		Direccion:   dir,
 		GPS:         gps,
 		FechaVenta:  in.FechaVenta,
-		Montos:      montos,
 		PlanCredito: plan,
 		DiaCobranza: dia,
 		Nota:        in.Nota,

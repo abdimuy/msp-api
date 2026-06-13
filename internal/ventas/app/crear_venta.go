@@ -69,6 +69,11 @@ type CrearVentaDiaCobranzaInput struct {
 // CrearVentaInput is the create-venta request DTO. All fields are primitives;
 // VOs are constructed by intoDomain so handlers stay decoupled from the
 // domain VO constructors.
+//
+// PrecioAnual, PrecioCorto, PrecioContado are accepted for backwards
+// compatibility with existing clients but are IGNORED — header montos are
+// derived automatically from the line items by the domain. To set pricing,
+// populate the per-Producto and per-Combo precio fields.
 type CrearVentaInput struct {
 	ID                uuid.UUID
 	ClienteID         *int
@@ -86,9 +91,9 @@ type CrearVentaInput struct {
 	Longitud          float64
 	FechaVenta        time.Time
 	TipoVenta         string
-	PrecioAnual       decimal.Decimal
-	PrecioCorto       decimal.Decimal
-	PrecioContado     decimal.Decimal
+	PrecioAnual       decimal.Decimal // ignored: montos are derived from line items
+	PrecioCorto       decimal.Decimal // ignored: montos are derived from line items
+	PrecioContado     decimal.Decimal // ignored: montos are derived from line items
 	PlanCredito       *CrearVentaPlanCreditoInput
 	DiaCobranza       *CrearVentaDiaCobranzaInput
 	Nota              *string
@@ -247,10 +252,6 @@ func (in CrearVentaInput) intoDomain(by uuid.UUID, now time.Time) (domain.CrearV
 	if err != nil {
 		return domain.CrearVentaParams{}, err
 	}
-	montos, err := domain.NewMontoSnapshot(in.PrecioAnual, in.PrecioCorto, in.PrecioContado)
-	if err != nil {
-		return domain.CrearVentaParams{}, err
-	}
 	plan, err := buildOptionalPlanCredito(in.PlanCredito)
 	if err != nil {
 		return domain.CrearVentaParams{}, err
@@ -273,7 +274,6 @@ func (in CrearVentaInput) intoDomain(by uuid.UUID, now time.Time) (domain.CrearV
 		GPS:         gps,
 		FechaVenta:  in.FechaVenta,
 		TipoVenta:   tipo,
-		Montos:      montos,
 		PlanCredito: plan,
 		DiaCobranza: dia,
 		Nota:        in.Nota,

@@ -40,7 +40,6 @@ func validHeaderBody() venthttp.ActualizarHeaderBody {
 		},
 		GPS:        venthttp.GPSDTO{Latitud: 20.97, Longitud: -89.62},
 		FechaVenta: time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC).Format(time.RFC3339),
-		Montos:     venthttp.MontosDTO{Anual: "1200", CortoPlazo: "1100", Contado: "1000"},
 	}
 }
 
@@ -161,7 +160,7 @@ func TestActualizarHeader_InvalidBody(t *testing.T) {
 	r := buildRouter(t, svc, fullPerms(uuid.New()))
 	id := seedVentaViaHTTP(t, r)
 	body := validHeaderBody()
-	body.Montos.Anual = "not-a-number"
+	body.FechaVenta = "not-a-date"
 	req := jsonRequest(t, http.MethodPatch, "/ventas/"+id, body)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)

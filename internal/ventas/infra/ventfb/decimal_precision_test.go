@@ -160,7 +160,7 @@ func TestVentaRepo_DecimalPrecision_Cantidad_RoundTrip(t *testing.T) {
 						Nombre: nombre,
 					}),
 					Direccion: dir, GPS: gps, FechaVenta: testNow(),
-					TipoVenta: domain.TipoVentaContado, Montos: montos,
+					TipoVenta: domain.TipoVentaContado,
 					Productos: []domain.CrearVentaProductoInput{{
 						ID: uuid.New(), ArticuloID: 1, Articulo: "P",
 						Cantidad: cant, Precios: montos,
@@ -274,7 +274,7 @@ func TestCantidad_RejectsExtraDecimals(t *testing.T) {
 			Nombre: nombre,
 		}),
 		Direccion: dir, GPS: gps, FechaVenta: testNow(),
-		TipoVenta: domain.TipoVentaContado, Montos: montos,
+		TipoVenta: domain.TipoVentaContado,
 		Productos: []domain.CrearVentaProductoInput{{
 			ID: uuid.New(), ArticuloID: 1, Articulo: "P",
 			Cantidad:       decimal.RequireFromString("1.99999"), // 5 decimals

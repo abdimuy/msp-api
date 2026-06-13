@@ -44,7 +44,6 @@ func validCrearVentaParams(t *testing.T) domain.CrearVentaParams {
 		GPS:        gps,
 		FechaVenta: time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC),
 		TipoVenta:  domain.TipoVentaContado,
-		Montos:     montos,
 		Productos: []domain.CrearVentaProductoInput{{
 			ID:             uuid.New(),
 			ArticuloID:     1,
@@ -545,7 +544,6 @@ func TestVenta_AccessorsRoundtrip(t *testing.T) {
 	assert.Equal(t, p.Direccion.Calle(), v.Direccion().Calle())
 	assert.InDelta(t, p.GPS.Latitud(), v.GPS().Latitud(), 0)
 	assert.Equal(t, p.FechaVenta, v.FechaVenta())
-	assert.True(t, p.Montos.Equals(v.Montos()))
 	require.NotNil(t, v.Nota())
 	// Nota is folded to ALL CAPS by the domain (Microsip convention).
 	assert.Equal(t, "UNA NOTA", *v.Nota())

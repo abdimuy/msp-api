@@ -51,7 +51,7 @@ func TestCombo_ViaCrearVenta_Validation(t *testing.T) {
 	mk := func(mut func(*domain.CrearVentaComboInput)) error {
 		params := validCrearVentaParams(t)
 		input := domain.CrearVentaComboInput{
-			ID: uuid.New(), Nombre: "Combo X", Precios: params.Montos,
+			ID: uuid.New(), Nombre: "Combo X", Precios: domain.HydrateMontoSnapshot(decimal.NewFromInt(100), decimal.NewFromInt(80), decimal.NewFromInt(50)),
 			Cantidad: decimal.NewFromInt(1), AlmacenOrigen: 1, AlmacenDestino: 2,
 		}
 		mut(&input)

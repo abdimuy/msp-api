@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -64,39 +63,32 @@ func TestConcurrency_PATCHHeader_LastWriteWins(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, snapB)
 
-	// Writer A commits its edit (contado=1111).
+	// Writer A commits its edit.
 	_, err = h.svc.ActualizarHeader(ctx, ventasapp.ActualizarHeaderInput{
-		VentaID:       id,
-		Calle:         "Av. A",
-		Colonia:       "Centro",
-		Poblacion:     "Ciudad",
-		Ciudad:        "Ciudad",
-		Latitud:       19.0,
-		Longitud:      -99.0,
-		FechaVenta:    time.Now().UTC(),
-		PrecioAnual:   decimal.NewFromInt(2111),
-		PrecioCorto:   decimal.NewFromInt(1611),
-		PrecioContado: decimal.NewFromInt(1111),
+		VentaID:    id,
+		Calle:      "Av. A",
+		Colonia:    "Centro",
+		Poblacion:  "Ciudad",
+		Ciudad:     "Ciudad",
+		Latitud:    19.0,
+		Longitud:   -99.0,
+		FechaVenta: time.Now().UTC(),
 	}, actorA)
 	require.NoError(t, err, "writer A should commit without optimistic-lock conflict")
 
 	// Writer B commits its edit based on the stale snapshot it read
-	// before A wrote (contado=2222). In a system with optimistic
-	// locking, this call would fail because B's snapshot version no
-	// longer matches the DB. With last-write-wins it succeeds and the
-	// final state is B's.
+	// before A wrote. In a system with optimistic locking, this call
+	// would fail because B's snapshot version no longer matches the DB.
+	// With last-write-wins it succeeds and the final state is B's.
 	_, err = h.svc.ActualizarHeader(ctx, ventasapp.ActualizarHeaderInput{
-		VentaID:       id,
-		Calle:         "Av. B",
-		Colonia:       "Centro",
-		Poblacion:     "Ciudad",
-		Ciudad:        "Ciudad",
-		Latitud:       19.0,
-		Longitud:      -99.0,
-		FechaVenta:    time.Now().UTC(),
-		PrecioAnual:   decimal.NewFromInt(2222),
-		PrecioCorto:   decimal.NewFromInt(1722),
-		PrecioContado: decimal.NewFromInt(2222),
+		VentaID:    id,
+		Calle:      "Av. B",
+		Colonia:    "Centro",
+		Poblacion:  "Ciudad",
+		Ciudad:     "Ciudad",
+		Latitud:    19.0,
+		Longitud:   -99.0,
+		FechaVenta: time.Now().UTC(),
 	}, actorB)
 	require.NoError(t, err, "writer B should commit without optimistic-lock conflict — last-write-wins is intentional")
 
@@ -104,12 +96,9 @@ func TestConcurrency_PATCHHeader_LastWriteWins(t *testing.T) {
 	// silently lost — no notification, no conflict error.
 	final, err := h.svc.ObtenerVenta(ctx, id)
 	require.NoError(t, err)
-	assert.True(t, decimal.NewFromInt(2222).Equal(final.Montos().Contado()),
-		"final contado must equal B's write (last-write-wins); A's changes were silently overwritten. got=%s",
-		final.Montos().Contado().String())
 	// Address text is folded to ALL CAPS by the domain (Microsip convention).
 	assert.Equal(t, "AV. B", final.Direccion().Calle(),
-		"final calle must equal B's write")
+		"final calle must equal B's write (last-write-wins); A's changes were silently overwritten")
 	finalAudit := final.Audit()
 	assert.Equal(t, actorB, finalAudit.UpdatedBy(),
 		"updated_by must reflect the last writer, not A")

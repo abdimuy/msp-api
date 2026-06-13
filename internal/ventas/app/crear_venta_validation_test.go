@@ -122,10 +122,13 @@ func TestCrearVentaInputValidation(t *testing.T) {
 	})
 
 	t.Run("negative_monto_rejected", func(t *testing.T) {
+		// Header-level PrecioAnual/Corto/Contado are ignored (montos are derived
+		// from line items). A negative precio on a producto line is rejected by
+		// NewMontoSnapshot during buildProductoInputs.
 		t.Parallel()
 		h := newHarness(t)
 		in := validContadoInput()
-		in.PrecioAnual = decimal.NewFromInt(-1)
+		in.Productos[0].PrecioAnual = decimal.NewFromInt(-1)
 
 		_, err := h.svc.CrearVenta(t.Context(), in, uuid.New())
 		require.ErrorIs(t, err, domain.ErrMontoNegativo)

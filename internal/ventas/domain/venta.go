@@ -83,6 +83,8 @@ type CrearVentaVendedorInput struct {
 }
 
 // CrearVentaParams aggregates every field needed to build a fresh Venta.
+// Montos (header totals) are no longer accepted here — they are derived
+// automatically from the line items via recomputarMontos.
 type CrearVentaParams struct {
 	ID          uuid.UUID
 	ClienteID   *int
@@ -91,7 +93,6 @@ type CrearVentaParams struct {
 	GPS         GPSCoords
 	FechaVenta  time.Time
 	TipoVenta   TipoVenta
-	Montos      MontoSnapshot
 	PlanCredito *PlanCredito
 	DiaCobranza *DiaCobranza
 	Nota        *string
@@ -130,7 +131,6 @@ func CrearVenta(p CrearVentaParams) (*Venta, error) {
 		gps:         p.GPS,
 		fechaVenta:  p.FechaVenta,
 		tipoVenta:   p.TipoVenta,
-		montos:      p.Montos,
 		planCredito: p.PlanCredito,
 		diaCobranza: p.DiaCobranza,
 		nota:        nota,
@@ -143,6 +143,7 @@ func CrearVenta(p CrearVentaParams) (*Venta, error) {
 		imagenes:    nil,
 		audit:       audit.NewAuditable(p.Now, p.CreatedBy),
 	}
+	v.recomputarMontos()
 	v.pendingEvents = []Event{NewVentaCreadaEvent(v.id, v.tipoVenta, p.CreatedBy, p.Now)}
 	return v, nil
 }
@@ -710,11 +711,12 @@ func (v *Venta) AsignarClienteMicrosip(id int, by uuid.UUID) error {
 
 // ActualizarHeaderParams carries the editable header fields. TipoVenta is
 // intentionally absent — changing CONTADO↔CREDITO requires cancel + recreate.
+// Montos is intentionally absent — header totals are derived from line items
+// via recomputarMontos; ActualizarHeader never mutates montos directly.
 type ActualizarHeaderParams struct {
 	Direccion   Direccion
 	GPS         GPSCoords
 	FechaVenta  time.Time
-	Montos      MontoSnapshot
 	PlanCredito *PlanCredito
 	DiaCobranza *DiaCobranza
 	Nota        *string
@@ -741,7 +743,6 @@ func (v *Venta) ActualizarHeader(p ActualizarHeaderParams) error {
 	v.direccion = p.Direccion
 	v.gps = p.GPS
 	v.fechaVenta = p.FechaVenta
-	v.montos = p.Montos
 	v.planCredito = p.PlanCredito
 	v.diaCobranza = p.DiaCobranza
 	v.nota = nota
@@ -823,6 +824,7 @@ func (v *Venta) ReemplazarProductos(p ReemplazarProductosParams) error {
 		return err
 	}
 	v.productos = productos
+	v.recomputarMontos()
 	v.audit.MarkUpdated(p.By)
 	v.pendingEvents = append(v.pendingEvents, NewVentaProductosReemplazadosEvent(v.id, len(productos), p.By, p.Now))
 	return nil
@@ -851,6 +853,7 @@ func (v *Venta) ReemplazarCombos(p ReemplazarCombosParams) error {
 		return err
 	}
 	v.combos = combos
+	v.recomputarMontos()
 	v.audit.MarkUpdated(p.By)
 	v.pendingEvents = append(v.pendingEvents, NewVentaCombosReemplazadosEvent(v.id, len(combos), p.By, p.Now))
 	return nil
@@ -879,6 +882,41 @@ func (v *Venta) ReemplazarVendedores(p ReemplazarVendedoresParams) error {
 	v.audit.MarkUpdated(p.By)
 	v.pendingEvents = append(v.pendingEvents, NewVentaVendedoresReemplazadosEvent(v.id, len(vendedores), p.By, p.Now))
 	return nil
+}
+
+// ─── Derived invariants ────────────────────────────────────────────────────
+
+// recomputarMontos derives the header totals from the current line items.
+//
+// Rule: montos = Σ(standalone productos: precio_tier × cantidad)
+//   - Σ(combos: precio_tier × cantidad)
+//
+// Combo-child productos (ComboID != nil) are NOT counted because their value
+// is already captured in the parent combo's price.
+//
+// Each tier total is rounded to 2 decimal places (half-away-from-zero,
+// matching the NUMERIC(14,2) storage scale). HydrateMontoSnapshot is used
+// instead of NewMontoSnapshot to bypass re-validation: sums of validated
+// non-negative line items are always ≥ 0, and large totals that legitimately
+// exceed MaxMontoVenta per-line are not expected at the aggregate level.
+func (v *Venta) recomputarMontos() {
+	var anual, cortoPlazo, contado decimal.Decimal
+	for _, p := range v.productos {
+		if p.ComboID() != nil {
+			continue // combo-child: value lives in the parent combo price
+		}
+		qty := p.Cantidad()
+		anual = anual.Add(p.Precios().Anual().Mul(qty))
+		cortoPlazo = cortoPlazo.Add(p.Precios().CortoPlazo().Mul(qty))
+		contado = contado.Add(p.Precios().Contado().Mul(qty))
+	}
+	for _, c := range v.combos {
+		qty := c.Cantidad()
+		anual = anual.Add(c.Precios().Anual().Mul(qty))
+		cortoPlazo = cortoPlazo.Add(c.Precios().CortoPlazo().Mul(qty))
+		contado = contado.Add(c.Precios().Contado().Mul(qty))
+	}
+	v.montos = HydrateMontoSnapshot(anual.Round(2), cortoPlazo.Round(2), contado.Round(2))
 }
 
 // ─── Events buffer ─────────────────────────────────────────────────────────

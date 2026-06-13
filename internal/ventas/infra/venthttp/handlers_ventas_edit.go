@@ -140,13 +140,10 @@ func (h *Handlers) ReemplazarVendedores(ctx context.Context, in *ReemplazarVende
 
 // actualizarHeaderBodyToAppInput translates the JSON body for the header
 // edit into the app input shape, mirroring crearVentaBodyToAppInput minus
-// non-editable fields.
+// non-editable fields. Montos are not forwarded — they are derived from
+// line items by the domain.
 func actualizarHeaderBodyToAppInput(ventaID uuid.UUID, b ActualizarHeaderBody) (ventasapp.ActualizarHeaderInput, error) {
 	fecha, err := parseTimeField(b.FechaVenta, "fecha_venta")
-	if err != nil {
-		return ventasapp.ActualizarHeaderInput{}, err
-	}
-	montos, err := parseMontos(b.Montos)
 	if err != nil {
 		return ventasapp.ActualizarHeaderInput{}, err
 	}
@@ -165,9 +162,6 @@ func actualizarHeaderBodyToAppInput(ventaID uuid.UUID, b ActualizarHeaderBody) (
 		Latitud:        b.GPS.Latitud,
 		Longitud:       b.GPS.Longitud,
 		FechaVenta:     fecha,
-		PrecioAnual:    montos.anual,
-		PrecioCorto:    montos.cortoPlazo,
-		PrecioContado:  montos.contado,
 		PlanCredito:    plan,
 		DiaCobranza:    dtoToAppDiaCobranza(b.DiaCobranza),
 		Nota:           b.Nota,

@@ -84,7 +84,6 @@ func TestE2E_Firebird_Aprobada_Regresar_Edit_Reaprobar(t *testing.T) {
 			Direccion:  body.Direccion,
 			GPS:        body.GPS,
 			FechaVenta: body.FechaVenta,
-			Montos:     body.Montos,
 			PlanCredito: &venthttp.PlanCreditoDTO{
 				PlazoMeses:  9,
 				Enganche:    "100",
