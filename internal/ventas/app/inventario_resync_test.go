@@ -262,6 +262,50 @@ func TestReemplazarCombos_NilInventario_StillSucceeds(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestReemplazarProductos_IdenticalEdit — case 9.
+// ReemplazarProductos called with the SAME productos the venta already has →
+// ResincronizarTraspasoParaVenta is STILL called (no short-circuit in ventas;
+// the no-op decision lives in the inventario module). Assert the recording
+// fake's resinc call count incremented and the detalles match the current set.
+func TestReemplazarProductos_IdenticalEdit(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	inv := &fakeInventarioService{}
+	h.svc.WithInventario(inv)
+
+	// Seed a venta with a known standalone producto.
+	ventaID := h.seedVenta(t)
+
+	// Re-supply the same producto that validContadoInput uses (ArticuloID=42,
+	// AlmacenOrigen=1, AlmacenDestino=2) — effectively a no-op edit.
+	one, two := 1, 2
+	_, err := h.svc.ReemplazarProductos(t.Context(), app.ReemplazarProductosInput{
+		VentaID: *ventaID,
+		Productos: []app.CrearVentaProductoInput{{
+			ID:             uuid.New(),
+			ArticuloID:     42,
+			Articulo:       "Refrigerador",
+			Cantidad:       decimal.NewFromInt(1),
+			PrecioAnual:    decimal.NewFromInt(1200),
+			PrecioCorto:    decimal.NewFromInt(1100),
+			PrecioContado:  decimal.NewFromInt(1000),
+			AlmacenOrigen:  &one,
+			AlmacenDestino: &two,
+		}},
+	}, uuid.New())
+	require.NoError(t, err)
+
+	// ResincronizarTraspasoParaVenta must be called even for an identical edit.
+	assert.Equal(t, int32(1), inv.resincCalls.Load(),
+		"ResincronizarTraspasoParaVenta must be called even when productos are identical")
+	require.Len(t, inv.resincParams, 1)
+	assert.Equal(t, *ventaID, inv.resincParams[0].VentaID)
+	assert.Equal(t, 1, inv.resincParams[0].AlmacenOrigen)
+	require.Len(t, inv.resincParams[0].Detalles, 1, "detalles must reflect the current producto set")
+	assert.Equal(t, 42, inv.resincParams[0].Detalles[0].ArticuloID)
+	assert.True(t, inv.resincParams[0].Detalles[0].Cantidad.Equal(decimal.NewFromInt(1)))
+}
+
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 // newSinStockError builds the canonical stock-out validation error so tests
