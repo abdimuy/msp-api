@@ -29,19 +29,31 @@ func (s *Service) ValidarStockParaVenta(ctx context.Context, items []ValidarStoc
 		return nil
 	}
 	return s.runInTxNoWait(ctx, func(ctx context.Context) error {
-		for _, item := range items {
-			existencia, err := s.existencia.Existencia(ctx, item.ArticuloID, item.AlmacenOrigen)
-			if err != nil {
-				return err
-			}
-			if existencia.LessThan(item.Cantidad) {
-				return domain.ErrArticuloSinExistencia.
-					WithField("articulo_id", item.ArticuloID).
-					WithField("almacen_id", item.AlmacenOrigen).
-					WithField("cantidad_requerida", item.Cantidad.String()).
-					WithField("existencia_disponible", existencia.String())
-			}
-		}
-		return nil
+		return s.checkExistencia(ctx, items)
 	})
+}
+
+// checkExistencia performs the per-item stock comparison on the AMBIENT
+// transaction context. It must be called from within an already-open
+// transaction so that reads participate in the same snapshot as any preceding
+// writes (e.g. a directo reversal that releases stock back to origin).
+//
+// Returns domain.ErrArticuloSinExistencia for the first item whose
+// existencia is below the requested cantidad. Returns nil when items is
+// empty or all items pass.
+func (s *Service) checkExistencia(ctx context.Context, items []ValidarStockItem) error {
+	for _, item := range items {
+		existencia, err := s.existencia.Existencia(ctx, item.ArticuloID, item.AlmacenOrigen)
+		if err != nil {
+			return err
+		}
+		if existencia.LessThan(item.Cantidad) {
+			return domain.ErrArticuloSinExistencia.
+				WithField("articulo_id", item.ArticuloID).
+				WithField("almacen_id", item.AlmacenOrigen).
+				WithField("cantidad_requerida", item.Cantidad.String()).
+				WithField("existencia_disponible", existencia.String())
+		}
+	}
+	return nil
 }

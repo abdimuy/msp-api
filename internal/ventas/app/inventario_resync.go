@@ -19,13 +19,14 @@ import (
 //   - s.inventario is nil (inventario not wired)
 //   - venta.IsAplicada() — the traspaso is already materialized in Microsip
 //
-// When detalles is empty (all line items removed), stock validation is skipped
-// and ResincronizarTraspasoParaVenta is still called — the inventario module
-// reverses any active traspaso, or no-ops when there is none.
+// When detalles is empty (all line items removed), ResincronizarTraspasoParaVenta
+// is still called — the inventario module reverses any active traspaso, or
+// no-ops when there is none.
 //
-// Validates stock before calling ResincronizarTraspasoParaVenta so that an
-// edit that would exceed available existencia is rejected before any DB write
-// is committed.
+// Stock validation is intentionally NOT performed here. It happens inside
+// ResincronizarTraspasoParaVenta AFTER the active directo is reversed, so
+// the existencia read reflects the released stock and does not double-count
+// the old reservation as unavailable.
 func (s *Service) resincronizarTraspaso(ctx context.Context, venta *domain.Venta, by uuid.UUID, now time.Time) error {
 	if s.inventario == nil {
 		return nil
@@ -36,11 +37,6 @@ func (s *Service) resincronizarTraspaso(ctx context.Context, venta *domain.Venta
 	detalles, almacenOrigen, err := buildTraspasoDetallesFromVenta(venta)
 	if err != nil {
 		return err
-	}
-	if len(detalles) > 0 {
-		if err := s.validateStockParaDetalles(ctx, detalles, almacenOrigen); err != nil {
-			return err
-		}
 	}
 	_, err = s.inventario.ResincronizarTraspasoParaVenta(ctx, outbound.InventarioCrearTraspasoParams{
 		VentaID:       venta.ID(),

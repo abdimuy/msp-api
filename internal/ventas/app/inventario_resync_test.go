@@ -185,23 +185,32 @@ func TestReemplazarCombos_WithInventario_CallsResincronizar(t *testing.T) {
 }
 
 // TestReemplazarProductos_WithInventario_StockFailureAborts verifies that when
-// stock validation fails inside resincronizarTraspaso, the error propagates to
-// the caller and ResincronizarTraspasoParaVenta is never called.
+// stock validation fails inside ResincronizarTraspasoParaVenta (post-reversal,
+// inside the inventario module), the error propagates to the caller.
+//
+// The ventas layer no longer pre-validates stock on the edit path — that check
+// was removed because it double-counted the old reservation as unavailable.
+// Stock is now validated inside the inventario resync after the active directo
+// is reversed, so the existencia read reflects the released stock.
 func TestReemplazarProductos_WithInventario_StockFailureAborts(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	sinStock := newSinStockError()
-	inv := &fakeInventarioService{validarErr: sinStock}
+	// The stock error is returned by ResincronizarTraspasoParaVenta itself
+	// (simulating the inventario module's post-reversal check failing).
+	inv := &fakeInventarioService{resincErr: sinStock}
 	h.svc.WithInventario(inv)
 
-	// Seed the venta without inventario so the initial creation succeeds.
-	// Then re-wire inventario before the replacement.
-	ventaID := h.seedVentaViaRepo(t)
+	// Seed the venta via the same harness. Since inv.validarErr is not set,
+	// CrearVenta's stock check passes, CrearTraspasoParaVenta is called (and
+	// returns ok). The venta is saved to h.ventas so ReemplazarProductos can
+	// find it. The resincErr only triggers on ResincronizarTraspasoParaVenta.
+	ventaID := h.seedVenta(t)
 
 	three := 3
 	four := 4
 	_, err := h.svc.ReemplazarProductos(t.Context(), app.ReemplazarProductosInput{
-		VentaID: ventaID,
+		VentaID: *ventaID,
 		Productos: []app.CrearVentaProductoInput{{
 			ID:             uuid.New(),
 			ArticuloID:     55,
@@ -214,9 +223,9 @@ func TestReemplazarProductos_WithInventario_StockFailureAborts(t *testing.T) {
 			AlmacenDestino: &four,
 		}},
 	}, uuid.New())
-	require.Error(t, err, "stock failure must propagate as an error")
-	// validateStockParaDetalles fires before ResincronizarTraspasoParaVenta.
-	assert.Equal(t, int32(0), inv.resincCalls.Load(), "resync must not be called when stock validation fails")
+	require.Error(t, err, "stock failure from resync must propagate as an error")
+	// ResincronizarTraspasoParaVenta was called (and returned the stock error).
+	assert.Equal(t, int32(1), inv.resincCalls.Load(), "resync must be called; it returns the stock error internally")
 }
 
 // TestReemplazarProductos_NilInventario_StillSucceeds verifies that

@@ -18,7 +18,7 @@ import (
 func TestActiveDirect_NoTraspasos_ReturnsNotFound(t *testing.T) {
 	t.Parallel()
 	repo := newFakeTraspasoRepo()
-	svc := app.NewService(repo, newFakeExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, &fakeOutbox{}, nil)
+	svc := app.NewService(repo, newAbundantExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, &fakeOutbox{}, nil)
 
 	ventaID := uuid.New()
 	// Use a proxy via CrearTraspasoReverso which internally calls activeDirect.
@@ -31,7 +31,7 @@ func TestActiveDirect_NoTraspasos_ReturnsNotFound(t *testing.T) {
 func TestActiveDirect_OneActive_ReturnsIt(t *testing.T) {
 	t.Parallel()
 	repo := newFakeTraspasoRepo()
-	svc := app.NewService(repo, newFakeExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, &fakeOutbox{}, nil)
+	svc := app.NewService(repo, newAbundantExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, &fakeOutbox{}, nil)
 
 	ventaID := uuid.New()
 	original, _ := seedDirectTraspaso(t, svc, repo, ventaID)
@@ -50,7 +50,7 @@ func TestActiveDirect_OneActive_ReturnsIt(t *testing.T) {
 func TestActiveDirect_TwoActive_ReturnsMultipleError(t *testing.T) {
 	t.Parallel()
 	repo := newFakeTraspasoRepo()
-	svc := app.NewService(repo, newFakeExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, &fakeOutbox{}, nil)
+	svc := app.NewService(repo, newAbundantExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, &fakeOutbox{}, nil)
 
 	ventaID := uuid.New()
 	// Seed two separate directos without reversing the first.
@@ -67,7 +67,7 @@ func TestActiveDirect_IgnoresAlreadyReversedDirecto(t *testing.T) {
 	t.Parallel()
 	repo := newFakeTraspasoRepo()
 	outbox := &fakeOutbox{}
-	svc := app.NewService(repo, newFakeExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, outbox, nil)
+	svc := app.NewService(repo, newAbundantExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, outbox, nil)
 
 	ventaID := uuid.New()
 	by := uuid.New()
@@ -122,7 +122,7 @@ func TestResincronizar_NoActive_NonEmptyDetalles_CreatesDirecto(t *testing.T) {
 	t.Parallel()
 	repo := newFakeTraspasoRepo()
 	outbox := &fakeOutbox{}
-	svc := app.NewService(repo, newFakeExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, outbox, nil)
+	svc := app.NewService(repo, newAbundantExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, outbox, nil)
 
 	ventaID := uuid.New()
 	p := baseResyncParams(ventaID)
@@ -160,7 +160,7 @@ func TestResincronizar_ActivePresent_DifferentDetalles_ReversesAndCreatesNew(t *
 	t.Parallel()
 	repo := newFakeTraspasoRepo()
 	outbox := &fakeOutbox{}
-	svc := app.NewService(repo, newFakeExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, outbox, nil)
+	svc := app.NewService(repo, newAbundantExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, outbox, nil)
 
 	ventaID := uuid.New()
 	p := baseResyncParams(ventaID)
@@ -204,7 +204,7 @@ func TestResincronizar_ActivePresent_IdenticalDetalles_Noop(t *testing.T) {
 	t.Parallel()
 	repo := newFakeTraspasoRepo()
 	outbox := &fakeOutbox{}
-	svc := app.NewService(repo, newFakeExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, outbox, nil)
+	svc := app.NewService(repo, newAbundantExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, outbox, nil)
 
 	ventaID := uuid.New()
 	p := baseResyncParams(ventaID)
@@ -236,7 +236,7 @@ func TestResincronizar_EmptyDetalles_ActivePresent_OnlyReverse(t *testing.T) {
 	t.Parallel()
 	repo := newFakeTraspasoRepo()
 	outbox := &fakeOutbox{}
-	svc := app.NewService(repo, newFakeExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, outbox, nil)
+	svc := app.NewService(repo, newAbundantExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, outbox, nil)
 
 	ventaID := uuid.New()
 	// Seed a directo first.
@@ -283,7 +283,7 @@ func TestResincronizar_EmptyDetalles_ActivePresent_OnlyReverse(t *testing.T) {
 func TestResincronizar_EmptyDetalles_NoActive_Noop(t *testing.T) {
 	t.Parallel()
 	repo := newFakeTraspasoRepo()
-	svc := app.NewService(repo, newFakeExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, &fakeOutbox{}, nil)
+	svc := app.NewService(repo, newAbundantExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, &fakeOutbox{}, nil)
 
 	p := baseResyncParams(uuid.New())
 	p.Detalles = nil
@@ -303,7 +303,7 @@ func TestResincronizar_EmptyDetalles_NoActive_Noop(t *testing.T) {
 func TestResincronizar_ThreeSequentialResyncs_ExactlyOneActiveEachTime(t *testing.T) {
 	t.Parallel()
 	repo := newFakeTraspasoRepo()
-	svc := app.NewService(repo, newFakeExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, &fakeOutbox{}, nil)
+	svc := app.NewService(repo, newAbundantExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, &fakeOutbox{}, nil)
 
 	ventaID := uuid.New()
 
@@ -339,7 +339,7 @@ func TestResincronizar_FolioMinterFailsOnNewDirecto_PropagatesError(t *testing.T
 	// Minter: first call succeeds (seed directo), second succeeds (reverso folio),
 	// third fails (new directo folio).
 	minter := &countingFolioMinter{failAfter: 2, err: errSentinel}
-	svc := app.NewService(repo, newFakeExistenciaQuery(), minter, newFakeAlmacenRepo(), &fakeClock{fixedNow}, &fakeOutbox{}, nil)
+	svc := app.NewService(repo, newAbundantExistenciaQuery(), minter, newFakeAlmacenRepo(), &fakeClock{fixedNow}, &fakeOutbox{}, nil)
 
 	ventaID := uuid.New()
 	// Seed initial directo (minter call 1).
@@ -369,7 +369,7 @@ func TestResincronizar_SaveFailsOnNewDirecto_ReturnsError(t *testing.T) {
 	// a fully consistent state. Allow unlimited saves during seeding.
 	const unlimited = 1_000_000
 	repo := &countingSaveFakeRepo{fakeTraspasoRepo: newFakeTraspasoRepo(), failAfterSave: unlimited}
-	svc := app.NewService(repo, newFakeExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, &fakeOutbox{}, nil)
+	svc := app.NewService(repo, newAbundantExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, &fakeOutbox{}, nil)
 
 	ventaID := uuid.New()
 	if _, _, err := svc.ResincronizarTraspasoParaVenta(context.Background(), baseResyncParams(ventaID)); err != nil {
@@ -394,7 +394,7 @@ func TestCrearTraspasoReverso_AfterEditChain_ReversesActiveOnly(t *testing.T) {
 	t.Parallel()
 	repo := newFakeTraspasoRepo()
 	outbox := &fakeOutbox{}
-	svc := app.NewService(repo, newFakeExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, outbox, nil)
+	svc := app.NewService(repo, newAbundantExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, outbox, nil)
 
 	ventaID := uuid.New()
 	by := uuid.New()
@@ -436,7 +436,7 @@ func TestResincronizar_ListByVentaIDError_Propagates(t *testing.T) {
 	t.Parallel()
 	repo := newFakeTraspasoRepo()
 	repo.findErr = errSentinel
-	svc := app.NewService(repo, newFakeExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, &fakeOutbox{}, nil)
+	svc := app.NewService(repo, newAbundantExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, &fakeOutbox{}, nil)
 
 	_, _, err := svc.ResincronizarTraspasoParaVenta(context.Background(), baseResyncParams(uuid.New()))
 	if !errors.Is(err, errSentinel) {
@@ -453,7 +453,7 @@ func TestResincronizar_ListByVentaIDError_Propagates(t *testing.T) {
 func TestResincronizar_ActiveDirectoNilDoctoInID_ReturnsError(t *testing.T) {
 	t.Parallel()
 	repo := newFakeTraspasoRepo()
-	svc := app.NewService(repo, newFakeExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, &fakeOutbox{}, nil)
+	svc := app.NewService(repo, newAbundantExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, &fakeOutbox{}, nil)
 
 	ventaID := uuid.New()
 	// Inject an active directo with DoctoInID=nil directly into the fake repo.
@@ -501,7 +501,7 @@ func TestResincronizar_DuplicateArticuloIDs_CollapseToSameNetEffect(t *testing.T
 	t.Parallel()
 	repo := newFakeTraspasoRepo()
 	outbox := &fakeOutbox{}
-	svc := app.NewService(repo, newFakeExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, outbox, nil)
+	svc := app.NewService(repo, newAbundantExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, outbox, nil)
 
 	ventaID := uuid.New()
 	// Seed active directo: articuloID=100, cantidad=5.
@@ -561,7 +561,7 @@ func TestResincronizar_DifferentAlmacenOrigen_NotNoop(t *testing.T) {
 	t.Parallel()
 	repo := newFakeTraspasoRepo()
 	outbox := &fakeOutbox{}
-	svc := app.NewService(repo, newFakeExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, outbox, nil)
+	svc := app.NewService(repo, newAbundantExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, outbox, nil)
 
 	ventaID := uuid.New()
 	// Seed active directo: almacenOrigen=1, almacenDestino=2, articuloID=100, cantidad=5.
@@ -629,4 +629,167 @@ func (r *countingSaveFakeRepo) Save(ctx context.Context, t *domain.Traspaso) (in
 		return 0, errSentinel
 	}
 	return r.fakeTraspasoRepo.Save(ctx, t)
+}
+
+// ─── sequentialExistenciaQuery ───────────────────────────────────────────────
+
+// sequentialExistenciaQuery returns a pre-configured sequence of existencia
+// values on successive Existencia calls. Once the sequence is exhausted it
+// returns the last value in the list. This lets resync tests model the
+// "post-reversal" state: first call returns the current (pre-reversal)
+// existencia; second call returns the released (post-reversal) existencia.
+type sequentialExistenciaQuery struct {
+	values []decimal.Decimal // returned in order; last value repeats
+	calls  int
+}
+
+func (q *sequentialExistenciaQuery) Existencia(_ context.Context, _, _ int) (decimal.Decimal, error) {
+	idx := q.calls
+	if idx >= len(q.values) {
+		idx = len(q.values) - 1
+	}
+	q.calls++
+	return q.values[idx], nil
+}
+
+func (q *sequentialExistenciaQuery) ExistenciasPorAlmacen(_ context.Context, _ int) ([]domain.Existencia, error) {
+	return nil, nil
+}
+
+// ─── Stock-validation-in-resync regression tests ─────────────────────────────
+
+// TestResincronizar_StockValidation_PassesAfterReversal is the primary
+// regression test for the false-rejection bug. It models the scenario where:
+//
+//   - Article 100 in almacén 1 has an old reservation of 7 units, leaving
+//     only 3 units of "free" existencia visible before the reversal.
+//   - The edit requests 8 units.
+//
+// Before the fix, ventas pre-checked existencia (saw 3 < 8) and rejected the
+// edit. After the fix, the resync reverses the old directo first, then checks
+// existencia. The sequentialExistenciaQuery returns 3 on the first call (for
+// the initial crearDirecto stock check when seeding), then 10 on subsequent
+// calls (simulating the post-reversal state: 3 free + 7 released = 10).
+// The edit to qty=8 must succeed.
+func TestResincronizar_StockValidation_PassesAfterReversal(t *testing.T) {
+	t.Parallel()
+	repo := newFakeTraspasoRepo()
+	outbox := &fakeOutbox{}
+
+	// First call (seed resync checkExistencia with qty=3): returns 3 — exact.
+	// Subsequent calls (edit resync checkExistencia post-reversal): returns 10.
+	eq := &sequentialExistenciaQuery{values: []decimal.Decimal{
+		decimal.NewFromInt(3),  // first call: seed qty=3 passes (3>=3)
+		decimal.NewFromInt(10), // second call: post-reversal existencia = 10
+	}}
+	svc := app.NewService(repo, eq, &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, outbox, nil)
+
+	ventaID := uuid.New()
+
+	// Seed: create an initial directo with qty=3 (simulating old reservation).
+	seed := app.CrearTraspasoParaVentaParams{
+		VentaID:        ventaID,
+		AlmacenOrigen:  1,
+		AlmacenDestino: 2,
+		Fecha:          fixedNow,
+		Descripcion:    "seed reservation",
+		Detalles:       []app.CrearTraspasoDetalleInput{{ArticuloID: 100, Cantidad: decimal.NewFromInt(3)}},
+		CreatedBy:      uuid.New(),
+	}
+	if _, _, err := svc.ResincronizarTraspasoParaVenta(context.Background(), seed); err != nil {
+		t.Fatalf("seed failed: %v", err)
+	}
+
+	// Edit: request qty=8 — fits in 10 (post-reversal) but NOT in 3 (pre-reversal).
+	// With the fix, this must succeed because checkExistencia runs after reversal.
+	edit := app.CrearTraspasoParaVentaParams{
+		VentaID:        ventaID,
+		AlmacenOrigen:  1,
+		AlmacenDestino: 2,
+		Fecha:          fixedNow,
+		Descripcion:    "edit to larger qty",
+		Detalles:       []app.CrearTraspasoDetalleInput{{ArticuloID: 100, Cantidad: decimal.NewFromInt(8)}},
+		CreatedBy:      uuid.New(),
+	}
+	newTr, _, err := svc.ResincronizarTraspasoParaVenta(context.Background(), edit)
+	if err != nil {
+		t.Fatalf("edit resync must succeed (qty=8 fits in post-reversal existencia=10), got error: %v", err)
+	}
+	if newTr == nil {
+		t.Fatal("expected a new directo, got nil")
+	}
+	// Exactly one active directo after the edit.
+	if n := countActiveDirectos(t, repo, ventaID); n != 1 {
+		t.Errorf("expected 1 active directo after edit resync, got %d", n)
+	}
+}
+
+// TestResincronizar_StockValidation_FailsWhenTrulyInsufficient verifies that
+// when the new quantity exceeds even the post-reversal existencia, the resync
+// returns ErrArticuloSinExistencia and the entire transaction rolls back
+// atomically (the reversal is not committed, no new directo is created).
+//
+// The sequentialExistenciaQuery returns 10 on all calls (enough for the seed
+// qty=7 check), then 5 for the edit's post-reversal check — so qty=8 fails.
+func TestResincronizar_StockValidation_FailsWhenTrulyInsufficient(t *testing.T) {
+	t.Parallel()
+	repo := newFakeTraspasoRepo()
+
+	// First call (seed resync, qty=7): 10 >= 7 → passes.
+	// Second call (edit resync post-reversal, qty=8): 5 < 8 → fails.
+	eq := &sequentialExistenciaQuery{values: []decimal.Decimal{
+		decimal.NewFromInt(10), // seed check passes
+		decimal.NewFromInt(5),  // post-reversal check: 5 < 8 → fail
+	}}
+	svc := app.NewService(repo, eq, &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, &fakeOutbox{}, nil)
+
+	ventaID := uuid.New()
+
+	// Seed: initial directo qty=7.
+	seed := app.CrearTraspasoParaVentaParams{
+		VentaID:        ventaID,
+		AlmacenOrigen:  1,
+		AlmacenDestino: 2,
+		Fecha:          fixedNow,
+		Descripcion:    "seed",
+		Detalles:       []app.CrearTraspasoDetalleInput{{ArticuloID: 100, Cantidad: decimal.NewFromInt(7)}},
+		CreatedBy:      uuid.New(),
+	}
+	if _, _, err := svc.ResincronizarTraspasoParaVenta(context.Background(), seed); err != nil {
+		t.Fatalf("seed failed: %v", err)
+	}
+	savesBefore := repo.SaveCalls
+
+	// Edit: qty=8 exceeds post-reversal existencia=5 → must fail.
+	edit := app.CrearTraspasoParaVentaParams{
+		VentaID:        ventaID,
+		AlmacenOrigen:  1,
+		AlmacenDestino: 2,
+		Fecha:          fixedNow,
+		Descripcion:    "edit over limit",
+		Detalles:       []app.CrearTraspasoDetalleInput{{ArticuloID: 100, Cantidad: decimal.NewFromInt(8)}},
+		CreatedBy:      uuid.New(),
+	}
+	_, _, err := svc.ResincronizarTraspasoParaVenta(context.Background(), edit)
+	if !errors.Is(err, domain.ErrArticuloSinExistencia) {
+		t.Errorf("expected ErrArticuloSinExistencia, got %v", err)
+	}
+
+	// With txMgr=nil the fake repo does not roll back in-memory writes — the
+	// reverso Save may have landed in the fake repo. In production (Firebird tx),
+	// the entire tx rolls back atomically. What we assert here is that:
+	// (a) the error is returned to the caller, and
+	// (b) no NEW directo was persisted (the new directo Save never ran).
+	//
+	// The fake repo does not implement rollback, so the reverso may appear.
+	// We verify that no extra directo (non-reverso, non-reversado) was created.
+	if n := countActiveDirectos(t, repo, ventaID); n != 0 {
+		t.Errorf("expected 0 active directos after failed edit resync (new directo must not be persisted), got %d", n)
+	}
+	// At most 1 additional Save should have occurred (the reverso, if the fake
+	// ran it before checkExistencia failed). The new-directo Save must not run.
+	extraSaves := repo.SaveCalls - savesBefore
+	if extraSaves > 1 {
+		t.Errorf("expected at most 1 extra Save (reverso only; new directo must not be saved), got %d", extraSaves)
+	}
 }

@@ -155,13 +155,29 @@ func (r *fakeTraspasoRepo) MarcarDirectoReversado(_ context.Context, doctoInID i
 // ─── fakeExistenciaQuery ────────────────────────────────────────────────────
 
 type fakeExistenciaQuery struct {
-	// stock[articuloID][almacenID] = cantidad
+	// stock[articuloID][almacenID] = cantidad explicitly configured by set().
 	stock map[int]map[int]decimal.Decimal
-	err   error
+	// defaultStock is returned for any unconfigured article/almacén pair.
+	// nil means return decimal.Zero (strict zero-default for stock-out tests).
+	defaultStock *decimal.Decimal
+	err          error
 }
 
+// newFakeExistenciaQuery returns a fake with strict zero defaults: any
+// unconfigured article/almacén pair returns 0. Use this when testing
+// stock-out behavior (e.g. ValidarStockParaVenta insufficient-stock tests).
 func newFakeExistenciaQuery() *fakeExistenciaQuery {
 	return &fakeExistenciaQuery{stock: make(map[int]map[int]decimal.Decimal)}
+}
+
+// newAbundantExistenciaQuery returns a fake with an effectively unlimited
+// default: any unconfigured article/almacén pair returns 1_000_000. Use this
+// in resync tests whose focus is NOT stock validation, so that the
+// checkExistencia call added inside ResincronizarTraspasoParaVenta always
+// passes without explicit stock configuration.
+func newAbundantExistenciaQuery() *fakeExistenciaQuery {
+	v := decimal.NewFromInt(1_000_000)
+	return &fakeExistenciaQuery{stock: make(map[int]map[int]decimal.Decimal), defaultStock: &v}
 }
 
 func (q *fakeExistenciaQuery) set(articuloID, almacenID int, cantidad decimal.Decimal) {
@@ -179,6 +195,9 @@ func (q *fakeExistenciaQuery) Existencia(_ context.Context, articuloID, almacenI
 		if v, ok2 := byAlmacen[almacenID]; ok2 {
 			return v, nil
 		}
+	}
+	if q.defaultStock != nil {
+		return *q.defaultStock, nil
 	}
 	return decimal.Zero, nil
 }

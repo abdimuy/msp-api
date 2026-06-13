@@ -162,8 +162,10 @@ func (s *Service) ResincronizarTraspasoParaVenta(ctx context.Context, p CrearTra
 		}
 
 		// Create a new directo when the caller supplied detalles.
+		// Stock is validated inside crearDirectoConStockCheck BEFORE persisting,
+		// on the AMBIENT tx so it sees the post-reversal existencia.
 		if len(p.Detalles) > 0 {
-			nd, ndID, ndErr := s.crearDirecto(ctx, p)
+			nd, ndID, ndErr := s.crearDirectoConStockCheck(ctx, p)
 			if ndErr != nil {
 				return ndErr
 			}
@@ -219,4 +221,26 @@ func (s *Service) guardDoctoInID(active *domain.Traspaso) error {
 		)
 	}
 	return nil
+}
+
+// crearDirectoConStockCheck validates existencia on the AMBIENT transaction
+// context (so post-reversal stock releases are visible) and then creates a
+// new directo traspaso. Must be called from within the resync transaction
+// after any active directo has been reversed.
+//
+// Using a helper here keeps the ResincronizarTraspasoParaVenta closure flat
+// and under the gocognit threshold.
+func (s *Service) crearDirectoConStockCheck(ctx context.Context, p CrearTraspasoParaVentaParams) (*domain.Traspaso, int, error) {
+	items := make([]ValidarStockItem, 0, len(p.Detalles))
+	for _, d := range p.Detalles {
+		items = append(items, ValidarStockItem{
+			ArticuloID:    d.ArticuloID,
+			AlmacenOrigen: p.AlmacenOrigen,
+			Cantidad:      d.Cantidad,
+		})
+	}
+	if err := s.checkExistencia(ctx, items); err != nil {
+		return nil, 0, err
+	}
+	return s.crearDirecto(ctx, p)
 }

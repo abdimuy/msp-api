@@ -39,7 +39,10 @@ func buildTraspasoDetallesFromVenta(v *domain.Venta) ([]outbound.InventarioTrasp
 		} else {
 			comboOrigen, ok := combosByID[*p.ComboID()]
 			if !ok {
-				return nil, 0, apperror.NewInternal("producto_combo_referencia_invalida", "el producto referencia un combo que no existe en la venta")
+				// The producto references a combo not present in this venta.
+				// This is a client error (Validation 422), not an internal error —
+				// use the domain sentinel so the HTTP layer returns 422 instead of 500.
+				return nil, 0, domain.ErrProductoComboReferenciaInvalida
 			}
 			origen = comboOrigen
 		}
