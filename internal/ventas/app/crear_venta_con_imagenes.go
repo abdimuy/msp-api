@@ -64,15 +64,16 @@ func (s *Service) CrearVentaConImagenes(
 	if err := s.validateVendedorUsuarios(ctx, in.Vendedores); err != nil {
 		return nil, err
 	}
-	if err := s.validateStockParaProductos(ctx, in.Productos); err != nil {
-		return nil, err
-	}
 	params, err := in.intoDomain(by, now)
 	if err != nil {
 		return nil, err
 	}
 	venta, err := domain.CrearVenta(params)
 	if err != nil {
+		return nil, err
+	}
+	// Validate stock using the fully built venta (includes combo children).
+	if err := s.validateStockFromVenta(ctx, venta); err != nil {
 		return nil, err
 	}
 
@@ -91,7 +92,7 @@ func (s *Service) CrearVentaConImagenes(
 		if saveErr := s.ventas.Save(ctx, venta); saveErr != nil {
 			return saveErr
 		}
-		return s.crearTraspasoParaVenta(ctx, venta, in.Productos, by, now)
+		return s.crearTraspasoParaVenta(ctx, venta, by, now)
 	}); err != nil {
 		s.cleanupBlobs(ctx, storedKeys)
 		return nil, err

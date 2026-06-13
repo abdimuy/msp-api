@@ -23,12 +23,15 @@ type fakeInventarioService struct {
 	validarCalls   atomic.Int32
 	crearCalls     atomic.Int32
 	reversoCalls   atomic.Int32
+	resincCalls    atomic.Int32
 	validarItems   [][]outbound.InventarioStockItem
 	crearParams    []outbound.InventarioCrearTraspasoParams
+	resincParams   []outbound.InventarioCrearTraspasoParams
 	validarErr     error
 	crearErr       error
 	reversoDoctoIn int
 	reversoErr     error
+	resincErr      error
 	nextCreatedID  int
 }
 
@@ -53,7 +56,12 @@ func (f *fakeInventarioService) CrearTraspasoReverso(_ context.Context, _, _ uui
 	return f.reversoDoctoIn, f.reversoErr
 }
 
-func (f *fakeInventarioService) ResincronizarTraspasoParaVenta(_ context.Context, _ outbound.InventarioCrearTraspasoParams) (int, error) {
+func (f *fakeInventarioService) ResincronizarTraspasoParaVenta(_ context.Context, p outbound.InventarioCrearTraspasoParams) (int, error) {
+	f.resincCalls.Add(1)
+	f.resincParams = append(f.resincParams, p)
+	if f.resincErr != nil {
+		return 0, f.resincErr
+	}
 	return 0, nil
 }
 

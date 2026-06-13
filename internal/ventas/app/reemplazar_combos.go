@@ -16,8 +16,11 @@ type ReemplazarCombosInput struct {
 	Combos  []CrearVentaComboInput
 }
 
-// ReemplazarCombos replaces the venta's combos collection.
+// ReemplazarCombos replaces the venta's combos collection and keeps the
+// inventory reservation consistent by calling ResincronizarTraspasoParaVenta
+// inside the same transaction.
 func (s *Service) ReemplazarCombos(ctx context.Context, in ReemplazarCombosInput, by uuid.UUID) (*domain.Venta, error) {
+	now := s.clock.Now()
 	venta, err := s.ventas.FindByID(ctx, in.VentaID)
 	if err != nil {
 		return nil, err
@@ -25,12 +28,15 @@ func (s *Service) ReemplazarCombos(ctx context.Context, in ReemplazarCombosInput
 	if err := venta.ReemplazarCombos(domain.ReemplazarCombosParams{
 		Combos: buildComboInputs(in.Combos),
 		By:     by,
-		Now:    s.clock.Now(),
+		Now:    now,
 	}); err != nil {
 		return nil, err
 	}
 	if err := s.runInTx(ctx, func(ctx context.Context) error {
-		return s.ventas.ReplaceCombos(ctx, venta)
+		if err := s.ventas.ReplaceCombos(ctx, venta); err != nil {
+			return err
+		}
+		return s.resincronizarTraspaso(ctx, venta, by, now)
 	}); err != nil {
 		return nil, err
 	}

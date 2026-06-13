@@ -16,8 +16,11 @@ type ReemplazarProductosInput struct {
 	Productos []CrearVentaProductoInput
 }
 
-// ReemplazarProductos replaces the venta's productos collection.
+// ReemplazarProductos replaces the venta's productos collection and keeps the
+// inventory reservation consistent by calling ResincronizarTraspasoParaVenta
+// inside the same transaction.
 func (s *Service) ReemplazarProductos(ctx context.Context, in ReemplazarProductosInput, by uuid.UUID) (*domain.Venta, error) {
+	now := s.clock.Now()
 	venta, err := s.ventas.FindByID(ctx, in.VentaID)
 	if err != nil {
 		return nil, err
@@ -29,12 +32,15 @@ func (s *Service) ReemplazarProductos(ctx context.Context, in ReemplazarProducto
 	if err := venta.ReemplazarProductos(domain.ReemplazarProductosParams{
 		Productos: productos,
 		By:        by,
-		Now:       s.clock.Now(),
+		Now:       now,
 	}); err != nil {
 		return nil, err
 	}
 	if err := s.runInTx(ctx, func(ctx context.Context) error {
-		return s.ventas.ReplaceProductos(ctx, venta)
+		if err := s.ventas.ReplaceProductos(ctx, venta); err != nil {
+			return err
+		}
+		return s.resincronizarTraspaso(ctx, venta, by, now)
 	}); err != nil {
 		return nil, err
 	}
