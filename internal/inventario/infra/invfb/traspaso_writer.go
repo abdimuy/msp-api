@@ -177,7 +177,7 @@ func (r *TraspasoRepo) Save(ctx context.Context, t *domain.Traspaso) (int, error
 // used by Save.
 func (r *TraspasoRepo) MarcarDirectoReversado(ctx context.Context, doctoInID int) error {
 	q := firebird.GetQuerier(ctx, r.pool.DB)
-	if _, err := q.ExecContext(ctx, updateVentaTraspasoReversado, doctoInID); err != nil {
+	if _, err := q.ExecContext(ctx, updateVentaTraspasoReversado, reversadoSi, doctoInID, tipoTraspasoDirecto); err != nil {
 		return fmt.Errorf("invfb MarcarDirectoReversado docto_in_id=%d: %w", doctoInID, firebird.MapError(err))
 	}
 	return nil

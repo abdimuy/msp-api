@@ -65,8 +65,8 @@ const insertVentaTraspaso = `INSERT INTO MSP_VENTAS_TRASPASOS (
 //
 //nolint:gosec // SQL constant, not user input.
 const updateVentaTraspasoReversado = `UPDATE MSP_VENTAS_TRASPASOS
-SET REVERSADO = 'S'
-WHERE DOCTO_IN_ID = ? AND TIPO = 'directo'`
+SET REVERSADO = ?
+WHERE DOCTO_IN_ID = ? AND TIPO = ?`
 
 // ─── Clave articulo lookup ────────────────────────────────────────────────────
 
