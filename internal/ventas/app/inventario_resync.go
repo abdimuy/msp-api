@@ -18,7 +18,10 @@ import (
 // Skips when:
 //   - s.inventario is nil (inventario not wired)
 //   - venta.IsAplicada() — the traspaso is already materialized in Microsip
-//   - the venta has no productos (detalles is empty)
+//
+// When detalles is empty (all line items removed), stock validation is skipped
+// and ResincronizarTraspasoParaVenta is still called — the inventario module
+// reverses any active traspaso, or no-ops when there is none.
 //
 // Validates stock before calling ResincronizarTraspasoParaVenta so that an
 // edit that would exceed available existencia is rejected before any DB write

@@ -196,8 +196,6 @@ func TestReemplazarProductos_WithInventario_StockFailureAborts(t *testing.T) {
 
 	// Seed the venta without inventario so the initial creation succeeds.
 	// Then re-wire inventario before the replacement.
-	svcNoInv := newHarness(t)
-	svcNoInv.ventas = h.ventas // share the same repo
 	ventaID := h.seedVentaViaRepo(t)
 
 	three := 3

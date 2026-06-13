@@ -3,7 +3,6 @@ package app
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/google/uuid"
 
@@ -40,7 +39,7 @@ func buildTraspasoDetallesFromVenta(v *domain.Venta) ([]outbound.InventarioTrasp
 		} else {
 			comboOrigen, ok := combosByID[*p.ComboID()]
 			if !ok {
-				return nil, 0, fmt.Errorf("producto %v referencia combo %v que no existe en la venta", p.ID(), *p.ComboID())
+				return nil, 0, apperror.NewInternal("producto_combo_referencia_invalida", "el producto referencia un combo que no existe en la venta")
 			}
 			origen = comboOrigen
 		}
