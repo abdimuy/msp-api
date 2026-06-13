@@ -50,43 +50,52 @@ func (s *Service) activeDirect(ctx context.Context, ventaID uuid.UUID) (*domain.
 // none exists, or with errMultiplesTraspasosdirectos when more than one active
 // directo exists. Already-reversed directos are ignored — only truly active
 // (non-reversado) directos count.
+//
+// The active-directo read, folio minting, domain Reversar call, Save, and
+// MarcarDirectoReversado all execute inside a single transaction so the whole
+// operation is atomic.
 func (s *Service) CrearTraspasoReverso(ctx context.Context, ventaID, by uuid.UUID) (*domain.Traspaso, int, error) {
-	original, err := s.activeDirect(ctx, ventaID)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	// Mint a fresh folio for the reversal outside the tx (minting is
-	// idempotent-safe and should not be inside the write tx).
-	newFolio, err := s.folioMinter.MintFolio(ctx)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	// Guard: the original must have a DoctoInID (it was persisted).
-	if original.DoctoInID() == nil {
-		return nil, 0, apperror.NewInternal(
-			"traspaso_directo_sin_docto_in_id",
-			"el traspaso directo no tiene un id de microsip asignado",
-		)
-	}
-
-	reversed, err := original.Reversar(s.clock.Now(), by, uuid.New(), newFolio)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	var doctoInID int
+	var (
+		reversed  *domain.Traspaso
+		doctoInID int
+	)
 	if err := s.runInTx(ctx, func(ctx context.Context) error {
-		id, saveErr := s.traspasos.Save(ctx, reversed)
+		original, err := s.activeDirect(ctx, ventaID)
+		if err != nil {
+			return err
+		}
+
+		// Guard: the original must have a DoctoInID (it was persisted).
+		if original.DoctoInID() == nil {
+			return apperror.NewInternal(
+				"traspaso_directo_sin_docto_in_id",
+				"el traspaso directo no tiene un id de microsip asignado",
+			)
+		}
+
+		newFolio, err := s.folioMinter.MintFolio(ctx)
+		if err != nil {
+			return err
+		}
+
+		rev, err := original.Reversar(s.clock.Now(), by, uuid.New(), newFolio)
+		if err != nil {
+			return err
+		}
+
+		id, saveErr := s.traspasos.Save(ctx, rev)
 		if saveErr != nil {
 			return saveErr
 		}
 		doctoInID = id
-		if err := reversed.MarcarAplicado(id); err != nil {
+		if err := rev.MarcarAplicado(id); err != nil {
 			return err
 		}
-		return s.traspasos.MarcarDirectoReversado(ctx, *original.DoctoInID())
+		if err := s.traspasos.MarcarDirectoReversado(ctx, *original.DoctoInID()); err != nil {
+			return err
+		}
+		reversed = rev
+		return nil
 	}); err != nil {
 		return nil, 0, err
 	}

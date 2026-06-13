@@ -79,39 +79,54 @@ func sameNetEffect(active *domain.Traspaso, p CrearTraspasoParaVentaParams) bool
 //   - Empty new detalles + active directo → reverse only; no new directo.
 //   - Empty new detalles + no active directo → no-op; returns nil, 0, nil.
 func (s *Service) ResincronizarTraspasoParaVenta(ctx context.Context, p CrearTraspasoParaVentaParams) (*domain.Traspaso, int, error) {
-	// Resolve active directo outside of the transaction (read-only, no side
-	// effects). Any error other than ErrTraspasoNoEncontrado is fatal.
-	active, err := s.activeDirect(ctx, p.VentaID)
-	if err != nil && !errors.Is(err, domain.ErrTraspasoNoEncontrado) {
-		return nil, 0, err
-	}
-	if errors.Is(err, domain.ErrTraspasoNoEncontrado) {
-		active = nil
-	}
-
-	// Fast path: nothing to do.
-	if sameNetEffect(active, p) {
-		return active, *active.DoctoInID(), nil
-	}
-	if len(p.Detalles) == 0 && active == nil {
-		return nil, 0, nil
-	}
-
-	// Guard: if we need to reverse the active, it must have a DoctoInID.
-	if active != nil && active.DoctoInID() == nil {
-		return nil, 0, apperror.NewInternal(
-			"traspaso_directo_sin_docto_in_id",
-			"el traspaso directo no tiene un id de microsip asignado",
-		)
-	}
-
 	var (
 		reverso    *domain.Traspaso
 		newDirecto *domain.Traspaso
 		doctoInID  int
+		// noopResult captures the active traspaso and its DoctoInID when the
+		// fast-path (sameNetEffect) fires inside the transaction.
+		noopActive    *domain.Traspaso
+		noopDoctoInID int
+		isNoop        bool
 	)
 
 	if err := s.runInTx(ctx, func(ctx context.Context) error {
+		// Resolve the active directo inside the transaction so the read
+		// participates in the same snapshot as any subsequent writes.
+		active, err := s.activeDirect(ctx, p.VentaID)
+		if err != nil && !errors.Is(err, domain.ErrTraspasoNoEncontrado) {
+			return err
+		}
+		if errors.Is(err, domain.ErrTraspasoNoEncontrado) {
+			active = nil
+		}
+
+		// Fast path: nothing to do — read-only tx commits trivially.
+		if sameNetEffect(active, p) {
+			if active.DoctoInID() == nil {
+				return apperror.NewInternal(
+					"traspaso_directo_sin_docto_in_id",
+					"el traspaso directo no tiene un id de microsip asignado",
+				)
+			}
+			isNoop = true
+			noopActive = active
+			noopDoctoInID = *active.DoctoInID()
+			return nil
+		}
+		if len(p.Detalles) == 0 && active == nil {
+			isNoop = true
+			return nil
+		}
+
+		// Guard: if we need to reverse the active, it must have a DoctoInID.
+		if active != nil && active.DoctoInID() == nil {
+			return apperror.NewInternal(
+				"traspaso_directo_sin_docto_in_id",
+				"el traspaso directo no tiene un id de microsip asignado",
+			)
+		}
+
 		// Reverse the active directo if one exists.
 		if active != nil {
 			newFolio, folioErr := s.folioMinter.MintFolio(ctx)
@@ -147,6 +162,10 @@ func (s *Service) ResincronizarTraspasoParaVenta(ctx context.Context, p CrearTra
 		return nil
 	}); err != nil {
 		return nil, 0, err
+	}
+
+	if isNoop {
+		return noopActive, noopDoctoInID, nil
 	}
 
 	// Drain outbox events for every aggregate we created.
