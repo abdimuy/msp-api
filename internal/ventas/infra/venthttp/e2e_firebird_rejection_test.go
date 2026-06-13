@@ -59,7 +59,9 @@ func TestE2E_Firebird_Rejection(t *testing.T) {
 		t.Run("monto_contado_negativo_422", func(t *testing.T) {
 			body := validCreateBody()
 			body.Vendedores[0].UsuarioID = usuarioID.String()
-			body.Montos.Contado = "-100.00"
+			// Header montos are derived from line items and ignored, so a
+			// negative price must be rejected at the producto precio level.
+			body.Productos[0].PrecioContado = "-100.00"
 
 			rec := post(t, body)
 			require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "negative contado must be 422: %s", rec.Body.String())

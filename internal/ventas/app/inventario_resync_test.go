@@ -312,12 +312,12 @@ func newSinStockError() error {
 	// We import the apperror package indirectly through the domain's sentinel,
 	// but use errors.New here so the test only checks that *an* error propagates
 	// when validarErr is set — the exact code is tested in crear_venta_inventario_test.go.
-	return errSinStock{}
+	return sinStockError{}
 }
 
-type errSinStock struct{}
+type sinStockError struct{}
 
-func (e errSinStock) Error() string { return "sin existencia" }
+func (e sinStockError) Error() string { return "sin existencia" }
 
 // seedVentaViaRepo creates a venta directly in the repo (bypassing the service
 // to avoid triggering inventario on an already-configured fake) and returns

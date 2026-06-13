@@ -456,7 +456,9 @@ func TestRecomputarMontos_Property_SumInvariant(t *testing.T) {
 		}
 
 		// All productos = standalone + children.
-		allProductos := append(standaloneDTOs, childDTOs...)
+		allProductos := make([]domain.CrearVentaProductoInput, 0, len(standaloneDTOs)+len(childDTOs))
+		allProductos = append(allProductos, standaloneDTOs...)
+		allProductos = append(allProductos, childDTOs...)
 
 		params := validCrearVentaParams(t)
 		params.Combos = comboDTOs
@@ -468,7 +470,7 @@ func TestRecomputarMontos_Property_SumInvariant(t *testing.T) {
 		}
 
 		// Independently compute expected totals.
-		computeExpected := func(lines []lineItem, comboLines []lineItem) (decimal.Decimal, decimal.Decimal, decimal.Decimal) {
+		computeExpected := func(lines, comboLines []lineItem) (decimal.Decimal, decimal.Decimal, decimal.Decimal) {
 			var a, c, k decimal.Decimal
 			for _, l := range lines {
 				a = a.Add(l.anual.Mul(l.qty))
