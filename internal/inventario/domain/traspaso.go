@@ -224,9 +224,15 @@ func (t *Traspaso) DetallesForRepo() []*TraspasoDetalle { return t.detalles }
 // prefixed with "REVERSO: ", and the detalles are deep-copied. A
 // TraspasoReversadoEvent is emitted on the returned aggregate.
 //
-// Returns ErrTraspasoYaReversado if this traspaso is itself already a reverso.
+// Returns ErrTraspasoYaReversado if this traspaso is itself already a reverso
+// (tipoReverso=true) or if it has already been superseded by a previous reverso
+// (reversado=true). Only active directos (tipoReverso=false AND reversado=false)
+// can be reversed.
 func (t *Traspaso) Reversar(now time.Time, by, newID uuid.UUID, newFolio Folio) (*Traspaso, error) {
 	if t.tipoReverso {
+		return nil, ErrTraspasoYaReversado
+	}
+	if t.reversado {
 		return nil, ErrTraspasoYaReversado
 	}
 	// Deep-copy detalles.

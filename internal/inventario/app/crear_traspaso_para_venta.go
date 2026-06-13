@@ -33,6 +33,33 @@ type CrearTraspasoParaVentaParams struct {
 // inside a transaction, and best-effort emits the buffered events to the
 // outbox. Returns the persisted aggregate and its Microsip DOCTO_IN_ID.
 func (s *Service) CrearTraspasoParaVenta(ctx context.Context, p CrearTraspasoParaVentaParams) (*domain.Traspaso, int, error) {
+	var (
+		t         *domain.Traspaso
+		doctoInID int
+	)
+	if err := s.runInTx(ctx, func(ctx context.Context) error {
+		tr, id, err := s.crearDirecto(ctx, p)
+		if err != nil {
+			return err
+		}
+		t = tr
+		doctoInID = id
+		return nil
+	}); err != nil {
+		return nil, 0, err
+	}
+	s.drainEvents(ctx, t)
+	return t, doctoInID, nil
+}
+
+// crearDirecto is the shared core for building and persisting a single directo
+// traspaso. It must be called from within the caller's ambient transaction —
+// it does NOT open its own runInTx.
+//
+// It converts decimal cantidades to domain Cantidad VOs, mints a folio,
+// calls domain.CrearTraspaso with tipoReverso=false, persists via Save,
+// marks the aggregate applied, and returns the aggregate + its DOCTO_IN_ID.
+func (s *Service) crearDirecto(ctx context.Context, p CrearTraspasoParaVentaParams) (*domain.Traspaso, int, error) {
 	now := s.clock.Now()
 
 	// Build domain Cantidad VOs.
@@ -72,18 +99,12 @@ func (s *Service) CrearTraspasoParaVenta(ctx context.Context, p CrearTraspasoPar
 		return nil, 0, err
 	}
 
-	var doctoInID int
-	if err := s.runInTx(ctx, func(ctx context.Context) error {
-		id, saveErr := s.traspasos.Save(ctx, t)
-		if saveErr != nil {
-			return saveErr
-		}
-		doctoInID = id
-		return t.MarcarAplicado(id)
-	}); err != nil {
+	id, saveErr := s.traspasos.Save(ctx, t)
+	if saveErr != nil {
+		return nil, 0, saveErr
+	}
+	if err := t.MarcarAplicado(id); err != nil {
 		return nil, 0, err
 	}
-
-	s.drainEvents(ctx, t)
-	return t, doctoInID, nil
+	return t, id, nil
 }

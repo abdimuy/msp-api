@@ -113,7 +113,42 @@ func (r *fakeTraspasoRepo) ListByVentaID(_ context.Context, ventaID uuid.UUID) (
 	return list, nil
 }
 
-func (r *fakeTraspasoRepo) MarcarDirectoReversado(_ context.Context, _ int) error {
+func (r *fakeTraspasoRepo) MarcarDirectoReversado(_ context.Context, doctoInID int) error {
+	t, ok := r.byID[doctoInID]
+	if !ok {
+		return nil // nothing to do — consistent with the real repo
+	}
+	// Rebuild the traspaso with reversado=true so subsequent ListByVentaID
+	// / activeDirect calls see the updated state.
+	aud := t.Audit()
+	rebuilt := domain.HydrateTraspaso(domain.HydrateTraspasoParams{
+		ID:             t.ID(),
+		Folio:          t.Folio(),
+		AlmacenOrigen:  t.AlmacenOrigen(),
+		AlmacenDestino: t.AlmacenDestino(),
+		Fecha:          t.Fecha(),
+		Descripcion:    t.Descripcion(),
+		VentaID:        t.VentaID(),
+		TipoReverso:    t.TipoReverso(),
+		Reversado:      true,
+		DoctoInID:      t.DoctoInID(),
+		Detalles:       t.DetallesForRepo(),
+		CreatedAt:      aud.CreatedAt(),
+		UpdatedAt:      aud.UpdatedAt(),
+		CreatedBy:      aud.CreatedBy(),
+		UpdatedBy:      aud.UpdatedBy(),
+	})
+	r.byID[doctoInID] = rebuilt
+	// Also update the byVentaID slice so ListByVentaID returns the new state.
+	if rebuilt.VentaID() != nil {
+		vID := *rebuilt.VentaID()
+		for i, tr := range r.byVentaID[vID] {
+			if tr.DoctoInID() != nil && *tr.DoctoInID() == doctoInID {
+				r.byVentaID[vID][i] = rebuilt
+				break
+			}
+		}
+	}
 	return nil
 }
 
