@@ -233,21 +233,28 @@ func readMontosFromDB(ctx context.Context, t *testing.T, q firebird.Querier, ven
 func discoverTestArticuloAndAlmacen(ctx context.Context, t *testing.T, q firebird.Querier) (int, int) {
 	t.Helper()
 	const almacenDestino = 11058
+	// minExistencia must comfortably exceed the largest quantity any delta test
+	// reserves so the post-reversal stock check in ResincronizarTraspasoParaVenta
+	// passes. Edits reserve absolute (not cumulative) quantities, all in single
+	// digits, so 100 leaves ample headroom.
+	const minExistencia = 100
 
-	// Find an articulo that has a clave lookup row.
-	var articuloID int
+	// Pick an articulo+almacén (other than the destino 11058) that has a clave
+	// lookup row (ROL=17, required by the traspaso writer) AND enough on-hand
+	// existencia in SALDOS_IN for the edits to validate against real stock.
+	var articuloID, almacenOrigen int
 	if err := q.QueryRowContext(ctx,
-		`SELECT FIRST 1 ARTICULO_ID FROM CLAVES_ARTICULOS WHERE ROL_CLAVE_ART_ID = 17`,
-	).Scan(&articuloID); err != nil {
-		t.Skip("no ARTICULOS row with CLAVES_ARTICULOS rol=17 in dev DB — skipping inventario delta e2e tests")
-	}
-
-	// Find an almacén other than the destino.
-	var almacenOrigen int
-	if err := q.QueryRowContext(ctx,
-		`SELECT FIRST 1 ALMACEN_ID FROM ALMACENES WHERE ALMACEN_ID <> ?`, almacenDestino,
-	).Scan(&almacenOrigen); err != nil {
-		t.Skip("no ALMACENES row other than destino (11058) in dev DB — skipping inventario delta e2e tests")
+		`SELECT FIRST 1 s.ARTICULO_ID, s.ALMACEN_ID
+		   FROM SALDOS_IN s
+		  WHERE s.ALMACEN_ID <> ?
+		    AND EXISTS (SELECT 1 FROM CLAVES_ARTICULOS c
+		                 WHERE c.ARTICULO_ID = s.ARTICULO_ID
+		                   AND c.ROL_CLAVE_ART_ID = 17)
+		  GROUP BY s.ARTICULO_ID, s.ALMACEN_ID
+		  HAVING SUM(s.ENTRADAS_UNIDADES - s.SALIDAS_UNIDADES) >= ?`,
+		almacenDestino, minExistencia,
+	).Scan(&articuloID, &almacenOrigen); err != nil {
+		t.Skip("no well-stocked articulo (clave rol=17, existencia >= 100, almacén <> 11058) in dev DB — skipping inventario delta e2e tests")
 	}
 	return articuloID, almacenOrigen
 }
