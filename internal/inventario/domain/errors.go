@@ -77,10 +77,18 @@ var (
 		"la descripción del traspaso excede 200 caracteres",
 	)
 	// ErrTraspasoYaReversado is returned when Reversar is called on a
-	// traspaso that is already a reverso.
+	// traspaso that is itself already a reverso (tipoReverso=true).
 	ErrTraspasoYaReversado = apperror.NewConflict(
 		"traspaso_ya_reversado",
 		"el traspaso ya es un reverso",
+	)
+	// ErrTraspasoYaSupersedido is returned when Reversar is called on a
+	// directo traspaso that has already been superseded by a previous reverso
+	// (reversado=true). Use ErrTraspasoYaReversado when the traspaso is itself
+	// a reverso (tipoReverso=true).
+	ErrTraspasoYaSupersedido = apperror.NewConflict(
+		"traspaso_ya_supersedido",
+		"el traspaso ya fue reemplazado por uno nuevo",
 	)
 	// ErrTraspasoYaAplicado is returned when MarcarAplicado is called on a
 	// traspaso that already has a doctoInID.

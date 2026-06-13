@@ -359,36 +359,30 @@ func TestResincronizar_FolioMinterFailsOnNewDirecto_PropagatesError(t *testing.T
 	}
 }
 
-func TestResincronizar_SaveFailsOnNewDirecto_PropagatesError(t *testing.T) {
+// TestResincronizar_SaveFailsOnNewDirecto_ReturnsError verifies that when the
+// Save call for the new directo fails, the error is propagated to the caller.
+// Note: the fake repo does NOT roll back the reverso write — true DB rollback
+// is an e2e concern. This test only verifies error propagation.
+func TestResincronizar_SaveFailsOnNewDirecto_ReturnsError(t *testing.T) {
 	t.Parallel()
-	repo := newFakeTraspasoRepo()
+	// Seed the initial directo through the service so byID / byVentaID are in
+	// a fully consistent state. Allow unlimited saves during seeding.
+	const unlimited = 1_000_000
+	repo := &countingSaveFakeRepo{fakeTraspasoRepo: newFakeTraspasoRepo(), failAfterSave: unlimited}
 	svc := app.NewService(repo, newFakeExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, &fakeOutbox{}, nil)
 
 	ventaID := uuid.New()
-	// Seed initial directo.
 	if _, _, err := svc.ResincronizarTraspasoParaVenta(context.Background(), baseResyncParams(ventaID)); err != nil {
 		t.Fatalf("seed failed: %v", err)
 	}
 
-	// The reverso Save happens first (call 1 = succeeds); the new-directo Save
-	// is call 2 (fails). Use countingSaveFakeRepo with failAfterSave=1 so the
-	// reverso is written but the new directo is not.
-	repo2 := &countingSaveFakeRepo{fakeTraspasoRepo: newFakeTraspasoRepo(), failAfterSave: 1}
-	// Pre-populate repo2 with the existing directo from repo.
-	all, _ := repo.ListByVentaID(context.Background(), ventaID)
-	for i, tr := range all {
-		repo2.byID[i+1] = tr
-		if tr.VentaID() != nil {
-			repo2.byVentaID[*tr.VentaID()] = append(repo2.byVentaID[*tr.VentaID()], tr)
-		}
-		repo2.counter = i + 1
-	}
+	// Allow exactly 1 more Save (the reverso); the new-directo Save will fail.
+	repo.failAfterSave = repo.savesThisRun + 1
 
-	svc2 := app.NewService(repo2, newFakeExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, &fakeOutbox{}, nil)
 	p2 := baseResyncParams(ventaID)
 	p2.Detalles = []app.CrearTraspasoDetalleInput{{ArticuloID: 999, Cantidad: decimal.NewFromInt(1)}}
 
-	_, _, err := svc2.ResincronizarTraspasoParaVenta(context.Background(), p2)
+	_, _, err := svc.ResincronizarTraspasoParaVenta(context.Background(), p2)
 	if !errors.Is(err, errSentinel) {
 		t.Errorf("expected sentinel error from Save, got %v", err)
 	}
@@ -429,6 +423,193 @@ func TestCrearTraspasoReverso_AfterEditChain_ReversesActiveOnly(t *testing.T) {
 	// After reversal, no active directos.
 	if n := countActiveDirectos(t, repo, ventaID); n != 0 {
 		t.Errorf("expected 0 active directos after full reversal, got %d", n)
+	}
+}
+
+// ─── M1: ListByVentaID repo error propagates ────────────────────────────────
+
+// TestResincronizar_ListByVentaIDError_Propagates mirrors
+// TestCrearTraspasoReverso_ListByVentaIDError: injecting a repo error on
+// ListByVentaID (via findErr) must propagate out of
+// ResincronizarTraspasoParaVenta unchanged.
+func TestResincronizar_ListByVentaIDError_Propagates(t *testing.T) {
+	t.Parallel()
+	repo := newFakeTraspasoRepo()
+	repo.findErr = errSentinel
+	svc := app.NewService(repo, newFakeExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, &fakeOutbox{}, nil)
+
+	_, _, err := svc.ResincronizarTraspasoParaVenta(context.Background(), baseResyncParams(uuid.New()))
+	if !errors.Is(err, errSentinel) {
+		t.Errorf("expected sentinel error from ListByVentaID, got %v", err)
+	}
+}
+
+// ─── M3: nil DoctoInID on active directo returns internal error ──────────────
+
+// TestResincronizar_ActiveDirectoNilDoctoInID_ReturnsError verifies that when
+// the active directo exists but has no DoctoInID (was never applied to
+// Microsip), ResincronizarTraspasoParaVenta returns a
+// traspaso_directo_sin_docto_in_id error rather than panicking.
+func TestResincronizar_ActiveDirectoNilDoctoInID_ReturnsError(t *testing.T) {
+	t.Parallel()
+	repo := newFakeTraspasoRepo()
+	svc := app.NewService(repo, newFakeExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, &fakeOutbox{}, nil)
+
+	ventaID := uuid.New()
+	// Inject an active directo with DoctoInID=nil directly into the fake repo.
+	// HydrateTraspaso is used because CrearTraspaso always calls MarcarAplicado.
+	tr := domain.HydrateTraspaso(domain.HydrateTraspasoParams{
+		ID:             uuid.New(),
+		Folio:          mustFolio("MST000099"),
+		AlmacenOrigen:  1,
+		AlmacenDestino: 2,
+		Fecha:          fixedNow,
+		Descripcion:    "sin docto in",
+		VentaID:        &ventaID,
+		TipoReverso:    false,
+		Reversado:      false,
+		DoctoInID:      nil, // explicitly not applied
+		Detalles:       nil,
+		CreatedAt:      fixedNow,
+		UpdatedAt:      fixedNow,
+		CreatedBy:      uuid.New(),
+		UpdatedBy:      uuid.New(),
+	})
+	repo.byID[1] = tr
+	repo.byVentaID[ventaID] = []*domain.Traspaso{tr}
+	repo.counter = 1
+
+	// Use the same params so sameNetEffect fires (empty detalles on both sides
+	// would be a match, but we want to hit the nil-DoctoInID guard). Params
+	// with detalles that differ from the nil-detalles active will NOT hit
+	// sameNetEffect, but will instead hit the non-fast-path nil guard.
+	p := baseResyncParams(ventaID)
+
+	_, _, err := svc.ResincronizarTraspasoParaVenta(context.Background(), p)
+	if !isAppError(err, "traspaso_directo_sin_docto_in_id") {
+		t.Errorf("expected traspaso_directo_sin_docto_in_id error, got %v", err)
+	}
+}
+
+// ─── M4: duplicate articuloIDs in params collapse to same net effect ─────────
+
+// TestResincronizar_DuplicateArticuloIDs_CollapseToSameNetEffect verifies that
+// when the new params contain two lines for the same articuloID whose cantidades
+// sum to the active directo's cantidad for that articuloID, sameNetEffect
+// detects a no-op and no new Saves are performed.
+func TestResincronizar_DuplicateArticuloIDs_CollapseToSameNetEffect(t *testing.T) {
+	t.Parallel()
+	repo := newFakeTraspasoRepo()
+	outbox := &fakeOutbox{}
+	svc := app.NewService(repo, newFakeExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, outbox, nil)
+
+	ventaID := uuid.New()
+	// Seed active directo: articuloID=100, cantidad=5.
+	seed := app.CrearTraspasoParaVentaParams{
+		VentaID:        ventaID,
+		AlmacenOrigen:  1,
+		AlmacenDestino: 2,
+		Fecha:          fixedNow,
+		Descripcion:    "seed",
+		Detalles:       []app.CrearTraspasoDetalleInput{{ArticuloID: 100, Cantidad: decimal.NewFromInt(5)}},
+		CreatedBy:      uuid.New(),
+	}
+	if _, _, err := svc.ResincronizarTraspasoParaVenta(context.Background(), seed); err != nil {
+		t.Fatalf("seed failed: %v", err)
+	}
+	savesBefore := repo.SaveCalls
+	outbox.entries = nil
+
+	// Call resync with two lines for articuloID=100: {100,2} + {100,3} = 5.
+	// Same almacenes, same net cantidad → no-op.
+	p := app.CrearTraspasoParaVentaParams{
+		VentaID:        ventaID,
+		AlmacenOrigen:  1,
+		AlmacenDestino: 2,
+		Fecha:          fixedNow,
+		Descripcion:    "resync duplicate",
+		Detalles: []app.CrearTraspasoDetalleInput{
+			{ArticuloID: 100, Cantidad: decimal.NewFromInt(2)},
+			{ArticuloID: 100, Cantidad: decimal.NewFromInt(3)},
+		},
+		CreatedBy: uuid.New(),
+	}
+
+	tr, _, err := svc.ResincronizarTraspasoParaVenta(context.Background(), p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tr == nil {
+		t.Fatal("expected active traspaso returned on no-op, got nil")
+	}
+	// No new Saves — this is a no-op.
+	if repo.SaveCalls != savesBefore {
+		t.Errorf("expected 0 new Saves on no-op, got %d", repo.SaveCalls-savesBefore)
+	}
+	if len(outbox.entries) != 0 {
+		t.Errorf("expected 0 outbox entries on no-op, got %d", len(outbox.entries))
+	}
+}
+
+// ─── M5: same detalles but different almacenOrigen → NOT a no-op ─────────────
+
+// TestResincronizar_DifferentAlmacenOrigen_NotNoop verifies that when the new
+// params have the same detalles multiset as the active directo but a different
+// almacenOrigen, sameNetEffect returns false and the service reverses the active
+// directo and creates a new one.
+func TestResincronizar_DifferentAlmacenOrigen_NotNoop(t *testing.T) {
+	t.Parallel()
+	repo := newFakeTraspasoRepo()
+	outbox := &fakeOutbox{}
+	svc := app.NewService(repo, newFakeExistenciaQuery(), &fakeFolioMinter{}, newFakeAlmacenRepo(), &fakeClock{fixedNow}, outbox, nil)
+
+	ventaID := uuid.New()
+	// Seed active directo: almacenOrigen=1, almacenDestino=2, articuloID=100, cantidad=5.
+	seed := app.CrearTraspasoParaVentaParams{
+		VentaID:        ventaID,
+		AlmacenOrigen:  1,
+		AlmacenDestino: 2,
+		Fecha:          fixedNow,
+		Descripcion:    "seed",
+		Detalles:       []app.CrearTraspasoDetalleInput{{ArticuloID: 100, Cantidad: decimal.NewFromInt(5)}},
+		CreatedBy:      uuid.New(),
+	}
+	if _, _, err := svc.ResincronizarTraspasoParaVenta(context.Background(), seed); err != nil {
+		t.Fatalf("seed failed: %v", err)
+	}
+	savesBefore := repo.SaveCalls
+	outbox.entries = nil
+
+	// Same detalles but almacenOrigen changed to 3 → different net effect.
+	p := app.CrearTraspasoParaVentaParams{
+		VentaID:        ventaID,
+		AlmacenOrigen:  3, // changed
+		AlmacenDestino: 2,
+		Fecha:          fixedNow,
+		Descripcion:    "resync diff almacen",
+		Detalles:       []app.CrearTraspasoDetalleInput{{ArticuloID: 100, Cantidad: decimal.NewFromInt(5)}},
+		CreatedBy:      uuid.New(),
+	}
+
+	newTr, _, err := svc.ResincronizarTraspasoParaVenta(context.Background(), p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if newTr == nil {
+		t.Fatal("expected a new directo, got nil")
+	}
+	// Should have produced exactly 2 new Saves: reverso + new directo.
+	newSaves := repo.SaveCalls - savesBefore
+	if newSaves != 2 {
+		t.Errorf("expected 2 new Saves (reverso + directo), got %d", newSaves)
+	}
+	// Exactly 1 active directo after resync.
+	if n := countActiveDirectos(t, repo, ventaID); n != 1 {
+		t.Errorf("expected 1 active directo after resync, got %d", n)
+	}
+	// The new directo uses the new almacenOrigen.
+	if newTr.AlmacenOrigen() != 3 {
+		t.Errorf("expected almacenOrigen=3 on new directo, got %d", newTr.AlmacenOrigen())
 	}
 }
 

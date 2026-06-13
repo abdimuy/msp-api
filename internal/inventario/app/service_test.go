@@ -242,3 +242,11 @@ func isAppError(err error, code string) bool {
 	appErr, ok := apperror.As(err)
 	return ok && appErr.Code == code
 }
+
+func mustFolio(s string) domain.Folio {
+	f, err := domain.NewFolio(s)
+	if err != nil {
+		panic(err)
+	}
+	return f
+}
