@@ -53,6 +53,10 @@ func (f *fakeInventarioService) CrearTraspasoReverso(_ context.Context, _, _ uui
 	return f.reversoDoctoIn, f.reversoErr
 }
 
+func (f *fakeInventarioService) ResincronizarTraspasoParaVenta(_ context.Context, _ outbound.InventarioCrearTraspasoParams) (int, error) {
+	return 0, nil
+}
+
 func TestCrearVenta_WithInventario_ValidatesStockAndCreatesTraspaso(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)

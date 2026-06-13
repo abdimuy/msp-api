@@ -119,6 +119,26 @@ func (a *ventasInventarioAdapter) CrearTraspasoReverso(ctx context.Context, vent
 	return doctoInID, err
 }
 
+func (a *ventasInventarioAdapter) ResincronizarTraspasoParaVenta(ctx context.Context, p ventasoutbound.InventarioCrearTraspasoParams) (int, error) {
+	detalles := make([]inventario.CrearTraspasoDetalleInput, len(p.Detalles))
+	for i, d := range p.Detalles {
+		detalles[i] = inventario.CrearTraspasoDetalleInput{
+			ArticuloID: d.ArticuloID,
+			Cantidad:   d.Cantidad,
+		}
+	}
+	_, doctoInID, err := a.inv.ResincronizarTraspasoParaVenta(ctx, inventario.CrearTraspasoParaVentaParams{
+		VentaID:        p.VentaID,
+		AlmacenOrigen:  p.AlmacenOrigen,
+		AlmacenDestino: a.almacenDestino,
+		Fecha:          p.Fecha,
+		Descripcion:    p.Descripcion,
+		Detalles:       detalles,
+		CreatedBy:      p.CreatedBy,
+	})
+	return doctoInID, err
+}
+
 // provideVentasInventarioAdapter builds the ventas-side adapter that fans
 // out to the inventario module while injecting the configured destino.
 func provideVentasInventarioAdapter(inv inventario.TraspasoService, cfg *config.Config) ventasoutbound.InventarioService {

@@ -65,4 +65,11 @@ type InventarioService interface {
 	// productos to their origin almacén. Used when a venta is canceled
 	// before it has been aplicada in Microsip.
 	CrearTraspasoReverso(ctx context.Context, ventaID, by uuid.UUID) (int, error)
+
+	// ResincronizarTraspasoParaVenta keeps the inventory reservation for a
+	// venta consistent with a possibly-changed set of detalles. Called
+	// when a venta's productos are edited. Returns the assigned Microsip
+	// DOCTO_IN_ID for the new directo (0 when the call is a no-op or a
+	// reverse-only with no new directo created).
+	ResincronizarTraspasoParaVenta(ctx context.Context, p InventarioCrearTraspasoParams) (int, error)
 }

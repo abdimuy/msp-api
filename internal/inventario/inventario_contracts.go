@@ -48,6 +48,17 @@ type TraspasoService interface {
 	// directo traspaso is found or when multiple directos exist (which
 	// requires manual resolution).
 	CrearTraspasoReverso(ctx context.Context, ventaID, by uuid.UUID) (Traspaso, int, error)
+
+	// ResincronizarTraspasoParaVenta keeps the inventory reservation for a
+	// venta consistent with a possibly-changed set of detalles. It is a
+	// superset of CrearTraspasoParaVenta: if an active directo already
+	// exists it is reversed first, then a new directo is created with the
+	// new detalles. When the net effect is identical (same almacenes, same
+	// quantities) the call is a no-op that returns the active traspaso.
+	// When p.Detalles is empty and no active directo exists it returns a
+	// zero-value Traspaso with doctoInID 0 and nil error — callers must
+	// treat (zero-ID Traspaso, 0, nil) as the no-op / reverse-only case.
+	ResincronizarTraspasoParaVenta(ctx context.Context, p CrearTraspasoParaVentaParams) (Traspaso, int, error)
 }
 
 // ValidarStockItem is one item submitted to ValidarStockParaVenta.

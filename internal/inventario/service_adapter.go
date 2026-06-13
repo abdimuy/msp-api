@@ -80,3 +80,36 @@ func (a *ServiceAdapter) CrearTraspasoReverso(ctx context.Context, ventaID, by u
 	}
 	return TraspasoFromDomain(tr), doctoInID, nil
 }
+
+// ResincronizarTraspasoParaVenta delegates to the inner service and
+// projects the result. The inner service can return (nil, 0, nil) in the
+// no-op / reverse-only case (empty detalles, no active directo). We
+// project nil as a zero-value Traspaso so callers can detect the no-op
+// by checking Traspaso.ID == uuid.Nil.
+func (a *ServiceAdapter) ResincronizarTraspasoParaVenta(ctx context.Context, p CrearTraspasoParaVentaParams) (Traspaso, int, error) {
+	innerDetalles := make([]app.CrearTraspasoDetalleInput, len(p.Detalles))
+	for i, d := range p.Detalles {
+		innerDetalles[i] = app.CrearTraspasoDetalleInput{
+			ArticuloID: d.ArticuloID,
+			Cantidad:   d.Cantidad,
+		}
+	}
+	tr, doctoInID, err := a.inner.ResincronizarTraspasoParaVenta(ctx, app.CrearTraspasoParaVentaParams{
+		VentaID:        p.VentaID,
+		AlmacenOrigen:  p.AlmacenOrigen,
+		AlmacenDestino: p.AlmacenDestino,
+		Fecha:          p.Fecha,
+		Descripcion:    p.Descripcion,
+		Detalles:       innerDetalles,
+		CreatedBy:      p.CreatedBy,
+	})
+	if err != nil {
+		return Traspaso{}, 0, err
+	}
+	if tr == nil {
+		// No-op / reverse-only case: no new directo was created.
+		// Callers can detect this via Traspaso.ID == uuid.Nil.
+		return Traspaso{}, doctoInID, nil
+	}
+	return TraspasoFromDomain(tr), doctoInID, nil
+}
