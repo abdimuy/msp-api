@@ -54,6 +54,10 @@ func (r *fakeTraspasoRepo) ListByVentaID(_ context.Context, ventaID uuid.UUID) (
 	return r.byVenta[ventaID], nil
 }
 
+func (r *fakeTraspasoRepo) MarcarDirectoReversado(_ context.Context, _ int) error {
+	return nil
+}
+
 // fakeExistenciaQuery is an in-memory ExistenciaQuery.
 type fakeExistenciaQuery struct {
 	stock map[[2]int]decimal.Decimal

@@ -25,6 +25,11 @@ const (
 	tipoTraspasoDirecto = "directo"
 	tipoTraspasoReverso = "reverso"
 
+	// reversadoNo and reversadoSi are the values stored in
+	// MSP_VENTAS_TRASPASOS.REVERSADO.
+	reversadoNo = "N"
+	reversadoSi = "S"
+
 	// existenciaScale is the NUMERIC scale for SALDOS_IN.ENTRADAS_UNIDADES /
 	// SALIDAS_UNIDADES, DOCTOS_IN_DET.UNIDADES and DOCTOS_PV_DET.UNIDADES —
 	// all of them declared as NUMERIC(18,5) in Microsip's schema (verified

@@ -34,6 +34,7 @@ type Traspaso struct {
 	descripcion    string
 	ventaID        *uuid.UUID
 	tipoReverso    bool
+	reversado      bool // true when this directo has been superseded by a reverso
 	doctoInID      *int // set after Microsip insert; nil until applied
 	detalles       []*TraspasoDetalle
 	audit          audit.Auditable
@@ -93,6 +94,7 @@ func CrearTraspaso(p CrearTraspasoParams) (*Traspaso, error) {
 		descripcion:    descripcion,
 		ventaID:        p.VentaID,
 		tipoReverso:    false,
+		reversado:      false,
 		doctoInID:      nil,
 		detalles:       detalles,
 		audit:          audit.NewAuditable(p.Now, p.CreatedBy),
@@ -134,6 +136,7 @@ type HydrateTraspasoParams struct {
 	Descripcion    string
 	VentaID        *uuid.UUID
 	TipoReverso    bool
+	Reversado      bool
 	DoctoInID      *int
 	Detalles       []*TraspasoDetalle
 	CreatedAt      time.Time
@@ -153,6 +156,7 @@ func HydrateTraspaso(p HydrateTraspasoParams) *Traspaso {
 		descripcion:    p.Descripcion,
 		ventaID:        p.VentaID,
 		tipoReverso:    p.TipoReverso,
+		reversado:      p.Reversado,
 		doctoInID:      p.DoctoInID,
 		detalles:       p.Detalles,
 		audit:          audit.HydrateAuditable(p.CreatedAt, p.UpdatedAt, p.CreatedBy, p.UpdatedBy),
@@ -184,6 +188,10 @@ func (t *Traspaso) VentaID() *uuid.UUID { return t.ventaID }
 
 // TipoReverso reports whether this traspaso is itself a reversal of another.
 func (t *Traspaso) TipoReverso() bool { return t.tipoReverso }
+
+// Reversado reports whether this directo traspaso has been superseded by a
+// reverso. Always false for traspasos of tipo='reverso'.
+func (t *Traspaso) Reversado() bool { return t.reversado }
 
 // DoctoInID returns the Microsip DOCTOS_IN id after application, or nil until
 // then.
@@ -237,6 +245,7 @@ func (t *Traspaso) Reversar(now time.Time, by, newID uuid.UUID, newFolio Folio) 
 		descripcion:    descripcion,
 		ventaID:        t.ventaID,
 		tipoReverso:    true,
+		reversado:      false, // a reverso is never itself reversed
 		doctoInID:      nil,
 		detalles:       copiedDetalles,
 		audit:          audit.NewAuditable(now, by),

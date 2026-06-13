@@ -401,3 +401,76 @@ func TestTraspaso_Accessors(t *testing.T) {
 		t.Fatal("Audit.CreatedAt should not be zero")
 	}
 }
+
+// ─── Reversado tests ───────────────────────────────────────────────────────
+
+func TestCrearTraspaso_ReversadoDefaultsFalse(t *testing.T) {
+	t.Parallel()
+	tr, err := domain.CrearTraspaso(validCrearParams(t))
+	require.NoError(t, err)
+	if tr.Reversado() {
+		t.Fatal("new traspaso from CrearTraspaso should have Reversado=false")
+	}
+}
+
+func TestReversar_ReversadoIsFalseOnReverso(t *testing.T) {
+	t.Parallel()
+	original, err := domain.CrearTraspaso(validCrearParams(t))
+	require.NoError(t, err)
+
+	newFolio, _ := domain.NewFolio("MST000002")
+	reversed, err := original.Reversar(fixedNow, uuid.New(), uuid.New(), newFolio)
+	require.NoError(t, err)
+
+	if reversed.Reversado() {
+		t.Fatal("a reverso traspaso should always have Reversado=false")
+	}
+}
+
+func TestHydrateTraspaso_ReversadoTrueRoundTrips(t *testing.T) {
+	t.Parallel()
+	doctoID := 42
+	tr := domain.HydrateTraspaso(domain.HydrateTraspasoParams{
+		ID:             uuid.New(),
+		Folio:          domain.HydrateFolio("MST999999"),
+		AlmacenOrigen:  1,
+		AlmacenDestino: 2,
+		Fecha:          fixedNow,
+		Descripcion:    "hydrated with reversado",
+		TipoReverso:    false,
+		Reversado:      true,
+		DoctoInID:      &doctoID,
+		CreatedAt:      fixedNow,
+		UpdatedAt:      fixedNow,
+		CreatedBy:      uuid.New(),
+		UpdatedBy:      uuid.New(),
+	})
+	require.NotNil(t, tr)
+	if !tr.Reversado() {
+		t.Fatal("HydrateTraspaso with Reversado=true should return Reversado()=true")
+	}
+}
+
+func TestHydrateTraspaso_ReversadoFalseRoundTrips(t *testing.T) {
+	t.Parallel()
+	doctoID := 55
+	tr := domain.HydrateTraspaso(domain.HydrateTraspasoParams{
+		ID:             uuid.New(),
+		Folio:          domain.HydrateFolio("MST999998"),
+		AlmacenOrigen:  3,
+		AlmacenDestino: 4,
+		Fecha:          fixedNow,
+		Descripcion:    "hydrated not reversed",
+		TipoReverso:    false,
+		Reversado:      false,
+		DoctoInID:      &doctoID,
+		CreatedAt:      fixedNow,
+		UpdatedAt:      fixedNow,
+		CreatedBy:      uuid.New(),
+		UpdatedBy:      uuid.New(),
+	})
+	require.NotNil(t, tr)
+	if tr.Reversado() {
+		t.Fatal("HydrateTraspaso with Reversado=false should return Reversado()=false")
+	}
+}

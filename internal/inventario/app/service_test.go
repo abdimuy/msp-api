@@ -113,6 +113,10 @@ func (r *fakeTraspasoRepo) ListByVentaID(_ context.Context, ventaID uuid.UUID) (
 	return list, nil
 }
 
+func (r *fakeTraspasoRepo) MarcarDirectoReversado(_ context.Context, _ int) error {
+	return nil
+}
+
 // ─── fakeExistenciaQuery ────────────────────────────────────────────────────
 
 type fakeExistenciaQuery struct {

@@ -26,4 +26,10 @@ type TraspasoRepo interface {
 	// ListByVentaID returns all traspasos linked to the given venta, ordered
 	// chronologically. Always returns a non-nil slice (empty when none).
 	ListByVentaID(ctx context.Context, ventaID uuid.UUID) ([]*domain.Traspaso, error)
+
+	// MarcarDirectoReversado sets REVERSADO='S' on the MSP_VENTAS_TRASPASOS
+	// row for the given DOCTO_IN_ID (only rows with TIPO='directo' are
+	// affected). This is called when a directo traspaso is superseded by a
+	// new edit cycle. Executes within the caller's ambient transaction.
+	MarcarDirectoReversado(ctx context.Context, doctoInID int) error
 }

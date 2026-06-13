@@ -60,12 +60,14 @@ func scanDoctoInDetRow(s rowScanner) (doctoInDetRaw, error) {
 
 // assembleTraspaso builds a domain.Traspaso from a scanned DOCTOS_IN header row
 // plus pre-loaded detalles and the MSP_VENTAS_TRASPASOS lookup data (ventaID,
-// tipo). The doctoInID is stored on the aggregate to indicate it's applied.
+// tipo, reversado). The doctoInID is stored on the aggregate to indicate it's
+// applied.
 func assembleTraspaso(
 	r doctoInRaw,
 	detalles []*domain.TraspasoDetalle,
 	ventaID *uuid.UUID,
 	tipoReverso bool,
+	reversado bool,
 	doctoInID int,
 ) (*domain.Traspaso, error) {
 	createdAt, err := firebird.ScanUTCTime(r.createdAtRaw)
@@ -101,6 +103,7 @@ func assembleTraspaso(
 		Descripcion:    r.descripcion,
 		VentaID:        ventaID,
 		TipoReverso:    tipoReverso,
+		Reversado:      reversado,
 		DoctoInID:      &doctoInID,
 		Detalles:       detalles,
 		CreatedAt:      createdAt,

@@ -34,13 +34,13 @@ func (r *TraspasoRepo) FindByID(ctx context.Context, doctoInID int) (*domain.Tra
 		return nil, fmt.Errorf("invfb FindByID detalles: %w", err)
 	}
 
-	// Read MSP_VENTAS_TRASPASOS to get ventaID + tipo.
-	ventaID, tipoReverso, err := r.loadVentaLink(ctx, q, doctoInID)
+	// Read MSP_VENTAS_TRASPASOS to get ventaID + tipo + reversado.
+	link, err := r.loadVentaLink(ctx, q, doctoInID)
 	if err != nil {
 		return nil, fmt.Errorf("invfb FindByID venta_link: %w", err)
 	}
 
-	return assembleTraspaso(raw, detalles[doctoInID], ventaID, tipoReverso, doctoInID)
+	return assembleTraspaso(raw, detalles[doctoInID], link.ventaID, link.tipoReverso, link.reversado, doctoInID)
 }
 
 // ListByVentaID returns all traspasos linked to the given venta, ordered by
@@ -69,10 +69,10 @@ func (r *TraspasoRepo) ListByVentaID(ctx context.Context, ventaID uuid.UUID) ([]
 		return nil, fmt.Errorf("invfb ListByVentaID detalles: %w", err)
 	}
 
-	// Step 4: load venta link rows for tipo.
-	tipoByDocto, err := r.loadTipos(ctx, q, doctoIDs)
+	// Step 4: load venta link rows for tipo and reversado.
+	linkByDocto, err := r.loadLinks(ctx, q, doctoIDs)
 	if err != nil {
-		return nil, fmt.Errorf("invfb ListByVentaID tipos: %w", err)
+		return nil, fmt.Errorf("invfb ListByVentaID links: %w", err)
 	}
 
 	// Assemble in doctoIDs order (chronological).
@@ -82,9 +82,9 @@ func (r *TraspasoRepo) ListByVentaID(ctx context.Context, ventaID uuid.UUID) ([]
 		if !ok {
 			continue
 		}
-		tipoReverso := tipoByDocto[did]
+		link := linkByDocto[did]
 		vID := &ventaID
-		t, err := assembleTraspaso(h, detallesByDocto[did], vID, tipoReverso, did)
+		t, err := assembleTraspaso(h, detallesByDocto[did], vID, link.tipoReverso, link.reversado, did)
 		if err != nil {
 			return nil, fmt.Errorf("invfb ListByVentaID assemble docto_in_id=%d: %w", did, err)
 		}
@@ -173,44 +173,57 @@ func (r *TraspasoRepo) loadDetalles(
 	return result, rows.Err()
 }
 
+// ventaLinkRow holds the scanned columns from a MSP_VENTAS_TRASPASOS lookup.
+type ventaLinkRow struct {
+	ventaID     *uuid.UUID
+	tipoReverso bool
+	reversado   bool
+}
+
 // loadVentaLink reads back the MSP_VENTAS_TRASPASOS row for a single doctoInID.
 func (r *TraspasoRepo) loadVentaLink(
 	ctx context.Context,
 	q firebird.Querier,
 	doctoInID int,
-) (*uuid.UUID, bool, error) {
+) (ventaLinkRow, error) {
 	var ventaIDRaw sql.NullString
 	var tipo string
+	var reversadoRaw string
 	err := q.QueryRowContext(ctx, selectVentaTraspasoRowByDoctoIn, doctoInID).
-		Scan(&ventaIDRaw, &tipo)
+		Scan(&ventaIDRaw, &tipo, &reversadoRaw)
 	if errors.Is(err, sql.ErrNoRows) {
 		// No lookup row — traspaso exists in Microsip but not linked to a venta.
-		return nil, false, nil //nolint:nilnil // legitimate absent-link case.
+		return ventaLinkRow{}, nil
 	}
 	if err != nil {
-		return nil, false, firebird.MapError(err)
+		return ventaLinkRow{}, firebird.MapError(err)
 	}
 	ventaID, err := parseNullUUIDCol("VENTA_ID", ventaIDRaw)
 	if err != nil {
-		return nil, false, err
+		return ventaLinkRow{}, err
 	}
-	return ventaID, tipo == tipoTraspasoReverso, nil
+	return ventaLinkRow{
+		ventaID:     ventaID,
+		tipoReverso: tipo == tipoTraspasoReverso,
+		reversado:   reversadoRaw == reversadoSi,
+	}, nil
 }
 
-// loadTipos reads tipo_reverso for a batch of docto IDs from MSP_VENTAS_TRASPASOS.
-func (r *TraspasoRepo) loadTipos(
+// loadLinks reads tipo_reverso and reversado for a batch of docto IDs from
+// MSP_VENTAS_TRASPASOS. N+1 is acceptable here: ListByVentaID typically
+// returns 1-5 rows.
+func (r *TraspasoRepo) loadLinks(
 	ctx context.Context,
 	q firebird.Querier,
 	ids []int,
-) (map[int]bool, error) {
-	// N+1 is acceptable here: ListByVentaID typically returns 1-5 rows.
-	result := make(map[int]bool, len(ids))
+) (map[int]ventaLinkRow, error) {
+	result := make(map[int]ventaLinkRow, len(ids))
 	for _, did := range ids {
-		_, isReverso, err := r.loadVentaLink(ctx, q, did)
+		link, err := r.loadVentaLink(ctx, q, did)
 		if err != nil {
-			return nil, fmt.Errorf("loadTipos docto_in_id=%d: %w", did, err)
+			return nil, fmt.Errorf("loadLinks docto_in_id=%d: %w", did, err)
 		}
-		result[did] = isReverso
+		result[did] = link
 	}
 	return result, nil
 }

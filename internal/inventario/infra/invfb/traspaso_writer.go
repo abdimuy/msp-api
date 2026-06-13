@@ -157,14 +157,30 @@ func (r *TraspasoRepo) Save(ctx context.Context, t *domain.Traspaso) (int, error
 	if t.TipoReverso() {
 		tipo = tipoTraspasoReverso
 	}
+	// New traspasos (both directos and freshly-created reversos) always start
+	// as not-reversed. REVERSADO is set to 'S' later via MarcarDirectoReversado
+	// when the directo is superseded by an edit cycle.
 	if _, err := q.ExecContext(ctx, insertVentaTraspaso,
 		t.ID().String(), t.VentaID().String(), doctoInID, tipo, t.Folio().Value(),
 		t.AlmacenOrigen(), t.AlmacenDestino(), createdAtWC, createdBy,
+		reversadoNo,
 	); err != nil {
 		return 0, fmt.Errorf("invfb Save: insert MSP_VENTAS_TRASPASOS: %w", firebird.MapError(err))
 	}
 
 	return doctoInID, nil
+}
+
+// MarcarDirectoReversado sets REVERSADO='S' on the MSP_VENTAS_TRASPASOS row
+// for the given DOCTO_IN_ID (TIPO='directo' only). It executes within the
+// caller's ambient transaction via firebird.GetQuerier, matching the pattern
+// used by Save.
+func (r *TraspasoRepo) MarcarDirectoReversado(ctx context.Context, doctoInID int) error {
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	if _, err := q.ExecContext(ctx, updateVentaTraspasoReversado, doctoInID); err != nil {
+		return fmt.Errorf("invfb MarcarDirectoReversado docto_in_id=%d: %w", doctoInID, firebird.MapError(err))
+	}
+	return nil
 }
 
 // resolveClaves returns a map[articuloID]claveArticulo for all detalles.

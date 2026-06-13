@@ -55,8 +55,18 @@ const executeAplicaDoctoIn = `EXECUTE PROCEDURE aplica_docto_in(?)`
 //nolint:gosec // SQL constant, not user input.
 const insertVentaTraspaso = `INSERT INTO MSP_VENTAS_TRASPASOS (
   ID, VENTA_ID, DOCTO_IN_ID, TIPO, FOLIO,
-  ALMACEN_ORIGEN, ALMACEN_DESTINO, CREATED_AT, CREATED_BY
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ALMACEN_ORIGEN, ALMACEN_DESTINO, CREATED_AT, CREATED_BY,
+  REVERSADO
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+// updateVentaTraspasoReversado marks the directo traspaso for a given
+// DOCTO_IN_ID as reversed (REVERSADO = 'S'). Only directo rows should be
+// targeted; the TIPO filter prevents accidentally marking a reverso row.
+//
+//nolint:gosec // SQL constant, not user input.
+const updateVentaTraspasoReversado = `UPDATE MSP_VENTAS_TRASPASOS
+SET REVERSADO = 'S'
+WHERE DOCTO_IN_ID = ? AND TIPO = 'directo'`
 
 // ─── Clave articulo lookup ────────────────────────────────────────────────────
 
@@ -96,8 +106,8 @@ WHERE VENTA_ID = ?
 ORDER BY DOCTO_IN_ID`
 
 // selectVentaTraspasoRowByDoctoIn reads back the lookup row for a given
-// DOCTO_IN_ID to reconstruct the full aggregate (VENTA_ID + TIPO).
-const selectVentaTraspasoRowByDoctoIn = `SELECT VENTA_ID, TIPO
+// DOCTO_IN_ID to reconstruct the full aggregate (VENTA_ID + TIPO + REVERSADO).
+const selectVentaTraspasoRowByDoctoIn = `SELECT VENTA_ID, TIPO, REVERSADO
 FROM MSP_VENTAS_TRASPASOS
 WHERE DOCTO_IN_ID = ?`
 
