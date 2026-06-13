@@ -392,18 +392,21 @@ func TestRecomputarMontos_Property_SumInvariant(t *testing.T) {
 		}
 
 		// Generate standalone productos.
+		// Prices use scale -2 (centavos: e.g. 10050 → 100.50) and quantities
+		// use scale -2 (e.g. 175 → 1.75) so that precio × cantidad can produce
+		// up to 4 decimal places, forcing Round(2) to do real work.
 		standalones := make([]lineItem, numStandalone)
 		standaloneDTOs := make([]domain.CrearVentaProductoInput, numStandalone)
 		orig, dest := 1, 2
 		for i := range numStandalone {
-			a := rapid.Int64Range(0, 999_999).Draw(rt, "sa_a")
-			c := rapid.Int64Range(0, 999_999).Draw(rt, "sa_c")
-			k := rapid.Int64Range(0, 999_999).Draw(rt, "sa_k")
-			q := rapid.Int64Range(1, 100).Draw(rt, "sa_q")
-			anual := decimal.New(a, 0)
-			corto := decimal.New(c, 0)
-			contado := decimal.New(k, 0)
-			qty := decimal.New(q, 0)
+			a := rapid.Int64Range(0, 99_999_999).Draw(rt, "sa_a")
+			c := rapid.Int64Range(0, 99_999_999).Draw(rt, "sa_c")
+			k := rapid.Int64Range(0, 99_999_999).Draw(rt, "sa_k")
+			q := rapid.Int64Range(1, 10_000).Draw(rt, "sa_q")
+			anual := decimal.New(a, -2) // e.g. 123456 → 1234.56
+			corto := decimal.New(c, -2)
+			contado := decimal.New(k, -2)
+			qty := decimal.New(q, -2) // e.g. 175 → 1.75; precio×qty has ≤4dp
 			standalones[i] = lineItem{anual, corto, contado, qty}
 			prec, _ := domain.NewMontoSnapshot(anual, corto, contado)
 			standaloneDTOs[i] = domain.CrearVentaProductoInput{
@@ -419,14 +422,14 @@ func TestRecomputarMontos_Property_SumInvariant(t *testing.T) {
 		var childDTOs []domain.CrearVentaProductoInput
 		comboIDs := make([]uuid.UUID, numCombos)
 		for i := range numCombos {
-			ca := rapid.Int64Range(0, 999_999).Draw(rt, "co_a")
-			cc := rapid.Int64Range(0, 999_999).Draw(rt, "co_c")
-			ck := rapid.Int64Range(0, 999_999).Draw(rt, "co_k")
-			cq := rapid.Int64Range(1, 10).Draw(rt, "co_q")
-			anual := decimal.New(ca, 0)
-			corto := decimal.New(cc, 0)
-			contado := decimal.New(ck, 0)
-			qty := decimal.New(cq, 0)
+			ca := rapid.Int64Range(0, 99_999_999).Draw(rt, "co_a")
+			cc := rapid.Int64Range(0, 99_999_999).Draw(rt, "co_c")
+			ck := rapid.Int64Range(0, 99_999_999).Draw(rt, "co_k")
+			cq := rapid.Int64Range(1, 10_000).Draw(rt, "co_q")
+			anual := decimal.New(ca, -2)
+			corto := decimal.New(cc, -2)
+			contado := decimal.New(ck, -2)
+			qty := decimal.New(cq, -2)
 			combos[i] = lineItem{anual, corto, contado, qty}
 			prec, _ := domain.NewMontoSnapshot(anual, corto, contado)
 			id := uuid.New()

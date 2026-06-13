@@ -171,7 +171,7 @@ type CrearVentaBody struct {
 	GPS         GPSDTO             `json:"gps"`
 	FechaVenta  string             `json:"fecha_venta"           format:"date-time"`
 	TipoVenta   string             `json:"tipo_venta"            enum:"CONTADO,CREDITO"`
-	Montos      MontosDTO          `json:"montos"`
+	Montos      MontosDTO          `json:"montos"            doc:"Ignorado; los montos se derivan de los precios de línea. Se conserva por compatibilidad."`
 	PlanCredito *PlanCreditoDTO    `json:"plan_credito,omitempty"`
 	DiaCobranza *DiaCobranzaDTO    `json:"dia_cobranza,omitempty"`
 	Nota        *string            `json:"nota,omitempty"        maxLength:"500" doc:"Nota libre, máximo 500 caracteres"`
