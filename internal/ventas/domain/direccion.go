@@ -5,7 +5,7 @@ import "strings"
 // Maximum widths mirror the Firebird column widths in MSP_VENTAS.
 const (
 	maxCalleLength          = 300
-	maxNumeroExteriorLength = 20
+	maxNumeroExteriorLength = 50
 	maxColoniaLength        = 120
 	maxPoblacionLength      = 120
 	maxCiudadLength         = 120

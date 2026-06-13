@@ -267,7 +267,7 @@ func TestNewDireccion_BlankNumeroExteriorNormalizesToNil(t *testing.T) {
 func TestNewDireccion_RejectsInvalid(t *testing.T) {
 	t.Parallel()
 	long := strings.Repeat("x", 301)
-	long20 := strings.Repeat("y", 21)
+	longNumExt := strings.Repeat("y", 51)
 	long120 := strings.Repeat("z", 121)
 	cases := []struct {
 		name string
@@ -276,7 +276,7 @@ func TestNewDireccion_RejectsInvalid(t *testing.T) {
 	}{
 		{"calle empty", func(p *domain.NewDireccionParams) { p.Calle = "  " }, "calle_required"},
 		{"calle too long", func(p *domain.NewDireccionParams) { p.Calle = long }, "calle_too_long"},
-		{"numero too long", func(p *domain.NewDireccionParams) { p.NumeroExterior = &long20 }, "numero_exterior_too_long"},
+		{"numero too long", func(p *domain.NewDireccionParams) { p.NumeroExterior = &longNumExt }, "numero_exterior_too_long"},
 		{"colonia empty", func(p *domain.NewDireccionParams) { p.Colonia = "" }, "colonia_required"},
 		{"colonia too long", func(p *domain.NewDireccionParams) { p.Colonia = long120 }, "colonia_too_long"},
 		{"poblacion empty", func(p *domain.NewDireccionParams) { p.Poblacion = "" }, "poblacion_required"},

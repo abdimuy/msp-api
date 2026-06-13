@@ -283,10 +283,10 @@ var (
 		"la calle excede 300 caracteres",
 	)
 	// ErrNumeroExteriorDemasiadoLargo is returned when numero_exterior
-	// exceeds 20 chars.
+	// exceeds 50 chars.
 	ErrNumeroExteriorDemasiadoLargo = apperror.NewValidation(
 		"numero_exterior_too_long",
-		"el número exterior excede 20 caracteres",
+		"el número exterior excede 50 caracteres",
 	)
 	// ErrColoniaRequerida is returned when colonia is empty after trim.
 	ErrColoniaRequerida = apperror.NewValidation(
