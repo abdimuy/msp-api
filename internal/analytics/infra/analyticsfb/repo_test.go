@@ -15,6 +15,7 @@ package analyticsfb_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -517,6 +518,167 @@ func scanDecimalForTest(raw any, scale int) (decimal.Decimal, error) {
 	// firebird.ScanDecimal is the canonical helper for SUM columns.
 	// Import it via the platform package already in scope.
 	return firebird.ScanDecimal(raw, scale)
+}
+
+// TestRepo_UpsertCandidatos_Perf measures UpsertCandidatos throughput for
+// N=5,000 and N=20,000 synthetic rows. Run with:
+//
+//	FB_DATABASE=/firebird/data/MUEBLERA.FDB \
+//	  go test ./internal/analytics/infra/analyticsfb/... \
+//	  -run TestRepo_UpsertCandidatos_Perf -v -timeout 600s
+//
+//nolint:paralleltest // serial: shares rollback-only tx.
+func TestRepo_UpsertCandidatos_Perf(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	for _, n := range []int{5000, 20000} {
+		n := n
+		t.Run(fmt.Sprintf("N=%d", n), func(t *testing.T) {
+			fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+				repo := analyticsfb.NewRepo(pool)
+
+				// Build N synthetic candidatos with unique large negative CLIENTE_IDs.
+				candidatos := make([]*domain.WinbackCandidato, 0, n)
+				for i := range n {
+					c, err := domain.CrearWinbackCandidato(domain.CrearWinbackCandidatoParams{
+						ClienteID:         -(500000 + i),
+						Nombre:            "Perf Test Cliente",
+						Zona:              "R/PERF",
+						Telefono:          "238 000 0000",
+						FechaUltimaCompra: fixedFechaUltima,
+						Frecuencia:        i % 20,
+						Monetary:          decimal.NewFromFloat(float64(1000 + i)),
+						Saldo:             decimal.NewFromFloat(float64(i % 500)),
+						PorLiquidarPct:    decimal.NewFromFloat(float64(i % 100)),
+						NextBestProduct:   "ROPERO MONARCA",
+						EnControl:         i%2 == 0,
+						CohorteFecha:      fixedCohorte,
+						Now:               fixedNow,
+					})
+					require.NoError(t, err)
+					candidatos = append(candidatos, c)
+				}
+
+				// Skip if table not available.
+				if skipErr := repo.UpsertCandidatos(ctx, candidatos[:1]); skipErr != nil {
+					t.Skipf("UpsertCandidatos failed — migration 000035 may not be applied: %v", skipErr)
+				}
+
+				start := time.Now()
+				err := repo.UpsertCandidatos(ctx, candidatos)
+				elapsed := time.Since(start)
+				require.NoError(t, err)
+
+				rowsPerSec := float64(n) / elapsed.Seconds()
+				projected43k := time.Duration(float64(43399) / rowsPerSec * float64(time.Second))
+				t.Logf("PERF N=%d elapsed=%s rows/sec=%.0f projected_43k=%s",
+					n, elapsed.Round(time.Millisecond), rowsPerSec, projected43k.Round(time.Millisecond))
+			})
+		})
+	}
+}
+
+// TestRepo_BatchedUpsert_PreservesEnControlAcrossMultipleRows verifies that a
+// second batched upsert (with different EN_CONTROL/COHORTE_FECHA in-memory)
+// does NOT overwrite the persisted flags for any row in the batch. This is the
+// multi-row companion to TestRepo_Upsert_PreservesEnControlAndCohorte.
+//
+//nolint:paralleltest // serial: shares rollback-only tx.
+func TestRepo_BatchedUpsert_PreservesEnControlAcrossMultipleRows(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		repo := analyticsfb.NewRepo(pool)
+
+		// Insert 5 rows with alternating EN_CONTROL values and a fixed cohort date.
+		clienteIDs := []int{-20001, -20002, -20003, -20004, -20005}
+		enControls := []bool{true, false, true, false, true}
+
+		first := make([]*domain.WinbackCandidato, len(clienteIDs))
+		for i, id := range clienteIDs {
+			c, err := domain.CrearWinbackCandidato(domain.CrearWinbackCandidatoParams{
+				ClienteID:       id,
+				Nombre:          "Batch Test",
+				Zona:            "R/BATCH",
+				Frecuencia:      1,
+				Monetary:        decimal.NewFromFloat(float64(1000 * (i + 1))),
+				Saldo:           decimal.Zero,
+				PorLiquidarPct:  decimal.Zero,
+				NextBestProduct: "SILLA",
+				EnControl:       enControls[i],
+				CohorteFecha:    fixedCohorte,
+				Now:             fixedNow,
+			})
+			require.NoError(t, err)
+			first[i] = c
+		}
+
+		err := repo.UpsertCandidatos(ctx, first)
+		if err != nil {
+			t.Skipf("UpsertCandidatos failed — migration 000035 may not be applied: %v", err)
+		}
+
+		// Second batch: same cliente IDs, EN_CONTROL all false, different CohorteFecha.
+		// The persisted flags must NOT change.
+		differentCohorte := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		second := make([]*domain.WinbackCandidato, len(clienteIDs))
+		for i, id := range clienteIDs {
+			c, err := domain.CrearWinbackCandidato(domain.CrearWinbackCandidatoParams{
+				ClienteID:       id,
+				Nombre:          "Batch Test Actualizado",
+				Zona:            "R/BATCH",
+				Frecuencia:      5,
+				Monetary:        decimal.NewFromFloat(float64(9000 * (i + 1))),
+				Saldo:           decimal.Zero,
+				PorLiquidarPct:  decimal.Zero,
+				NextBestProduct: "MESA",
+				EnControl:       false,            // different — must NOT be persisted
+				CohorteFecha:    differentCohorte, // different — must NOT be persisted
+				Now:             fixedNow.Add(time.Hour),
+			})
+			require.NoError(t, err)
+			second[i] = c
+		}
+		err = repo.UpsertCandidatos(ctx, second)
+		require.NoError(t, err)
+
+		// Read back and verify each row.
+		page, err := repo.ListCandidatos(ctx, outbound.ListWinbackParams{Zona: "R/BATCH"})
+		require.NoError(t, err)
+
+		got := make(map[int]*domain.WinbackCandidato, len(clienteIDs))
+		for _, item := range page.Items {
+			for _, id := range clienteIDs {
+				if item.ClienteID() == id {
+					got[id] = item
+				}
+			}
+		}
+		require.Len(t, got, len(clienteIDs), "all rows must appear after second batched upsert")
+
+		for i, id := range clienteIDs {
+			row := got[id]
+			require.NotNil(t, row, "row for clienteID=%d must exist", id)
+
+			// Mutable field was updated.
+			assert.Equal(t, "Batch Test Actualizado", row.Nombre(),
+				"NOMBRE must be updated for clienteID=%d", id)
+
+			// EN_CONTROL must retain the first-insert value.
+			assert.Equal(t, enControls[i], row.EnControl(),
+				"EN_CONTROL must be preserved for clienteID=%d: want=%v got=%v",
+				id, enControls[i], row.EnControl())
+
+			// COHORTE_FECHA must retain the first-insert value.
+			assert.WithinDuration(t, fixedCohorte, row.CohorteFecha(), time.Second,
+				"COHORTE_FECHA must be preserved for clienteID=%d: want=%s got=%s",
+				id, fixedCohorte, row.CohorteFecha())
+		}
+
+		t.Logf("batched preserve-flags ok: %d rows verified", len(got))
+	})
 }
 
 // TestRepo_LeerAnclasDesde_Smoke is a read-only smoke test against existing

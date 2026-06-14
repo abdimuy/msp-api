@@ -27,52 +27,13 @@ const candidatoCols = `
 	CREATED_AT,
 	UPDATED_AT`
 
-// updateCandidato updates the mutable fields of an existing candidato row.
-//
-// CRITICAL: EN_CONTROL and COHORTE_FECHA are intentionally absent from the
-// SET clause. They are set once at creation (INSERT) and must survive
-// subsequent refreshes unchanged so the A/B flag and cohort date remain stable.
-//
-// Note on MERGE: the nakagami/firebirdsql driver returns SQL error -804
-// ("Data type unknown") when parameters appear inside the USING SELECT clause
-// of MERGE (e.g. `USING (SELECT ? FROM RDB$DATABASE)`). This is a known driver
-// limitation. We fall back to the established UPDATE-then-INSERT pattern which
-// avoids the parameterized USING clause entirely.
-//
-// Positional args (11):
-//
-//	NOMBRE, ZONA, TELEFONO, FECHA_ULTIMA_COMPRA, FRECUENCIA,
-//	MONETARY, SALDO, POR_LIQUIDAR_PCT, NEXT_BEST_PRODUCT, UPDATED_AT,
-//	CLIENTE_ID (WHERE)
-const updateCandidato = `
-UPDATE MSP_AN_WINBACK_CANDIDATOS
-SET
-  NOMBRE              = ?,
-  ZONA                = ?,
-  TELEFONO            = ?,
-  FECHA_ULTIMA_COMPRA = ?,
-  FRECUENCIA          = ?,
-  MONETARY            = ?,
-  SALDO               = ?,
-  POR_LIQUIDAR_PCT    = ?,
-  NEXT_BEST_PRODUCT   = ?,
-  UPDATED_AT          = ?
-WHERE CLIENTE_ID = ?`
-
-// insertCandidato inserts a new candidato row with ALL columns explicit
-// (CLAUDE.md Rule 1: no DB-side defaults for ID, CREATED_AT, UPDATED_AT).
-//
-// Positional args (15):
-//
-//	ID, CLIENTE_ID, NOMBRE, ZONA, TELEFONO, FECHA_ULTIMA_COMPRA, FRECUENCIA,
-//	MONETARY, SALDO, POR_LIQUIDAR_PCT, NEXT_BEST_PRODUCT, EN_CONTROL,
-//	COHORTE_FECHA, CREATED_AT, UPDATED_AT
-const insertCandidato = `
-INSERT INTO MSP_AN_WINBACK_CANDIDATOS
-  (ID, CLIENTE_ID, NOMBRE, ZONA, TELEFONO, FECHA_ULTIMA_COMPRA,
-   FRECUENCIA, MONETARY, SALDO, POR_LIQUIDAR_PCT, NEXT_BEST_PRODUCT,
-   EN_CONTROL, COHORTE_FECHA, CREATED_AT, UPDATED_AT)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+// Note on upsert strategy: the nakagami/firebirdsql driver returns SQL error
+// -804 ("Data type unknown") when parameters appear inside the USING SELECT
+// clause of MERGE. We therefore use EXECUTE BLOCK with typed input parameters
+// (see repo.go buildUpsertBlock), which batches N rows into a single statement
+// and avoids the MERGE limitation. The UPDATE inside the block omits EN_CONTROL
+// and COHORTE_FECHA so they are preserved from the original INSERT across
+// subsequent refreshes.
 
 const selectCandidatoBase = `SELECT` + candidatoCols + `
 FROM MSP_AN_WINBACK_CANDIDATOS`
@@ -270,7 +231,7 @@ SELECT
               AS NUMERIC(5,2))
        ELSE 0
   END                                                                AS POR_LIQUIDAR_PCT,
-  COALESCE(nbp.ARTICULO_NOMBRE, '')                                  AS NEXT_BEST_PRODUCT
+  SUBSTRING(COALESCE(nbp.ARTICULO_NOMBRE, '') FROM 1 FOR 120)        AS NEXT_BEST_PRODUCT
 FROM rfm
 JOIN CLIENTES c ON c.CLIENTE_ID = rfm.CLIENTE_ID
 LEFT JOIN ZONAS_CLIENTES z   ON z.ZONA_CLIENTE_ID = c.ZONA_CLIENTE_ID
