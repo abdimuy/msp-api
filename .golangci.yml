@@ -244,6 +244,14 @@ linters:
           alias: inventariooutbound
         - pkg: github.com/abdimuy/msp-api/internal/analytics/app
           alias: analyticsapp
+        - pkg: github.com/abdimuy/msp-api/internal/analytics/domain
+          alias: analyticsdomain
+        - pkg: github.com/abdimuy/msp-api/internal/analytics/ports/outbound
+          alias: analyticsoutbound
+        - pkg: github.com/abdimuy/msp-api/internal/analytics/infra/analyticsfb
+          alias: analyticsfb
+        - pkg: github.com/abdimuy/msp-api/internal/analytics/infra/analyticshttp
+          alias: analyticshttp
         - pkg: github.com/go-playground/validator/v10
           alias: pv
         - pkg: firebase.google.com/go/v4

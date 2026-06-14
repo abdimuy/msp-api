@@ -37,6 +37,9 @@ import (
 
 	inventarioapp "github.com/abdimuy/msp-api/internal/inventario/app"
 	"github.com/abdimuy/msp-api/internal/inventario/infra/invhttp"
+
+	analyticsapp "github.com/abdimuy/msp-api/internal/analytics/app"
+	"github.com/abdimuy/msp-api/internal/analytics/infra/analyticshttp"
 )
 
 // RootHandler is the assembled chi router exposed as an fx-typed dependency.
@@ -139,6 +142,7 @@ func provideRootHandler(
 	cobranzaVentasRepo cobranzaoutbound.VentasRepo,
 	microsipSvc *microsipapp.Service,
 	inventarioSvc *inventarioapp.Service,
+	analyticsSvc *analyticsapp.Service,
 	logger *slog.Logger,
 ) RootHandler {
 	r := chi.NewRouter()
@@ -209,6 +213,17 @@ func provideRootHandler(
 		r.Group(func(r chi.Router) {
 			r.Use(skipAuthForPublicDocs(authn.Handler))
 			invhttp.MountRouter(r, inventarioSvc)
+		})
+
+		// Analytics endpoints — authn only; permission enforced inside handlers.
+		// The winback list and attribution are reads; the manual refresh POST is
+		// a demo trigger guarded by PermAnalyticsRefresh inside the handler.
+		// Authn-only, read-oriented (no idempotency middleware) like inventario;
+		// mounted under a chi route prefix like cobranza (the handlers register
+		// bare /winback paths, so the /analytics prefix lives here).
+		r.Route("/analytics", func(r chi.Router) {
+			r.Use(skipAuthForPublicDocs(authn.Handler))
+			analyticshttp.MountRouter(r, analyticsSvc)
 		})
 
 		// Cobranza endpoints — authn only. Read (saldos, pagos, sync) plus
