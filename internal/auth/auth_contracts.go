@@ -111,4 +111,9 @@ const (
 	PermTraspasosVer = domain.PermTraspasosVer
 	// PermStockConsultar — see domain.PermStockConsultar.
 	PermStockConsultar = domain.PermStockConsultar
+
+	// PermAnalyticsWinbackRead — see domain.PermAnalyticsWinbackRead.
+	PermAnalyticsWinbackRead = domain.PermAnalyticsWinbackRead
+	// PermAnalyticsRefresh — see domain.PermAnalyticsRefresh.
+	PermAnalyticsRefresh = domain.PermAnalyticsRefresh
 )

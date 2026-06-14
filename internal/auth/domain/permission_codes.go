@@ -91,6 +91,13 @@ const (
 	PermTraspasosVer Permission = "traspasos:ver"
 	// PermStockConsultar grants querying current stock for an articulo/almacen pair.
 	PermStockConsultar Permission = "stock:consultar"
+
+	// PermAnalyticsWinbackRead grants reading the winback candidate list and
+	// related analytics views.
+	PermAnalyticsWinbackRead Permission = "analytics:winback_ver"
+	// PermAnalyticsRefresh grants triggering a manual refresh of the analytics
+	// materialized tables (winback candidates, refresh state).
+	PermAnalyticsRefresh Permission = "analytics:refrescar"
 )
 
 // PermissionMeta is a catalog entry pairing a permission code with the
@@ -113,6 +120,7 @@ const (
 	categoriaFailedIntents = "failed_intents"
 	categoriaCobranza      = "cobranza"
 	categoriaInventario    = "inventario"
+	categoriaAnalytics     = "analytics"
 )
 
 // AllPermissions returns every permission known to the auth module, sorted
@@ -155,6 +163,9 @@ func AllPermissions() []PermissionMeta {
 		{PermInventarioVer, "ver el catálogo de almacenes y endpoints administrativos de inventario", categoriaInventario},
 		{PermTraspasosVer, "ver traspasos asociados a una venta", categoriaInventario},
 		{PermStockConsultar, "consultar existencia de un artículo en un almacén", categoriaInventario},
+
+		{PermAnalyticsWinbackRead, "ver la lista de candidatos winback y vistas de analytics", categoriaAnalytics},
+		{PermAnalyticsRefresh, "disparar un refresh manual de las tablas materializadas de analytics", categoriaAnalytics},
 	}
 	sort.Slice(perms, func(i, j int) bool { return perms[i].Code < perms[j].Code })
 	return perms
