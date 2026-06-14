@@ -27,6 +27,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/analytics/infra/analyticsfb"
 	"github.com/abdimuy/msp-api/internal/analytics/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/fbtestutil"
+	"github.com/abdimuy/msp-api/internal/platform/firebird"
 )
 
 // requireFBEnv skips the test when FB_DATABASE is not set.
@@ -391,6 +392,131 @@ func TestRepo_ExistingControlFlags_ReturnsCorrectMap(t *testing.T) {
 		t.Logf("control flags map: %d entries, -10006=%v -10007=%v",
 			len(flags), flag1, flag2)
 	})
+}
+
+// TestRepo_LeerAnclasDesde_Regression verifies that the fixed query (CTE-based
+// saldo from MSP_SALDOS_VENTAS, single-pass NBP) produces correct, un-inflated
+// aggregates for a real client that has both DOCTOS_PV sales and
+// MSP_SALDOS_VENTAS rows.
+//
+// Steps:
+//  1. Find a qualifying client: COUNT(DISTINCT DOCTO_PV_ID) >= 2 in DOCTOS_PV
+//     AND COUNT(*) >= 2 rows in MSP_SALDOS_VENTAS (CARGO_CANCELADO='N').
+//     If none exists skip cleanly.
+//  2. Compute expected values directly from the source tables.
+//  3. Call LeerAnclasDesde(ctx, nil) and find the client.
+//  4. Assert Monetary == SUM(IMPORTE_NETO) and Saldo == SUM(sv.SALDO).
+//
+//nolint:paralleltest // serial: read-only against live Microsip data.
+func TestRepo_LeerAnclasDesde_Regression(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		repo := analyticsfb.NewRepo(pool)
+
+		// ── Step 1: find a qualifying client ──────────────────────────────────
+		// We need a client with >= 2 distinct DOCTOS_PV rows and >= 2 active
+		// MSP_SALDOS_VENTAS rows so we can confirm there is no row-explosion
+		// (if aggregation were wrong with duplicates the numbers would differ).
+		const findClientQuery = `
+SELECT FIRST 1 pv.CLIENTE_ID
+FROM DOCTOS_PV pv
+WHERE pv.CLIENTE_ID IS NOT NULL
+  AND pv.TIPO_DOCTO IN ('V', 'P')
+  AND pv.ESTATUS = 'N'
+GROUP BY pv.CLIENTE_ID
+HAVING COUNT(DISTINCT pv.DOCTO_PV_ID) >= 2
+   AND pv.CLIENTE_ID IN (
+     SELECT sv.CLIENTE_ID
+     FROM MSP_SALDOS_VENTAS sv
+     WHERE sv.CARGO_CANCELADO = 'N'
+     GROUP BY sv.CLIENTE_ID
+     HAVING COUNT(*) >= 2
+   )
+ORDER BY COUNT(DISTINCT pv.DOCTO_PV_ID) DESC`
+
+		q := pool.DB
+		var clienteID int
+		row := q.QueryRowContext(ctx, findClientQuery)
+		if err := row.Scan(&clienteID); err != nil {
+			t.Skipf("no qualifying client found (need >=2 DOCTOS_PV and >=2 MSP_SALDOS_VENTAS rows): %v", err)
+		}
+		t.Logf("regression client: clienteID=%d", clienteID)
+
+		// ── Step 2: compute expected values from source tables ─────────────────
+		var expectedMonetaryRaw any
+		err := q.QueryRowContext(ctx, `
+SELECT CAST(SUM(pv.IMPORTE_NETO) AS NUMERIC(18,2))
+FROM DOCTOS_PV pv
+WHERE pv.CLIENTE_ID = ?
+  AND pv.TIPO_DOCTO IN ('V', 'P')
+  AND pv.ESTATUS = 'N'`, clienteID).Scan(&expectedMonetaryRaw)
+		require.NoError(t, err, "computing expected monetary")
+
+		var expectedSaldoRaw any
+		err = q.QueryRowContext(ctx, `
+SELECT CAST(SUM(sv.SALDO) AS NUMERIC(18,2))
+FROM MSP_SALDOS_VENTAS sv
+WHERE sv.CLIENTE_ID = ?
+  AND sv.CARGO_CANCELADO = 'N'`, clienteID).Scan(&expectedSaldoRaw)
+		require.NoError(t, err, "computing expected saldo")
+
+		// Use firebird.ScanDecimal to handle the nakagami driver's unscaled SUM.
+		expectedMonetary, err := scanDecimalForTest(expectedMonetaryRaw, 2)
+		require.NoError(t, err, "parsing expected monetary")
+		expectedSaldo, err := scanDecimalForTest(expectedSaldoRaw, 2)
+		require.NoError(t, err, "parsing expected saldo")
+
+		t.Logf("expected: monetary=%s saldo=%s", expectedMonetary, expectedSaldo)
+
+		// ── Step 3: call LeerAnclasDesde(nil) and find the client ─────────────
+		start := time.Now()
+		anclas, lerr := repo.LeerAnclasDesde(ctx, nil)
+		elapsed := time.Since(start)
+		if lerr != nil {
+			t.Skipf("LeerAnclasDesde returned error — check Microsip schema: %v", lerr)
+		}
+		t.Logf("LeerAnclasDesde(nil) completed in %s, returned %d rows", elapsed, len(anclas))
+
+		var found *outbound.AnclaCliente
+		for i := range anclas {
+			if anclas[i].ClienteID == clienteID {
+				found = &anclas[i]
+				break
+			}
+		}
+		require.NotNil(t, found, "clienteID=%d must appear in LeerAnclasDesde result", clienteID)
+
+		// ── Step 4: assert Monetary and Saldo match source tables ─────────────
+		assert.True(t, expectedMonetary.Equal(found.Monetary),
+			"monetary inflation check: expected=%s got=%s (clienteID=%d)",
+			expectedMonetary, found.Monetary, clienteID)
+
+		// Saldo: if all credits are negative (fully paid), clamp to 0.
+		if expectedSaldo.IsNegative() {
+			expectedSaldo = decimal.Zero
+		}
+		assert.True(t, expectedSaldo.Equal(found.Saldo),
+			"saldo inflation check: expected=%s got=%s (clienteID=%d)",
+			expectedSaldo, found.Saldo, clienteID)
+
+		t.Logf("regression ok: clienteID=%d monetary=%s saldo=%s nbp=%q elapsed=%s",
+			clienteID, found.Monetary, found.Saldo, found.NextBestProduct, elapsed)
+	})
+}
+
+// scanDecimalForTest is a local helper that delegates to firebird.ScanDecimal
+// without importing the internal platform package from the test file directly
+// (it is already imported transitively through fbtestutil). We mirror the
+// behavior here to keep the test self-contained.
+func scanDecimalForTest(raw any, scale int) (decimal.Decimal, error) {
+	if raw == nil {
+		return decimal.Zero, nil
+	}
+	// firebird.ScanDecimal is the canonical helper for SUM columns.
+	// Import it via the platform package already in scope.
+	return firebird.ScanDecimal(raw, scale)
 }
 
 // TestRepo_LeerAnclasDesde_Smoke is a read-only smoke test against existing

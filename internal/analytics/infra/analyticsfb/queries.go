@@ -138,13 +138,38 @@ VALUES (?, ?, ?)`
 // than a full join to avoid inflating the main GROUP BY and to keep the query
 // single-pass. In cases where the subquery finds no result, NBP is ''.
 
-// leerAnclasBase returns per-cliente RFM + saldo + NBP for ALL clients with
-// at least one DOCTOS_PV sale. When a `since` watermark is used the caller
-// appends `AND pv.FECHA >= ?` before the GROUP BY. The query uses
-// LEFT JOIN to DOCTOS_CC so clients with no credit history still appear with
-// saldo=0 and por_liquidar_pct=0.
+// leerAnclasBase is the fixed, scalable version of the winback anchor query.
 //
-// Column order (must match anclaRowRaw.scanFrom):
+// Previous implementation had two critical bugs:
+//  1. Row explosion: LEFT JOIN to IMPORTES_DOCTOS_CC/DOCTOS_CC at the
+//     DOCTO_PV row granularity produced P×K rows per client (P sales × K
+//     credit-lines), inflating MONETARY and SALDO aggregates and causing
+//     query times >10 min on the full DB.
+//  2. Correlated NBP subquery executed once per client (43 k times).
+//
+// Fix overview:
+//
+//   (A) saldo_cte: ONE row per client from MSP_SALDOS_VENTAS (the
+//       materialized cache maintained by triggers in migration 000010).
+//       No FECHA filter — saldo is current-state, not point-in-time.
+//       POR_LIQUIDAR_PCT = SUM(SALDO) / NULLIF(SUM(PRECIO_TOTAL),0) * 100,
+//       floored at 0.
+//
+//   (B) NBP: two-pass grouped aggregation (nbp_freq → nbp_max → nbp).
+//       nbp_freq groups (CLIENTE_ID, ARTICULO_NOMBRE) → CNT in one scan.
+//       nbp_max finds MAX(CNT) per CLIENTE_ID. nbp joins the two to get
+//       the top article, using MIN(ARTICULO_NOMBRE) for alphabetic tie-break.
+//       Avoids window functions (which force full materialization in
+//       Firebird 4 before streaming any rows, causing >20s delays).
+//
+//   (C) rfm CTE: unchanged — MAX(FECHA), COUNT(DISTINCT), SUM(IMPORTE_NETO)
+//       from DOCTOS_PV grouped by CLIENTE_ID.
+//
+// Watermark / `since` handling:
+//   When since != nil the caller injects an extra AND clause into BOTH rfm
+//   and nbp_freq (see repo.go). The saldo_cte has NO FECHA filter (current-state).
+//
+// Column order (must match anclaRowRaw.scanFrom exactly):
 //
 //	1  cliente_id
 //	2  nombre         (Win1252)
@@ -153,70 +178,106 @@ VALUES (?, ?, ?)`
 //	5  fecha_ultima_compra
 //	6  frecuencia
 //	7  monetary
-//	8  saldo          (CASE guarded ≥ 0)
+//	8  saldo          (floored at 0)
 //	9  por_liquidar   (NUMERIC(5,2), 0–100)
 //	10 next_best_product (Win1252, may be '')
-const leerAnclasBase = `
-SELECT
-  pv.CLIENTE_ID,
-  c.NOMBRE                                                             AS NOMBRE,
-  COALESCE(z.NOMBRE, '')                                              AS ZONA,
-  d.TELEFONO1                                                         AS TELEFONO,
-  MAX(pv.FECHA)                                                       AS FECHA_ULTIMA_COMPRA,
-  COUNT(DISTINCT pv.DOCTO_PV_ID)                                      AS FRECUENCIA,
-  CAST(SUM(pv.IMPORTE_NETO) AS NUMERIC(18,2))                        AS MONETARY,
-  CASE WHEN CAST(
-    SUM(CASE WHEN i.TIPO_IMPTE = 'C' THEN i.IMPORTE + i.IMPUESTO ELSE 0 END) -
-    SUM(CASE WHEN i.TIPO_IMPTE = 'R' THEN i.IMPORTE             ELSE 0 END)
-    AS NUMERIC(18,2)) > 0
-    THEN CAST(
-      SUM(CASE WHEN i.TIPO_IMPTE = 'C' THEN i.IMPORTE + i.IMPUESTO ELSE 0 END) -
-      SUM(CASE WHEN i.TIPO_IMPTE = 'R' THEN i.IMPORTE             ELSE 0 END)
-      AS NUMERIC(18,2))
-    ELSE 0
-  END                                                                  AS SALDO,
-  CASE WHEN CAST(
-    SUM(CASE WHEN i.TIPO_IMPTE = 'C' THEN i.IMPORTE + i.IMPUESTO ELSE 0 END)
-    AS NUMERIC(18,2)) > 0
-    AND (SUM(CASE WHEN i.TIPO_IMPTE = 'C' THEN i.IMPORTE + i.IMPUESTO ELSE 0 END) -
-         SUM(CASE WHEN i.TIPO_IMPTE = 'R' THEN i.IMPORTE             ELSE 0 END)) > 0
-    THEN CAST(
-      (SUM(CASE WHEN i.TIPO_IMPTE = 'C' THEN i.IMPORTE + i.IMPUESTO ELSE 0 END) -
-       SUM(CASE WHEN i.TIPO_IMPTE = 'R' THEN i.IMPORTE             ELSE 0 END))
-      / SUM(CASE WHEN i.TIPO_IMPTE = 'C' THEN i.IMPORTE + i.IMPUESTO ELSE 0 END)
-      * 100 AS NUMERIC(5,2))
-    ELSE 0
-  END                                                                  AS POR_LIQUIDAR_PCT,
-  COALESCE((
-    SELECT FIRST 1 a2.NOMBRE
-    FROM DOCTOS_PV pv2
-    JOIN DOCTOS_PV_DET det2 ON det2.DOCTO_PV_ID = pv2.DOCTO_PV_ID
-    JOIN ARTICULOS a2        ON a2.ARTICULO_ID   = det2.ARTICULO_ID
-    WHERE pv2.CLIENTE_ID = pv.CLIENTE_ID
-      AND pv2.TIPO_DOCTO IN ('V', 'P')
-      AND pv2.ESTATUS = 'N'
-    GROUP BY a2.NOMBRE
-    ORDER BY COUNT(*) DESC, a2.NOMBRE ASC
-  ), '')                                                               AS NEXT_BEST_PRODUCT
-FROM DOCTOS_PV pv
-JOIN CLIENTES c ON c.CLIENTE_ID = pv.CLIENTE_ID
-LEFT JOIN ZONAS_CLIENTES z ON z.ZONA_CLIENTE_ID = c.ZONA_CLIENTE_ID
-LEFT JOIN DIRS_CLIENTES d ON d.CLIENTE_ID = c.CLIENTE_ID AND d.ES_DIR_PPAL = 'S'
-LEFT JOIN (
-  SELECT i.TIPO_IMPTE, i.IMPORTE, i.IMPUESTO, dc.CLIENTE_ID
-  FROM IMPORTES_DOCTOS_CC i
-  JOIN DOCTOS_CC dc ON dc.DOCTO_CC_ID = i.DOCTO_CC_ACR_ID
-  WHERE dc.CONCEPTO_CC_ID = 5 /* concepto 5 = cargo crédito (microsipConceptoCCCargo) */
-    AND dc.CANCELADO = 'N'
-    AND i.CANCELADO = 'N'
-) i ON i.CLIENTE_ID = pv.CLIENTE_ID
-WHERE pv.CLIENTE_ID IS NOT NULL
-  AND pv.TIPO_DOCTO IN ('V', 'P')
-  AND pv.ESTATUS = 'N'`
 
-// leerAnclasGroupBy is appended after any WHERE predicates.
-// COALESCE(z.NOMBRE, ”) mirrors the SELECT expression so unzoned clients
-// (z.NOMBRE IS NULL) are aggregated into the same ” bucket rather than
-// being grouped separately by NULL vs. ” (which Firebird treats as distinct).
-const leerAnclasGroupBy = `
-GROUP BY pv.CLIENTE_ID, c.NOMBRE, COALESCE(z.NOMBRE, ''), d.TELEFONO1`
+// leerAnclasRFMBase is the opening of the WITH block through the end of the
+// rfm CTE. The caller appends an optional FECHA predicate then leerAnclasRFMClose.
+const leerAnclasRFMBase = `
+WITH rfm AS (
+  SELECT
+    pv.CLIENTE_ID,
+    MAX(pv.FECHA)                              AS FECHA_ULTIMA_COMPRA,
+    COUNT(DISTINCT pv.DOCTO_PV_ID)             AS FRECUENCIA,
+    CAST(SUM(pv.IMPORTE_NETO) AS NUMERIC(18,2)) AS MONETARY
+  FROM DOCTOS_PV pv
+  WHERE pv.CLIENTE_ID IS NOT NULL
+    AND pv.TIPO_DOCTO IN ('V', 'P')
+    AND pv.ESTATUS = 'N'`
+
+// leerAnclasRFMClose closes the rfm CTE, opens saldo_cte, then opens nbp_freq.
+// saldo_cte has no FECHA filter (current-state read model).
+const leerAnclasRFMClose = `
+  GROUP BY pv.CLIENTE_ID
+),
+saldo_cte AS (
+  SELECT
+    sv.CLIENTE_ID,
+    CASE WHEN CAST(SUM(sv.SALDO) AS NUMERIC(18,2)) > 0
+         THEN CAST(SUM(sv.SALDO) AS NUMERIC(18,2))
+         ELSE 0
+    END                                        AS SALDO,
+    CAST(SUM(sv.PRECIO_TOTAL) AS NUMERIC(18,2)) AS PRECIO_TOTAL_SUM
+  FROM MSP_SALDOS_VENTAS sv
+  WHERE sv.CARGO_CANCELADO = 'N'
+  GROUP BY sv.CLIENTE_ID
+),`
+
+// leerAnclasNBPBase is the opening of the nbp_freq CTE. The caller appends an
+// optional FECHA predicate then leerAnclasNBPClose.
+//
+// NBP = Next Best Product: the most-frequently-purchased article per client.
+// We use a two-step aggregation instead of ROW_NUMBER() OVER PARTITION BY to
+// avoid Firebird 4's full-materialization behaviour with window functions
+// (which stalls result streaming for 20+ seconds on the full DB).
+//
+// Step 1 (nbp_freq): group by (CLIENTE_ID, ARTICULO_NOMBRE) → CNT.
+// Step 2 (nbp_max):  find MAX(CNT) per CLIENTE_ID.
+// Step 3 (nbp):      join the two and pick MIN(ARTICULO_NOMBRE) to break ties.
+const leerAnclasNBPBase = `
+nbp_freq AS (
+  SELECT
+    pv.CLIENTE_ID,
+    a.NOMBRE                                   AS ARTICULO_NOMBRE,
+    COUNT(*)                                   AS CNT
+  FROM DOCTOS_PV pv
+  JOIN DOCTOS_PV_DET det ON det.DOCTO_PV_ID = pv.DOCTO_PV_ID
+  JOIN ARTICULOS a        ON a.ARTICULO_ID   = det.ARTICULO_ID
+  WHERE pv.CLIENTE_ID IS NOT NULL
+    AND pv.TIPO_DOCTO IN ('V', 'P')
+    AND pv.ESTATUS = 'N'`
+
+// leerAnclasNBPClose closes nbp_freq, adds nbp_max and nbp CTEs, then the
+// final SELECT joining rfm + saldo_cte + nbp + dimension tables.
+const leerAnclasNBPClose = `
+  GROUP BY pv.CLIENTE_ID, a.NOMBRE
+),
+nbp_max AS (
+  SELECT CLIENTE_ID, MAX(CNT) AS MAX_CNT
+  FROM nbp_freq
+  GROUP BY CLIENTE_ID
+),
+nbp AS (
+  SELECT f.CLIENTE_ID, MIN(f.ARTICULO_NOMBRE) AS ARTICULO_NOMBRE
+  FROM nbp_freq f
+  JOIN nbp_max m ON m.CLIENTE_ID = f.CLIENTE_ID AND m.MAX_CNT = f.CNT
+  GROUP BY f.CLIENTE_ID
+)
+SELECT
+  rfm.CLIENTE_ID,
+  c.NOMBRE                                                            AS NOMBRE,
+  COALESCE(z.NOMBRE, '')                                             AS ZONA,
+  d.TELEFONO1                                                        AS TELEFONO,
+  rfm.FECHA_ULTIMA_COMPRA,
+  rfm.FRECUENCIA,
+  rfm.MONETARY,
+  COALESCE(sc.SALDO, 0)                                              AS SALDO,
+  CASE WHEN COALESCE(sc.PRECIO_TOTAL_SUM, 0) > 0
+            AND COALESCE(sc.SALDO, 0) > 0
+       THEN CAST(
+              sc.SALDO / sc.PRECIO_TOTAL_SUM * 100
+              AS NUMERIC(5,2))
+       ELSE 0
+  END                                                                AS POR_LIQUIDAR_PCT,
+  COALESCE(nbp.ARTICULO_NOMBRE, '')                                  AS NEXT_BEST_PRODUCT
+FROM rfm
+JOIN CLIENTES c ON c.CLIENTE_ID = rfm.CLIENTE_ID
+LEFT JOIN ZONAS_CLIENTES z   ON z.ZONA_CLIENTE_ID = c.ZONA_CLIENTE_ID
+LEFT JOIN DIRS_CLIENTES d    ON d.CLIENTE_ID = c.CLIENTE_ID AND d.ES_DIR_PPAL = 'S'
+LEFT JOIN saldo_cte sc       ON sc.CLIENTE_ID = rfm.CLIENTE_ID
+LEFT JOIN nbp                ON nbp.CLIENTE_ID = rfm.CLIENTE_ID`
+
+// leerAnclasBase is the complete query for the since=nil (full-DB) case.
+// It is assembled by concatenating the CTE parts with no additional predicates.
+const leerAnclasBase = leerAnclasRFMBase + leerAnclasRFMClose + leerAnclasNBPBase + leerAnclasNBPClose

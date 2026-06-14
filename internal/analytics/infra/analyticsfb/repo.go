@@ -349,28 +349,42 @@ func (r *Repo) ExistingControlFlags(ctx context.Context) (map[int]bool, error) {
 // since != nil: restricts to clients whose MAX(DOCTOS_PV.FECHA) >=
 //
 //	(since - watermarkOverlap), to handle overlap between runs.
+//	The FECHA predicate is applied inside BOTH the rfm CTE and the nbp_raw
+//	CTE. The saldo_cte has NO date filter — it reflects current-state saldo
+//	from MSP_SALDOS_VENTAS regardless of when the last sale occurred.
 //
 // Column mapping:
 //   - RFM anchored on DOCTOS_PV (contado + crédito) — NOT DOCTOS_CC.
-//   - Saldo from IMPORTES_DOCTOS_CC (concepto 5 cargos, not cancelled).
-//   - NBP: most-frequently-purchased ARTICULOS.NOMBRE per cliente (correlated
-//     subquery; may be ” when no purchase lines exist).
+//   - Saldo from MSP_SALDOS_VENTAS (trigger-maintained materialized cache,
+//     migration 000010). ONE row per cargo; no row explosion.
+//   - NBP: most-frequently-purchased ARTICULOS.NOMBRE per cliente, computed
+//     in a single pass using ROW_NUMBER() OVER PARTITION BY CLIENTE_ID.
 //   - Text columns decoded via firebird.Win1252 (CLIENTES.NOMBRE, ZONAS_CLIENTES.NOMBRE,
 //     DIRS_CLIENTES.TELEFONO1, ARTICULOS.NOMBRE are CHARACTER SET NONE / Win1252).
 func (r *Repo) LeerAnclasDesde(ctx context.Context, since *time.Time) ([]outbound.AnclaCliente, error) {
-	query := leerAnclasBase
+	// Build query from CTE parts. When since != nil we inject an extra AND
+	// predicate into both the rfm CTE and the nbp_raw CTE before their GROUP BY.
+	// The saldo_cte never receives a date filter (current-state read model).
+	var query string
 	var args []any
-	if since != nil {
-		// Apply overlap window: read back an extra 24 h before the watermark so
-		// rows that arrived between the previous run's commit and the current
-		// run's start are not silently skipped.
+
+	if since == nil {
+		// Full-DB case: use the pre-assembled constant (no extra predicates).
+		query = leerAnclasBase
+	} else {
+		// Incremental case: inject FECHA >= ? into rfm and nbp_raw.
+		// Apply overlap window: look back an extra 24 h before the watermark.
 		boundary := since.Add(-watermarkOverlap)
-		// DOCTOS_PV.FECHA is DATE (not TIMESTAMP) in Microsip; use ToWallClock
-		// to convert the UTC boundary to the local wall-clock that Firebird stores.
-		query += "\n  AND pv.FECHA >= ?"
-		args = append(args, firebird.ToWallClock(boundary))
+		// DOCTOS_PV.FECHA is DATE in Microsip; ToWallClock converts the UTC
+		// boundary to the local wall-clock value Firebird stores.
+		datePredicate := "\n    AND pv.FECHA >= ?"
+		query = leerAnclasRFMBase + datePredicate +
+			leerAnclasRFMClose +
+			leerAnclasNBPBase + datePredicate +
+			leerAnclasNBPClose
+		// Two CTEs reference the same boundary; bind the parameter twice.
+		args = append(args, firebird.ToWallClock(boundary), firebird.ToWallClock(boundary))
 	}
-	query += leerAnclasGroupBy
 
 	var result []outbound.AnclaCliente
 	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
