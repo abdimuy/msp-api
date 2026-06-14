@@ -242,6 +242,8 @@ linters:
           alias: inventariodomain
         - pkg: github.com/abdimuy/msp-api/internal/inventario/ports/outbound
           alias: inventariooutbound
+        - pkg: github.com/abdimuy/msp-api/internal/analytics/app
+          alias: analyticsapp
         - pkg: github.com/go-playground/validator/v10
           alias: pv
         - pkg: firebase.google.com/go/v4
