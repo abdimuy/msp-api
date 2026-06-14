@@ -187,3 +187,92 @@ func TestComputeSegmentoScore_Segments(t *testing.T) {
 		})
 	}
 }
+
+// TestComputeSegmentoScore_SegmentBoundaries tests the EXACT boundary values
+// for umbralActivoDias (335) and umbralPerdidoDias (730). Only recenciaDias
+// varies; monetary/frecuencia/porLiquidarPct are held constant to isolate
+// the threshold logic.
+func TestComputeSegmentoScore_SegmentBoundaries(t *testing.T) {
+	t.Parallel()
+
+	// Constants mirror scoring.go values; they are not exported, so we test
+	// against their expected effect rather than the constant itself.
+	//   umbralActivoDias  = 335  → ≤335 active, >335 lapsed
+	//   umbralPerdidoDias = 730  → >730 perdido, ≤730 lapsed-but-not-lost
+
+	type tc struct {
+		name         string
+		recenciaDias int
+		wantSeg      domain.Segmento
+	}
+
+	tests := []tc{
+		// umbralActivoDias boundary (335 / 336)
+		{
+			name:         "recencia=335 — still active (≤ umbralActivoDias)",
+			recenciaDias: 335,
+			wantSeg:      domain.SegmentoActivo,
+		},
+		{
+			name:         "recencia=336 — just lapsed (> umbralActivoDias, ≤ umbralPerdidoDias)",
+			recenciaDias: 336,
+			// frecuencia=5 ≥ frecuenciaLeal(3) but porLiquidarPct=0 so no LEAL_POR_LIQUIDAR;
+			// monetary=25000 ≥ 20000 so DORMIDO_VALIOSO.
+			wantSeg: domain.SegmentoDormidoValioso,
+		},
+
+		// umbralPerdidoDias boundary (730 / 731)
+		{
+			name:         "recencia=730 — last lapsed day (≤ umbralPerdidoDias)",
+			recenciaDias: 730,
+			// Same conditions as above → DORMIDO_VALIOSO.
+			wantSeg: domain.SegmentoDormidoValioso,
+		},
+		{
+			name:         "recencia=731 — just lost (> umbralPerdidoDias)",
+			recenciaDias: 731,
+			wantSeg:      domain.SegmentoPerdido,
+		},
+	}
+
+	// Shared fixture: frecuencia=5 (≥ frecuenciaLeal), monetary=25000 (≥ umbralValioso),
+	// porLiquidarPct=0 (no saldo), no phone — only recencia drives segment classification.
+	const (
+		fixedFrecuencia     = 5
+		fixedMonetary       = 25_000.0
+		fixedPorLiquidarPct = 0.0
+	)
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			fechaUltimaCompra := testNow.AddDate(0, 0, -tt.recenciaDias)
+
+			c := mustCandidato(domain.CrearWinbackCandidatoParams{
+				ClienteID:         2,
+				Nombre:            "Boundary",
+				Zona:              "Z1",
+				Telefono:          "",
+				FechaUltimaCompra: fechaUltimaCompra,
+				Frecuencia:        fixedFrecuencia,
+				Monetary:          decimal.NewFromFloat(fixedMonetary),
+				Saldo:             decimal.Zero,
+				PorLiquidarPct:    decimal.NewFromFloat(fixedPorLiquidarPct),
+				EnControl:         false,
+				CohorteFecha:      testNow.AddDate(-1, 0, 0),
+				Now:               testNow,
+			})
+
+			seg, _, recencia := app.ExportComputeSegmentoScore(c, testNow)
+
+			if recencia != tt.recenciaDias {
+				t.Errorf("recenciaDias: got %d, want %d", recencia, tt.recenciaDias)
+			}
+			if seg != tt.wantSeg {
+				t.Errorf("segment at recencia=%d: got %q, want %q", tt.recenciaDias, seg, tt.wantSeg)
+			}
+		})
+	}
+}

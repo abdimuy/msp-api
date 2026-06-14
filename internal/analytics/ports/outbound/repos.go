@@ -59,6 +59,12 @@ type WinbackRepo interface {
 	// The repo matches rows by CLIENTE_ID and updates all mutable fields.
 	// Existing EN_CONTROL assignments are NOT overwritten by this call;
 	// callers must merge control flags from ExistingControlFlags beforehand.
+	//
+	// R1 limitation — no eviction: rows are never deleted from
+	// MSP_AN_WINBACK_CANDIDATOS. A client who reactivates between full refreshes
+	// stays in the table until the next full refresh overwrites their row. This
+	// means ListCandidatos and the Atribucion denominators may include stale
+	// rows (clients who are no longer lapsed). Eviction logic is deferred to R2.
 	UpsertCandidatos(ctx context.Context, candidatos []*domain.WinbackCandidato) error
 
 	// ListCandidatos returns candidatos that match the given params, ordered

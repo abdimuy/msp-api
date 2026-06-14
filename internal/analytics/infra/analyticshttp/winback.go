@@ -13,6 +13,12 @@ import (
 // field in the analytics response.
 const moneyScale int32 = 2
 
+// rateScale is the number of decimal places enforced for rate/ratio fields
+// (values in [0, 1] such as TasaTreatment, TasaControl, Uplift). Four decimal
+// places preserve meaningful precision for small uplifts (e.g. 0.0050 instead
+// of 0.00).
+const rateScale int32 = 4
+
 // Handlers holds the analytics HTTP handlers wired against the app service.
 type Handlers struct {
 	svc *analyticsapp.Service
@@ -45,23 +51,7 @@ func (h *Handlers) ListarWinback(ctx context.Context, input *ListWinbackInput) (
 
 	dtos := make([]WinbackItemDTO, 0, len(items))
 	for _, item := range items {
-		c := item.Candidato
-		dtos = append(dtos, WinbackItemDTO{
-			ClienteID:         c.ClienteID(),
-			Nombre:            c.Nombre(),
-			Zona:              c.Zona(),
-			Telefono:          c.Telefono(),
-			FechaUltimaCompra: formatTime(c.FechaUltimaCompra()),
-			RecenciaDias:      item.RecenciaDias,
-			Frecuencia:        c.Frecuencia(),
-			Monetary:          c.Monetary().StringFixed(moneyScale),
-			Saldo:             c.Saldo().StringFixed(moneyScale),
-			PorLiquidarPct:    c.PorLiquidarPct().StringFixed(moneyScale),
-			NextBestProduct:   c.NextBestProduct(),
-			Segmento:          item.Segmento.String(),
-			Score:             item.Score.Int(),
-			EnControl:         c.EnControl(),
-		})
+		dtos = append(dtos, toWinbackItemDTO(item))
 	}
 
 	out := &ListWinbackOutput{}
@@ -87,13 +77,7 @@ func (h *Handlers) Atribucion(ctx context.Context, input *AttributionInput) (*At
 	}
 
 	out := &AttributionOutput{}
-	out.Body.TreatmentTotal = result.TreatmentTotal
-	out.Body.TreatmentConvertidos = result.TreatmentConvertidos
-	out.Body.ControlTotal = result.ControlTotal
-	out.Body.ControlConvertidos = result.ControlConvertidos
-	out.Body.TasaTreatment = result.TasaTreatment.StringFixed(moneyScale)
-	out.Body.TasaControl = result.TasaControl.StringFixed(moneyScale)
-	out.Body.Uplift = result.Uplift.StringFixed(moneyScale)
+	fillAttributionOutput(out, result)
 	return out, nil
 }
 

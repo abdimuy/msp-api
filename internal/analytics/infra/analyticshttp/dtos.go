@@ -56,9 +56,9 @@ type AttributionOutput struct {
 		TreatmentConvertidos int    `json:"treatment_convertidos"  doc:"Candidatos del grupo de tratamiento que convirtieron"`
 		ControlTotal         int    `json:"control_total"          doc:"Total de candidatos en el grupo de control"`
 		ControlConvertidos   int    `json:"control_convertidos"    doc:"Candidatos del grupo de control que convirtieron"`
-		TasaTreatment        string `json:"tasa_treatment"         doc:"Tasa de conversión del grupo de tratamiento, fracción en rango [0, 1] (2 decimales)"`
-		TasaControl          string `json:"tasa_control"           doc:"Tasa de conversión del grupo de control, fracción en rango [0, 1] (2 decimales)"`
-		Uplift               string `json:"uplift"                 doc:"Diferencia incremental tasa_treatment - tasa_control, rango [-1, 1] (2 decimales)"`
+		TasaTreatment        string `json:"tasa_treatment"         doc:"Tasa de conversión del grupo de tratamiento, fracción en rango [0, 1] (4 decimales)"`
+		TasaControl          string `json:"tasa_control"           doc:"Tasa de conversión del grupo de control, fracción en rango [0, 1] (4 decimales)"`
+		Uplift               string `json:"uplift"                 doc:"Diferencia incremental tasa_treatment - tasa_control, rango [-1, 1] (4 decimales)"`
 	}
 }
 
