@@ -301,6 +301,7 @@ linters:
             - github.com/abdimuy/msp-api/internal/ventas/domain
             - github.com/abdimuy/msp-api/internal/cobranza/domain
             - github.com/abdimuy/msp-api/internal/inventario/domain
+            - github.com/abdimuy/msp-api/internal/analytics/domain
 
         app-no-infra:
           list-mode: lax
