@@ -13,9 +13,6 @@ import "github.com/abdimuy/msp-api/internal/platform/apperror"
 //
 // Error codes are snake_case English; messages are lowercase Spanish without a
 // trailing period, per project conventions (CLAUDE.md Rule 3).
-//
-// NOTE: Task 02 (value-objects-errors) extends this file with additional
-// sentinels for other invariants and value objects in the analytics module.
 var (
 	// ErrWinbackCandidatoFrecuenciaInvalida is returned when frecuencia < 0.
 	ErrWinbackCandidatoFrecuenciaInvalida = apperror.NewValidation(
@@ -39,5 +36,23 @@ var (
 	ErrWinbackCandidatoCohorteInvalida = apperror.NewValidation(
 		"winback_candidato_cohorte_invalida",
 		"la fecha de cohorte del candidato winback es obligatoria",
+	)
+
+	// ErrSegmentoInvalido is returned when a string cannot be parsed as a Segmento.
+	ErrSegmentoInvalido = apperror.NewValidation(
+		"segmento_invalido",
+		"el segmento no es válido",
+	)
+
+	// ErrScoreWinbackFueraDeRango is returned when a score is not in [0, 100].
+	ErrScoreWinbackFueraDeRango = apperror.NewValidation(
+		"score_winback_fuera_de_rango",
+		"el score winback debe estar entre 0 y 100",
+	)
+
+	// ErrRefreshStateNotFound is returned when no MSP_AN_REFRESH_STATE row exists.
+	ErrRefreshStateNotFound = apperror.NewNotFound(
+		"refresh_state_not_found",
+		"no se encontró el estado de refresco",
 	)
 )
