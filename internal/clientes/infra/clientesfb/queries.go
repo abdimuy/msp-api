@@ -1,0 +1,397 @@
+// Package clientesfb implements the Firebird-backed repository for the clientes
+// hub. All reads target native Microsip tables; this module owns no MSP_* tables
+// and never writes to Microsip. Text columns in Microsip are CHARACTER SET NONE
+// (raw Windows-1252 bytes) and must be scanned with firebird.Win1252.
+//
+//nolint:misspell // Spanish domain vocabulary (clientes, directorio, ficha, etc.) by project convention.
+package clientesfb
+
+// ─── Cliente identity ─────────────────────────────────────────────────────────
+
+// selectClienteCols is the canonical column list for a single-cliente lookup.
+// Order matches clienteRowRaw.scanFrom one-to-one.
+//
+// DIRS_CLIENTES uses COLONIA (not NOMBRE_CALLE) as the street-level field
+// because B1 research shows COLONIA is 99.9% populated while NOMBRE_CALLE
+// coverage is lower and CALLE is a composite. The Direccion VO receives
+// NOMBRE_CALLE as calle, COLONIA as colonia, and POBLACION as poblacion.
+//
+// VERIFY-AT-CHECKPOINT: confirm that DIRS_CLIENTES.NOMBRE_CALLE (not CALLE)
+// is the right street component for the Direccion.Calle() field. The research
+// doc describes CALLE as a composite column (NOMBRE_CALLE + NUM_EXT + \n + …).
+// Using NOMBRE_CALLE here keeps it clean; if the app wants the full composite
+// swap to CALLE.
+const selectClienteCols = `
+	c.CLIENTE_ID,
+	c.NOMBRE,
+	c.LIMITE_CREDITO,
+	c.NOTAS,
+	c.ESTATUS,
+	c.ZONA_CLIENTE_ID,
+	COALESCE(z.NOMBRE, ''),
+	c.COBRADOR_ID,
+	COALESCE(cob.NOMBRE, ''),
+	COALESCE(d.NOMBRE_CALLE, ''),
+	COALESCE(d.COLONIA, ''),
+	COALESCE(d.POBLACION, ''),
+	COALESCE(e.NOMBRE, ''),
+	COALESCE(d.TELEFONO1, '')`
+
+const clienteFromClause = `
+FROM CLIENTES c
+LEFT JOIN ZONAS_CLIENTES z    ON z.ZONA_CLIENTE_ID = c.ZONA_CLIENTE_ID
+LEFT JOIN COBRADORES cob      ON cob.COBRADOR_ID   = c.COBRADOR_ID
+LEFT JOIN DIRS_CLIENTES d     ON d.CLIENTE_ID      = c.CLIENTE_ID AND d.ES_DIR_PPAL = 'S'
+LEFT JOIN ESTADOS e           ON e.ESTADO_ID       = d.ESTADO_ID`
+
+const queryObtenerCliente = `
+SELECT ` + selectClienteCols + clienteFromClause + `
+WHERE c.CLIENTE_ID = ?`
+
+// ─── Directory listing ────────────────────────────────────────────────────────
+
+// selectDirectorioCols extends selectClienteCols with the aggregated balance.
+//
+// Saldo is computed natively from IMPORTES_DOCTOS_CC:
+//
+//	SUM(IMPORTE+IMPUESTO WHERE TIPO_IMPTE='C') − SUM(IMPORTE WHERE TIPO_IMPTE='R')
+//
+// over non-cancelled cargos (CONCEPTO_CC_ID=5, CANCELADO='N') and non-cancelled
+// importes (CANCELADO='N'). The GREATEST(…,0) floor prevents negative saldo
+// display when a client has been over-paid or had condonaciones that exceed the
+// cargo. CAST(SUM) is mandatory because the firebirdsql v0.9.19 driver returns
+// unscaled *big.Int for aggregates.
+//
+// VERIFY-AT-CHECKPOINT: the saldo subquery uses CONCEPTO_CC_ID=5 (Venta en
+// mostrador / cargo de crédito). Confirm no other concepto acts as a principal
+// cargo that should be included.
+const selectDirectorioCols = selectClienteCols + `,
+	COALESCE((
+		SELECT CAST(
+			GREATEST(
+				SUM(CASE WHEN i.TIPO_IMPTE = 'C' THEN i.IMPORTE + i.IMPUESTO ELSE 0 END)
+				- SUM(CASE WHEN i.TIPO_IMPTE = 'R' THEN i.IMPORTE ELSE 0 END),
+				0
+			) AS NUMERIC(18,2))
+		FROM IMPORTES_DOCTOS_CC i
+		JOIN DOCTOS_CC cargo ON cargo.DOCTO_CC_ID = i.DOCTO_CC_ACR_ID
+		WHERE cargo.CLIENTE_ID = c.CLIENTE_ID
+		  AND cargo.CONCEPTO_CC_ID = 5
+		  AND cargo.CANCELADO = 'N'
+		  AND i.CANCELADO = 'N'
+	), 0)`
+
+// queryListarDirectorioBase is the FROM + base WHERE for the directory listing.
+// Dynamic filters (zona, cobrador, conSaldo, clienteIDs) and pagination are
+// appended by the repo method.
+const queryListarDirectorioBase = `
+SELECT FIRST ? ` + selectDirectorioCols + clienteFromClause
+
+// ─── ResumenFicha ─────────────────────────────────────────────────────────────
+
+// queryResumenFichaTotales returns the aggregate financial summary for a client.
+//
+// TotalComprado = SUM of IMPORTE+IMPUESTO of all cargos concepto 5.
+// TotalAbonado  = SUM of IMPORTE of all abonos (TIPO_IMPTE='R').
+// SaldoTotal    = TotalComprado − TotalAbonado (floored at 0).
+// NumVentas     = COUNT DISTINCT of cargo DOCTO_CC_ACR_ID.
+// NumPagos      = COUNT DISTINCT of TIPO_IMPTE='R' rows.
+//
+// All SUM casts are required (v0.9.19 driver scale bug).
+const queryResumenFichaTotales = `
+SELECT
+  CAST(COALESCE(SUM(CASE WHEN i.TIPO_IMPTE = 'C' THEN i.IMPORTE + i.IMPUESTO ELSE 0 END), 0) AS NUMERIC(18,2)) AS TOTAL_COMPRADO,
+  CAST(COALESCE(SUM(CASE WHEN i.TIPO_IMPTE = 'R' THEN i.IMPORTE ELSE 0 END), 0) AS NUMERIC(18,2)) AS TOTAL_ABONADO,
+  COUNT(DISTINCT CASE WHEN i.TIPO_IMPTE = 'C' THEN i.DOCTO_CC_ACR_ID END)                       AS NUM_VENTAS,
+  COUNT(DISTINCT CASE WHEN i.TIPO_IMPTE = 'R' THEN i.IMPTE_DOCTO_CC_ID END)                      AS NUM_PAGOS
+FROM IMPORTES_DOCTOS_CC i
+JOIN DOCTOS_CC cargo ON cargo.DOCTO_CC_ID = i.DOCTO_CC_ACR_ID
+WHERE cargo.CLIENTE_ID = ?
+  AND cargo.CONCEPTO_CC_ID = 5
+  AND cargo.CANCELADO = 'N'
+  AND i.CANCELADO = 'N'`
+
+// queryAbonosPorMes returns monthly payment totals for the trailing chart.
+// Grouped by (EXTRACT YEAR, EXTRACT MONTH) of the pago document's FECHA.
+// Ordered ascending so the UI can render a left-to-right timeline.
+const queryAbonosPorMes = `
+SELECT
+  EXTRACT(YEAR FROM abono.FECHA)                                            AS ANIO,
+  EXTRACT(MONTH FROM abono.FECHA)                                           AS MES,
+  CAST(SUM(i.IMPORTE) AS NUMERIC(18,2))                                     AS MONTO
+FROM IMPORTES_DOCTOS_CC i
+JOIN DOCTOS_CC cargo ON cargo.DOCTO_CC_ID = i.DOCTO_CC_ACR_ID
+JOIN DOCTOS_CC abono ON abono.DOCTO_CC_ID = i.DOCTO_CC_ID
+WHERE cargo.CLIENTE_ID = ?
+  AND cargo.CONCEPTO_CC_ID = 5
+  AND cargo.CANCELADO = 'N'
+  AND i.TIPO_IMPTE = 'R'
+  AND i.CANCELADO = 'N'
+GROUP BY EXTRACT(YEAR FROM abono.FECHA), EXTRACT(MONTH FROM abono.FECHA)
+ORDER BY ANIO, MES`
+
+// queryCompradoVsAbonado returns paired (comprado, abonado) monthly data for
+// the dual-series ficha chart.
+//
+// Comprado is bucketed by cargo.FECHA (the sale date, a DATE column).
+// Abonado  is bucketed by abono.FECHA (the payment date, also DATE).
+// Two aggregations are UNION-ed then re-grouped at the outer level.
+//
+// VERIFY-AT-CHECKPOINT: DOCTOS_CC.FECHA is type DATE (not TIMESTAMP) per B2
+// research. EXTRACT(YEAR/MONTH FROM DATE) is valid in Firebird — confirm no
+// cast needed.
+const queryCompradoVsAbonado = `
+SELECT
+  ANIO, MES,
+  CAST(SUM(COMPRADO) AS NUMERIC(18,2)) AS COMPRADO,
+  CAST(SUM(ABONADO)  AS NUMERIC(18,2)) AS ABONADO
+FROM (
+  SELECT
+    EXTRACT(YEAR FROM cargo.FECHA)  AS ANIO,
+    EXTRACT(MONTH FROM cargo.FECHA) AS MES,
+    i.IMPORTE + i.IMPUESTO          AS COMPRADO,
+    0                               AS ABONADO
+  FROM IMPORTES_DOCTOS_CC i
+  JOIN DOCTOS_CC cargo ON cargo.DOCTO_CC_ID = i.DOCTO_CC_ACR_ID
+  WHERE cargo.CLIENTE_ID = ?
+    AND cargo.CONCEPTO_CC_ID = 5
+    AND cargo.CANCELADO = 'N'
+    AND i.TIPO_IMPTE = 'C'
+    AND i.CANCELADO = 'N'
+  UNION ALL
+  SELECT
+    EXTRACT(YEAR FROM abono.FECHA)  AS ANIO,
+    EXTRACT(MONTH FROM abono.FECHA) AS MES,
+    0                               AS COMPRADO,
+    i.IMPORTE                       AS ABONADO
+  FROM IMPORTES_DOCTOS_CC i
+  JOIN DOCTOS_CC cargo ON cargo.DOCTO_CC_ID = i.DOCTO_CC_ACR_ID
+  JOIN DOCTOS_CC abono ON abono.DOCTO_CC_ID = i.DOCTO_CC_ID
+  WHERE cargo.CLIENTE_ID = ?
+    AND cargo.CONCEPTO_CC_ID = 5
+    AND cargo.CANCELADO = 'N'
+    AND i.TIPO_IMPTE = 'R'
+    AND i.CANCELADO = 'N'
+) t
+GROUP BY ANIO, MES
+ORDER BY ANIO, MES`
+
+// ─── ListarVentas ─────────────────────────────────────────────────────────────
+
+// selectVentaClienteCols is the projection for a VentaCliente row.
+// tipo is derived from DOCTOS_PV_COBROS: FORMA_COBRO_ID=71 means CREDITO,
+// otherwise CONTADO (validated in B4 research). EXISTS subquery is used
+// to avoid inflating the result set.
+//
+// Saldo per sale uses the same IMPORTES_DOCTOS_CC formula as above, bridged
+// via DOCTOS_ENTRE_SIS (PV → CC) to find the cargo DOCTO_CC_ID for this PV.
+// NumPagos counts the distinct abono rows applied to that cargo.
+//
+// VERIFY-AT-CHECKPOINT: confirm that for a contado sale (no CC cargo),
+// the saldo subquery correctly returns 0 (no JOIN match → COALESCE to 0).
+const selectVentaClienteCols = `
+	pv.DOCTO_PV_ID,
+	pv.CLIENTE_ID,
+	pv.FECHA,
+	pv.FOLIO,
+	pv.IMPORTE_NETO,
+	CASE WHEN EXISTS (
+		SELECT 1 FROM DOCTOS_PV_COBROS cob
+		WHERE cob.DOCTO_PV_ID = pv.DOCTO_PV_ID AND cob.FORMA_COBRO_ID = 71
+	) THEN 'CREDITO' ELSE 'CONTADO' END AS TIPO,
+	COALESCE((
+		SELECT CAST(
+			GREATEST(
+				SUM(CASE WHEN i.TIPO_IMPTE = 'C' THEN i.IMPORTE + i.IMPUESTO ELSE 0 END)
+				- SUM(CASE WHEN i.TIPO_IMPTE = 'R' THEN i.IMPORTE ELSE 0 END),
+				0
+			) AS NUMERIC(18,2))
+		FROM DOCTOS_ENTRE_SIS des
+		JOIN IMPORTES_DOCTOS_CC i   ON i.DOCTO_CC_ACR_ID = des.DOCTO_DEST_ID
+		JOIN DOCTOS_CC cargo        ON cargo.DOCTO_CC_ID  = des.DOCTO_DEST_ID
+		WHERE des.CLAVE_SIS_FTE  = 'PV'
+		  AND des.CLAVE_SIS_DEST = 'CC'
+		  AND des.DOCTO_FTE_ID   = pv.DOCTO_PV_ID
+		  AND cargo.CANCELADO    = 'N'
+		  AND i.CANCELADO        = 'N'
+	), 0) AS SALDO_VENTA,
+	COALESCE((
+		SELECT COUNT(DISTINCT i.IMPTE_DOCTO_CC_ID)
+		FROM DOCTOS_ENTRE_SIS des
+		JOIN IMPORTES_DOCTOS_CC i ON i.DOCTO_CC_ACR_ID = des.DOCTO_DEST_ID
+		WHERE des.CLAVE_SIS_FTE  = 'PV'
+		  AND des.CLAVE_SIS_DEST = 'CC'
+		  AND des.DOCTO_FTE_ID   = pv.DOCTO_PV_ID
+		  AND i.TIPO_IMPTE       = 'R'
+		  AND i.CANCELADO        = 'N'
+	), 0) AS NUM_PAGOS`
+
+const queryListarVentasBase = `
+SELECT FIRST ? ` + selectVentaClienteCols + `
+FROM DOCTOS_PV pv
+WHERE pv.CLIENTE_ID = ?
+  AND pv.TIPO_DOCTO IN ('V', 'P')
+  AND pv.ESTATUS = 'N'`
+
+// ─── ObtenerVentaDetalle ──────────────────────────────────────────────────────
+
+// queryVentaHeader fetches the venta header only — used to establish the sale
+// exists before fetching children. Reuses selectVentaClienteCols shape.
+const queryVentaHeader = `
+SELECT ` + selectVentaClienteCols + `
+FROM DOCTOS_PV pv
+WHERE pv.DOCTO_PV_ID = ?
+  AND pv.TIPO_DOCTO IN ('V', 'P')
+  AND pv.ESTATUS = 'N'`
+
+// queryProductos fetches the sale line items for a given DOCTO_PV_ID.
+//
+// ROL filter: Microsip records kit/juego sales with three ROL values:
+//   - ROL='N': normal single-article line — always shown.
+//   - ROL='J': the priced kit header line — shown (carries the kit total price).
+//   - ROL='C': zero-price kit component lines (stock deduction) — EXCLUDED.
+//
+// Keeping ROL IN ('N', 'J') and excluding ROL='C' avoids showing duplicate
+// zero-price component rows to the user while still showing the kit as one
+// priced line (ROL='J'). Source: project memory reference_microsip_juegos_kits
+// and B3 research §5.2.
+//
+// VERIFY-AT-CHECKPOINT: verify the exact ROL values against DOCTOS_PV_DET.ROL
+// in the live DB. The memory doc states ROL='J' (kit priced), ROL='C' (kit
+// component zero-price), ROL='N' (normal). Confirm there are no other values
+// (e.g. ROL='D' for devolucion) that should also be filtered.
+//
+// UNIDADES scale=5, PRECIO_UNITARIO scale=6, PRECIO_TOTAL_NETO scale=2,
+// PCTJE_DSCTO scale=6 — scanned with appropriate ScanDecimal calls.
+const queryProductos = `
+SELECT
+	det.ARTICULO_ID,
+	a.NOMBRE,
+	det.UNIDADES,
+	det.PRECIO_UNITARIO,
+	det.PRECIO_TOTAL_NETO,
+	det.PCTJE_DSCTO
+FROM DOCTOS_PV_DET det
+JOIN ARTICULOS a ON a.ARTICULO_ID = det.ARTICULO_ID
+WHERE det.DOCTO_PV_ID = ?
+  AND det.ROL IN ('N', 'J')
+ORDER BY det.POSICION`
+
+// queryContrato fetches the credit contract data for the cargo CC associated
+// with a PV sale, using the DOCTOS_ENTRE_SIS bridge.
+//
+// VENDEDOR_1/2/3 in LIBRES_CARGOS_CC are IDs into the LISTAS_ATRIBUTOS table.
+// LISTAS_ATRIBUTOS.VALOR_DESPLEGADO holds the human-readable name.
+// LEFT JOIN LISTAS_ATRIBUTOS lv1/lv2/lv3 resolves the vendedor names.
+//
+// FORMA_DE_PAGO in LIBRES_CARGOS_CC is also an ID into LISTAS_ATRIBUTOS.
+// We resolve it to VALOR_DESPLEGADO for FormaDePago.
+//
+// TIEMPO_A_CORTO_PLAZOMESES is used as PlazoMeses (months of the financing
+// term). Per B2 research, CREDITO_EN_MESES is a FK to a plan ID, not a raw
+// month count, so TIEMPO_A_CORTO_PLAZOMESES is the best available month count.
+//
+// VERIFY-AT-CHECKPOINT: verify that TIEMPO_A_CORTO_PLAZOMESES is indeed the
+// correct plazo-meses column (not CREDITO_EN_MESES which is an opaque FK).
+// Also verify that LISTAS_ATRIBUTOS resolves FORMA_DE_PAGO IDs to
+// SEMANAL/QUINCENAL/MENSUAL text values.
+const queryContrato = `
+SELECT
+	lc.PARCIALIDAD,
+	lc.ENGANCHE,
+	lc.PRECIO_DE_CONTADO,
+	lc.TIEMPO_A_CORTO_PLAZOMESES,
+	COALESCE(lfp.VALOR_DESPLEGADO, ''),
+	COALESCE(UPPER(lv1.VALOR_DESPLEGADO), ''),
+	COALESCE(UPPER(lv2.VALOR_DESPLEGADO), ''),
+	COALESCE(UPPER(lv3.VALOR_DESPLEGADO), '')
+FROM DOCTOS_ENTRE_SIS des
+JOIN DOCTOS_CC cargo             ON cargo.DOCTO_CC_ID  = des.DOCTO_DEST_ID
+JOIN LIBRES_CARGOS_CC lc         ON lc.DOCTO_CC_ID     = des.DOCTO_DEST_ID
+LEFT JOIN LISTAS_ATRIBUTOS lfp   ON lfp.LISTA_ATRIB_ID = lc.FORMA_DE_PAGO
+LEFT JOIN LISTAS_ATRIBUTOS lv1   ON lv1.LISTA_ATRIB_ID = lc.VENDEDOR_1
+LEFT JOIN LISTAS_ATRIBUTOS lv2   ON lv2.LISTA_ATRIB_ID = lc.VENDEDOR_2
+LEFT JOIN LISTAS_ATRIBUTOS lv3   ON lv3.LISTA_ATRIB_ID = lc.VENDEDOR_3
+WHERE des.CLAVE_SIS_FTE  = 'PV'
+  AND des.CLAVE_SIS_DEST = 'CC'
+  AND des.DOCTO_FTE_ID   = ?
+  AND cargo.CANCELADO    = 'N'`
+
+// queryPagos fetches the payment history for a given PV sale, bridged through
+// DOCTOS_ENTRE_SIS to the cargo DOCTO_CC_ID.
+//
+// Pagos are DOCTOS_CC with NATURALEZA_CONCEPTO='R' (abono) linked to the
+// cargo via IMPORTES_DOCTOS_CC.DOCTO_CC_ACR_ID.
+//
+// The real amount is IMPORTES_DOCTOS_CC.IMPORTE (not DOCTOS_CC.IMPORTE_COBRO
+// which is always 0, confirmed by B2 research and cobranza pago writer).
+// FormaCobro is resolved from FORMAS_COBRO_DOCTOS → FORMAS_COBRO.
+//
+// VERIFY-AT-CHECKPOINT: confirm that joining FORMAS_COBRO_DOCTOS
+// (NOM_TABLA_DOCTOS='DOCTOS_CC', DOCTO_ID=pago.DOCTO_CC_ID) gives the correct
+// forma cobro name, or whether FORMAS_COBRO can be joined directly on
+// some column in DOCTOS_CC.
+const queryPagos = `
+SELECT
+	pago.DOCTO_CC_ID,
+	pago.FECHA,
+	CAST(COALESCE(i.IMPORTE, 0) AS NUMERIC(18,2)) AS IMPORTE,
+	COALESCE(fc.NOMBRE, ''),
+	des.DOCTO_DEST_ID
+FROM DOCTOS_ENTRE_SIS des
+JOIN IMPORTES_DOCTOS_CC i   ON i.DOCTO_CC_ACR_ID  = des.DOCTO_DEST_ID
+JOIN DOCTOS_CC pago         ON pago.DOCTO_CC_ID   = i.DOCTO_CC_ID
+LEFT JOIN FORMAS_COBRO_DOCTOS fcd
+         ON fcd.NOM_TABLA_DOCTOS = 'DOCTOS_CC' AND fcd.DOCTO_ID = pago.DOCTO_CC_ID
+LEFT JOIN FORMAS_COBRO fc   ON fc.FORMA_COBRO_ID  = fcd.FORMA_COBRO_ID
+WHERE des.CLAVE_SIS_FTE  = 'PV'
+  AND des.CLAVE_SIS_DEST = 'CC'
+  AND des.DOCTO_FTE_ID   = ?
+  AND pago.NATURALEZA_CONCEPTO = 'R'
+  AND pago.CANCELADO     = 'N'
+  AND i.TIPO_IMPTE       = 'R'
+  AND i.CANCELADO        = 'N'
+ORDER BY pago.FECHA`
+
+// ─── BuscarClienteIDsBasico ───────────────────────────────────────────────────
+
+// queryBuscarBasico is the degraded-fallback SQL LIKE search over CLIENTES.NOMBRE.
+// Used when the Bleve in-process index is not yet ready.
+// UPPER() on both sides makes the comparison case-insensitive in Firebird.
+// Restricts to ESTATUS IN ('A','B') to exclude vendedor-ruta pseudo-clientes
+// (ESTATUS='V') and cancelled ones (ESTATUS='C').
+//
+// VERIFY-AT-CHECKPOINT: decide whether to include ESTATUS='B' (bloqueados)
+// in search results. Currently included because bloqueados still have saldo
+// and the cobrador / office may need to find them. Remove if UX wants only
+// activos.
+const queryBuscarBasico = `
+SELECT FIRST ? c.CLIENTE_ID
+FROM CLIENTES c
+WHERE c.ESTATUS IN ('A', 'B')
+  AND UPPER(c.NOMBRE) LIKE UPPER(?)
+ORDER BY c.NOMBRE, c.CLIENTE_ID`
+
+// ─── LeerDocumentosBusqueda ───────────────────────────────────────────────────
+
+// queryLeerDocumentos fetches the text fields needed to build SearchDocs for
+// the in-process Bleve index. Returns one row per active client.
+//
+// Texto is assembled in Go (not in SQL) to allow the repo to decode each
+// Win1252 column individually and then concatenate UTF-8 strings.
+//
+// ESTATUS IN ('A','B') — same rationale as BuscarBasico above.
+//
+// COALESCE on nullable address columns prevents NULLs from propagating into
+// the concatenated text.
+const queryLeerDocumentos = `
+SELECT
+	c.CLIENTE_ID,
+	c.NOMBRE,
+	COALESCE(d.NOMBRE_CALLE, ''),
+	COALESCE(d.COLONIA, ''),
+	COALESCE(d.POBLACION, '')
+FROM CLIENTES c
+LEFT JOIN DIRS_CLIENTES d ON d.CLIENTE_ID = c.CLIENTE_ID AND d.ES_DIR_PPAL = 'S'
+WHERE c.ESTATUS IN ('A', 'B')
+ORDER BY c.CLIENTE_ID`
