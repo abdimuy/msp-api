@@ -28,12 +28,8 @@ type Cliente struct {
 	zonaNombre     string
 	cobradorID     int
 	cobradorNombre string
-	// address primitives (a Direccion value object is out of scope here — Task B2)
-	calle     string
-	colonia   string
-	poblacion string
-	estado    string
-	telefono  string
+	direccion      Direccion
+	telefono       string
 }
 
 // HydrateClienteParams holds all fields needed to reconstruct a Cliente from
@@ -48,10 +44,7 @@ type HydrateClienteParams struct {
 	ZonaNombre     string
 	CobradorID     int
 	CobradorNombre string
-	Calle          string
-	Colonia        string
-	Poblacion      string
-	Estado         string
+	Direccion      Direccion
 	Telefono       string
 }
 
@@ -68,10 +61,7 @@ func HydrateCliente(p HydrateClienteParams) *Cliente {
 		zonaNombre:     p.ZonaNombre,
 		cobradorID:     p.CobradorID,
 		cobradorNombre: p.CobradorNombre,
-		calle:          p.Calle,
-		colonia:        p.Colonia,
-		poblacion:      p.Poblacion,
-		estado:         p.Estado,
+		direccion:      p.Direccion,
 		telefono:       p.Telefono,
 	}
 }
@@ -105,17 +95,8 @@ func (c *Cliente) CobradorID() int { return c.cobradorID }
 // CobradorNombre returns the display name of the assigned cobrador.
 func (c *Cliente) CobradorNombre() string { return c.cobradorNombre }
 
-// Calle returns the street address component.
-func (c *Cliente) Calle() string { return c.calle }
-
-// Colonia returns the neighborhood (colonia) component of the address.
-func (c *Cliente) Colonia() string { return c.colonia }
-
-// Poblacion returns the city/town component of the address.
-func (c *Cliente) Poblacion() string { return c.poblacion }
-
-// Estado returns the state (e.g. "Jalisco") component of the address.
-func (c *Cliente) Estado() string { return c.estado }
+// Direccion returns the composite address value object for this client.
+func (c *Cliente) Direccion() Direccion { return c.direccion }
 
 // Telefono returns the primary phone number for this client.
 func (c *Cliente) Telefono() string { return c.telefono }

@@ -23,7 +23,7 @@ func TestHydrateVentaCliente_AllGettersRoundTrip(t *testing.T) {
 		ClienteID:  42,
 		Fecha:      fixedFecha,
 		Folio:      "PV-000123",
-		Tipo:       "credito",
+		Tipo:       domain.TipoVentaCredito,
 		Total:      total,
 		SaldoVenta: saldo,
 		NumPagos:   3,
@@ -33,7 +33,7 @@ func TestHydrateVentaCliente_AllGettersRoundTrip(t *testing.T) {
 	assert.Equal(t, 42, v.ClienteID())
 	assert.Equal(t, fixedFecha, v.Fecha())
 	assert.Equal(t, "PV-000123", v.Folio())
-	assert.Equal(t, "credito", v.Tipo())
+	assert.Equal(t, domain.TipoVentaCredito, v.Tipo())
 	assert.True(t, total.Equal(v.Total()), "Total round-trip")
 	assert.True(t, saldo.Equal(v.SaldoVenta()), "SaldoVenta round-trip")
 	assert.Equal(t, 3, v.NumPagos())
@@ -70,10 +70,10 @@ func TestHydrateVentaCliente_FechaIsUTC_WhenAlreadyUTC(t *testing.T) {
 func TestHydrateVentaCliente_TipoContado(t *testing.T) {
 	t.Parallel()
 	v := domain.HydrateVentaCliente(domain.HydrateVentaClienteParams{
-		Tipo:  "contado",
+		Tipo:  domain.TipoVentaContado,
 		Fecha: fixedFecha,
 	})
-	assert.Equal(t, "contado", v.Tipo())
+	assert.Equal(t, domain.TipoVentaContado, v.Tipo())
 }
 
 func TestHydrateVentaCliente_ZeroValues(t *testing.T) {
@@ -85,7 +85,7 @@ func TestHydrateVentaCliente_ZeroValues(t *testing.T) {
 	assert.Zero(t, v.ClienteID())
 	assert.True(t, v.Fecha().IsZero())
 	assert.Empty(t, v.Folio())
-	assert.Empty(t, v.Tipo())
+	assert.Equal(t, domain.TipoVenta(""), v.Tipo())
 	assert.True(t, decimal.Zero.Equal(v.Total()))
 	assert.True(t, decimal.Zero.Equal(v.SaldoVenta()))
 	assert.Zero(t, v.NumPagos())

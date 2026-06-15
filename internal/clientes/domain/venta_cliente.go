@@ -21,7 +21,7 @@ type VentaCliente struct {
 	clienteID  int
 	fecha      time.Time // UTC
 	folio      string
-	tipo       string // "contado" or "credito"; derived by repo from FORMAS_COBRO; no enum yet (Task B2)
+	tipo       TipoVenta
 	total      decimal.Decimal
 	saldoVenta decimal.Decimal
 	numPagos   int
@@ -34,7 +34,7 @@ type HydrateVentaClienteParams struct {
 	ClienteID  int
 	Fecha      time.Time // caller must supply UTC
 	Folio      string
-	Tipo       string
+	Tipo       TipoVenta
 	Total      decimal.Decimal
 	SaldoVenta decimal.Decimal
 	NumPagos   int
@@ -70,10 +70,9 @@ func (v *VentaCliente) Fecha() time.Time { return v.fecha }
 // Folio returns the document folio number as displayed in Microsip.
 func (v *VentaCliente) Folio() string { return v.folio }
 
-// Tipo returns the payment modality: "contado" or "credito". The repository
+// Tipo returns the payment modality (CONTADO or CREDITO). The repository
 // derives this from DOCTOS_PV_COBROS.FORMA_COBRO_ID (67=contado, 71=credito).
-// An enum/value-object representation is deferred to Task B2.
-func (v *VentaCliente) Tipo() string { return v.tipo }
+func (v *VentaCliente) Tipo() TipoVenta { return v.tipo }
 
 // Total returns the net invoice amount (DOCTOS_PV.IMPORTE_NETO).
 func (v *VentaCliente) Total() decimal.Decimal { return v.total }
