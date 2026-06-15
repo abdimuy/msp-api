@@ -27,6 +27,8 @@ func toWinbackItemDTO(item analyticsapp.WinbackListItem) WinbackItemDTO {
 		Segmento:          item.Segmento.String(),
 		Score:             item.Score.Int(),
 		EnControl:         c.EnControl(),
+		FechaUltimoPago:   formatTime(c.FechaUltimoPago()),
+		EstadoPago:        item.EstadoPago.String(),
 	}
 }
 

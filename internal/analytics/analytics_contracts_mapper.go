@@ -23,7 +23,9 @@ func ToWinbackCandidatoContract(c *domain.WinbackCandidato) WinbackCandidatoCont
 		PorLiquidarPct:    c.PorLiquidarPct(),
 		NextBestProduct:   c.NextBestProduct(),
 		// Segmento and Score are intentionally zero — see function doc.
-		EnControl: c.EnControl(),
+		EnControl:       c.EnControl(),
+		FechaUltimoPago: c.FechaUltimoPago(),
+		// EstadoPago intentionally left empty — computed at read time by caller.
 	}
 }
 

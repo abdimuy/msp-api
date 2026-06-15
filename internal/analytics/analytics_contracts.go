@@ -36,4 +36,10 @@ type WinbackCandidatoContract struct {
 	Segmento          string
 	Score             int
 	EnControl         bool
+	// FechaUltimoPago is the most recent payment date. Zero when no history.
+	FechaUltimoPago time.Time
+	// EstadoPago is the payment-solvency signal. Left empty by the entity-only
+	// mapper; callers that need it must set it after mapping (same pattern as
+	// Segmento and Score).
+	EstadoPago string
 }

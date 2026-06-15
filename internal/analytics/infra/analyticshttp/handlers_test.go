@@ -245,6 +245,8 @@ func TestListarWinback_HappyPath_200(t *testing.T) {
 			Segmento          string `json:"segmento"`
 			Score             int    `json:"score"`
 			EnControl         bool   `json:"en_control"`
+			FechaUltimoPago   string `json:"fecha_ultimo_pago"`
+			EstadoPago        string `json:"estado_pago"`
 		} `json:"items"`
 	}
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
@@ -260,6 +262,19 @@ func TestListarWinback_HappyPath_200(t *testing.T) {
 	assert.Equal(t, "50.00", item.PorLiquidarPct)
 	assert.Equal(t, 5, item.Frecuencia)
 	assert.False(t, item.EnControl)
+
+	// EstadoPago must be a known non-empty value.
+	assert.NotEmpty(t, item.EstadoPago)
+	ep, epErr := domain.ParseEstadoPago(item.EstadoPago)
+	require.NoError(t, epErr, "estado_pago must be a valid EstadoPago value, got %q", item.EstadoPago)
+	assert.True(t, ep.IsValid())
+
+	// mustCandidato uses Saldo=500 and zero FechaUltimoPago → MOROSO.
+	assert.Equal(t, domain.EstadoPagoMoroso.String(), item.EstadoPago,
+		"saldo=500 with zero FechaUltimoPago must be MOROSO")
+	// FechaUltimoPago is empty because mustCandidato does not set it.
+	assert.Empty(t, item.FechaUltimoPago,
+		"fecha_ultimo_pago must be empty when FechaUltimoPago is zero")
 
 	// FechaUltimaCompra must be RFC3339 UTC.
 	require.NotEmpty(t, item.FechaUltimaCompra)
