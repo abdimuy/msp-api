@@ -134,8 +134,10 @@ type ClientesRepo interface {
 	ListarDirectorio(ctx context.Context, p ListParams, f FiltroDirectorio) (Page[DirectorioItem], error)
 
 	// ObtenerResumenFicha returns the pre-aggregated financial summary for
-	// a client's detail screen (ficha). Returns domain.ErrClienteNotFound
-	// when clienteID has no records.
+	// a client's detail screen (ficha). Returns a zero-valued ResumenFicha
+	// (not an error) when the client has no records — the aggregate query
+	// returns zero rows rather than ErrClienteNotFound. Callers that need
+	// existence validation must call ObtenerCliente first.
 	ObtenerResumenFicha(ctx context.Context, clienteID int) (ResumenFicha, error)
 
 	// ListarVentas returns a cursor-paginated list of sale headers for a client,

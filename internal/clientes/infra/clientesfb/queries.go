@@ -81,11 +81,21 @@ const selectDirectorioCols = selectClienteCols + `,
 		  AND i.CANCELADO = 'N'
 	), 0)`
 
-// queryListarDirectorioBase is the FROM + base WHERE for the directory listing.
-// Dynamic filters (zona, cobrador, conSaldo, clienteIDs) and pagination are
-// appended by the repo method.
+// queryListarDirectorioBase is the SELECT + FROM for the directory listing.
+// ESTATUS IN ('A','B') excludes vendor-route pseudo-clients (ESTATUS='V') and
+// cancelled clients (ESTATUS='C'). ESTATUS='B' (bloqueados) is intentionally
+// kept — 63% of clients with saldo are bloqueados and cobradores need to find
+// them.
 const queryListarDirectorioBase = `
-SELECT FIRST ? ` + selectDirectorioCols + clienteFromClause
+SELECT FIRST ? ` + selectDirectorioCols + clienteFromClause + `
+WHERE c.ESTATUS IN ('A', 'B')`
+
+// queryListarDirectorioInner is the unbounded SELECT (no FIRST ?) used when
+// the ConSaldo derived-table wrapper is needed. The derived table applies
+// WHERE SALDO_TOTAL > 0 so the outer FIRST ? operates on pre-filtered rows.
+const queryListarDirectorioInner = `
+SELECT ` + selectDirectorioCols + clienteFromClause + `
+WHERE c.ESTATUS IN ('A', 'B')`
 
 // ─── ResumenFicha ─────────────────────────────────────────────────────────────
 

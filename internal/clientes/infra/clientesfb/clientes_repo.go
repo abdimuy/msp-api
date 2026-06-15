@@ -97,12 +97,22 @@ func buildDirectorioQuery(p outbound.ListParams, f outbound.FiltroDirectorio) (s
 		}
 	}
 
-	whereClause := ""
+	andClause := ""
 	if len(conditions) > 0 {
-		whereClause = " WHERE " + strings.Join(conditions, " AND ")
+		andClause = " AND " + strings.Join(conditions, " AND ")
 	}
-	orderClause := " ORDER BY c.NOMBRE, c.CLIENTE_ID"
-	query := queryListarDirectorioBase + whereClause + orderClause
+
+	var query string
+	if f.ConSaldo {
+		// Wrap the inner (un-FIRST'd) query in a derived table so the outer
+		// FIRST ? applies only to rows that already have SALDO_TOTAL > 0.
+		// Without this, FIRST pageSize is applied before the saldo filter,
+		// under-sizing pages and breaking the "has next page" detection.
+		inner := queryListarDirectorioInner + andClause + " ORDER BY c.NOMBRE, c.CLIENTE_ID"
+		query = "SELECT FIRST ? * FROM (" + inner + ") d WHERE d.SALDO_TOTAL > 0 ORDER BY d.NOMBRE, d.CLIENTE_ID"
+	} else {
+		query = queryListarDirectorioBase + andClause + " ORDER BY c.NOMBRE, c.CLIENTE_ID"
+	}
 	return query, args
 }
 
@@ -122,9 +132,6 @@ func (r *ClientesRepo) ListarDirectorio(
 	query, args := buildDirectorioQuery(p, f)
 	pageSize, _ := args[0].(int)
 
-	// ConSaldo filtering is applied post-scan (avoids a correlated subquery in
-	// the WHERE which could interact badly with FIRST ? pagination).
-
 	var items []outbound.DirectorioItem
 	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
 		q := firebird.GetQuerier(ctx, r.pool.DB)
@@ -141,9 +148,6 @@ func (r *ClientesRepo) ListarDirectorio(
 			item, aerr := raw.assemble()
 			if aerr != nil {
 				return aerr
-			}
-			if f.ConSaldo && item.SaldoTotal.IsZero() {
-				continue
 			}
 			items = append(items, item)
 		}
@@ -281,20 +285,30 @@ func (r *ClientesRepo) ListarVentas(
 ) (outbound.Page[*domain.VentaCliente], error) {
 	pageSize := clampPageSize(p.PageSize)
 
-	cursorFecha, cursorID, err := decodeCursorVentas(p.Cursor)
+	cursorFechaStr, cursorID, err := decodeCursorVentas(p.Cursor)
 	if err != nil {
 		slog.WarnContext(ctx, "clientesfb: invalid ventas cursor, starting from first page",
 			"cursor", p.Cursor, "err", err)
-		cursorFecha, cursorID = "", 0
+		cursorFechaStr, cursorID = "", 0
 	}
 
 	args := []any{pageSize, clienteID}
 	var extra string
-	if cursorFecha != "" {
-		// Keyset descending: FECHA < cursor OR (FECHA = cursor AND DOCTO_PV_ID < cursorID)
-		// FECHA is a DATE column in DOCTOS_PV (see B3 research §5.1).
-		extra = " AND (pv.FECHA < ? OR (pv.FECHA = ? AND pv.DOCTO_PV_ID < ?))"
-		args = append(args, cursorFecha, cursorFecha, cursorID)
+	if cursorFechaStr != "" {
+		// Parse stored RFC3339 string back to time.Time so we can bind
+		// firebird.ToWallClock (a time.Time), not a raw string.
+		// FECHA is a DATE column in DOCTOS_PV; the driver expects a time.Time
+		// or its ToWallClock wrapper — not a string literal (see B3 research §5.1).
+		cursorFecha, parseErr := time.Parse(time.RFC3339, cursorFechaStr)
+		if parseErr != nil {
+			slog.WarnContext(ctx, "clientesfb: ventas cursor fecha unparseable, starting from first page",
+				"fechaStr", cursorFechaStr, "err", parseErr)
+		} else {
+			// Keyset descending: FECHA < cursor OR (FECHA = cursor AND DOCTO_PV_ID < cursorID)
+			extra = " AND (pv.FECHA < ? OR (pv.FECHA = ? AND pv.DOCTO_PV_ID < ?))"
+			fb := firebird.ToWallClock(cursorFecha)
+			args = append(args, fb, fb, cursorID)
+		}
 	}
 	query := queryListarVentasBase + extra + " ORDER BY pv.FECHA DESC, pv.DOCTO_PV_ID DESC"
 

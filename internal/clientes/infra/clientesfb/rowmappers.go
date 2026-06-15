@@ -26,7 +26,7 @@ type clienteRowRaw struct {
 	clienteID     int
 	nombreRaw     firebird.Win1252
 	limiteCrRaw   any
-	notasRaw      sql.NullString // BLOB Sub_Type 1 → driver returns sql.NullString
+	notasRaw      firebird.Win1252 // BLOB Sub_Type 1 — Win1252 handles nil→"" at scan time
 	estatus       string
 	zonaClienteID sql.NullInt64
 	zonaNombreRaw firebird.Win1252
@@ -68,7 +68,7 @@ func (r *clienteRowRaw) assemble() (*domain.Cliente, error) {
 		ClienteID:      r.clienteID,
 		Nombre:         string(r.nombreRaw),
 		LimiteCredito:  lc,
-		Notas:          r.notasRaw.String,
+		Notas:          string(r.notasRaw),
 		Estatus:        r.estatus,
 		ZonaClienteID:  nullableIntVal(r.zonaClienteID),
 		ZonaNombre:     string(r.zonaNombreRaw),
@@ -263,10 +263,10 @@ type contratoRowRaw struct {
 	engancheRaw      any
 	precioContadoRaw any
 	plazoMesesRaw    sql.NullInt64
-	formaDePagoRaw   sql.NullString
-	vendedor1Raw     sql.NullString
-	vendedor2Raw     sql.NullString
-	vendedor3Raw     sql.NullString
+	formaDePagoRaw   firebird.Win1252 // LISTAS_ATRIBUTOS.VALOR_DESPLEGADO — CHARACTER SET NONE
+	vendedor1Raw     firebird.Win1252 // LISTAS_ATRIBUTOS.VALOR_DESPLEGADO — CHARACTER SET NONE
+	vendedor2Raw     firebird.Win1252 // LISTAS_ATRIBUTOS.VALOR_DESPLEGADO — CHARACTER SET NONE
+	vendedor3Raw     firebird.Win1252 // LISTAS_ATRIBUTOS.VALOR_DESPLEGADO — CHARACTER SET NONE
 }
 
 func (r *contratoRowRaw) scanFrom(s scannable) error {
@@ -303,16 +303,16 @@ func (r *contratoRowRaw) assemble() (*outbound.ContratoCredito, error) {
 		plazoMeses = int(r.plazoMesesRaw.Int64)
 	}
 	vendedores := collectVendedores(
-		r.vendedor1Raw.String,
-		r.vendedor2Raw.String,
-		r.vendedor3Raw.String,
+		string(r.vendedor1Raw),
+		string(r.vendedor2Raw),
+		string(r.vendedor3Raw),
 	)
 	return &outbound.ContratoCredito{
 		Parcialidad:     parcialidad,
 		Enganche:        enganche,
 		PrecioDeContado: precioContado,
 		PlazoMeses:      plazoMeses,
-		FormaDePago:     r.formaDePagoRaw.String,
+		FormaDePago:     string(r.formaDePagoRaw),
 		Vendedores:      vendedores,
 	}, nil
 }
@@ -343,7 +343,7 @@ type pagoRowRaw struct {
 	doctoCCID     int
 	fechaRaw      any
 	importeRaw    any
-	formaCobroRaw sql.NullString
+	formaCobroRaw firebird.Win1252 // FORMAS_COBRO.NOMBRE — CHARACTER SET NONE
 	cargoIDRaw    int
 }
 
@@ -370,7 +370,7 @@ func (r *pagoRowRaw) assemble() (*domain.Pago, error) {
 		DoctoCCID:      r.doctoCCID,
 		Fecha:          fecha,
 		Importe:        importe,
-		FormaCobro:     r.formaCobroRaw.String,
+		FormaCobro:     string(r.formaCobroRaw),
 		AplicaACargoID: r.cargoIDRaw,
 	}), nil
 }

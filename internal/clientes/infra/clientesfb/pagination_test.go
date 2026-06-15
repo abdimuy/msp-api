@@ -3,6 +3,7 @@ package clientesfb
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -142,6 +143,28 @@ func TestDecodeCursorVentas_Malformed_ReturnsError(t *testing.T) {
 	t.Parallel()
 	_, _, err := decodeCursorVentas("!!!notbase64")
 	assert.Error(t, err)
+}
+
+// TestDecodeCursorVentas_FechaParseableAsTime asserts that the fecha string
+// stored in the ventas cursor is a valid RFC3339 time that round-trips to
+// time.Time. This validates the C1 fix: the repo parses it back to time.Time
+// before binding to the Firebird DATE column via firebird.ToWallClock.
+func TestDecodeCursorVentas_FechaParseableAsTime(t *testing.T) {
+	t.Parallel()
+	// Encode a ventas cursor as the repo does (last.Fecha().Format(time.RFC3339)).
+	fechaOrig, err := time.Parse(time.RFC3339, "2026-06-11T00:00:00Z")
+	require.NoError(t, err)
+
+	encoded := encodeCursorVentas(fechaOrig.Format(time.RFC3339), 15542211)
+
+	gotFechaStr, gotID, err := decodeCursorVentas(encoded)
+	require.NoError(t, err)
+	assert.Equal(t, 15542211, gotID)
+
+	// The decoded string must be parseable back to time.Time (the C1 fix path).
+	parsed, parseErr := time.Parse(time.RFC3339, gotFechaStr)
+	require.NoError(t, parseErr, "decoded fecha must be parseable as RFC3339 time.Time")
+	assert.True(t, fechaOrig.Equal(parsed), "round-trip time must be equal: got %v want %v", parsed, fechaOrig)
 }
 
 // ─── buildInPlaceholders ──────────────────────────────────────────────────────
