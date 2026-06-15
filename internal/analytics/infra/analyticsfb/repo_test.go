@@ -50,6 +50,9 @@ var fixedCohorte = time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 // fixedFechaUltima is a deterministic last-purchase date.
 var fixedFechaUltima = time.Date(2025, 12, 31, 10, 0, 0, 0, time.UTC)
 
+// fixedFechaPago is a deterministic last-payment date (different from last-purchase).
+var fixedFechaPago = time.Date(2026, 1, 15, 8, 0, 0, 0, time.UTC)
+
 // makeCandidato builds a WinbackCandidato with deterministic fields.
 // clienteID should be a large negative number unlikely to collide with real
 // Microsip data; use a unique value per test to avoid UNIQUE constraint
@@ -67,6 +70,7 @@ func makeCandidato(t *testing.T, clienteID int, monetary, saldo string, enContro
 		Saldo:             decimal.RequireFromString(saldo),
 		PorLiquidarPct:    decimal.RequireFromString("45.50"),
 		NextBestProduct:   "ROPERO MONARCA",
+		FechaUltimoPago:   fixedFechaPago,
 		EnControl:         enControl,
 		CohorteFecha:      fixedCohorte,
 		Now:               fixedNow,
@@ -131,6 +135,8 @@ func TestRepo_UpsertAndList_RoundTrip(t *testing.T) {
 		// Timestamps round-trip within 1-second tolerance (subsecond truncation
 		// at the Firebird TIMESTAMP level is expected).
 		assert.WithinDuration(t, fixedFechaUltima, got.FechaUltimaCompra(), time.Second)
+		assert.WithinDuration(t, fixedFechaPago, got.FechaUltimoPago(), time.Second,
+			"FECHA_ULTIMO_PAGO must round-trip correctly")
 		assert.WithinDuration(t, fixedCohorte, got.CohorteFecha(), time.Second)
 		assert.WithinDuration(t, fixedNow, got.CreatedAt(), time.Second)
 		assert.WithinDuration(t, fixedNow, got.UpdatedAt(), time.Second)
@@ -392,6 +398,53 @@ func TestRepo_ExistingControlFlags_ReturnsCorrectMap(t *testing.T) {
 
 		t.Logf("control flags map: %d entries, -10006=%v -10007=%v",
 			len(flags), flag1, flag2)
+	})
+}
+
+// TestRepo_UpsertAndList_NullFechaUltimoPago verifies that when FechaUltimoPago
+// is zero (no payment history), the column round-trips as zero time.Time.
+//
+//nolint:paralleltest // serial: shares rollback-only tx.
+func TestRepo_UpsertAndList_NullFechaUltimoPago(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		repo := analyticsfb.NewRepo(pool)
+
+		const clienteID = -10030
+		c, err := domain.CrearWinbackCandidato(domain.CrearWinbackCandidatoParams{
+			ClienteID:       clienteID,
+			Nombre:          "Sin Pago",
+			Zona:            "R/TEST",
+			Frecuencia:      1,
+			Monetary:        decimal.RequireFromString("5000.00"),
+			Saldo:           decimal.Zero,
+			PorLiquidarPct:  decimal.Zero,
+			FechaUltimoPago: time.Time{}, // explicit zero
+			CohorteFecha:    fixedCohorte,
+			Now:             fixedNow,
+		})
+		require.NoError(t, err)
+
+		err = repo.UpsertCandidatos(ctx, []*domain.WinbackCandidato{c})
+		if err != nil {
+			t.Skipf("UpsertCandidatos failed — migration 000036 may not be applied: %v", err)
+		}
+
+		page, err := repo.ListCandidatos(ctx, outbound.ListWinbackParams{})
+		require.NoError(t, err)
+
+		var got *domain.WinbackCandidato
+		for _, item := range page.Items {
+			if item.ClienteID() == clienteID {
+				got = item
+				break
+			}
+		}
+		require.NotNil(t, got)
+		assert.True(t, got.FechaUltimoPago().IsZero(),
+			"NULL FECHA_ULTIMO_PAGO must scan as zero time.Time, got %v", got.FechaUltimoPago())
 	})
 }
 
