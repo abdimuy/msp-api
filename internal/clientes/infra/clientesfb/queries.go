@@ -28,14 +28,14 @@ const selectClienteCols = `
 	c.NOTAS,
 	c.ESTATUS,
 	c.ZONA_CLIENTE_ID,
-	COALESCE(z.NOMBRE, ''),
+	COALESCE(z.NOMBRE, '')     AS ZONA_NOMBRE,
 	c.COBRADOR_ID,
-	COALESCE(cob.NOMBRE, ''),
-	COALESCE(d.NOMBRE_CALLE, ''),
-	COALESCE(d.COLONIA, ''),
-	COALESCE(d.POBLACION, ''),
-	COALESCE(e.NOMBRE, ''),
-	COALESCE(d.TELEFONO1, '')`
+	COALESCE(cob.NOMBRE, '')   AS COBRADOR_NOMBRE,
+	COALESCE(d.NOMBRE_CALLE, '') AS NOMBRE_CALLE,
+	COALESCE(d.COLONIA, '')    AS COLONIA,
+	COALESCE(d.POBLACION, '')  AS POBLACION,
+	COALESCE(e.NOMBRE, '')     AS ESTADO_NOMBRE,
+	COALESCE(d.TELEFONO1, '')  AS TELEFONO1`
 
 const clienteFromClause = `
 FROM CLIENTES c
@@ -79,7 +79,7 @@ const selectDirectorioCols = selectClienteCols + `,
 		  AND cargo.CONCEPTO_CC_ID = 5
 		  AND cargo.CANCELADO = 'N'
 		  AND i.CANCELADO = 'N'
-	), 0)`
+	), 0) AS SALDO_TOTAL`
 
 // queryListarDirectorioBase is the SELECT + FROM for the directory listing.
 // ESTATUS IN ('A','B') excludes vendor-route pseudo-clients (ESTATUS='V') and
@@ -305,6 +305,11 @@ ORDER BY det.POSICION`
 // correct plazo-meses column (not CREDITO_EN_MESES which is an opaque FK).
 // Also verify that LISTAS_ATRIBUTOS resolves FORMA_DE_PAGO IDs to
 // SEMANAL/QUINCENAL/MENSUAL text values.
+//
+// ORDER BY + ROWS 1 ensures a deterministic result when multiple DOCTOS_ENTRE_SIS
+// bridge rows exist for the same PV sale (e.g. duplicate bridge rows).
+// DOCTO_ENTRE_SIS_ID is assumed to be the PK of DOCTOS_ENTRE_SIS — newest wins.
+// VERIFY-AT-CHECKPOINT: confirm DOCTO_ENTRE_SIS_ID is the correct PK column name.
 const queryContrato = `
 SELECT
 	lc.PARCIALIDAD,
@@ -325,7 +330,9 @@ LEFT JOIN LISTAS_ATRIBUTOS lv3   ON lv3.LISTA_ATRIB_ID = lc.VENDEDOR_3
 WHERE des.CLAVE_SIS_FTE  = 'PV'
   AND des.CLAVE_SIS_DEST = 'CC'
   AND des.DOCTO_FTE_ID   = ?
-  AND cargo.CANCELADO    = 'N'`
+  AND cargo.CANCELADO    = 'N'
+ORDER BY des.DOCTO_ENTRE_SIS_ID DESC
+ROWS 1`
 
 // queryPagos fetches the payment history for a given PV sale, bridged through
 // DOCTOS_ENTRE_SIS to the cargo DOCTO_CC_ID.
@@ -335,25 +342,32 @@ WHERE des.CLAVE_SIS_FTE  = 'PV'
 //
 // The real amount is IMPORTES_DOCTOS_CC.IMPORTE (not DOCTOS_CC.IMPORTE_COBRO
 // which is always 0, confirmed by B2 research and cobranza pago writer).
-// FormaCobro is resolved from FORMAS_COBRO_DOCTOS → FORMAS_COBRO.
+//
+// FormaCobro is resolved via a correlated scalar subquery (ROWS 1) instead of
+// a LEFT JOIN, to prevent fan-out on split payments (a single pago row with
+// multiple FORMAS_COBRO_DOCTOS entries). The scalar subquery returns exactly
+// one forma-cobro name per pago, picking the first by FORMA_COBRO_ID.
 //
 // VERIFY-AT-CHECKPOINT: confirm that joining FORMAS_COBRO_DOCTOS
 // (NOM_TABLA_DOCTOS='DOCTOS_CC', DOCTO_ID=pago.DOCTO_CC_ID) gives the correct
-// forma cobro name, or whether FORMAS_COBRO can be joined directly on
-// some column in DOCTOS_CC.
+// forma cobro name.
 const queryPagos = `
 SELECT
 	pago.DOCTO_CC_ID,
 	pago.FECHA,
 	CAST(COALESCE(i.IMPORTE, 0) AS NUMERIC(18,2)) AS IMPORTE,
-	COALESCE(fc.NOMBRE, ''),
+	COALESCE((
+		SELECT fc.NOMBRE
+		FROM FORMAS_COBRO_DOCTOS fcd
+		JOIN FORMAS_COBRO fc ON fc.FORMA_COBRO_ID = fcd.FORMA_COBRO_ID
+		WHERE fcd.NOM_TABLA_DOCTOS = 'DOCTOS_CC'
+		  AND fcd.DOCTO_ID = pago.DOCTO_CC_ID
+		ROWS 1
+	), '') AS FORMA_COBRO,
 	des.DOCTO_DEST_ID
 FROM DOCTOS_ENTRE_SIS des
 JOIN IMPORTES_DOCTOS_CC i   ON i.DOCTO_CC_ACR_ID  = des.DOCTO_DEST_ID
 JOIN DOCTOS_CC pago         ON pago.DOCTO_CC_ID   = i.DOCTO_CC_ID
-LEFT JOIN FORMAS_COBRO_DOCTOS fcd
-         ON fcd.NOM_TABLA_DOCTOS = 'DOCTOS_CC' AND fcd.DOCTO_ID = pago.DOCTO_CC_ID
-LEFT JOIN FORMAS_COBRO fc   ON fc.FORMA_COBRO_ID  = fcd.FORMA_COBRO_ID
 WHERE des.CLAVE_SIS_FTE  = 'PV'
   AND des.CLAVE_SIS_DEST = 'CC'
   AND des.DOCTO_FTE_ID   = ?

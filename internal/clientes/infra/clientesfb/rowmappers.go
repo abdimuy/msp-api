@@ -120,9 +120,9 @@ func (r *directorioRowRaw) assemble() (outbound.DirectorioItem, error) {
 	}
 	saldo, err := firebird.ScanDecimal(r.saldoRaw, 2)
 	if err != nil {
-		// When saldo subquery returns NULL (no CC), COALESCE gives 0.
-		// If the driver still sends a nil (unexpected), treat as zero.
-		saldo = decimal.Zero
+		// The SQL COALESCEs the saldo subquery to 0, so the value is never NULL.
+		// A ScanDecimal failure here signals real column drift — propagate it.
+		return outbound.DirectorioItem{}, err
 	}
 	return outbound.DirectorioItem{
 		Cliente:    c,
@@ -169,13 +169,15 @@ func (r *ventaClienteRowRaw) assemble() (*domain.VentaCliente, error) {
 	}
 	saldo, err := firebird.ScanDecimal(r.saldoRaw, 2)
 	if err != nil {
-		saldo = decimal.Zero
+		// The SQL COALESCEs the per-sale saldo subquery to 0, so the value is
+		// never NULL. A ScanDecimal failure signals real column drift — propagate.
+		return nil, err
 	}
-	numPagos := 0
-	if r.numPagosRaw != nil {
-		if n, ok := r.numPagosRaw.(int64); ok {
-			numPagos = int(n)
-		}
+	// firebirdsql v0.9.19 returns INTEGER columns as int32, not int64.
+	// Use scanIntFromAny which handles int16/int32/int64/float64/*big.Int.
+	numPagos, err := scanIntFromAny(r.numPagosRaw)
+	if err != nil {
+		return nil, err
 	}
 	tipo := tipoVentaFromStr(r.tipoStr)
 	return domain.HydrateVentaCliente(domain.HydrateVentaClienteParams{

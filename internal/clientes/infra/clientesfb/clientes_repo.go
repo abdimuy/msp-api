@@ -59,13 +59,19 @@ func (r *ClientesRepo) ObtenerCliente(ctx context.Context, clienteID int) (*doma
 // ─── ListarDirectorio ─────────────────────────────────────────────────────────
 
 // buildDirectorioQuery constructs the SQL query and argument list for ListarDirectorio.
-// args[0] is always pageSize (the FIRST ? in the FIRST ? clause).
-func buildDirectorioQuery(p outbound.ListParams, f outbound.FiltroDirectorio) (string, []any) {
+// args[0] is always pageSize (the FIRST ? in the outermost FIRST ? clause).
+// The decoded cursor values are passed in so ListarDirectorio can decode once
+// and log a warning before calling this function.
+//
+// Returns (query, args, pageSize) so callers don't need to re-extract pageSize
+// from args[0].
+func buildDirectorioQuery(
+	p outbound.ListParams,
+	f outbound.FiltroDirectorio,
+	cursorNombre string,
+	cursorID int,
+) (string, []any, int) {
 	pageSize := clampPageSize(p.PageSize)
-	cursorNombre, cursorID, err := decodeCursorDir(p.Cursor)
-	if err != nil {
-		cursorNombre, cursorID = "", 0
-	}
 
 	args := make([]any, 0, 8)
 	args = append(args, pageSize)
@@ -108,12 +114,26 @@ func buildDirectorioQuery(p outbound.ListParams, f outbound.FiltroDirectorio) (s
 		// FIRST ? applies only to rows that already have SALDO_TOTAL > 0.
 		// Without this, FIRST pageSize is applied before the saldo filter,
 		// under-sizing pages and breaking the "has next page" detection.
+		//
+		// NOTE — ConSaldo latency: the saldo subquery in selectDirectorioCols is
+		// correlated (one sub-select per client row). The derived table
+		// materializes the full filtered client set before FIRST applies, so
+		// latency grows with zone size. This is a Fase-2 optimization target
+		// (e.g. pre-computed MSP_SALDOS cache or a non-correlated join).
 		inner := queryListarDirectorioInner + andClause + " ORDER BY c.NOMBRE, c.CLIENTE_ID"
-		query = "SELECT FIRST ? * FROM (" + inner + ") d WHERE d.SALDO_TOTAL > 0 ORDER BY d.NOMBRE, d.CLIENTE_ID"
+		// List columns explicitly (instead of *) so column order stays stable
+		// if selectDirectorioCols ever gains new columns. Aliases match those
+		// defined in selectClienteCols and selectDirectorioCols.
+		query = `SELECT FIRST ? ` +
+			`d.CLIENTE_ID, d.NOMBRE, d.LIMITE_CREDITO, d.NOTAS, d.ESTATUS, ` +
+			`d.ZONA_CLIENTE_ID, d.ZONA_NOMBRE, d.COBRADOR_ID, d.COBRADOR_NOMBRE, ` +
+			`d.NOMBRE_CALLE, d.COLONIA, d.POBLACION, d.ESTADO_NOMBRE, d.TELEFONO1, ` +
+			`d.SALDO_TOTAL ` +
+			`FROM (` + inner + `) d WHERE d.SALDO_TOTAL > 0 ORDER BY d.NOMBRE, d.CLIENTE_ID`
 	} else {
 		query = queryListarDirectorioBase + andClause + " ORDER BY c.NOMBRE, c.CLIENTE_ID"
 	}
-	return query, args
+	return query, args, pageSize
 }
 
 // ListarDirectorio returns a cursor-paginated list of clients enriched with
@@ -123,14 +143,16 @@ func (r *ClientesRepo) ListarDirectorio(
 	p outbound.ListParams,
 	f outbound.FiltroDirectorio,
 ) (outbound.Page[outbound.DirectorioItem], error) {
-	// Log warning for malformed cursor before building query.
-	if _, _, err := decodeCursorDir(p.Cursor); err != nil {
+	// Decode the cursor once here so we can log a warning on malformed input
+	// and pass the decoded values into buildDirectorioQuery (avoids double decode).
+	cursorNombre, cursorID, cursorErr := decodeCursorDir(p.Cursor)
+	if cursorErr != nil {
 		slog.WarnContext(ctx, "clientesfb: invalid directory cursor, starting from first page",
-			"cursor", p.Cursor, "err", err)
+			"cursor", p.Cursor, "err", cursorErr)
+		cursorNombre, cursorID = "", 0
 	}
 
-	query, args := buildDirectorioQuery(p, f)
-	pageSize, _ := args[0].(int)
+	query, args, pageSize := buildDirectorioQuery(p, f, cursorNombre, cursorID)
 
 	var items []outbound.DirectorioItem
 	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
