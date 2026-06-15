@@ -61,4 +61,11 @@ var (
 		"refresh_state_not_found",
 		"no se encontró el estado de refresco",
 	)
+
+	// ErrWinbackCandidatoNotFound is returned when no MSP_AN_WINBACK_CANDIDATOS row
+	// exists for the requested clienteID (e.g. a client with zero purchase history).
+	ErrWinbackCandidatoNotFound = apperror.NewNotFound(
+		"winback_candidato_not_found",
+		"candidato winback no encontrado",
+	)
 )

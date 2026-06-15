@@ -6,6 +6,11 @@
 // The contract exports:
 //   - WinbackCandidatoContract: flat primitive view of a winback candidate,
 //     intended for consumption by the future reactivacion module.
+//   - ClientePulsoContract: flat primitive view of a client's analytics pulse
+//     (score, segmento, estado_pago, recencia, RFM, next-best-product),
+//     intended for consumption by the clientes hub module.
+//
+//nolint:misspell // Spanish domain vocabulary (clientes, segmento, etc.) by project convention.
 package analytics
 
 import (
@@ -42,4 +47,23 @@ type WinbackCandidatoContract struct {
 	// mapper; callers that need it must set it after mapping (same pattern as
 	// Segmento and Score).
 	EstadoPago string
+}
+
+// ClientePulsoContract is the projected, cross-module view of a client's
+// analytics pulse. It carries the scored/segmented snapshot for a single
+// client as of the read time. Money fields are decimal.Decimal (exact) —
+// the consuming module converts them to strings at its own HTTP boundary.
+type ClientePulsoContract struct {
+	ClienteID         int
+	Score             int    // 0–100, computed at read time
+	Segmento          string // domain.Segmento → string
+	EstadoPago        string // domain.EstadoPago → string
+	RecenciaDias      int    // days since last purchase; 9999 sentinel if none
+	Frecuencia        int
+	Monetary          decimal.Decimal
+	Saldo             decimal.Decimal
+	PorLiquidarPct    decimal.Decimal
+	FechaUltimaCompra time.Time // zero if none
+	FechaUltimoPago   time.Time // zero if none
+	NextBestProduct   string
 }

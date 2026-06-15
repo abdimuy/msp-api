@@ -44,6 +44,14 @@ func (stubRepo) ExistingControlFlags(_ context.Context) (map[int]bool, error) {
 	return map[int]bool{}, nil
 }
 
+func (stubRepo) GetCandidato(_ context.Context, _ int) (*domain.WinbackCandidato, error) {
+	return nil, domain.ErrWinbackCandidatoNotFound
+}
+
+func (stubRepo) ListCandidatosByClienteIDs(_ context.Context, _ []int) ([]*domain.WinbackCandidato, error) {
+	return []*domain.WinbackCandidato{}, nil
+}
+
 // stubMicrosip satisfies outbound.MicrosipReader with a no-op implementation.
 type stubMicrosip struct{}
 

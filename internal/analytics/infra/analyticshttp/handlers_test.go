@@ -107,6 +107,14 @@ func (r *controlledRepo) ExistingControlFlags(_ context.Context) (map[int]bool, 
 	return r.controlFlags, r.controlFlagsErr
 }
 
+func (r *controlledRepo) GetCandidato(_ context.Context, _ int) (*domain.WinbackCandidato, error) {
+	return nil, domain.ErrWinbackCandidatoNotFound
+}
+
+func (r *controlledRepo) ListCandidatosByClienteIDs(_ context.Context, _ []int) ([]*domain.WinbackCandidato, error) {
+	return []*domain.WinbackCandidato{}, nil
+}
+
 // noopMicrosip returns an empty ancla list by default.
 type noopMicrosip struct {
 	anclas []outbound.AnclaCliente

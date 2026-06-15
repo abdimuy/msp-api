@@ -104,6 +104,33 @@ func (r *fakeWinbackRepo) ExistingControlFlags(_ context.Context) (map[int]bool,
 	return out, nil
 }
 
+func (r *fakeWinbackRepo) GetCandidato(_ context.Context, clienteID int) (*domain.WinbackCandidato, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.candidates {
+		if c.ClienteID() == clienteID {
+			return c, nil
+		}
+	}
+	return nil, domain.ErrWinbackCandidatoNotFound
+}
+
+func (r *fakeWinbackRepo) ListCandidatosByClienteIDs(_ context.Context, clienteIDs []int) ([]*domain.WinbackCandidato, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ids := make(map[int]struct{}, len(clienteIDs))
+	for _, id := range clienteIDs {
+		ids[id] = struct{}{}
+	}
+	var result []*domain.WinbackCandidato
+	for _, c := range r.candidates {
+		if _, ok := ids[c.ClienteID()]; ok {
+			result = append(result, c)
+		}
+	}
+	return result, nil
+}
+
 // ─── Fake MicrosipReader ──────────────────────────────────────────────────────
 
 type fakeMicrosipReader struct {

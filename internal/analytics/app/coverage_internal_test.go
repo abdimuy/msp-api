@@ -94,6 +94,14 @@ func (r *internalFakeRepo) ExistingControlFlags(_ context.Context) (map[int]bool
 	return make(map[int]bool), nil
 }
 
+func (r *internalFakeRepo) GetCandidato(_ context.Context, _ int) (*domain.WinbackCandidato, error) {
+	return nil, domain.ErrWinbackCandidatoNotFound
+}
+
+func (r *internalFakeRepo) ListCandidatosByClienteIDs(_ context.Context, _ []int) ([]*domain.WinbackCandidato, error) {
+	return []*domain.WinbackCandidato{}, nil
+}
+
 // internalFakeMicrosip is a minimal MicrosipReader for worker tick tests.
 type internalFakeMicrosip struct {
 	anclas []outbound.AnclaCliente
@@ -150,6 +158,14 @@ func (r *errorInternalFakeRepo) SaveRefreshState(_ context.Context, _ outbound.R
 
 func (r *errorInternalFakeRepo) ExistingControlFlags(_ context.Context) (map[int]bool, error) {
 	return make(map[int]bool), nil
+}
+
+func (r *errorInternalFakeRepo) GetCandidato(_ context.Context, _ int) (*domain.WinbackCandidato, error) {
+	return nil, domain.ErrWinbackCandidatoNotFound
+}
+
+func (r *errorInternalFakeRepo) ListCandidatosByClienteIDs(_ context.Context, _ []int) ([]*domain.WinbackCandidato, error) {
+	return []*domain.WinbackCandidato{}, nil
 }
 
 // buildInternalAnclas creates n valid AnclaCliente values for tick tests.

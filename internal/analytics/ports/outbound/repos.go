@@ -53,7 +53,7 @@ type RefreshState struct {
 
 // WinbackRepo persists and retrieves WinbackCandidato projection rows.
 //
-//nolint:interfacebloat // five methods mandated by the R1 spec; each maps to a distinct operation.
+//nolint:interfacebloat // seven methods mandated by the R1 spec; each maps to a distinct operation.
 type WinbackRepo interface {
 	// UpsertCandidatos inserts or replaces the given candidatos in bulk.
 	// The repo matches rows by CLIENTE_ID and updates all mutable fields.
@@ -85,4 +85,14 @@ type WinbackRepo interface {
 	// clients when building the new candidato set, so a refresh does not
 	// accidentally flip the A/B flag.
 	ExistingControlFlags(ctx context.Context) (map[int]bool, error)
+
+	// GetCandidato returns the candidato row for clienteID, or
+	// domain.ErrWinbackCandidatoNotFound when the client is not materialized
+	// (e.g. a client with zero purchase history).
+	GetCandidato(ctx context.Context, clienteID int) (*domain.WinbackCandidato, error)
+
+	// ListCandidatosByClienteIDs returns the materialized candidatos for the given
+	// clienteIDs. Clients not materialized are simply absent from the result
+	// (no error). An empty input returns an empty slice.
+	ListCandidatosByClienteIDs(ctx context.Context, clienteIDs []int) ([]*domain.WinbackCandidato, error)
 }

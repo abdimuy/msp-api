@@ -443,6 +443,68 @@ func (r *Repo) ExistingControlFlags(ctx context.Context) (map[int]bool, error) {
 	return result, nil
 }
 
+// GetCandidato returns the candidato for clienteID.
+// Returns domain.ErrWinbackCandidatoNotFound when no row exists.
+func (r *Repo) GetCandidato(ctx context.Context, clienteID int) (*domain.WinbackCandidato, error) {
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	query := selectCandidatoBase + " WHERE CLIENTE_ID = ?"
+	var raw candidatoRowRaw
+	if err := raw.scanFrom(q.QueryRowContext(ctx, query, clienteID)); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrWinbackCandidatoNotFound
+		}
+		return nil, firebird.MapError(err)
+	}
+	c, err := assembleCandidato(&raw)
+	if err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// candidatoChunkSize is the maximum number of clienteIDs per IN clause.
+// Firebird's parameter limit is well above 500; we use 500 as a safe chunk.
+const candidatoChunkSize = 500
+
+// ListCandidatosByClienteIDs returns candidatos for the given clienteIDs.
+// Missing clients are absent from the result (no error).
+func (r *Repo) ListCandidatosByClienteIDs(ctx context.Context, clienteIDs []int) ([]*domain.WinbackCandidato, error) {
+	if len(clienteIDs) == 0 {
+		return []*domain.WinbackCandidato{}, nil
+	}
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	var result []*domain.WinbackCandidato
+	for i := 0; i < len(clienteIDs); i += candidatoChunkSize {
+		end := i + candidatoChunkSize
+		if end > len(clienteIDs) {
+			end = len(clienteIDs)
+		}
+		chunk := clienteIDs[i:end]
+		items, err := r.listCandidatosByChunk(ctx, q, chunk)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, items...)
+	}
+	return result, nil
+}
+
+func (r *Repo) listCandidatosByChunk(ctx context.Context, q firebird.Querier, clienteIDs []int) ([]*domain.WinbackCandidato, error) {
+	placeholders := make([]string, len(clienteIDs))
+	args := make([]any, len(clienteIDs))
+	for i, id := range clienteIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := selectCandidatoBase + " WHERE CLIENTE_ID IN (" + strings.Join(placeholders, ",") + ")"
+	rows, err := q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, firebird.MapError(err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanCandidatoRows(rows)
+}
+
 // ─── MicrosipReader ───────────────────────────────────────────────────────────
 
 // LeerAnclasDesde returns per-cliente RFM + saldo + NBP anchor facts from
