@@ -31,6 +31,7 @@ type WinbackCandidato struct {
 	zona              string
 	telefono          string
 	fechaUltimaCompra time.Time
+	fechaUltimoPago   time.Time
 	frecuencia        int
 	monetary          decimal.Decimal
 	saldo             decimal.Decimal
@@ -58,8 +59,11 @@ type CrearWinbackCandidatoParams struct {
 	PorLiquidarPct    decimal.Decimal
 	NextBestProduct   string
 	EnControl         bool
-	CohorteFecha      time.Time
-	Now               time.Time
+	// FechaUltimoPago is the most recent payment date across open cargos.
+	// Zero if the client has no payment history.
+	FechaUltimoPago time.Time
+	CohorteFecha    time.Time
+	Now             time.Time
 }
 
 // CrearWinbackCandidato validates all invariants, generates a new UUID, and
@@ -90,6 +94,11 @@ func CrearWinbackCandidato(p CrearWinbackCandidatoParams) (*WinbackCandidato, er
 		fechaUltimaCompra = p.FechaUltimaCompra.UTC()
 	}
 
+	var fechaUltimoPago time.Time
+	if !p.FechaUltimoPago.IsZero() {
+		fechaUltimoPago = p.FechaUltimoPago.UTC()
+	}
+
 	return &WinbackCandidato{
 		id:                uuid.New(),
 		clienteID:         p.ClienteID,
@@ -97,6 +106,7 @@ func CrearWinbackCandidato(p CrearWinbackCandidatoParams) (*WinbackCandidato, er
 		zona:              p.Zona,
 		telefono:          p.Telefono,
 		fechaUltimaCompra: fechaUltimaCompra,
+		fechaUltimoPago:   fechaUltimoPago,
 		frecuencia:        p.Frecuencia,
 		monetary:          p.Monetary,
 		saldo:             p.Saldo,
@@ -119,15 +129,18 @@ type HydrateWinbackCandidatoParams struct {
 	Zona              string
 	Telefono          string
 	FechaUltimaCompra time.Time
-	Frecuencia        int
-	Monetary          decimal.Decimal
-	Saldo             decimal.Decimal
-	PorLiquidarPct    decimal.Decimal
-	NextBestProduct   string
-	EnControl         bool
-	CohorteFecha      time.Time
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	// FechaUltimoPago is the most recent payment date from persistence.
+	// Zero when the column is NULL (no payment history).
+	FechaUltimoPago time.Time
+	Frecuencia      int
+	Monetary        decimal.Decimal
+	Saldo           decimal.Decimal
+	PorLiquidarPct  decimal.Decimal
+	NextBestProduct string
+	EnControl       bool
+	CohorteFecha    time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // HydrateWinbackCandidato reconstructs a WinbackCandidato from persistence
@@ -140,6 +153,7 @@ func HydrateWinbackCandidato(p HydrateWinbackCandidatoParams) *WinbackCandidato 
 		zona:              p.Zona,
 		telefono:          p.Telefono,
 		fechaUltimaCompra: p.FechaUltimaCompra,
+		fechaUltimoPago:   p.FechaUltimoPago,
 		frecuencia:        p.Frecuencia,
 		monetary:          p.Monetary,
 		saldo:             p.Saldo,
@@ -196,6 +210,10 @@ func (w *WinbackCandidato) EnControl() bool { return w.enControl }
 
 // CohorteFecha returns the UTC cohort assignment date. Never zero.
 func (w *WinbackCandidato) CohorteFecha() time.Time { return w.cohorteFecha }
+
+// FechaUltimoPago returns the UTC timestamp of the client's most recent payment
+// across open cargos. Returns zero time.Time when no payment history is available.
+func (w *WinbackCandidato) FechaUltimoPago() time.Time { return w.fechaUltimoPago }
 
 // CreatedAt returns the UTC timestamp when the projection row was created.
 func (w *WinbackCandidato) CreatedAt() time.Time { return w.timestamps.CreatedAt() }

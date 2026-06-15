@@ -188,3 +188,54 @@ func TestHydrateWinbackCandidato(t *testing.T) {
 	assert.Equal(t, createdAt, got.CreatedAt())
 	assert.Equal(t, updatedAt, got.UpdatedAt())
 }
+
+func TestWinbackCandidato_FechaUltimoPago(t *testing.T) {
+	t.Parallel()
+
+	fechaPago := time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)
+
+	t.Run("Crear sets fechaUltimoPago to UTC", func(t *testing.T) {
+		t.Parallel()
+		p := validParams()
+		p.FechaUltimoPago = fechaPago
+		got, err := domain.CrearWinbackCandidato(p)
+		require.NoError(t, err)
+		assert.Equal(t, fechaPago.UTC(), got.FechaUltimoPago(), "fechaUltimoPago must be UTC")
+	})
+
+	t.Run("Crear with zero fechaUltimoPago remains zero", func(t *testing.T) {
+		t.Parallel()
+		p := validParams()
+		p.FechaUltimoPago = time.Time{}
+		got, err := domain.CrearWinbackCandidato(p)
+		require.NoError(t, err)
+		assert.True(t, got.FechaUltimoPago().IsZero(), "zero fechaUltimoPago must remain zero")
+	})
+
+	t.Run("Hydrate round-trips fechaUltimoPago", func(t *testing.T) {
+		t.Parallel()
+		p := domain.HydrateWinbackCandidatoParams{
+			ID:              uuid.New(),
+			ClienteID:       10,
+			CohorteFecha:    now,
+			FechaUltimoPago: fechaPago,
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		}
+		got := domain.HydrateWinbackCandidato(p)
+		assert.Equal(t, fechaPago, got.FechaUltimoPago())
+	})
+
+	t.Run("Hydrate with zero fechaUltimoPago is zero", func(t *testing.T) {
+		t.Parallel()
+		p := domain.HydrateWinbackCandidatoParams{
+			ID:           uuid.New(),
+			ClienteID:    10,
+			CohorteFecha: now,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}
+		got := domain.HydrateWinbackCandidato(p)
+		assert.True(t, got.FechaUltimoPago().IsZero())
+	})
+}
