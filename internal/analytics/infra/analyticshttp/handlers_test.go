@@ -461,9 +461,15 @@ func TestAtribucion_HappyPath_200(t *testing.T) {
 
 // ─── Scenario 6: POST /winback/refresh ───────────────────────────────────────
 
-// TestRefrescarCandidatos_FullTrue_200 verifies that full=true is forwarded
-// and the response carries procesados + a RFC3339 watermark.
-func TestRefrescarCandidatos_FullTrue_200(t *testing.T) {
+// refreshBody is the shape of RefreshOutput.Body used in handler tests.
+type refreshBody struct {
+	Estado  string `json:"estado"`
+	Mensaje string `json:"mensaje"`
+}
+
+// TestRefrescarCandidatos_FullTrue_202_Iniciado verifies that full=true triggers
+// a background refresh and the handler returns 202 with estado="iniciado".
+func TestRefrescarCandidatos_FullTrue_202_Iniciado(t *testing.T) {
 	t.Parallel()
 
 	repo := newControlledRepo()
@@ -486,28 +492,21 @@ func TestRefrescarCandidatos_FullTrue_200(t *testing.T) {
 	h := buildRouter(svc, cu)
 
 	rec := doJSON(h, http.MethodPost, "/winback/refresh", map[string]bool{"full": true})
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
 
-	var resp struct {
-		Procesados int    `json:"procesados"`
-		Watermark  string `json:"watermark"`
-	}
+	var resp refreshBody
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
 
-	assert.Equal(t, 1, resp.Procesados, "one ancla → one candidato")
-	require.NotEmpty(t, resp.Watermark)
-	parsed, parseErr := time.Parse(time.RFC3339Nano, resp.Watermark)
-	require.NoError(t, parseErr, "watermark must be RFC3339")
-	assert.Equal(t, fixedNow.UTC(), parsed.UTC(), "watermark must equal clock.Now()")
+	assert.Equal(t, "iniciado", resp.Estado)
+	assert.NotEmpty(t, resp.Mensaje)
 }
 
-// TestRefrescarCandidatos_FullFalse_200 verifies that full=false (incremental)
-// also works and procesados reflects what was returned by the micro adapter.
-func TestRefrescarCandidatos_FullFalse_200(t *testing.T) {
+// TestRefrescarCandidatos_FullFalse_202_Iniciado verifies that full=false
+// (incremental) also returns 202 with estado="iniciado".
+func TestRefrescarCandidatos_FullFalse_202_Iniciado(t *testing.T) {
 	t.Parallel()
 
 	repo := newControlledRepo()
-	// No anclas for incremental run — procesados = 0.
 	micro := &noopMicrosip{}
 
 	svc := buildService(repo, micro)
@@ -515,38 +514,61 @@ func TestRefrescarCandidatos_FullFalse_200(t *testing.T) {
 	h := buildRouter(svc, cu)
 
 	rec := doJSON(h, http.MethodPost, "/winback/refresh", map[string]bool{"full": false})
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
 
-	var resp struct {
-		Procesados int    `json:"procesados"`
-		Watermark  string `json:"watermark"`
-	}
+	var resp refreshBody
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
 
-	assert.Equal(t, 0, resp.Procesados)
-	assert.NotEmpty(t, resp.Watermark)
+	assert.Equal(t, "iniciado", resp.Estado)
+	assert.NotEmpty(t, resp.Mensaje)
 }
 
-// TestRefrescarCandidatos_ExplicitFalse_200 verifies that full=false
-// succeeds and procesados is 0 when there are no anclas.
-func TestRefrescarCandidatos_ExplicitFalse_200(t *testing.T) {
+// TestRefrescarCandidatos_YaEnProgreso_202 simulates the single-flight guard
+// returning false (a refresh is already running) and asserts the handler still
+// returns 202 but with estado="ya_en_progreso".
+//
+// A blocking MicrosipReader holds the guard open between the two HTTP requests.
+func TestRefrescarCandidatos_YaEnProgreso_202(t *testing.T) {
 	t.Parallel()
 
+	release := make(chan struct{})
+	bmImpl := &blockingMicrosipImpl{release: release}
+
 	repo := newControlledRepo()
-	micro := &noopMicrosip{}
-	svc := buildService(repo, micro)
+	svc := buildService(repo, bmImpl)
 	cu := userWith(auth.PermAnalyticsRefresh)
 	h := buildRouter(svc, cu)
 
-	// Huma requires the "full" field to be present in the body.
-	rec := doJSON(h, http.MethodPost, "/winback/refresh", map[string]bool{"full": false})
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	// First request: starts the background goroutine which blocks on microsip.
+	rec1 := doJSON(h, http.MethodPost, "/winback/refresh", map[string]bool{"full": false})
+	require.Equal(t, http.StatusAccepted, rec1.Code, rec1.Body.String())
 
-	var resp struct {
-		Procesados int `json:"procesados"`
-	}
-	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
-	assert.Equal(t, 0, resp.Procesados)
+	var resp1 refreshBody
+	require.NoError(t, json.NewDecoder(rec1.Body).Decode(&resp1))
+	assert.Equal(t, "iniciado", resp1.Estado, "first trigger must be iniciado")
+
+	// The goroutine is now blocked inside LeerAnclasDesde; the guard is held.
+	// Second request: guard is taken, must return ya_en_progreso.
+	rec2 := doJSON(h, http.MethodPost, "/winback/refresh", map[string]bool{"full": false})
+	require.Equal(t, http.StatusAccepted, rec2.Code, rec2.Body.String())
+
+	var resp2 refreshBody
+	require.NoError(t, json.NewDecoder(rec2.Body).Decode(&resp2))
+	assert.Equal(t, "ya_en_progreso", resp2.Estado, "second trigger while first runs must be ya_en_progreso")
+
+	// Unblock the goroutine so the test goroutine exits cleanly.
+	close(release)
+}
+
+// blockingMicrosipImpl is a MicrosipReader that blocks LeerAnclasDesde until
+// its release channel is closed. Used to hold the single-flight guard open.
+type blockingMicrosipImpl struct {
+	release chan struct{}
+}
+
+func (b *blockingMicrosipImpl) LeerAnclasDesde(_ context.Context, _ *time.Time) ([]outbound.AnclaCliente, error) {
+	<-b.release
+	return nil, nil
 }
 
 // ─── Scenario 7: internal error → 500 ────────────────────────────────────────
@@ -582,9 +604,11 @@ func TestAtribucion_RepoError_500(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
 }
 
-// TestRefrescarCandidatos_MicrosipError_500 simulates Microsip returning an
-// error during refresh and asserts 500 from the handler.
-func TestRefrescarCandidatos_MicrosipError_500(t *testing.T) {
+// TestRefrescarCandidatos_MicrosipError_StillReturns202 verifies that even when
+// Microsip would return an error, the handler still returns 202 immediately
+// because the refresh runs asynchronously. The error is logged by the background
+// goroutine rather than surfaced as an HTTP 500.
+func TestRefrescarCandidatos_MicrosipError_StillReturns202(t *testing.T) {
 	t.Parallel()
 
 	repo := newControlledRepo()
@@ -595,7 +619,11 @@ func TestRefrescarCandidatos_MicrosipError_500(t *testing.T) {
 	h := buildRouter(svc, cu)
 
 	rec := doJSON(h, http.MethodPost, "/winback/refresh", map[string]bool{"full": true})
-	assert.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
+	assert.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+
+	var resp refreshBody
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	assert.Equal(t, "iniciado", resp.Estado)
 }
 
 // ─── Unauthenticated (no CurrentUser) → 401 ──────────────────────────────────

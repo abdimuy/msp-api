@@ -82,9 +82,9 @@ func registerOperations(api huma.API, h *Handlers) {
 		Method:        http.MethodPost,
 		Path:          "/winback/refresh",
 		Summary:       "Refrescar candidatos winback",
-		Description:   "Reconstruye la proyección de candidatos winback desde las anclas de Microsip. Incremental por defecto; full=true fuerza reconstrucción completa.",
+		Description:   "Dispara la reconstrucción de la proyección de candidatos winback en segundo plano y devuelve 202 Accepted inmediatamente. Incremental por defecto; full=true fuerza reconstrucción completa. Si ya hay un refresco en curso, el cuerpo de respuesta indica ya_en_progreso.",
 		Tags:          tags,
 		Security:      security,
-		DefaultStatus: http.StatusOK,
+		DefaultStatus: http.StatusAccepted,
 	}, h.RefrescarCandidatos)
 }

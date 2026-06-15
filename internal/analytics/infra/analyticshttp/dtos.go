@@ -69,10 +69,15 @@ type RefreshInput struct {
 	}
 }
 
-// RefreshOutput is the response wrapper for POST /winback/refresh.
+// RefreshOutput is the response wrapper for POST /winback/refresh (HTTP 202).
+// The refresh runs asynchronously; procesados/watermark are NOT available at
+// trigger time. Check server logs for completion details.
 type RefreshOutput struct {
 	Body struct {
-		Procesados int    `json:"procesados"  doc:"Número de candidatos upsertados en este ciclo"`
-		Watermark  string `json:"watermark"   format:"date-time" doc:"RFC3339 UTC del nuevo watermark"`
+		// Estado is "iniciado" when a new background refresh was started, or
+		// "ya_en_progreso" when a refresh was already running and was not
+		// started again.
+		Estado  string `json:"estado"   doc:"Estado del disparo: 'iniciado' | 'ya_en_progreso'"`
+		Mensaje string `json:"mensaje"  doc:"Descripción del estado"`
 	}
 }

@@ -19,6 +19,12 @@ const moneyScale int32 = 2
 // of 0.00).
 const rateScale int32 = 4
 
+// refresh estado constants used in RefreshOutput.Body.
+const (
+	estadoIniciado     = "iniciado"
+	estadoYaEnProgreso = "ya_en_progreso"
+)
+
 // Handlers holds the analytics HTTP handlers wired against the app service.
 type Handlers struct {
 	svc *analyticsapp.Service
@@ -82,6 +88,16 @@ func (h *Handlers) Atribucion(ctx context.Context, input *AttributionInput) (*At
 }
 
 // RefrescarCandidatos handles POST /winback/refresh.
+//
+// The refresh is dispatched as a background goroutine so the endpoint returns
+// immediately with HTTP 202 Accepted. The actual work (reading Microsip anclas
+// + upserting candidatos) takes ~50s for a full rebuild and would exceed the
+// HTTP write timeout if run synchronously.
+//
+// A single-flight guard in the app layer prevents duplicate concurrent runs: if
+// a refresh is already in progress, the response body carries estado =
+// "ya_en_progreso" but the status code is still 202 (the request was accepted;
+// the desired end-state — a fresh projection — is already being worked on).
 func (h *Handlers) RefrescarCandidatos(ctx context.Context, input *RefreshInput) (*RefreshOutput, error) {
 	cu, err := currentUserOrError(ctx)
 	if err != nil {
@@ -91,14 +107,16 @@ func (h *Handlers) RefrescarCandidatos(ctx context.Context, input *RefreshInput)
 		return nil, err
 	}
 
-	result, err := h.svc.RefrescarCandidatos(ctx, input.Body.Full)
-	if err != nil {
-		return nil, mapAppError(err)
-	}
-
 	out := &RefreshOutput{}
-	out.Body.Procesados = result.Procesados
-	out.Body.Watermark = formatTime(result.Watermark)
+	//nolint:contextcheck // intentional: RefrescarEnSegundoPlano uses context.Background() internally
+	// so that the background goroutine is not cancelled by the HTTP request context.
+	if h.svc.RefrescarEnSegundoPlano(input.Body.Full) {
+		out.Body.Estado = estadoIniciado
+		out.Body.Mensaje = "refresco iniciado en segundo plano"
+	} else {
+		out.Body.Estado = estadoYaEnProgreso
+		out.Body.Mensaje = "ya hay un refresco en progreso"
+	}
 	return out, nil
 }
 
