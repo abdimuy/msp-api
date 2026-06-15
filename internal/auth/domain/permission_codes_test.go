@@ -52,6 +52,8 @@ func TestAllPermissions_NonEmpty(t *testing.T) {
 		domain.PermStockConsultar,
 		domain.PermAnalyticsWinbackRead,
 		domain.PermAnalyticsRefresh,
+		domain.PermClientesLeer,
+		domain.PermClientesReindexar,
 	}
 	got := make(map[domain.Permission]struct{}, len(perms))
 	for _, p := range perms {

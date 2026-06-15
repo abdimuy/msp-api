@@ -1,3 +1,4 @@
+//nolint:misspell // Spanish domain names (clientes, etc.) per project convention.
 package domain
 
 import "sort"
@@ -98,6 +99,13 @@ const (
 	// PermAnalyticsRefresh grants triggering a manual refresh of the analytics
 	// materialized tables (winback candidates, refresh state).
 	PermAnalyticsRefresh Permission = "analytics:refrescar"
+
+	// PermClientesLeer grants read access to the clientes hub: directory, ficha,
+	// ventas list, and venta detail.
+	PermClientesLeer Permission = "clientes:leer"
+	// PermClientesReindexar grants triggering a manual rebuild of the clientes
+	// full-text search index.
+	PermClientesReindexar Permission = "clientes:reindexar"
 )
 
 // PermissionMeta is a catalog entry pairing a permission code with the
@@ -121,6 +129,7 @@ const (
 	categoriaCobranza      = "cobranza"
 	categoriaInventario    = "inventario"
 	categoriaAnalytics     = "analytics"
+	categoriaClientes      = "clientes"
 )
 
 // AllPermissions returns every permission known to the auth module, sorted
@@ -166,6 +175,9 @@ func AllPermissions() []PermissionMeta {
 
 		{PermAnalyticsWinbackRead, "ver la lista de candidatos winback y vistas de analytics", categoriaAnalytics},
 		{PermAnalyticsRefresh, "disparar un refresh manual de las tablas materializadas de analytics", categoriaAnalytics},
+
+		{PermClientesLeer, "ver el directorio, ficha, ventas y detalle de clientes", categoriaClientes},
+		{PermClientesReindexar, "reconstruir el índice de búsqueda de clientes", categoriaClientes},
 	}
 	sort.Slice(perms, func(i, j int) bool { return perms[i].Code < perms[j].Code })
 	return perms
