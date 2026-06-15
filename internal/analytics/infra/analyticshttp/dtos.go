@@ -37,6 +37,7 @@ type ListWinbackInput struct {
 	Zona           string `query:"zona"            doc:"Restringe a candidatos de esta zona de ventas"`
 	Limit          int    `query:"limit"           default:"50" minimum:"1" maximum:"500" doc:"Máximo de registros devueltos"`
 	IncluirControl bool   `query:"incluir_control" doc:"Incluye candidatos del grupo de control en el resultado"`
+	IncluirActivos bool   `query:"incluir_activos" doc:"Cuando true incluye segmentos ACTIVO y NUEVO (excluidos por defecto porque no son objetivos de winback)"`
 }
 
 // ListWinbackOutput is the response wrapper for GET /winback.

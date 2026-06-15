@@ -40,6 +40,14 @@ type ListarWinbackParams struct {
 	// IncluirControl, when true, includes control-group candidates in the
 	// results. When false (default), control candidates are excluded.
 	IncluirControl bool
+
+	// IncluirActivos, when true, overrides the default exclusion of ACTIVO and
+	// NUEVO segments from the winback list. By default (false) those segments
+	// are omitted because active clients are not winback targets.
+	//
+	// An explicit Segmento filter (e.g. Segmento="ACTIVO") takes precedence and
+	// returns that segment regardless of IncluirActivos.
+	IncluirActivos bool
 }
 
 // ListarWinback returns winback candidates scored and sorted by score
@@ -88,11 +96,20 @@ func (s *Service) ListarWinback(ctx context.Context, p ListarWinbackParams) ([]W
 	// Score and optionally filter.
 	items := make([]WinbackListItem, 0, len(page.Items))
 	for _, c := range page.Items {
-		seg, score, recencia := computeSegmentoScore(c, now)
-		if segFilter != "" && seg != segFilter {
-			continue
+		seg, score, recencia, ep := computeSegmentoScore(c, now)
+
+		// Apply segment filter (explicit filter overrides the default exclusion).
+		if segFilter != "" {
+			if seg != segFilter {
+				continue
+			}
+		} else if !p.IncluirActivos {
+			// Default: exclude ACTIVO and NUEVO — they are not winback targets.
+			if seg == domain.SegmentoActivo || seg == domain.SegmentoNuevo {
+				continue
+			}
 		}
-		ep := estadoPagoFor(c.Saldo(), c.FechaUltimoPago(), now)
+
 		items = append(items, WinbackListItem{
 			Candidato:    c,
 			Segmento:     seg,

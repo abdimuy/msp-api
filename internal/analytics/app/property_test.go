@@ -74,8 +74,8 @@ func TestProperty_ComputeSegmentoScore_Invariants(t *testing.T) {
 		})
 
 		// ── Invariant 1: determinism ──────────────────────────────────────────
-		seg1, score1, rec1 := app.ExportComputeSegmentoScore(c, now)
-		seg2, score2, rec2 := app.ExportComputeSegmentoScore(c, now)
+		seg1, score1, rec1, _ := app.ExportComputeSegmentoScore(c, now)
+		seg2, score2, rec2, _ := app.ExportComputeSegmentoScore(c, now)
 		if seg1 != seg2 {
 			t.Fatalf("non-deterministic segmento: %v != %v", seg1, seg2)
 		}

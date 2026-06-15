@@ -55,25 +55,81 @@ const (
 	scoreValueCap = 50_000.0
 
 	// Weight constants (must sum to 1.0).
-	wValue   = 0.40
-	wProp    = 0.30
-	wContact = 0.15
-	wPorLiq  = 0.15
+	// wRecencia dominates: winback is primarily about finding lapsed-but-recoverable
+	// clients. wValue rewards high lifetime value. wContact gives bonus for contactable
+	// clients. wPorLiq adds small signal for outstanding balances worth recovering.
+	wRecencia = 0.45
+	wValue    = 0.30
+	wContact  = 0.10
+	wPorLiq   = 0.15
 )
 
 // umbralValiosoDecimal is the decimal form of the monetary threshold used in
 // the segmentation rule. Declared as a package-level var so it is built once.
 var umbralValiosoDecimal = decimal.NewFromInt(20_000)
 
+// ─── Winback recency window constants ────────────────────────────────────────
+
+const (
+	// recenciaActivoMaxDias is the upper boundary for "still active" clients.
+	// Clients last seen within this window are not winback targets (they are
+	// still buying) and receive a low recency score component.
+	// R1 heuristic: 90 days ≈ one business quarter.
+	recenciaActivoMaxDias = 90
+
+	// recenciaVentanaIniDias is the start of the winback sweet spot.
+	// Clients lapsed 180–540 days are the most actionable: not so recent that
+	// they are self-serving, not so old that the relationship is cold.
+	// R1 heuristic: 180 days ≈ two missed purchase cycles for furniture.
+	recenciaVentanaIniDias = 180
+
+	// recenciaVentanaFinDias is the end of the winback sweet spot.
+	// R1 heuristic: 540 days ≈ ~18 months; beyond this recovery rate drops sharply.
+	recenciaVentanaFinDias = 540
+
+	// recenciaPerdidoDias is the threshold beyond which a client is considered
+	// likely lost for winback purposes (score component decays to near zero).
+	// R1 heuristic: 730 days = 2 years.
+	recenciaPerdidoDias = 730
+
+	// recenciaActivoScore is the recency score component for still-active clients.
+	// Low, not zero, so they still appear when explicitly requested.
+	recenciaActivoScore = 0.15
+
+	// recenciaPerdidoScore is the recency score component for likely-lost clients.
+	// Very low to deprioritise but non-zero so they are not invisible.
+	recenciaPerdidoScore = 0.10
+)
+
+// ─── Solvency multiplier constants ───────────────────────────────────────────
+
+const (
+	// solvenciaAlCorriente / solvenciaLiquidado: full priority — no penalty.
+	solvenciaAlCorriente = 1.0
+	solvenciaLiquidado   = 1.0
+
+	// solvenciaSinCredito: contado-only client; slightly deprioritised because
+	// there is no credit relationship to reactivate.
+	solvenciaSinCredito = 0.85
+
+	// solvenciaAtrasado: one to three missed payments; still recoverable but
+	// offering more credit without clearing arrears is risky.
+	solvenciaAtrasado = 0.6
+
+	// solvenciaMoroso: strongly deprioritise — re-selling on credit to a
+	// delinquent client creates more bad debt, not revenue.
+	solvenciaMoroso = 0.2
+)
+
 // ─── computeSegmentoScore ─────────────────────────────────────────────────────
 
 // computeSegmentoScore is a pure, deterministic function that computes the
-// RFM-derived segment, the 0–100 score, and the recency in days for a
-// WinbackCandidato as of now.
+// RFM-derived segment, the 0–100 score, the recency in days, and the solvency
+// classification for a WinbackCandidato as of now.
 //
 // Floats are used ONLY for the score arithmetic (an integer [0,100]); all
 // money fields remain as decimal.Decimal throughout.
-func computeSegmentoScore(c *domain.WinbackCandidato, now time.Time) (domain.Segmento, domain.ScoreWinback, int) {
+func computeSegmentoScore(c *domain.WinbackCandidato, now time.Time) (domain.Segmento, domain.ScoreWinback, int, domain.EstadoPago) {
 	// ── Recencia ──────────────────────────────────────────────────────────────
 	recenciaDias := recenciaMax
 	if !c.FechaUltimaCompra().IsZero() {
@@ -87,10 +143,13 @@ func computeSegmentoScore(c *domain.WinbackCandidato, now time.Time) (domain.Seg
 	// ── Segmento (first-match wins, in spec order) ────────────────────────────
 	seg := segmentoFor(c, recenciaDias)
 
-	// ── Score 0–100 ──────────────────────────────────────────────────────────
-	score := scoreFor(c, recenciaDias)
+	// ── EstadoPago (solvency signal) ──────────────────────────────────────────
+	ep := estadoPagoFor(c.Saldo(), c.FechaUltimoPago(), now)
 
-	return seg, score, recenciaDias
+	// ── Score 0–100 ──────────────────────────────────────────────────────────
+	score := scoreFor(c, recenciaDias, ep)
+
+	return seg, score, recenciaDias, ep
 }
 
 func segmentoFor(c *domain.WinbackCandidato, recenciaDias int) domain.Segmento {
@@ -113,18 +172,64 @@ func segmentoFor(c *domain.WinbackCandidato, recenciaDias int) domain.Segmento {
 	return domain.SegmentoFrio
 }
 
-func scoreFor(c *domain.WinbackCandidato, recenciaDias int) domain.ScoreWinback {
+// recenciaWinbackComp maps recency in days to a [0, 1] score component that
+// peaks in the dormant-recoverable window and is low for both active and
+// likely-lost clients.
+//
+// Regions:
+//
+//	[0, activoMax]            → 0.15  (still active, low winback priority)
+//	(activoMax, ventanaIni)   → ramp 0.15→1.0 (approaching the sweet spot)
+//	[ventanaIni, ventanaFin]  → 1.0   (peak winback window)
+//	(ventanaFin, perdido]     → ramp 1.0→0.10 (declining recovery probability)
+//	> perdido                 → 0.10  (likely lost)
+func recenciaWinbackComp(recenciaDias int) float64 {
+	switch {
+	case recenciaDias <= recenciaActivoMaxDias:
+		return recenciaActivoScore
+	case recenciaDias < recenciaVentanaIniDias:
+		// Linear ramp 0.15 → 1.0 over (activoMax, ventanaIni).
+		t := float64(recenciaDias-recenciaActivoMaxDias) / float64(recenciaVentanaIniDias-recenciaActivoMaxDias)
+		return recenciaActivoScore + t*(1.0-recenciaActivoScore)
+	case recenciaDias <= recenciaVentanaFinDias:
+		return 1.0
+	case recenciaDias <= recenciaPerdidoDias:
+		// Linear ramp 1.0 → 0.10 over (ventanaFin, perdido].
+		t := float64(recenciaDias-recenciaVentanaFinDias) / float64(recenciaPerdidoDias-recenciaVentanaFinDias)
+		return 1.0 - t*(1.0-recenciaPerdidoScore)
+	default:
+		return recenciaPerdidoScore
+	}
+}
+
+// solvenciaMultiplier returns the [0, 1] multiplier applied to the base score
+// based on the client's payment solvency. MOROSO clients are strongly
+// deprioritised to avoid re-selling on credit to delinquent payers.
+func solvenciaMultiplier(ep domain.EstadoPago) float64 {
+	switch ep {
+	case domain.EstadoPagoAlCorriente:
+		return solvenciaAlCorriente
+	case domain.EstadoPagoLiquidado:
+		return solvenciaLiquidado
+	case domain.EstadoPagoSinCredito:
+		return solvenciaSinCredito
+	case domain.EstadoPagoAtrasado:
+		return solvenciaAtrasado
+	case domain.EstadoPagoMoroso:
+		return solvenciaMoroso
+	default:
+		// Unknown EstadoPago: treat conservatively as MOROSO so unknown solvency
+		// does not inflate scores.
+		return solvenciaMoroso
+	}
+}
+
+func scoreFor(c *domain.WinbackCandidato, recenciaDias int, ep domain.EstadoPago) domain.ScoreWinback {
 	// Value component: clamp to [0, 1].
 	valueComp := clamp01(c.Monetary().InexactFloat64() / scoreValueCap)
 
-	// Propensity component: linearly decays from 1 (just lapsed) to 0 (PERDIDO).
-	// Clients still active (recencia <= umbralActivoDias) get propensity = 1.
-	var propComp float64
-	if recenciaDias <= umbralActivoDias {
-		propComp = 1.0
-	} else {
-		propComp = clamp01(1.0 - float64(recenciaDias-umbralActivoDias)/float64(umbralPerdidoDias-umbralActivoDias))
-	}
+	// Recency window component: peaked in the dormant-recoverable window.
+	recenciaComp := recenciaWinbackComp(recenciaDias)
 
 	// Contactable: 1 if phone number is non-empty.
 	contactComp := 0.0
@@ -135,7 +240,8 @@ func scoreFor(c *domain.WinbackCandidato, recenciaDias int) domain.ScoreWinback 
 	// PorLiquidar component: percentage / 100, clamped to [0, 1].
 	porLiqComp := clamp01(c.PorLiquidarPct().InexactFloat64() / 100.0)
 
-	raw := 100.0 * (wValue*valueComp + wProp*propComp + wContact*contactComp + wPorLiq*porLiqComp)
+	base := wRecencia*recenciaComp + wValue*valueComp + wContact*contactComp + wPorLiq*porLiqComp
+	raw := 100.0 * base * solvenciaMultiplier(ep)
 	n := int(math.Round(raw))
 	if n < 0 {
 		n = 0

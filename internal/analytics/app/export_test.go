@@ -13,7 +13,7 @@ import (
 
 // ExportComputeSegmentoScore exposes the internal computeSegmentoScore function
 // for table-driven tests in the app_test package.
-func ExportComputeSegmentoScore(c *domain.WinbackCandidato, now time.Time) (domain.Segmento, domain.ScoreWinback, int) {
+func ExportComputeSegmentoScore(c *domain.WinbackCandidato, now time.Time) (domain.Segmento, domain.ScoreWinback, int, domain.EstadoPago) {
 	return computeSegmentoScore(c, now)
 }
 

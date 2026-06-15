@@ -50,6 +50,7 @@ func (h *Handlers) ListarWinback(ctx context.Context, input *ListWinbackInput) (
 		Zona:           input.Zona,
 		Limit:          input.Limit,
 		IncluirControl: input.IncluirControl,
+		IncluirActivos: input.IncluirActivos,
 	})
 	if err != nil {
 		return nil, mapAppError(err)
