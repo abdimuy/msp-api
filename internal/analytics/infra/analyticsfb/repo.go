@@ -134,94 +134,106 @@ func buildUpsertBlock(chunk []*domain.WinbackCandidato) (string, []any) {
 		if i > 0 {
 			_, _ = header.WriteString(",\n")
 		}
-		// Declare 16 typed input params per row.
-		_, _ = fmt.Fprintf(
-			&header,
-			"  %s_id  VARCHAR(36)    = ?,\n"+
-				"  %s_cid INTEGER        = ?,\n"+
-				"  %s_nom VARCHAR(200)   = ?,\n"+
-				"  %s_zon VARCHAR(100)   = ?,\n"+
-				"  %s_tel VARCHAR(50)    = ?,\n"+
-				"  %s_fuc TIMESTAMP      = ?,\n"+
-				"  %s_frq INTEGER        = ?,\n"+
-				"  %s_mon NUMERIC(18,2)  = ?,\n"+
-				"  %s_sal NUMERIC(18,2)  = ?,\n"+
-				"  %s_plp NUMERIC(5,2)   = ?,\n"+
-				"  %s_nbp VARCHAR(120)   = ?,\n"+
-				"  %s_enc SMALLINT       = ?,\n"+
-				"  %s_coh TIMESTAMP      = ?,\n"+
-				"  %s_cat TIMESTAMP      = ?,\n"+
-				"  %s_upd TIMESTAMP      = ?,\n"+
-				"  %s_fup TIMESTAMP      = ?",
-			p, p, p, p, p,
-			p, p, p, p, p,
-			p, p, p, p, p,
-			p,
-		)
-
-		// Body: UPDATE mutable fields only (EN_CONTROL/COHORTE_FECHA excluded;
-		// FECHA_ULTIMO_PAGO IS mutable — update it on each refresh).
-		// Then INSERT the full row when no existing row was matched.
-		_, _ = fmt.Fprintf(
-			&body,
-			"  UPDATE MSP_AN_WINBACK_CANDIDATOS SET\n"+
-				"    NOMBRE=:%s_nom, ZONA=:%s_zon, TELEFONO=:%s_tel,\n"+
-				"    FECHA_ULTIMA_COMPRA=:%s_fuc, FRECUENCIA=:%s_frq,\n"+
-				"    MONETARY=:%s_mon, SALDO=:%s_sal,\n"+
-				"    POR_LIQUIDAR_PCT=:%s_plp, NEXT_BEST_PRODUCT=:%s_nbp,\n"+
-				"    FECHA_ULTIMO_PAGO=:%s_fup,\n"+
-				"    UPDATED_AT=:%s_upd\n"+
-				"  WHERE CLIENTE_ID=:%s_cid;\n"+
-				"  IF (ROW_COUNT=0) THEN\n"+
-				"    INSERT INTO MSP_AN_WINBACK_CANDIDATOS\n"+
-				"      (ID,CLIENTE_ID,NOMBRE,ZONA,TELEFONO,FECHA_ULTIMA_COMPRA,\n"+
-				"       FRECUENCIA,MONETARY,SALDO,POR_LIQUIDAR_PCT,NEXT_BEST_PRODUCT,\n"+
-				"       EN_CONTROL,COHORTE_FECHA,CREATED_AT,UPDATED_AT,FECHA_ULTIMO_PAGO)\n"+
-				"    VALUES(:%s_id,:%s_cid,:%s_nom,:%s_zon,:%s_tel,:%s_fuc,\n"+
-				"           :%s_frq,:%s_mon,:%s_sal,:%s_plp,:%s_nbp,\n"+
-				"           :%s_enc,:%s_coh,:%s_cat,:%s_upd,:%s_fup);\n",
-			p, p, p,
-			p, p,
-			p, p,
-			p, p,
-			p,
-			p,
-			p,
-			p, p, p, p, p, p,
-			p, p, p, p, p,
-			p, p, p, p, p,
-		)
-
-		// Bind args in param-declaration order (16 per row).
-		enControl := 0
-		if c.EnControl() {
-			enControl = 1
-		}
-		args = append(
-			args,
-			c.ID().String(), // _id
-			c.ClienteID(),   // _cid
-			c.Nombre(),      // _nom
-			c.Zona(),        // _zon
-			c.Telefono(),    // _tel
-			nullableWallClockArg(wallClockPtrFromTime(c.FechaUltimaCompra())), // _fuc
-			c.Frecuencia(),                         // _frq
-			c.Monetary(),                           // _mon
-			c.Saldo(),                              // _sal
-			c.PorLiquidarPct(),                     // _plp
-			c.NextBestProduct(),                    // _nbp
-			enControl,                              // _enc
-			firebird.ToWallClock(c.CohorteFecha()), // _coh
-			firebird.ToWallClock(c.CreatedAt()),    // _cat
-			firebird.ToWallClock(c.UpdatedAt()),    // _upd
-			nullableWallClockArg(wallClockPtrFromTime(c.FechaUltimoPago())), // _fup
-		)
+		appendUpsertParamDecls(&header, p)
+		appendUpsertBodyStmt(&body, p)
+		args = appendUpsertArgs(args, c)
 	}
 
 	_, _ = header.WriteString("\n)")
 	_, _ = body.WriteString("END")
 
 	return header.String() + "\n" + body.String(), args
+}
+
+// appendUpsertParamDecls writes the 16 typed EXECUTE BLOCK input-parameter
+// declarations for a single row prefix p into w.
+func appendUpsertParamDecls(w *strings.Builder, p string) {
+	_, _ = fmt.Fprintf(
+		w,
+		"  %s_id  VARCHAR(36)    = ?,\n"+
+			"  %s_cid INTEGER        = ?,\n"+
+			"  %s_nom VARCHAR(200)   = ?,\n"+
+			"  %s_zon VARCHAR(100)   = ?,\n"+
+			"  %s_tel VARCHAR(50)    = ?,\n"+
+			"  %s_fuc TIMESTAMP      = ?,\n"+
+			"  %s_frq INTEGER        = ?,\n"+
+			"  %s_mon NUMERIC(18,2)  = ?,\n"+
+			"  %s_sal NUMERIC(18,2)  = ?,\n"+
+			"  %s_plp NUMERIC(5,2)   = ?,\n"+
+			"  %s_nbp VARCHAR(120)   = ?,\n"+
+			"  %s_enc SMALLINT       = ?,\n"+
+			"  %s_coh TIMESTAMP      = ?,\n"+
+			"  %s_cat TIMESTAMP      = ?,\n"+
+			"  %s_upd TIMESTAMP      = ?,\n"+
+			"  %s_fup TIMESTAMP      = ?",
+		p, p, p, p, p,
+		p, p, p, p, p,
+		p, p, p, p, p,
+		p,
+	)
+}
+
+// appendUpsertBodyStmt writes the UPDATE+INSERT DML for a single row prefix p
+// into w. EN_CONTROL and COHORTE_FECHA are excluded from UPDATE so they are
+// preserved from the original INSERT across subsequent refreshes.
+func appendUpsertBodyStmt(w *strings.Builder, p string) {
+	_, _ = fmt.Fprintf(
+		w,
+		"  UPDATE MSP_AN_WINBACK_CANDIDATOS SET\n"+
+			"    NOMBRE=:%s_nom, ZONA=:%s_zon, TELEFONO=:%s_tel,\n"+
+			"    FECHA_ULTIMA_COMPRA=:%s_fuc, FRECUENCIA=:%s_frq,\n"+
+			"    MONETARY=:%s_mon, SALDO=:%s_sal,\n"+
+			"    POR_LIQUIDAR_PCT=:%s_plp, NEXT_BEST_PRODUCT=:%s_nbp,\n"+
+			"    FECHA_ULTIMO_PAGO=:%s_fup,\n"+
+			"    UPDATED_AT=:%s_upd\n"+
+			"  WHERE CLIENTE_ID=:%s_cid;\n"+
+			"  IF (ROW_COUNT=0) THEN\n"+
+			"    INSERT INTO MSP_AN_WINBACK_CANDIDATOS\n"+
+			"      (ID,CLIENTE_ID,NOMBRE,ZONA,TELEFONO,FECHA_ULTIMA_COMPRA,\n"+
+			"       FRECUENCIA,MONETARY,SALDO,POR_LIQUIDAR_PCT,NEXT_BEST_PRODUCT,\n"+
+			"       EN_CONTROL,COHORTE_FECHA,CREATED_AT,UPDATED_AT,FECHA_ULTIMO_PAGO)\n"+
+			"    VALUES(:%s_id,:%s_cid,:%s_nom,:%s_zon,:%s_tel,:%s_fuc,\n"+
+			"           :%s_frq,:%s_mon,:%s_sal,:%s_plp,:%s_nbp,\n"+
+			"           :%s_enc,:%s_coh,:%s_cat,:%s_upd,:%s_fup);\n",
+		p, p, p,
+		p, p,
+		p, p,
+		p, p,
+		p,
+		p,
+		p,
+		p, p, p, p, p, p,
+		p, p, p, p, p,
+		p, p, p, p, p,
+	)
+}
+
+// appendUpsertArgs appends the 16 bound arguments for candidato c (in
+// param-declaration order) to args and returns the extended slice.
+func appendUpsertArgs(args []any, c *domain.WinbackCandidato) []any {
+	enControl := 0
+	if c.EnControl() {
+		enControl = 1
+	}
+	return append(
+		args,
+		c.ID().String(), // _id
+		c.ClienteID(),   // _cid
+		c.Nombre(),      // _nom
+		c.Zona(),        // _zon
+		c.Telefono(),    // _tel
+		nullableWallClockArg(wallClockPtrFromTime(c.FechaUltimaCompra())), // _fuc
+		c.Frecuencia(),                         // _frq
+		c.Monetary(),                           // _mon
+		c.Saldo(),                              // _sal
+		c.PorLiquidarPct(),                     // _plp
+		c.NextBestProduct(),                    // _nbp
+		enControl,                              // _enc
+		firebird.ToWallClock(c.CohorteFecha()), // _coh
+		firebird.ToWallClock(c.CreatedAt()),    // _cat
+		firebird.ToWallClock(c.UpdatedAt()),    // _upd
+		nullableWallClockArg(wallClockPtrFromTime(c.FechaUltimoPago())), // _fup
+	)
 }
 
 // wallClockPtrFromTime returns nil when t is the zero value (no purchase

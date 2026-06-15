@@ -180,7 +180,7 @@ func clamp01(v float64) float64 {
 //
 // now must be UTC; zero fechaUltimoPago is treated as extremely old (MOROSO
 // when saldo > 0, SIN_CREDITO when saldo == 0).
-func estadoPagoFor(saldo decimal.Decimal, fechaUltimoPago time.Time, now time.Time) domain.EstadoPago {
+func estadoPagoFor(saldo decimal.Decimal, fechaUltimoPago, now time.Time) domain.EstadoPago {
 	if !saldo.IsPositive() {
 		// Client has no outstanding balance.
 		if fechaUltimoPago.IsZero() {

@@ -24,6 +24,6 @@ func ExportDeterministicControl(clienteID int) bool {
 
 // ExportEstadoPagoFor exposes the internal estadoPagoFor function for
 // table-driven tests in the app_test package.
-func ExportEstadoPagoFor(saldo decimal.Decimal, fechaUltimoPago time.Time, now time.Time) domain.EstadoPago {
+func ExportEstadoPagoFor(saldo decimal.Decimal, fechaUltimoPago, now time.Time) domain.EstadoPago {
 	return estadoPagoFor(saldo, fechaUltimoPago, now)
 }
