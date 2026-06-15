@@ -184,7 +184,7 @@ func appendUpsertBodyStmt(w *strings.Builder, p string) {
 			"    FECHA_ULTIMA_COMPRA=:%s_fuc, FRECUENCIA=:%s_frq,\n"+
 			"    MONETARY=:%s_mon, SALDO=:%s_sal,\n"+
 			"    POR_LIQUIDAR_PCT=:%s_plp, NEXT_BEST_PRODUCT=:%s_nbp,\n"+
-			"    FECHA_ULTIMO_PAGO=:%s_fup,\n"+
+			"    FECHA_ULTIMO_PAGO=COALESCE(:%s_fup, FECHA_ULTIMO_PAGO),\n"+
 			"    UPDATED_AT=:%s_upd\n"+
 			"  WHERE CLIENTE_ID=:%s_cid;\n"+
 			"  IF (ROW_COUNT=0) THEN\n"+
