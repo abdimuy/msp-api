@@ -27,6 +27,9 @@ type WinbackItemDTO struct {
 	EnControl         bool   `json:"en_control"          doc:"true cuando el candidato pertenece al grupo de control A/B"`
 	FechaUltimoPago   string `json:"fecha_ultimo_pago" format:"date-time" doc:"RFC3339 UTC de la fecha del último pago; vacío si sin historial de pagos"`
 	EstadoPago        string `json:"estado_pago"       doc:"Señal de solvencia: SIN_CREDITO | LIQUIDADO | AL_CORRIENTE | ATRASADO | MOROSO"`
+	Etiqueta          string `json:"etiqueta"          doc:"Etiqueta de tipo de cliente (2-3 palabras)"`
+	Resumen           string `json:"resumen"           doc:"Resumen de una línea: señal clave y acción recomendada"`
+	Tier              string `json:"tier"              doc:"Calidad intrínseca del cliente: A (Excelente) / B (Bueno) / C (Regular) / D (Bajo)"`
 }
 
 // ─── Input / Output types ────────────────────────────────────────────────────

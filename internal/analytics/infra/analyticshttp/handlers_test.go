@@ -247,6 +247,9 @@ func TestListarWinback_HappyPath_200(t *testing.T) {
 			EnControl         bool   `json:"en_control"`
 			FechaUltimoPago   string `json:"fecha_ultimo_pago"`
 			EstadoPago        string `json:"estado_pago"`
+			Etiqueta          string `json:"etiqueta"`
+			Resumen           string `json:"resumen"`
+			Tier              string `json:"tier"`
 		} `json:"items"`
 	}
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
@@ -289,6 +292,11 @@ func TestListarWinback_HappyPath_200(t *testing.T) {
 	assert.LessOrEqual(t, item.Score, 100)
 	// RecenciaDias: fixedNow - fixedUltimaCompra = 529 days.
 	assert.Positive(t, item.RecenciaDias)
+
+	// Narrative fields must be populated.
+	assert.NotEmpty(t, item.Etiqueta, "etiqueta must be set")
+	assert.NotEmpty(t, item.Resumen, "resumen must be set")
+	assert.Contains(t, []string{"A", "B", "C", "D"}, item.Tier, "tier must be A/B/C/D")
 }
 
 // ─── Scenario 2: query param pass-through ────────────────────────────────────
