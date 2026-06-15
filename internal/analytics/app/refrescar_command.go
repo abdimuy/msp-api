@@ -130,6 +130,7 @@ func buildCandidatos(
 			Saldo:             a.Saldo,
 			PorLiquidarPct:    a.PorLiquidarPct,
 			NextBestProduct:   a.NextBestProduct,
+			FechaUltimoPago:   a.FechaUltimoPago,
 			EnControl:         enControl,
 			CohorteFecha:      now,
 			Now:               now,

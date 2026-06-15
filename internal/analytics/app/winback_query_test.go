@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/shopspring/decimal"
+	"github.com/stretchr/testify/assert"
 
 	"github.com/abdimuy/msp-api/internal/analytics/app"
 	"github.com/abdimuy/msp-api/internal/analytics/domain"
@@ -72,6 +73,14 @@ func TestListarWinback_Ordering(t *testing.T) {
 			t.Errorf("items[%d]: got score=%d, want score=%d (clienteID=%d)",
 				i, items[i].Score.Int(), want.score, items[i].Candidato.ClienteID())
 		}
+	}
+
+	// All items must have a populated EstadoPago.
+	for i, item := range items {
+		assert.NotEmpty(t, item.EstadoPago.String(),
+			"items[%d]: EstadoPago must be populated", i)
+		assert.True(t, item.EstadoPago.IsValid(),
+			"items[%d]: EstadoPago must be a valid value, got %q", i, item.EstadoPago)
 	}
 }
 
@@ -240,5 +249,52 @@ func TestListarWinback_LimitAfterSorting(t *testing.T) {
 	}
 	if items[1].Candidato.ClienteID() != 4 {
 		t.Errorf("second item should be clienteID=4, got %d", items[1].Candidato.ClienteID())
+	}
+}
+
+func TestListarWinback_EstadoPago_Populated(t *testing.T) {
+	t.Parallel()
+
+	// cSinCredito: saldo=0, FechaUltimoPago zero → SIN_CREDITO
+	cSinCredito := mustCandidato(domain.CrearWinbackCandidatoParams{
+		ClienteID: 10, FechaUltimaCompra: testNow.AddDate(0, 0, -200),
+		Frecuencia: 2, Monetary: decimal.NewFromInt(10_000),
+		Saldo:        decimal.Zero,
+		CohorteFecha: testNow.AddDate(-1, 0, 0), Now: testNow,
+		// FechaUltimoPago zero + saldo == 0 → SIN_CREDITO
+	})
+	// cMoroso: saldo>0, FechaUltimoPago zero → MOROSO
+	cMoroso := mustCandidato(domain.CrearWinbackCandidatoParams{
+		ClienteID: 11, FechaUltimaCompra: testNow.AddDate(0, 0, -400),
+		Frecuencia: 4, Monetary: decimal.NewFromInt(30_000),
+		Saldo:        decimal.NewFromInt(8_000),
+		CohorteFecha: testNow.AddDate(-1, 0, 0), Now: testNow,
+		// FechaUltimoPago zero + saldo > 0 → MOROSO
+	})
+
+	repo := newFakeWinbackRepo()
+	repo.candidates = []*domain.WinbackCandidato{cSinCredito, cMoroso}
+	svc := app.NewService(repo, nil, fixedClock{testNow}, nil)
+
+	items, err := svc.ListarWinback(context.Background(), app.ListarWinbackParams{
+		IncluirControl: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(items))
+	}
+
+	byID := make(map[int]app.WinbackListItem)
+	for _, it := range items {
+		byID[it.Candidato.ClienteID()] = it
+	}
+
+	if byID[10].EstadoPago != domain.EstadoPagoSinCredito {
+		t.Errorf("clienteID=10: expected SIN_CREDITO, got %q", byID[10].EstadoPago)
+	}
+	if byID[11].EstadoPago != domain.EstadoPagoMoroso {
+		t.Errorf("clienteID=11: expected MOROSO, got %q", byID[11].EstadoPago)
 	}
 }

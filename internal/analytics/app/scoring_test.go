@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
+	"github.com/stretchr/testify/assert"
 
 	"github.com/abdimuy/msp-api/internal/analytics/app"
 	"github.com/abdimuy/msp-api/internal/analytics/domain"
@@ -273,6 +274,47 @@ func TestComputeSegmentoScore_SegmentBoundaries(t *testing.T) {
 			if seg != tt.wantSeg {
 				t.Errorf("segment at recencia=%d: got %q, want %q", tt.recenciaDias, seg, tt.wantSeg)
 			}
+		})
+	}
+}
+
+// TestEstadoPagoFor covers all branches of the estadoPagoFor pure function.
+// All inputs are deterministic UTC times to guarantee no TZ sensitivity.
+func TestEstadoPagoFor(t *testing.T) {
+	t.Parallel()
+
+	baseNow := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	zero := time.Time{}
+	recent := baseNow.AddDate(0, 0, -15) // 15 days ago — within 30d threshold
+	mid := baseNow.AddDate(0, 0, -60)    // 60 days ago — between 30 and 90
+	old := baseNow.AddDate(0, 0, -120)   // 120 days ago — beyond 90d threshold
+
+	tests := []struct {
+		name            string
+		saldo           decimal.Decimal
+		fechaUltimoPago time.Time
+		want            domain.EstadoPago
+	}{
+		// saldo == 0 branch
+		{"saldo zero and no payment date → SIN_CREDITO", decimal.Zero, zero, domain.EstadoPagoSinCredito},
+		{"saldo zero and has payment date → LIQUIDADO", decimal.Zero, recent, domain.EstadoPagoLiquidado},
+		// saldo > 0 branch
+		{"saldo positive, paid 15d ago → AL_CORRIENTE", decimal.NewFromInt(500), recent, domain.EstadoPagoAlCorriente},
+		{"saldo positive, paid exactly at umbralAlCorrienteDias → AL_CORRIENTE", decimal.NewFromInt(500), baseNow.AddDate(0, 0, -30), domain.EstadoPagoAlCorriente},
+		{"saldo positive, paid 31d ago → ATRASADO", decimal.NewFromInt(500), baseNow.AddDate(0, 0, -31), domain.EstadoPagoAtrasado},
+		{"saldo positive, paid 60d ago → ATRASADO", decimal.NewFromInt(500), mid, domain.EstadoPagoAtrasado},
+		{"saldo positive, paid exactly at umbralAtrasadoDias → ATRASADO", decimal.NewFromInt(500), baseNow.AddDate(0, 0, -90), domain.EstadoPagoAtrasado},
+		{"saldo positive, paid 91d ago → MOROSO", decimal.NewFromInt(500), baseNow.AddDate(0, 0, -91), domain.EstadoPagoMoroso},
+		{"saldo positive, paid 120d ago → MOROSO", decimal.NewFromInt(500), old, domain.EstadoPagoMoroso},
+		{"saldo positive, no payment date → MOROSO", decimal.NewFromInt(500), zero, domain.EstadoPagoMoroso},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := app.ExportEstadoPagoFor(tc.saldo, tc.fechaUltimoPago, baseNow)
+			assert.Equal(t, tc.want, got, "saldo=%s fechaUltimoPago=%v", tc.saldo, tc.fechaUltimoPago)
 		})
 	}
 }

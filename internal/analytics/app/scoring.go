@@ -34,6 +34,17 @@ const (
 	// recenciaMax is the sentinel value used when FechaUltimaCompra is zero
 	// (client has no purchase history). Treated as extremely old.
 	recenciaMax = 9_999
+
+	// umbralAlCorrienteDias is the maximum days since last payment for a client
+	// with outstanding saldo to still be considered AL_CORRIENTE (on time).
+	// R1 heuristic: 30 days maps to a monthly payment cycle typical of furniture
+	// credit (planes de 12–36 mensualidades).
+	umbralAlCorrienteDias = 30
+
+	// umbralAtrasadoDias is the maximum days since last payment before a client
+	// is classified as MOROSO instead of ATRASADO.
+	// R1 heuristic: 90 days = 3 missed monthly payments.
+	umbralAtrasadoDias = 90
 )
 
 // ─── Score weights and caps ───────────────────────────────────────────────────
@@ -151,5 +162,47 @@ func clamp01(v float64) float64 {
 		return 1
 	default:
 		return v
+	}
+}
+
+// estadoPagoFor computes the EstadoPago solvency signal from saldo and the
+// client's most recent payment date.
+//
+// Thresholds (R1 heuristics — tune via umbralAlCorrienteDias / umbralAtrasadoDias):
+//
+//	saldo == 0:
+//	  fechaUltimoPago zero → SIN_CREDITO (contado-only, never had open balance)
+//	  fechaUltimoPago non-zero → LIQUIDADO (had credit, now fully paid)
+//	saldo > 0:
+//	  diasSinPagar <= umbralAlCorrienteDias  → AL_CORRIENTE
+//	  diasSinPagar <= umbralAtrasadoDias     → ATRASADO
+//	  else (including fechaUltimoPago zero)  → MOROSO
+//
+// now must be UTC; zero fechaUltimoPago is treated as extremely old (MOROSO
+// when saldo > 0, SIN_CREDITO when saldo == 0).
+func estadoPagoFor(saldo decimal.Decimal, fechaUltimoPago time.Time, now time.Time) domain.EstadoPago {
+	if !saldo.IsPositive() {
+		// Client has no outstanding balance.
+		if fechaUltimoPago.IsZero() {
+			return domain.EstadoPagoSinCredito
+		}
+		return domain.EstadoPagoLiquidado
+	}
+	// saldo > 0: classify by how long since last payment.
+	if fechaUltimoPago.IsZero() {
+		// Never paid — treat as extremely delinquent.
+		return domain.EstadoPagoMoroso
+	}
+	diasSinPagar := int(now.Sub(fechaUltimoPago).Hours() / 24)
+	if diasSinPagar < 0 {
+		diasSinPagar = 0
+	}
+	switch {
+	case diasSinPagar <= umbralAlCorrienteDias:
+		return domain.EstadoPagoAlCorriente
+	case diasSinPagar <= umbralAtrasadoDias:
+		return domain.EstadoPagoAtrasado
+	default:
+		return domain.EstadoPagoMoroso
 	}
 }

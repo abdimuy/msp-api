@@ -18,6 +18,9 @@ type WinbackListItem struct {
 	Segmento     domain.Segmento
 	Score        domain.ScoreWinback
 	RecenciaDias int
+	// EstadoPago is the payment-solvency classification computed at read time
+	// from the candidato's saldo and FechaUltimoPago.
+	EstadoPago domain.EstadoPago
 }
 
 // ListarWinbackParams groups the filtering options for [Service.ListarWinback].
@@ -89,11 +92,13 @@ func (s *Service) ListarWinback(ctx context.Context, p ListarWinbackParams) ([]W
 		if segFilter != "" && seg != segFilter {
 			continue
 		}
+		ep := estadoPagoFor(c.Saldo(), c.FechaUltimoPago(), now)
 		items = append(items, WinbackListItem{
 			Candidato:    c,
 			Segmento:     seg,
 			Score:        score,
 			RecenciaDias: recencia,
+			EstadoPago:   ep,
 		})
 	}
 

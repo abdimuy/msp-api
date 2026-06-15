@@ -6,6 +6,8 @@ package app
 import (
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/abdimuy/msp-api/internal/analytics/domain"
 )
 
@@ -18,4 +20,10 @@ func ExportComputeSegmentoScore(c *domain.WinbackCandidato, now time.Time) (doma
 // ExportDeterministicControl exposes deterministicControl for property tests.
 func ExportDeterministicControl(clienteID int) bool {
 	return deterministicControl(clienteID)
+}
+
+// ExportEstadoPagoFor exposes the internal estadoPagoFor function for
+// table-driven tests in the app_test package.
+func ExportEstadoPagoFor(saldo decimal.Decimal, fechaUltimoPago time.Time, now time.Time) domain.EstadoPago {
+	return estadoPagoFor(saldo, fechaUltimoPago, now)
 }
