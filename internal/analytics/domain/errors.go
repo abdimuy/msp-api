@@ -50,6 +50,12 @@ var (
 		"el score winback debe estar entre 0 y 100",
 	)
 
+	// ErrEstadoPagoInvalido is returned when a string cannot be parsed as an EstadoPago.
+	ErrEstadoPagoInvalido = apperror.NewValidation(
+		"estado_pago_invalido",
+		"el estado de pago no es válido",
+	)
+
 	// ErrRefreshStateNotFound is returned when no MSP_AN_REFRESH_STATE row exists.
 	ErrRefreshStateNotFound = apperror.NewNotFound(
 		"refresh_state_not_found",
