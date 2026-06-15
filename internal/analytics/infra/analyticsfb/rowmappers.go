@@ -28,21 +28,22 @@ type rowScanner interface {
 // MSP_AN_WINBACK_CANDIDATOS columns are CHARACTER SET UTF8 — plain string /
 // sql.NullString is the correct scan target (no Win1252 decoding needed).
 type candidatoRowRaw struct {
-	idRaw             string
-	clienteID         int
-	nombre            sql.NullString
-	zona              sql.NullString
-	telefono          sql.NullString
-	fechaUltimaCompra any // TIMESTAMP nullable
-	frecuencia        int
-	monetaryRaw       any // NUMERIC(18,2)
-	saldoRaw          any // NUMERIC(18,2)
-	porLiquidarPctRaw any // NUMERIC(5,2) nullable
-	nextBestProduct   sql.NullString
-	enControl         int16 // SMALLINT; 0=false 1=true
-	cohorteFechaRaw   any   // TIMESTAMP NOT NULL
-	createdAtRaw      any   // TIMESTAMP NOT NULL
-	updatedAtRaw      any   // TIMESTAMP NOT NULL
+	idRaw              string
+	clienteID          int
+	nombre             sql.NullString
+	zona               sql.NullString
+	telefono           sql.NullString
+	fechaUltimaCompra  any // TIMESTAMP nullable
+	frecuencia         int
+	monetaryRaw        any // NUMERIC(18,2)
+	saldoRaw           any // NUMERIC(18,2)
+	porLiquidarPctRaw  any // NUMERIC(5,2) nullable
+	nextBestProduct    sql.NullString
+	enControl          int16 // SMALLINT; 0=false 1=true
+	cohorteFechaRaw    any   // TIMESTAMP NOT NULL
+	createdAtRaw       any   // TIMESTAMP NOT NULL
+	updatedAtRaw       any   // TIMESTAMP NOT NULL
+	fechaUltimoPagoRaw any   // TIMESTAMP nullable
 }
 
 func (r *candidatoRowRaw) scanFrom(s rowScanner) error {
@@ -62,6 +63,7 @@ func (r *candidatoRowRaw) scanFrom(s rowScanner) error {
 		&r.cohorteFechaRaw,
 		&r.createdAtRaw,
 		&r.updatedAtRaw,
+		&r.fechaUltimoPagoRaw,
 	)
 }
 
@@ -98,6 +100,10 @@ func assembleCandidato(r *candidatoRowRaw) (*domain.WinbackCandidato, error) {
 	if err != nil {
 		return nil, err
 	}
+	fechaUltimoPago, err := scanNullableTime(r.fechaUltimoPagoRaw)
+	if err != nil {
+		return nil, err
+	}
 	return domain.HydrateWinbackCandidato(domain.HydrateWinbackCandidatoParams{
 		ID:                id,
 		ClienteID:         r.clienteID,
@@ -114,6 +120,7 @@ func assembleCandidato(r *candidatoRowRaw) (*domain.WinbackCandidato, error) {
 		CohorteFecha:      cohorteFecha,
 		CreatedAt:         createdAt,
 		UpdatedAt:         updatedAt,
+		FechaUltimoPago:   fechaUltimoPago,
 	}), nil
 }
 
@@ -146,16 +153,17 @@ func scanCandidatoRows(rows *sql.Rows) ([]*domain.WinbackCandidato, error) {
 //
 // Column order must match leerAnclasBase SELECT list exactly.
 type anclaRowRaw struct {
-	clienteID         int
-	nombre            firebird.Win1252  // Win1252: CLIENTES.NOMBRE
-	zona              firebird.Win1252  // Win1252: ZONAS_CLIENTES.NOMBRE (COALESCE to '')
-	telefono          *firebird.Win1252 // Win1252 nullable: DIRS_CLIENTES.TELEFONO1
-	fechaUltimaCompra any               // DATE from DOCTOS_PV.FECHA MAX
-	frecuencia        int               // COUNT(DISTINCT …)
-	monetaryRaw       any               // CAST(SUM(IMPORTE_NETO) AS NUMERIC(18,2))
-	saldoRaw          any               // CAST(… AS NUMERIC(18,2))
-	porLiquidarRaw    any               // CAST(… AS NUMERIC(5,2))
-	nextBestProduct   firebird.Win1252  // Win1252: ARTICULOS.NOMBRE (COALESCE to '')
+	clienteID          int
+	nombre             firebird.Win1252  // Win1252: CLIENTES.NOMBRE
+	zona               firebird.Win1252  // Win1252: ZONAS_CLIENTES.NOMBRE (COALESCE to '')
+	telefono           *firebird.Win1252 // Win1252 nullable: DIRS_CLIENTES.TELEFONO1
+	fechaUltimaCompra  any               // DATE from DOCTOS_PV.FECHA MAX
+	frecuencia         int               // COUNT(DISTINCT …)
+	monetaryRaw        any               // CAST(SUM(IMPORTE_NETO) AS NUMERIC(18,2))
+	saldoRaw           any               // CAST(… AS NUMERIC(18,2))
+	porLiquidarRaw     any               // CAST(… AS NUMERIC(5,2))
+	nextBestProduct    firebird.Win1252  // Win1252: ARTICULOS.NOMBRE (COALESCE to '')
+	fechaUltimoPagoRaw any               // TIMESTAMP nullable: MAX(sv.FECHA_ULT_PAGO)
 }
 
 func (r *anclaRowRaw) scanFrom(s rowScanner) error {
@@ -170,6 +178,7 @@ func (r *anclaRowRaw) scanFrom(s rowScanner) error {
 		&r.saldoRaw,
 		&r.porLiquidarRaw,
 		&r.nextBestProduct,
+		&r.fechaUltimoPagoRaw,
 	)
 }
 
@@ -190,6 +199,10 @@ func assembleAncla(r *anclaRowRaw) (outbound.AnclaCliente, error) {
 	if err != nil {
 		return outbound.AnclaCliente{}, err
 	}
+	fechaUltimoPago, err := scanNullableTime(r.fechaUltimoPagoRaw)
+	if err != nil {
+		return outbound.AnclaCliente{}, err
+	}
 	// Decode Win1252 nullable telefono.
 	var telefono string
 	if r.telefono != nil {
@@ -206,6 +219,7 @@ func assembleAncla(r *anclaRowRaw) (outbound.AnclaCliente, error) {
 		Saldo:             saldo,
 		PorLiquidarPct:    porLiquidarPct,
 		NextBestProduct:   string(r.nextBestProduct),
+		FechaUltimoPago:   fechaUltimoPago,
 	}, nil
 }
 

@@ -55,7 +55,7 @@ var (
 // ─── WinbackRepo — MSP_AN_WINBACK_CANDIDATOS ─────────────────────────────────
 
 // upsertChunkSize is the number of candidatos sent per EXECUTE BLOCK call.
-// 20 rows × 15 params = 300 positional params per block. Each row references
+// 20 rows × 16 params = 320 positional params per block. Each row references
 // MSP_AN_WINBACK_CANDIDATOS twice (UPDATE + conditional INSERT), so 20 rows =
 // 40 Relation contexts — safely below Firebird's 256-context-per-statement limit.
 // Empirically the optimal chunk size for this workload against Firebird 5 is
@@ -116,11 +116,12 @@ func (r *Repo) upsertChunk(ctx context.Context, q firebird.Querier, chunk []*dom
 //
 // Each row i uses params named p{i}_id, p{i}_cid, etc. to avoid collisions
 // across rows in the same block body. Args are bound in exact param-declaration
-// order (15 per row). The UPDATE omits EN_CONTROL and COHORTE_FECHA so those
+// order (16 per row). The UPDATE omits EN_CONTROL and COHORTE_FECHA so those
 // columns are only set on first INSERT and survive subsequent refreshes.
+// FECHA_ULTIMO_PAGO IS mutable and IS updated on each refresh.
 func buildUpsertBlock(chunk []*domain.WinbackCandidato) (string, []any) {
 	n := len(chunk)
-	args := make([]any, 0, n*15)
+	args := make([]any, 0, n*16)
 
 	var header strings.Builder
 	var body strings.Builder
@@ -133,7 +134,7 @@ func buildUpsertBlock(chunk []*domain.WinbackCandidato) (string, []any) {
 		if i > 0 {
 			_, _ = header.WriteString(",\n")
 		}
-		// Declare 15 typed input params per row.
+		// Declare 16 typed input params per row.
 		_, _ = fmt.Fprintf(
 			&header,
 			"  %s_id  VARCHAR(36)    = ?,\n"+
@@ -150,13 +151,16 @@ func buildUpsertBlock(chunk []*domain.WinbackCandidato) (string, []any) {
 				"  %s_enc SMALLINT       = ?,\n"+
 				"  %s_coh TIMESTAMP      = ?,\n"+
 				"  %s_cat TIMESTAMP      = ?,\n"+
-				"  %s_upd TIMESTAMP      = ?",
+				"  %s_upd TIMESTAMP      = ?,\n"+
+				"  %s_fup TIMESTAMP      = ?",
 			p, p, p, p, p,
 			p, p, p, p, p,
 			p, p, p, p, p,
+			p,
 		)
 
-		// Body: UPDATE mutable fields only (EN_CONTROL/COHORTE_FECHA excluded).
+		// Body: UPDATE mutable fields only (EN_CONTROL/COHORTE_FECHA excluded;
+		// FECHA_ULTIMO_PAGO IS mutable — update it on each refresh).
 		// Then INSERT the full row when no existing row was matched.
 		_, _ = fmt.Fprintf(
 			&body,
@@ -165,28 +169,30 @@ func buildUpsertBlock(chunk []*domain.WinbackCandidato) (string, []any) {
 				"    FECHA_ULTIMA_COMPRA=:%s_fuc, FRECUENCIA=:%s_frq,\n"+
 				"    MONETARY=:%s_mon, SALDO=:%s_sal,\n"+
 				"    POR_LIQUIDAR_PCT=:%s_plp, NEXT_BEST_PRODUCT=:%s_nbp,\n"+
+				"    FECHA_ULTIMO_PAGO=:%s_fup,\n"+
 				"    UPDATED_AT=:%s_upd\n"+
 				"  WHERE CLIENTE_ID=:%s_cid;\n"+
 				"  IF (ROW_COUNT=0) THEN\n"+
 				"    INSERT INTO MSP_AN_WINBACK_CANDIDATOS\n"+
 				"      (ID,CLIENTE_ID,NOMBRE,ZONA,TELEFONO,FECHA_ULTIMA_COMPRA,\n"+
 				"       FRECUENCIA,MONETARY,SALDO,POR_LIQUIDAR_PCT,NEXT_BEST_PRODUCT,\n"+
-				"       EN_CONTROL,COHORTE_FECHA,CREATED_AT,UPDATED_AT)\n"+
+				"       EN_CONTROL,COHORTE_FECHA,CREATED_AT,UPDATED_AT,FECHA_ULTIMO_PAGO)\n"+
 				"    VALUES(:%s_id,:%s_cid,:%s_nom,:%s_zon,:%s_tel,:%s_fuc,\n"+
 				"           :%s_frq,:%s_mon,:%s_sal,:%s_plp,:%s_nbp,\n"+
-				"           :%s_enc,:%s_coh,:%s_cat,:%s_upd);\n",
+				"           :%s_enc,:%s_coh,:%s_cat,:%s_upd,:%s_fup);\n",
 			p, p, p,
 			p, p,
 			p, p,
 			p, p,
 			p,
 			p,
+			p,
 			p, p, p, p, p, p,
 			p, p, p, p, p,
-			p, p, p, p,
+			p, p, p, p, p,
 		)
 
-		// Bind args in param-declaration order (15 per row).
+		// Bind args in param-declaration order (16 per row).
 		enControl := 0
 		if c.EnControl() {
 			enControl = 1
@@ -208,6 +214,7 @@ func buildUpsertBlock(chunk []*domain.WinbackCandidato) (string, []any) {
 			firebird.ToWallClock(c.CohorteFecha()), // _coh
 			firebird.ToWallClock(c.CreatedAt()),    // _cat
 			firebird.ToWallClock(c.UpdatedAt()),    // _upd
+			nullableWallClockArg(wallClockPtrFromTime(c.FechaUltimoPago())), // _fup
 		)
 	}
 

@@ -25,7 +25,8 @@ const candidatoCols = `
 	EN_CONTROL,
 	COHORTE_FECHA,
 	CREATED_AT,
-	UPDATED_AT`
+	UPDATED_AT,
+	FECHA_ULTIMO_PAGO`
 
 // Note on upsert strategy: the nakagami/firebirdsql driver returns SQL error
 // -804 ("Data type unknown") when parameters appear inside the USING SELECT
@@ -142,6 +143,7 @@ VALUES (?, ?, ?)`
 //	8  saldo          (floored at 0)
 //	9  por_liquidar   (NUMERIC(5,2), 0–100)
 //	10 next_best_product (Win1252, may be '')
+//	11 fecha_ultimo_pago (TIMESTAMP, may be NULL)
 
 // leerAnclasRFMBase is the opening of the WITH block through the end of the
 // rfm CTE. The caller appends an optional FECHA predicate then leerAnclasRFMClose.
@@ -169,7 +171,8 @@ saldo_cte AS (
          THEN CAST(SUM(sv.SALDO) AS NUMERIC(18,2))
          ELSE 0
     END                                        AS SALDO,
-    CAST(SUM(sv.PRECIO_TOTAL) AS NUMERIC(18,2)) AS PRECIO_TOTAL_SUM
+    CAST(SUM(sv.PRECIO_TOTAL) AS NUMERIC(18,2)) AS PRECIO_TOTAL_SUM,
+    MAX(sv.FECHA_ULT_PAGO)                      AS FECHA_ULTIMO_PAGO
   FROM MSP_SALDOS_VENTAS sv
   WHERE sv.CARGO_CANCELADO = 'N'
   GROUP BY sv.CLIENTE_ID
@@ -231,7 +234,8 @@ SELECT
               AS NUMERIC(5,2))
        ELSE 0
   END                                                                AS POR_LIQUIDAR_PCT,
-  SUBSTRING(COALESCE(nbp.ARTICULO_NOMBRE, '') FROM 1 FOR 120)        AS NEXT_BEST_PRODUCT
+  SUBSTRING(COALESCE(nbp.ARTICULO_NOMBRE, '') FROM 1 FOR 120)        AS NEXT_BEST_PRODUCT,
+  sc.FECHA_ULTIMO_PAGO                                               AS FECHA_ULTIMO_PAGO
 FROM rfm
 JOIN CLIENTES c ON c.CLIENTE_ID = rfm.CLIENTE_ID
 LEFT JOIN ZONAS_CLIENTES z   ON z.ZONA_CLIENTE_ID = c.ZONA_CLIENTE_ID
