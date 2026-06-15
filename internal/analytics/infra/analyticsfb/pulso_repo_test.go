@@ -60,11 +60,16 @@ func TestRepo_GetCandidato_NotFound(t *testing.T) {
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		repo := analyticsfb.NewRepo(pool)
 
+		// Upsert a sentinel row first so a failure here (not in GetCandidato)
+		// is what signals the table is missing — this keeps the not-found
+		// assertion below unconditional.
+		seed := makeCandidato(t, -30002, "1000.00", "0.00", false)
+		if err := repo.UpsertCandidatos(ctx, []*domain.WinbackCandidato{seed}); err != nil {
+			t.Skipf("UpsertCandidatos failed — migration 000035 may not be applied: %v", err)
+		}
+
 		const nonExistentID = -99999999
 		_, err := repo.GetCandidato(ctx, nonExistentID)
-		if err == nil {
-			t.Skip("GetCandidato returned nil — MSP_AN_WINBACK_CANDIDATOS may not exist (migration 000035 not applied)")
-		}
 		require.ErrorIs(t, err, domain.ErrWinbackCandidatoNotFound,
 			"GetCandidato with missing clienteID must return ErrWinbackCandidatoNotFound")
 	})

@@ -34,7 +34,8 @@ func (s *Service) ObtenerPulsoCliente(ctx context.Context, clienteID int) (analy
 
 // ObtenerPulsosClientes returns a map keyed by clienteID with the pulse for each
 // materialized client among the input IDs. Clients without a materialized row are
-// simply absent from the map (no error). Empty input → empty map.
+// simply absent from the map (no error). Empty input → empty map. Duplicate input
+// IDs collapse to a single entry (the map is keyed by clienteID).
 func (s *Service) ObtenerPulsosClientes(ctx context.Context, clienteIDs []int) (map[int]analytics.ClientePulsoContract, error) {
 	const source = "analytics.ObtenerPulsosClientes"
 
