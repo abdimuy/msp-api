@@ -50,6 +50,12 @@ type AnclaCliente struct {
 	// product for this client, derived from purchase-pattern analysis.
 	// May be empty when no recommendation is available.
 	NextBestProduct string
+
+	// FechaUltimoPago is the most recent payment date across the client's open
+	// cargos in MSP_SALDOS_VENTAS (CARGO_CANCELADO='N'). Derived as
+	// MAX(sv.FECHA_ULT_PAGO) per CLIENTE_ID. Zero if the client has never made
+	// a payment.
+	FechaUltimoPago time.Time
 }
 
 // MicrosipReader is the analytics module's read-only view of Microsip.
