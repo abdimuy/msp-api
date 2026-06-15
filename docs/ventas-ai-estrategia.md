@@ -97,7 +97,7 @@
 - **Neto del dueño en Año 3 (escenario normal, solo winback ≥2 compras):** ~$2.85M de
   ventas que no existían; con canal 35% sube a ~$7.11M.
 - Solo 51% del pool total tiene teléfono (20,828 de ~40,489). Enriquecer con
-  `MSP_VENTAS.TELEFONO` antes del piloto casi duplica el pool contactable — más palanca
+  `MSP_LOCAL_SALE.TELEFONO` antes del piloto casi duplica el pool contactable — más palanca
   que cualquier ajuste de laxitud.
 - El grupo de control es más importante de lo habitual: con tanta reactivación orgánica,
   el sistema cobra solo el LIFT incremental, no las 6,000 ventas que volvían solas.
@@ -343,7 +343,7 @@ umbral. Todos los tiers son rentables; el criterio de selección es conversión 
 bajar a ≥1 con el grupo de control midiendo resultados por tier para calibrar el ROI real.
 
 **Teléfono como cuello de botella real:** solo el 51% del universo tiene teléfono. Enriquecer
-desde `MSP_VENTAS.TELEFONO` es la palanca de mayor impacto — casi duplica el pool contactable
+desde `MSP_LOCAL_SALE.TELEFONO` es la palanca de mayor impacto — casi duplica el pool contactable
 sin cambiar ningún criterio de riesgo.
 
 ---
@@ -973,27 +973,41 @@ El motor Firebird Super es compartido con producción. Reglas absolutas:
 
 | Tabla | Contenido | Notas |
 |---|---|---|
-| `DOCTOS_CC` | Movimientos de cuentas por cobrar | `COBRADOR_ID`, `FECHA`, `CLIENTE_ID` |
+| `DOCTOS_PV` + `DOCTOS_PV_DET` | **LA tabla de ventas** (contado Y crédito) | 423,284 docs, 2006→2026; `CLIENTE_ID` 100% poblado (44,781 clientes); ventas reales = `TIPO_DOCTO IN ('V','P')` y `ESTATUS='N'` (421,575). **El RFM/recencia se ancla aquí, no en DOCTOS_CC** |
+| `DOCTOS_PV_COBROS` + `FORMAS_COBRO` | Forma de cobro de cada venta | `FORMA_COBRO_ID`: 67=Efectivo, 68=Cheque, **71=Crédito**, 27773=Traspaso. Venta con línea forma 71 = a crédito |
+| `DOCTOS_VE` | Módulo Ventas/Facturación | **Abandonado** (59 registros de ene-2018). No usar |
+| `DOCTOS_CC` | **Capa de crédito** sobre la venta (cuentas por cobrar) | Solo ve ventas a crédito; `COBRADOR_ID`, `FECHA`, `CLIENTE_ID`. Enlaza a la venta PV por `FOLIO`+`CLIENTE_ID`+`SISTEMA_ORIGEN` (sin FK `DOCTO_PV_ID`) |
 | `IMPORTES_DOCTOS_CC` | Montos por movimiento | `IMPORTE` (sin IVA), `IMPUESTO`; abonos ligan al cargo vía `DOCTO_CC_ACR_ID` |
-| `CONCEPTOS_CC` | Catálogo de conceptos | 5=Venta a crédito (cargo), 11/155=Cobro, 24533=Enganche, 27966=Cancelaciones, 27967=Fugas, 27968=Mal Cliente, 27969=Condonaciones, 87327=Cobranza ruta |
-| `LIBRES_CARGOS_CC` | Datos particulares por venta (MSP) | `PRECIO_DE_CONTADO`, `CREDITO_EN_MESES`, `ENGANCHE`, `PARCIALIDAD`, `VENDEDOR_1/2/3`, `NUMERO_DE_VENDEDORES`; poblado desde 2024 (85% cobertura 2025) |
+| `CONCEPTOS_CC` | Catálogo de conceptos (verificado) | 5=Venta en mostrador (cargo de crédito), 11/155=Cobro, **24533=Enganche**, 27966=Cancelaciones, 27967=Fugas, 27968=Mal Cliente, 27969=Condonaciones, 87327=Cobranza en ruta |
+| `LIBRES_CARGOS_CC` | Datos particulares por venta a crédito (MSP) | `PRECIO_DE_CONTADO`, `CREDITO_EN_MESES`, `ENGANCHE`, `PARCIALIDAD`, `VENDEDOR_1/2/3`, `NUMERO_DE_VENDEDORES`; **poblado desde 2018** (~100% cobertura). `FREC_PAGO` NO está aquí (vive en `MSP_LOCAL_SALE`) |
 | `PRECIOS_EMPRESA` | Listas de precios | Escalera: Contado (8941), 1..12 Meses, Precio de lista (42), Precio mínimo (43 = costo/piso) |
 | `PRECIOS_ARTICULOS` | Precios por artículo | |
 | `CLIENTES` | Clientes | `TIPO_CLIENTE_ID` (21499=Público General, 27770=Mal Cliente), `ESTATUS`, `LIMITE_CREDITO` |
-| `DIRS_CLIENTES` | Domicilios y contacto | `CIUDAD_ID` (338=Tehuacán), `TELEFONO1` (única fuente con cobertura) |
+| `DIRS_CLIENTES` | Domicilios y contacto | `CIUDAD_ID` (338=Tehuacán), `TELEFONO1` (cobertura re-medida: **52.7%**, 23,820/45,217) |
 | `GRUPOS_RUTAS` | Rutas de cobranza | |
 | `ZONAS_CLIENTES` | Zonas por cliente | |
 
 **Notas importantes:**
+- **La venta vive en `DOCTOS_PV` (contado Y crédito); `DOCTOS_CC` es solo la capa de
+  crédito.** Para RFM/recencia/frecuencia anclar en `DOCTOS_PV` — derivarlo de `DOCTOS_CC`
+  deja invisible al cliente de contado y mal-fecha a ~7,200 clientes (16% de la base) que
+  compraron de contado más reciente que su último crédito.
+- Split medido: contado 317,562 ventas ($123.0M, 75% por conteo) · crédito 104,013 ($664.6M,
+  84% por valor). Cohortes: solo-crédito 30,256 · ambos 13,678 · solo-contado 804.
 - El saldo de cada cliente se calcula por cargo (concepto 5), con IVA, sumando solo
   balances abiertos (`DOCTO_CC_ACR_ID IS NULL` en los abonos). No usar un campo de saldo
-  directo — puede estar desactualizado.
-- `LIBRES_CARGOS_CC` solo tiene cobertura en ventas desde 2024. Las ventas anteriores no
-  tienen `PRECIO_DE_CONTADO` ni `VENDEDOR_*`.
-- Móviles frescos: `MSP_VENTAS.TELEFONO` (la app de campo captura móviles más actuales
-  que `DIRS_CLIENTES.TELEFONO1`). Enriquecer antes del piloto.
+  directo — puede estar desactualizado. Aplica solo a compradores a crédito.
+- `LIBRES_CARGOS_CC` está poblado **desde 2018** (~100% cobertura), no desde 2024. El
+  **enganche** vive en `DOCTOS_CC` concepto 24533 / `LIBRES_CARGOS_CC.ENGANCHE` (~$35M),
+  **no** como línea de efectivo en `DOCTOS_PV_COBROS`.
+- Móviles frescos: `MSP_LOCAL_SALE.TELEFONO` (la app de campo captura móviles más actuales
+  que `DIRS_CLIENTES.TELEFONO1`; 89.4% cobertura pero solo sobre 6,438 ventas de campo).
+  Las tablas MSP reales son `MSP_LOCAL_SALE`, `MSP_PAGOS_RECIBIDOS`, `MSP_VISITAS` — **no**
+  existen `MSP_VENTAS` ni `MSP_SALDOS_VENTAS`. Enriquecer antes del piloto.
 - `PRECIO_DE_CONTADO` en `LIBRES_CARGOS_CC` es la base para calcular el premio de
-  financiamiento real por venta (spread = precio_crédito − precio_contado).
+  financiamiento real por venta (spread = precio_crédito − precio_contado; medido en **+45–64%**).
+- **Detalle verificado completo** del mapa de datos: `docs/research/inteligencia-cliente-diccionario-datos.md`
+  y el estado del arte en `docs/research/inteligencia-cliente-estado-del-arte.md`.
 
 ### Etiquetas de confianza (para retomar análisis)
 
@@ -1012,7 +1026,7 @@ El motor Firebird Super es compartido con producción. Reglas absolutas:
 | Atribución sin grupo de control | Alto | El grupo de control es no-negociable desde el diseño. Sin él, las ventas son discutibles — más aún con 6,000 reactivaciones orgánicas/año de base. |
 | Operaciones (entrega/crédito) como cuello | Medio-Alto | Se satura en Año 2-3. El cuello deja de ser demanda y pasa a logística. Planificar capacidad antes del rollout. |
 | WhatsApp Business: demora en verificación | Medio | Iniciar el trámite ya — es el cuello de tiempo. Demo puede arrancar con cuenta normal (ritmo humano, riesgo de baneo bajo). |
-| Teléfonos desactualizados (49% sin teléfono) | Medio | Enriquecer con `MSP_VENTAS.TELEFONO` antes del piloto. Documentar cobertura real. Esta es la palanca de mayor impacto en pool contactable. |
+| Teléfonos desactualizados (49% sin teléfono) | Medio | Enriquecer con `MSP_LOCAL_SALE.TELEFONO` antes del piloto. Documentar cobertura real. Esta es la palanca de mayor impacto en pool contactable. |
 | Trato verbal sin fórmula escrita | Alto | No escribir código de escala sin confirmación escrita (mensaje del dueño basta). |
 | Proyecciones Año 2-3 asumen rollout a red | Medio | Solo Año 1 / demo es lo que el piloto prueba. Años 2-3 son extrapolación. |
 | Reactivación orgánica alta diluye el lift aparente | Medio | El grupo de control aísla esto. Comunicar al dueño antes: "el control muestra los que compraban solos; el sistema cobra solo el excedente." |
@@ -1037,7 +1051,7 @@ El motor Firebird Super es compartido con producción. Reglas absolutas:
    arrancar con cuenta normal/calentada para el demo.
 3. **Armar la lista priorizada** (154 por-liquidar ≥90% + 432 dormidos-frescos × 4+
    compras + segmento "por liquidar con hueco" ~2,982) con next-best-product por cliente.
-4. **Enriquecer teléfonos** con `MSP_VENTAS.TELEFONO` antes del piloto — es la mayor
+4. **Enriquecer teléfonos** con `MSP_LOCAL_SALE.TELEFONO` antes del piloto — es la mayor
    palanca de cobertura (51% → potencialmente ~80-85% del pool).
 5. **Playbook del agente IA** (system prompt + buckets de objeción + reglas de handoff
    + ejemplos de los mejores cierres del padre del desarrollador).
