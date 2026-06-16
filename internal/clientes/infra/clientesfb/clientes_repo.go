@@ -116,10 +116,10 @@ func buildDirectorioQuery(
 		// under-sizing pages and breaking the "has next page" detection.
 		//
 		// NOTE — ConSaldo latency: the saldo subquery in selectDirectorioCols is
-		// correlated (one sub-select per client row). The derived table
-		// materializes the full filtered client set before FIRST applies, so
-		// latency grows with zone size. This is a Fase-2 optimization target
-		// (e.g. pre-computed MSP_SALDOS cache or a non-correlated join).
+		// correlated (one sub-select per client row) but now reads the small,
+		// indexed MSP_SALDOS_VENTAS cache rather than aggregating the ~3.4M-row
+		// IMPORTES_DOCTOS_CC table, so each sub-select is cheap. The derived table
+		// still materializes the full filtered client set before FIRST applies.
 		inner := queryListarDirectorioInner + andClause + " ORDER BY c.NOMBRE, c.CLIENTE_ID"
 		// List columns explicitly (instead of *) so column order stays stable
 		// if selectDirectorioCols ever gains new columns. Aliases match those
@@ -288,6 +288,17 @@ func (r *ClientesRepo) fetchFichaTotales(ctx context.Context, q firebird.Querier
 	return totRow.assemble()
 }
 
+// fetchFichaSaldo returns the ficha's total saldo from the MSP_SALDOS_VENTAS cache
+// (user-approved exception), the same source the directory uses, so the ficha saldo
+// equals the directory saldo exactly.
+func (r *ClientesRepo) fetchFichaSaldo(ctx context.Context, q firebird.Querier, clienteID int) (decimal.Decimal, error) {
+	var saldoRaw any
+	if serr := q.QueryRowContext(ctx, queryResumenFichaSaldo, clienteID).Scan(&saldoRaw); serr != nil {
+		return decimal.Zero, firebird.MapError(serr)
+	}
+	return firebird.ScanDecimal(saldoRaw, 2)
+}
+
 func (r *ClientesRepo) fetchAbonosPorMes(ctx context.Context, q firebird.Querier, clienteID int) ([]outbound.PuntoMensual, error) {
 	rows, err := q.QueryContext(ctx, queryAbonosPorMes, clienteID)
 	if err != nil {
@@ -352,11 +363,19 @@ func (r *ClientesRepo) ObtenerResumenFicha(ctx context.Context, clienteID int) (
 		resumen.NumVentas = numVentas
 		resumen.NumPagos = numPagos
 
-		// Derived fields.
-		resumen.SaldoTotal = totalComprado.Sub(totalAbonado)
+		// SaldoTotal sourced from the MSP_SALDOS_VENTAS cache (user-approved
+		// exception) so the ficha saldo equals the directory saldo exactly,
+		// rather than re-deriving TotalComprado − TotalAbonado natively.
+		saldoTotal, err := r.fetchFichaSaldo(ctx, q, clienteID)
+		if err != nil {
+			return err
+		}
+		resumen.SaldoTotal = saldoTotal
 		if resumen.SaldoTotal.IsNegative() {
 			resumen.SaldoTotal = decimal.Zero
 		}
+
+		// Derived fields.
 		if numVentas > 0 && !totalComprado.IsZero() {
 			resumen.TicketPromedio = totalComprado.Div(decimal.NewFromInt(int64(numVentas)))
 		}

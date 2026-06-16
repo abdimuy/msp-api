@@ -1,7 +1,12 @@
 // Package clientesfb implements the Firebird-backed repository for the clientes
-// hub. All reads target native Microsip tables; this module owns no MSP_* tables
-// and never writes to Microsip. Text columns in Microsip are CHARACTER SET NONE
-// (raw Windows-1252 bytes) and must be scanned with firebird.Win1252.
+// hub. Reads target native Microsip tables; this module owns no MSP_* tables and
+// never writes to Microsip. The one read-only exception (user-approved 2026-06-16,
+// for performance) is the directory + ficha total saldo, which is read from the
+// MSP_SALDOS_VENTAS cobranza cache — a read-model OF native cargo facts, verified
+// to match the native saldo formula exactly. See selectDirectorioCols. The cache
+// is a plain MSP_ table (CHARACTER SET UTF8, NUMERIC) — no Win1252 decoding.
+// Text columns in native Microsip tables are CHARACTER SET NONE (raw Windows-1252
+// bytes) and must be scanned with firebird.Win1252.
 //
 //nolint:misspell // Spanish domain vocabulary (clientes, directorio, ficha, etc.) by project convention.
 package clientesfb
@@ -58,37 +63,33 @@ WHERE c.CLIENTE_ID = ?`
 
 // selectDirectorioCols extends selectClienteCols with the aggregated balance.
 //
-// Saldo is computed natively from IMPORTES_DOCTOS_CC:
+// Saldo source — MSP_SALDOS_VENTAS cache (USER-APPROVED EXCEPTION 2026-06-16):
+// Per-client total saldo is SUM(MSP_SALDOS_VENTAS.SALDO) over non-cancelled
+// cargos (CARGO_CANCELADO='N'), grouped by CLIENTE_ID.
+//
+// This is an explicit, user-approved exception to CLAUDE.md hard rule #1
+// ("saldo nativo, nunca MSP_*"). MSP_SALDOS_VENTAS is a read-model cache OF the
+// native cargo facts (one row per cargo/venta, maintained by cobranza via
+// MSP_RECOMPUTE_SALDO_VENTA) — not invented business logic. It encodes the same
+// native formula the directory used before:
 //
 //	SUM(IMPORTE+IMPUESTO WHERE TIPO_IMPTE='C') − SUM(IMPORTE WHERE TIPO_IMPTE='R')
 //
-// over non-cancelled cargos (CONCEPTO_CC_ID=5, CANCELADO='N') and non-cancelled
-// importes (CANCELADO='N'). The MAXVALUE(…,0) floor prevents negative saldo
-// display when a client has been over-paid or had condonaciones that exceed the
-// cargo. CAST(SUM) is mandatory because the firebirdsql v0.9.19 driver returns
-// unscaled *big.Int for aggregates.
+// over non-cancelled cargos (CONCEPTO_CC_ID=5). VERIFIED live 2026-06-16 to match
+// the native formula exactly (cliente 12440: 504666.60 = 504666.60).
 //
-// Note: Firebird has no GREATEST() function. MAXVALUE() is the correct built-in
-// (available since Firebird 2.0) — CONFIRMED working on this server (FB 5.0).
+// Rationale: the native aggregation scans the full ~3.4M-row IMPORTES_DOCTOS_CC,
+// making the unfiltered global directory path ~56s. MSP_SALDOS_VENTAS is small
+// (~103k rows) and indexed on CLIENTE_ID → the same path is now sub-second.
 //
-// CONFIRMED (live DB 2026-06-15): CONCEPTO_CC_ID=5 is the saldo cargo. It carries
-// 102,491 cargos / $646.2M vs negligible conceptos 4 ($284K) and 10 ($12K). The
-// native formula here matches MSP_SALDOS_VENTAS exactly for the top clients by
-// balance (e.g. cliente 12440: 504666.60 = 504666.60).
+// CAST(SUM) is mandatory because the firebirdsql v0.9.19 driver returns unscaled
+// *big.Int for aggregates; firebird.ScanDecimal(raw, 2) reads the scaled result.
 const selectDirectorioCols = selectClienteCols + `,
 	COALESCE((
-		SELECT CAST(
-			MAXVALUE(
-				SUM(CASE WHEN i.TIPO_IMPTE = 'C' THEN i.IMPORTE + i.IMPUESTO ELSE 0 END)
-				- SUM(CASE WHEN i.TIPO_IMPTE = 'R' THEN i.IMPORTE ELSE 0 END),
-				0
-			) AS NUMERIC(18,2))
-		FROM IMPORTES_DOCTOS_CC i
-		JOIN DOCTOS_CC cargo ON cargo.DOCTO_CC_ID = i.DOCTO_CC_ACR_ID
-		WHERE cargo.CLIENTE_ID = c.CLIENTE_ID
-		  AND cargo.CONCEPTO_CC_ID = 5
-		  AND cargo.CANCELADO = 'N'
-		  AND i.CANCELADO = 'N'
+		SELECT CAST(SUM(s.SALDO) AS NUMERIC(18,2))
+		FROM MSP_SALDOS_VENTAS s
+		WHERE s.CLIENTE_ID = c.CLIENTE_ID
+		  AND s.CARGO_CANCELADO = 'N'
 	), 0) AS SALDO_TOTAL`
 
 // queryListarDirectorioBase is the SELECT + FROM for the directory listing.
@@ -110,40 +111,32 @@ WHERE c.ESTATUS IN ('A', 'B')`
 // ─── Directory listing (complete / unbounded) ────────────────────────────────
 
 // selectDirectorioColsGrouped is the directory projection backed by an EFFICIENT
-// grouped saldo aggregation instead of the per-row correlated subquery used by
-// selectDirectorioCols. A single derived table (sal) groups IMPORTES_DOCTOS_CC by
-// CLIENTE_ID once and is LEFT JOINed to CLIENTES, so saldo costs one aggregation
-// pass for the whole set rather than one sub-select per row.
+// grouped saldo aggregation over the MSP_SALDOS_VENTAS cache instead of the
+// per-row correlated subquery used by selectDirectorioCols. A single derived
+// table (sal) groups the cache by CLIENTE_ID once and is LEFT JOINed to CLIENTES,
+// so saldo costs one aggregation pass for the whole set rather than one sub-select
+// per row.
 //
-// The saldo formula is identical to selectDirectorioCols (and to
-// MSP_SALDOS_VENTAS, verified live 2026-06-16 — cliente 12440: 504666.60):
-//
-//	SUM(IMPORTE+IMPUESTO WHERE TIPO_IMPTE='C') − SUM(IMPORTE WHERE TIPO_IMPTE='R')
-//
-// over non-cancelled cargos (CONCEPTO_CC_ID=5, CANCELADO='N') and non-cancelled
-// importes (CANCELADO='N'), floored at 0 via MAXVALUE(…,0). CAST is mandatory
-// (firebirdsql v0.9.19 returns unscaled *big.Int for aggregates).
+// Saldo source — MSP_SALDOS_VENTAS cache (USER-APPROVED EXCEPTION 2026-06-16),
+// same source and formula as selectDirectorioCols above. SUM(s.SALDO) over
+// non-cancelled cargos (CARGO_CANCELADO='N'), grouped by CLIENTE_ID. VERIFIED
+// live to match the native formula exactly (cliente 12440: 504666.60). CAST is
+// mandatory (firebirdsql v0.9.19 returns unscaled *big.Int for aggregates).
 const selectDirectorioColsGrouped = selectClienteCols + `,
 	COALESCE(sal.SALDO_TOTAL, 0) AS SALDO_TOTAL`
 
 // directorioGroupedSaldoJoin is the single grouped-aggregation derived table that
-// supplies SALDO_TOTAL per client. Joined once (not correlated per row).
+// supplies SALDO_TOTAL per client from the MSP_SALDOS_VENTAS cache. Joined once
+// (not correlated per row). The cache is small (~103k rows) and indexed on
+// CLIENTE_ID, so this aggregation is sub-second even unfiltered — the previous
+// native aggregation over the ~3.4M-row IMPORTES_DOCTOS_CC took ~56s here.
 const directorioGroupedSaldoJoin = `
 LEFT JOIN (
-	SELECT cargo.CLIENTE_ID,
-		CAST(
-			MAXVALUE(
-				SUM(CASE WHEN i.TIPO_IMPTE = 'C' THEN i.IMPORTE + i.IMPUESTO ELSE 0 END)
-				- SUM(CASE WHEN i.TIPO_IMPTE = 'R' THEN i.IMPORTE ELSE 0 END),
-				0
-			) AS NUMERIC(18,2)
-		) AS SALDO_TOTAL
-	FROM IMPORTES_DOCTOS_CC i
-	JOIN DOCTOS_CC cargo ON cargo.DOCTO_CC_ID = i.DOCTO_CC_ACR_ID
-	WHERE cargo.CONCEPTO_CC_ID = 5
-	  AND cargo.CANCELADO = 'N'
-	  AND i.CANCELADO = 'N'
-	GROUP BY cargo.CLIENTE_ID
+	SELECT s.CLIENTE_ID,
+		CAST(SUM(s.SALDO) AS NUMERIC(18,2)) AS SALDO_TOTAL
+	FROM MSP_SALDOS_VENTAS s
+	WHERE s.CARGO_CANCELADO = 'N'
+	GROUP BY s.CLIENTE_ID
 ) sal ON sal.CLIENTE_ID = c.CLIENTE_ID`
 
 // queryListarDirectorioCompletoBase is the SELECT + FROM (with the grouped saldo
@@ -151,16 +144,14 @@ LEFT JOIN (
 // is returned. ESTATUS IN ('A','B') matches the paginated listing's rationale.
 //
 // PERFORMANCE (measured live 2026-06-16, FB 5.0):
-//   - Unfiltered (whole padrón, ~38k rows): ~56s. The grouped saldo aggregation
-//     alone scans the full IMPORTES_DOCTOS_CC table (~3.4M rows) so it is the
-//     dominant cost. This is pathological and only happens for a global sort with
-//     NO zone/cobrador filter.
-//   - Zone-filtered (e.g. ~2.5k clients): ~0.5s — the optimizer pushes the zone
-//     predicate into the join so saldo is aggregated only for in-zone clients.
+//   - Unfiltered (whole padrón, ~38k rows): sub-second now that the grouped saldo
+//     join reads the small, indexed MSP_SALDOS_VENTAS cache (~103k rows) instead
+//     of aggregating the full ~3.4M-row IMPORTES_DOCTOS_CC table. The unfiltered
+//     global path used to take ~56s with the native aggregation.
+//   - Zone-filtered (e.g. ~2.5k clients): also sub-second.
 //
-// The office app's global sort / pulse-filter path is expected to carry a zone or
-// cobrador filter, which keeps this sub-second. A Fase-2 optimization would
-// materialize the pulse columns into MSP_* and ORDER BY at the DB level.
+// A Fase-2 optimization would materialize the pulse columns into MSP_* and
+// ORDER BY at the DB level.
 const queryListarDirectorioCompletoBase = `
 SELECT ` + selectDirectorioColsGrouped + clienteFromClause + directorioGroupedSaldoJoin + `
 WHERE c.ESTATUS IN ('A', 'B')`
@@ -169,11 +160,16 @@ WHERE c.ESTATUS IN ('A', 'B')`
 
 // queryResumenFichaTotales returns the aggregate financial summary for a client.
 //
-// TotalComprado = SUM of IMPORTE+IMPUESTO of all cargos concepto 5.
-// TotalAbonado  = SUM of IMPORTE of all abonos (TIPO_IMPTE='R').
-// SaldoTotal    = TotalComprado − TotalAbonado (floored at 0).
+// TotalComprado = SUM of IMPORTE+IMPUESTO of all cargos concepto 5 (native).
+// TotalAbonado  = SUM of IMPORTE of all abonos (TIPO_IMPTE='R') (native).
 // NumVentas     = COUNT DISTINCT of cargo DOCTO_CC_ACR_ID.
 // NumPagos      = COUNT DISTINCT of TIPO_IMPTE='R' rows.
+//
+// NOTE: SaldoTotal is NOT derived here from TotalComprado − TotalAbonado anymore.
+// It is sourced from the MSP_SALDOS_VENTAS cache (queryResumenFichaSaldo below)
+// so the ficha saldo equals the directory saldo exactly. TotalComprado /
+// TotalAbonado / PctLiquidado stay native (PctLiquidado = abonado/comprado, not
+// derived from saldo, so it is unaffected).
 //
 // All SUM casts are required (v0.9.19 driver scale bug).
 const queryResumenFichaTotales = `
@@ -188,6 +184,18 @@ WHERE cargo.CLIENTE_ID = ?
   AND cargo.CONCEPTO_CC_ID = 5
   AND cargo.CANCELADO = 'N'
   AND i.CANCELADO = 'N'`
+
+// queryResumenFichaSaldo returns the ficha's total saldo from the MSP_SALDOS_VENTAS
+// cache (USER-APPROVED EXCEPTION 2026-06-16), the SAME source the directory uses,
+// so the ficha saldo equals the directory saldo exactly. SUM(s.SALDO) over
+// non-cancelled cargos (CARGO_CANCELADO='N') for the client. VERIFIED live to
+// match the native TotalComprado − TotalAbonado formula (cliente 12440: 504666.60).
+// CAST is mandatory (firebirdsql v0.9.19 returns unscaled *big.Int for aggregates).
+const queryResumenFichaSaldo = `
+SELECT COALESCE(CAST(SUM(s.SALDO) AS NUMERIC(18,2)), 0) AS SALDO_TOTAL
+FROM MSP_SALDOS_VENTAS s
+WHERE s.CLIENTE_ID = ?
+  AND s.CARGO_CANCELADO = 'N'`
 
 // queryAbonosPorMes returns monthly payment totals for the trailing chart.
 // Grouped by (EXTRACT YEAR, EXTRACT MONTH) of the pago document's FECHA.
@@ -261,9 +269,14 @@ ORDER BY ANIO, MES`
 // otherwise CONTADO (validated in B4 research). EXISTS subquery is used
 // to avoid inflating the result set.
 //
-// Saldo per sale uses the same IMPORTES_DOCTOS_CC formula as above, bridged
+// Saldo per sale is still computed natively from IMPORTES_DOCTOS_CC, bridged
 // via DOCTOS_ENTRE_SIS (PV → CC) to find the cargo DOCTO_CC_ID for this PV.
 // NumPagos counts the distinct abono rows applied to that cargo.
+//
+// FOLLOW-UP: for full consistency with the directory + ficha (which now read the
+// MSP_SALDOS_VENTAS cache), this per-venta saldo could also be sourced from
+// MSP_SALDOS_VENTAS.SALDO keyed by DOCTO_PV_ID. Left native for now — it is a
+// single-client, fast path and out of scope for the directory perf change.
 //
 // VERIFY-AT-CHECKPOINT: confirm that for a contado sale (no CC cargo),
 // the saldo subquery correctly returns 0 (no JOIN match → COALESCE to 0).
