@@ -258,6 +258,12 @@ linters:
           alias: clientesdomain
         - pkg: github.com/abdimuy/msp-api/internal/clientes/ports/outbound
           alias: clientesoutbound
+        - pkg: github.com/abdimuy/msp-api/internal/clientes/infra/clientesfb
+          alias: clientesfb
+        - pkg: github.com/abdimuy/msp-api/internal/clientes/infra/clienteshttp
+          alias: clienteshttp
+        - pkg: github.com/abdimuy/msp-api/internal/clientes/infra/search
+          alias: clientessearch
         - pkg: github.com/go-playground/validator/v10
           alias: pv
         - pkg: firebase.google.com/go/v4

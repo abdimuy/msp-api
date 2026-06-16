@@ -1,3 +1,4 @@
+//nolint:misspell // clientes vocabulary is Spanish per project convention.
 package main
 
 import (
@@ -40,6 +41,9 @@ import (
 
 	analyticsapp "github.com/abdimuy/msp-api/internal/analytics/app"
 	"github.com/abdimuy/msp-api/internal/analytics/infra/analyticshttp"
+
+	clientesapp "github.com/abdimuy/msp-api/internal/clientes/app"
+	"github.com/abdimuy/msp-api/internal/clientes/infra/clienteshttp"
 )
 
 // RootHandler is the assembled chi router exposed as an fx-typed dependency.
@@ -143,6 +147,7 @@ func provideRootHandler(
 	microsipSvc *microsipapp.Service,
 	inventarioSvc *inventarioapp.Service,
 	analyticsSvc *analyticsapp.Service,
+	clientesSvc *clientesapp.Service,
 	logger *slog.Logger,
 ) RootHandler {
 	r := chi.NewRouter()
@@ -224,6 +229,17 @@ func provideRootHandler(
 		r.Route("/analytics", func(r chi.Router) {
 			r.Use(skipAuthForPublicDocs(authn.Handler))
 			analyticshttp.MountRouter(r, analyticsSvc)
+		})
+
+		// Clientes hub endpoints — read-only Customer 360. Authn only (no
+		// idempotency, no failed-intent capture — zero writes). The Huma
+		// operations register bare /clientes/* paths, so we mount with Group
+		// (not r.Route("/clientes")) to avoid a /v2/clientes/clientes double-prefix.
+		// Final paths: /v2/clientes, /v2/clientes/{id}, /v2/clientes/{id}/ventas,
+		// /v2/clientes/{id}/ventas/{doctoPvId}, /v2/clientes/_search/refresh.
+		r.Group(func(r chi.Router) {
+			r.Use(skipAuthForPublicDocs(authn.Handler))
+			clienteshttp.MountRouter(r, clientesSvc)
 		})
 
 		// Cobranza endpoints — authn only. Read (saldos, pagos, sync) plus

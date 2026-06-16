@@ -64,6 +64,12 @@ type BleveIndex struct {
 	reconcileMu sync.Mutex
 }
 
+// NewBleveIndex returns a zero-value BleveIndex ready for use. The index starts
+// empty (EstaListo returns false) until the first Reconciliar call completes.
+func NewBleveIndex() *BleveIndex {
+	return &BleveIndex{}
+}
+
 // loadCurrent returns the active bleve.Index, or nil when not yet ready.
 func (b *BleveIndex) loadCurrent() bleve.Index {
 	h := b.current.Load()
