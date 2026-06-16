@@ -91,6 +91,11 @@ type ClienteDoc struct {
 	// (lower = worse state). Sortable.
 	EstadoPagoOrden int `json:"estado_pago_orden"`
 
+	// ── Sortable (not searchable/filterable) ────────────────────────────
+
+	// Saldo is the outstanding balance amount. Sortable.
+	Saldo float64 `json:"saldo"`
+
 	// ── Display-only (not searchable/filterable/sortable) ───────────────
 
 	// Telefono is the primary phone number for display.
@@ -98,9 +103,6 @@ type ClienteDoc struct {
 
 	// DireccionCorta is a short one-line address for list display.
 	DireccionCorta string `json:"direccion_corta"`
-
-	// Saldo is the outstanding balance amount. Display + sortable.
-	Saldo float64 `json:"saldo"`
 
 	// Frecuencia is the purchase frequency (number of orders in period).
 	// Display only.

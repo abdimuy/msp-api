@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"testing"
 
+	meili "github.com/meilisearch/meilisearch-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -89,6 +90,27 @@ func TestTransientErrorClassification(t *testing.T) {
 	t.Run("nil_error_returns_nil", func(t *testing.T) {
 		t.Parallel()
 		assert.NoError(t, platformmeili.ClassifyErrorForTest("code", "msg", nil))
+	})
+
+	// The next two tests cover the *meili.Error branch specifically.
+	// SDK communication failures come back as *meili.Error with StatusCode==0
+	// and ErrCode==MeilisearchCommunicationError — they must be transient.
+	// A 4xx API error (e.g. bad request) must NOT be transient.
+
+	t.Run("meili_communication_error_is_transient", func(t *testing.T) {
+		t.Parallel()
+		cause := (&meili.Error{}).WithErrCode(meili.MeilisearchCommunicationError)
+		wrapped := platformmeili.ClassifyErrorForTest("test_code", "test msg", cause)
+		require.ErrorIs(t, wrapped, platformmeili.ErrMeilisearchTransient,
+			"MeilisearchCommunicationError must be classified as transient")
+	})
+
+	t.Run("meili_4xx_error_is_not_transient", func(t *testing.T) {
+		t.Parallel()
+		cause := &meili.Error{StatusCode: 400}
+		wrapped := platformmeili.ClassifyErrorForTest("test_code", "test msg", cause)
+		assert.NotErrorIs(t, wrapped, platformmeili.ErrMeilisearchTransient,
+			"4xx meili error must NOT be classified as transient")
 	})
 }
 

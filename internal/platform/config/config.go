@@ -276,6 +276,7 @@ type Meilisearch struct {
 	IndexName string `env:"MEILISEARCH_INDEX_NAME" envDefault:"clientes"`
 	// SyncInterval is how often the background reconcile worker pushes
 	// updates from Firebird into Meilisearch. Defaults to 5 minutes.
+	// Task A3: wire into the reconcile worker.
 	SyncInterval time.Duration `env:"MEILISEARCH_SYNC_INTERVAL" envDefault:"5m"`
 	// AllowUnconfigured opts into the NotConfigured client when URL is unset.
 	// Mutually exclusive with URL being set. Default false.

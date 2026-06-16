@@ -20,25 +20,25 @@ func NewNotConfiguredClient() *NotConfiguredClient {
 	return &NotConfiguredClient{}
 }
 
-// EnsureIndex is a no-op for the not-configured client.
+// EnsureIndex returns ErrMeilisearchNotConfigured for the not-configured client.
 func (c *NotConfiguredClient) EnsureIndex(_ context.Context, _ IndexConfig) error {
 	return ErrMeilisearchNotConfigured
 }
 
-// UpsertDocs is a no-op for the not-configured client.
+// UpsertDocs returns ErrMeilisearchNotConfigured for the not-configured client.
 func (c *NotConfiguredClient) UpsertDocs(_ context.Context, _ string, _ any) error {
 	return ErrMeilisearchNotConfigured
 }
 
-// DeleteDocs is a no-op for the not-configured client.
+// DeleteDocs returns ErrMeilisearchNotConfigured for the not-configured client.
 func (c *NotConfiguredClient) DeleteDocs(_ context.Context, _ string, _ []string) error {
 	return ErrMeilisearchNotConfigured
 }
 
-// Search is a no-op for the not-configured client.
+// Search returns ErrMeilisearchNotConfigured for the not-configured client.
 func (c *NotConfiguredClient) Search(_ context.Context, _ string, _ SearchParams) (SearchResult, error) {
 	return SearchResult{}, ErrMeilisearchNotConfigured
 }
 
-// Close is a no-op for the not-configured client.
+// Close is a no-op for the not-configured client (no resources to release).
 func (c *NotConfiguredClient) Close() {}

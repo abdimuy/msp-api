@@ -61,7 +61,7 @@ func (c *RealClient) EnsureIndex(ctx context.Context, cfg IndexConfig) error {
 	idx := c.sdk.Index(cfg.UID)
 
 	// Probe whether the index already exists.
-	_, err := idx.FetchInfo()
+	_, err := idx.FetchInfoWithContext(ctx)
 	if err != nil {
 		// Index does not exist (or unreachable) — try to create it.
 		task, createErr := c.sdk.CreateIndex(&meili.IndexConfig{
@@ -72,9 +72,13 @@ func (c *RealClient) EnsureIndex(ctx context.Context, cfg IndexConfig) error {
 			return classifyError("meilisearch_create_index_failed",
 				"no se pudo crear el índice de meilisearch", createErr)
 		}
-		waitCtx, cancel := context.WithTimeout(ctx, taskTimeout)
-		defer cancel()
-		if waitErr := c.waitForTask(waitCtx, task.TaskUID); waitErr != nil {
+		// Scope the cancel to just this wait so the first context is released
+		// before we begin the settings wait below.
+		if waitErr := func() error {
+			waitCtx, cancel := context.WithTimeout(ctx, taskTimeout)
+			defer cancel()
+			return c.waitForTask(waitCtx, task.TaskUID)
+		}(); waitErr != nil {
 			return waitErr
 		}
 		slog.InfoContext(ctx, "meilisearch.index_created", "index", cfg.UID)
@@ -82,14 +86,17 @@ func (c *RealClient) EnsureIndex(ctx context.Context, cfg IndexConfig) error {
 
 	// Apply settings (idempotent — safe to re-apply on every boot).
 	settings := c.buildSettings(cfg)
-	task, err := idx.UpdateSettings(settings)
+	task, err := idx.UpdateSettingsWithContext(ctx, settings)
 	if err != nil {
 		return classifyError("meilisearch_update_settings_failed",
 			"no se pudieron actualizar las configuraciones del índice", err)
 	}
-	waitCtx, cancel := context.WithTimeout(ctx, taskTimeout)
-	defer cancel()
-	if err := c.waitForTask(waitCtx, task.TaskUID); err != nil {
+	// Scope the cancel to just this wait.
+	if err := func() error {
+		waitCtx, cancel := context.WithTimeout(ctx, taskTimeout)
+		defer cancel()
+		return c.waitForTask(waitCtx, task.TaskUID)
+	}(); err != nil {
 		return err
 	}
 	slog.InfoContext(ctx, "meilisearch.settings_applied", "index", cfg.UID)
@@ -258,10 +265,16 @@ func classifyError(code, msg string, err error) error {
 	if errors.As(err, &urlErr) {
 		return &transientError{cause: err, code: code, msg: msg}
 	}
-	// Classify SDK error codes that indicate a server-side transient condition.
+	// Classify SDK error codes that indicate a transient condition.
+	// NOTE: *meili.Error has no Unwrap() method, so network/transport failures
+	// (ErrCode == MeilisearchCommunicationError or MeilisearchTimeoutError) are
+	// returned as *meili.Error with StatusCode==0, which is < 500 and would
+	// otherwise be misclassified as permanent. We therefore also check ErrCode.
 	var meiliErr *meili.Error
 	if errors.As(err, &meiliErr) {
-		if meiliErr.StatusCode >= 500 {
+		if meiliErr.StatusCode >= 500 ||
+			meiliErr.ErrCode == meili.MeilisearchCommunicationError ||
+			meiliErr.ErrCode == meili.MeilisearchTimeoutError {
 			return &transientError{cause: err, code: code, msg: msg}
 		}
 		return apperror.NewInternal(code, msg).

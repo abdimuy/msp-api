@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,17 +26,38 @@ func skipIfNoMeilisearch(t *testing.T) string {
 	return url
 }
 
+// sanitizeIndexName converts a test name into a valid Meilisearch index UID
+// (alphanumeric, hyphens and underscores only; max 512 characters).
+func sanitizeIndexName(name string) string {
+	re := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+	s := re.ReplaceAllString(name, "-")
+	s = strings.ToLower(s)
+	if len(s) > 512 {
+		s = s[:512]
+	}
+	return s
+}
+
 // TestIntegration_EnsureIndex verifies that EnsureIndex creates the index and
 // applies the settings against a live Meilisearch instance.
 func TestIntegration_EnsureIndex(t *testing.T) { //nolint:paralleltest // mutates shared Meilisearch state
 	rawURL := skipIfNoMeilisearch(t)
 
 	cfg := platformmeili.NewTestConfig(rawURL)
-	cfg.IndexName = "integration-test-ensure-index"
+	cfg.IndexName = sanitizeIndexName("integration-ensure-index-" + t.Name())
 
 	c, err := platformmeili.NewRealClient(cfg)
 	require.NoError(t, err)
 	defer c.Close()
+
+	// Clean up the index after the test so reruns start from a blank slate.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	t.Cleanup(func() {
+		cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cleanCancel()
+		_ = c.DeleteIndexForTest(cleanCtx, cfg.IndexName)
+	})
 
 	indexCfg := platformmeili.IndexConfig{
 		UID:                  cfg.IndexName,
@@ -48,9 +71,6 @@ func TestIntegration_EnsureIndex(t *testing.T) { //nolint:paralleltest // mutate
 		FacetingMaxValuesPerFacet: 50,
 		PaginationMaxTotalHits:    1000,
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
 
 	// First call — creates the index.
 	err = c.EnsureIndex(ctx, indexCfg)
@@ -67,7 +87,7 @@ func TestIntegration_UpsertAndSearch(t *testing.T) { //nolint:paralleltest // mu
 	rawURL := skipIfNoMeilisearch(t)
 
 	cfg := platformmeili.NewTestConfig(rawURL)
-	cfg.IndexName = "integration-test-search"
+	cfg.IndexName = sanitizeIndexName("integration-search-" + t.Name())
 
 	c, err := platformmeili.NewRealClient(cfg)
 	require.NoError(t, err)
@@ -75,6 +95,13 @@ func TestIntegration_UpsertAndSearch(t *testing.T) { //nolint:paralleltest // mu
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
+
+	// Clean up the index after the test.
+	t.Cleanup(func() {
+		cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cleanCancel()
+		_ = c.DeleteIndexForTest(cleanCtx, cfg.IndexName)
+	})
 
 	// Ensure the index exists before uploading docs.
 	err = c.EnsureIndex(ctx, platformmeili.IndexConfig{
@@ -86,17 +113,14 @@ func TestIntegration_UpsertAndSearch(t *testing.T) { //nolint:paralleltest // mu
 	})
 	require.NoError(t, err)
 
-	// Upsert test documents.
+	// Upsert test documents and wait synchronously for indexing to complete.
 	docs := []map[string]any{
 		{"id": "doc-1", "name": "Fernández López", "zone": 1},
 		{"id": "doc-2", "name": "García Ramírez", "zone": 2},
 		{"id": "doc-3", "name": "Hernández Cruz", "zone": 1},
 	}
-	err = c.UpsertDocs(ctx, cfg.IndexName, docs)
+	err = c.UpsertDocsAndWaitForTest(ctx, cfg.IndexName, docs, 100*time.Millisecond)
 	require.NoError(t, err)
-
-	// Give Meilisearch time to index (async task).
-	time.Sleep(1 * time.Second)
 
 	// Search by name fragment.
 	result, err := c.Search(ctx, cfg.IndexName, platformmeili.SearchParams{
@@ -119,7 +143,7 @@ func TestIntegration_UpsertAndSearch(t *testing.T) { //nolint:paralleltest // mu
 	}
 	assert.True(t, found, "search for 'Fernández' must return doc-1")
 
-	// Clean up.
+	// Clean up documents (index itself will be cleaned by t.Cleanup).
 	err = c.DeleteDocs(ctx, cfg.IndexName, []string{"doc-1", "doc-2", "doc-3"})
 	require.NoError(t, err)
 }
