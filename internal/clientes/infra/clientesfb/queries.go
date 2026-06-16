@@ -21,6 +21,12 @@ package clientesfb
 // doc describes CALLE as a composite column (NOMBRE_CALLE + NUM_EXT + \n + …).
 // Using NOMBRE_CALLE here keeps it clean; if the app wants the full composite
 // swap to CALLE.
+//
+// All text columns from Microsip are CHARACTER SET NONE (raw Windows-1252
+// bytes). COALESCE(none_col, ”) is intentionally OMITTED because mixing a
+// NONE column with a UTF-8 connection literal causes Firebird to attempt
+// transliteration, failing on bytes such as ñ (0xF1). The columns are selected
+// bare and scanned as firebird.Win1252, which handles NULL → "" internally.
 const selectClienteCols = `
 	c.CLIENTE_ID,
 	c.NOMBRE,
@@ -28,14 +34,14 @@ const selectClienteCols = `
 	c.NOTAS,
 	c.ESTATUS,
 	c.ZONA_CLIENTE_ID,
-	COALESCE(z.NOMBRE, '')     AS ZONA_NOMBRE,
+	z.NOMBRE                   AS ZONA_NOMBRE,
 	c.COBRADOR_ID,
-	COALESCE(cob.NOMBRE, '')   AS COBRADOR_NOMBRE,
-	COALESCE(d.NOMBRE_CALLE, '') AS NOMBRE_CALLE,
-	COALESCE(d.COLONIA, '')    AS COLONIA,
-	COALESCE(d.POBLACION, '')  AS POBLACION,
-	COALESCE(e.NOMBRE, '')     AS ESTADO_NOMBRE,
-	COALESCE(d.TELEFONO1, '')  AS TELEFONO1`
+	cob.NOMBRE                 AS COBRADOR_NOMBRE,
+	d.NOMBRE_CALLE,
+	d.COLONIA,
+	d.POBLACION,
+	e.NOMBRE                   AS ESTADO_NOMBRE,
+	d.TELEFONO1`
 
 const clienteFromClause = `
 FROM CLIENTES c
@@ -57,10 +63,13 @@ WHERE c.CLIENTE_ID = ?`
 //	SUM(IMPORTE+IMPUESTO WHERE TIPO_IMPTE='C') − SUM(IMPORTE WHERE TIPO_IMPTE='R')
 //
 // over non-cancelled cargos (CONCEPTO_CC_ID=5, CANCELADO='N') and non-cancelled
-// importes (CANCELADO='N'). The GREATEST(…,0) floor prevents negative saldo
+// importes (CANCELADO='N'). The MAXVALUE(…,0) floor prevents negative saldo
 // display when a client has been over-paid or had condonaciones that exceed the
 // cargo. CAST(SUM) is mandatory because the firebirdsql v0.9.19 driver returns
 // unscaled *big.Int for aggregates.
+//
+// Note: Firebird has no GREATEST() function. MAXVALUE() is the correct built-in
+// (available since Firebird 2.0) — CONFIRMED working on this server (FB 5.0).
 //
 // VERIFY-AT-CHECKPOINT: the saldo subquery uses CONCEPTO_CC_ID=5 (Venta en
 // mostrador / cargo de crédito). Confirm no other concepto acts as a principal
@@ -68,7 +77,7 @@ WHERE c.CLIENTE_ID = ?`
 const selectDirectorioCols = selectClienteCols + `,
 	COALESCE((
 		SELECT CAST(
-			GREATEST(
+			MAXVALUE(
 				SUM(CASE WHEN i.TIPO_IMPTE = 'C' THEN i.IMPORTE + i.IMPUESTO ELSE 0 END)
 				- SUM(CASE WHEN i.TIPO_IMPTE = 'R' THEN i.IMPORTE ELSE 0 END),
 				0
@@ -211,7 +220,7 @@ const selectVentaClienteCols = `
 	) THEN 'CREDITO' ELSE 'CONTADO' END AS TIPO,
 	COALESCE((
 		SELECT CAST(
-			GREATEST(
+			MAXVALUE(
 				SUM(CASE WHEN i.TIPO_IMPTE = 'C' THEN i.IMPORTE + i.IMPUESTO ELSE 0 END)
 				- SUM(CASE WHEN i.TIPO_IMPTE = 'R' THEN i.IMPORTE ELSE 0 END),
 				0
@@ -308,18 +317,26 @@ ORDER BY det.POSICION`
 //
 // ORDER BY + ROWS 1 ensures a deterministic result when multiple DOCTOS_ENTRE_SIS
 // bridge rows exist for the same PV sale (e.g. duplicate bridge rows).
-// DOCTO_ENTRE_SIS_ID is assumed to be the PK of DOCTOS_ENTRE_SIS — newest wins.
-// VERIFY-AT-CHECKPOINT: confirm DOCTO_ENTRE_SIS_ID is the correct PK column name.
+// CONFIRMED (live DB): DOCTOS_ENTRE_SIS has no surrogate PK. Columns are:
+// DOCTO_DEST_ID, CLAVE_SIS_DEST, CLAVE_SIS_FTE, DOCTO_FTE_ID, TIPO_DOCTO.
+// ORDER BY DOCTO_DEST_ID DESC uses the cargo CC ID as a tiebreaker (highest wins).
+// CONFIRMED (live DB): TIEMPO_A_CORTO_PLAZOMESES exists in LIBRES_CARGOS_CC
+// alongside CREDITO_EN_MESES (opaque FK); TIEMPO_A_CORTO_PLAZOMESES is correct.
+// Note: VALOR_DESPLEGADO columns are CHARACTER SET NONE in Microsip. COALESCE
+// and UPPER() with a UTF-8 connection literal would force transliteration on
+// those bytes, failing on Win1252 characters. Bare column selects are used
+// instead; NULL → "" is handled in Go by firebird.Win1252.Scan. UPPER() on
+// vendedor names is also done in Go (strings.ToUpper) rather than SQL.
 const queryContrato = `
 SELECT
 	lc.PARCIALIDAD,
 	lc.ENGANCHE,
 	lc.PRECIO_DE_CONTADO,
 	lc.TIEMPO_A_CORTO_PLAZOMESES,
-	COALESCE(lfp.VALOR_DESPLEGADO, ''),
-	COALESCE(UPPER(lv1.VALOR_DESPLEGADO), ''),
-	COALESCE(UPPER(lv2.VALOR_DESPLEGADO), ''),
-	COALESCE(UPPER(lv3.VALOR_DESPLEGADO), '')
+	lfp.VALOR_DESPLEGADO,
+	lv1.VALOR_DESPLEGADO,
+	lv2.VALOR_DESPLEGADO,
+	lv3.VALOR_DESPLEGADO
 FROM DOCTOS_ENTRE_SIS des
 JOIN DOCTOS_CC cargo             ON cargo.DOCTO_CC_ID  = des.DOCTO_DEST_ID
 JOIN LIBRES_CARGOS_CC lc         ON lc.DOCTO_CC_ID     = des.DOCTO_DEST_ID
@@ -331,7 +348,7 @@ WHERE des.CLAVE_SIS_FTE  = 'PV'
   AND des.CLAVE_SIS_DEST = 'CC'
   AND des.DOCTO_FTE_ID   = ?
   AND cargo.CANCELADO    = 'N'
-ORDER BY des.DOCTO_ENTRE_SIS_ID DESC
+ORDER BY des.DOCTO_DEST_ID DESC
 ROWS 1`
 
 // queryPagos fetches the payment history for a given PV sale, bridged through
@@ -406,15 +423,19 @@ ORDER BY c.NOMBRE, c.CLIENTE_ID`
 //
 // ESTATUS IN ('A','B') — same rationale as BuscarBasico above.
 //
-// COALESCE on nullable address columns prevents NULLs from propagating into
-// the concatenated text.
+// Address columns (NOMBRE_CALLE, COLONIA, POBLACION) are CHARACTER SET NONE in
+// Microsip (raw Windows-1252 bytes). COALESCE(col, ”) is intentionally OMITTED
+// here because mixing a NONE column with a UTF-8 literal causes Firebird to
+// attempt transliteration, which fails on Win1252 bytes such as ñ (0xF1).
+// Instead the bare nullable columns are selected and scanned as firebird.Win1252,
+// which handles NULL → "" internally at scan time.
 const queryLeerDocumentos = `
 SELECT
 	c.CLIENTE_ID,
 	c.NOMBRE,
-	COALESCE(d.NOMBRE_CALLE, ''),
-	COALESCE(d.COLONIA, ''),
-	COALESCE(d.POBLACION, '')
+	d.NOMBRE_CALLE,
+	d.COLONIA,
+	d.POBLACION
 FROM CLIENTES c
 LEFT JOIN DIRS_CLIENTES d ON d.CLIENTE_ID = c.CLIENTE_ID AND d.ES_DIR_PPAL = 'S'
 WHERE c.ESTATUS IN ('A', 'B')

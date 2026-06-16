@@ -222,19 +222,22 @@ func TestClientesRepo_ListarVentas(t *testing.T) {
 // ─── ObtenerVentaDetalle ──────────────────────────────────────────────────────
 
 // TestClientesRepo_ObtenerVentaDetalle_Found verifies the detail bundle for a
-// known sale (validated in B3 research §5.3: DOCTO_PV_ID=15542211).
+// known sale. Originally used DOCTO_PV_ID=15542211 (B3 research §5.3) but that
+// row was not present in the live dev DB; replaced with DOCTO_PV_ID=14941516
+// (cliente 12387, tipo=V, estatus=N, 7 product lines, 1 CC bridge row, confirmed
+// live against real MUEBLERA.FDB on 2026-06-15).
 func TestClientesRepo_ObtenerVentaDetalle_Found(t *testing.T) {
 	requireFBEnv(t)
 	pool := fbtestutil.NewTestFirebirdPool(t)
 	repo := clientesfb.NewClientesRepo(pool)
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
-		detail, err := repo.ObtenerVentaDetalle(ctx, 15542211)
+		detail, err := repo.ObtenerVentaDetalle(ctx, 14941516)
 		require.NoError(t, err)
 		require.NotNil(t, detail.Venta)
 
-		assert.Equal(t, 15542211, detail.Venta.DoctoPVID())
-		assert.NotEmpty(t, detail.Productos, "sale 15542211 has 4 lines per B3 research")
+		assert.Equal(t, 14941516, detail.Venta.DoctoPVID())
+		assert.NotEmpty(t, detail.Productos, "sale 14941516 has 7 lines confirmed in live DB")
 
 		for _, p := range detail.Productos {
 			assert.NotEmpty(t, p.Nombre())
@@ -244,7 +247,7 @@ func TestClientesRepo_ObtenerVentaDetalle_Found(t *testing.T) {
 		}
 
 		// Pagos may or may not exist depending on the sale's credit status.
-		t.Logf("ObtenerVentaDetalle 15542211: tipo=%s productos=%d pagos=%d contrato=%v",
+		t.Logf("ObtenerVentaDetalle 14941516: tipo=%s productos=%d pagos=%d contrato=%v",
 			detail.Venta.Tipo(), len(detail.Productos), len(detail.Pagos), detail.Contrato != nil)
 	})
 }

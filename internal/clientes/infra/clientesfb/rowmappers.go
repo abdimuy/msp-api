@@ -304,10 +304,12 @@ func (r *contratoRowRaw) assemble() (*outbound.ContratoCredito, error) {
 	if r.plazoMesesRaw.Valid {
 		plazoMeses = int(r.plazoMesesRaw.Int64)
 	}
+	// UPPER() previously applied in SQL is now done in Go to avoid Firebird
+	// transliteration errors on Win1252 NONE columns with a UTF-8 connection.
 	vendedores := collectVendedores(
-		string(r.vendedor1Raw),
-		string(r.vendedor2Raw),
-		string(r.vendedor3Raw),
+		strings.ToUpper(string(r.vendedor1Raw)),
+		strings.ToUpper(string(r.vendedor2Raw)),
+		strings.ToUpper(string(r.vendedor3Raw)),
 	)
 	return &outbound.ContratoCredito{
 		Parcialidad:     parcialidad,
