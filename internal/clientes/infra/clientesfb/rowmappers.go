@@ -478,49 +478,6 @@ func (r *compradoVsAbonadoRowRaw) assemble() (outbound.PuntoCompradoAbonado, err
 	}, nil
 }
 
-// ─── searchDocRaw ─────────────────────────────────────────────────────────────
-
-// searchDocRaw holds raw scan targets for the search document query.
-type searchDocRaw struct {
-	clienteID  int
-	nombreRaw  firebird.Win1252
-	calleRaw   firebird.Win1252
-	coloniaRaw firebird.Win1252
-	poblRaw    firebird.Win1252
-}
-
-func (r *searchDocRaw) scanFrom(s scannable) error {
-	return s.Scan(
-		&r.clienteID,
-		&r.nombreRaw,
-		&r.calleRaw,
-		&r.coloniaRaw,
-		&r.poblRaw,
-	)
-}
-
-// assembleSearchDoc builds the SearchDoc from Win1252-decoded text fields.
-// Texto concatenates all available text so the index can match on any component.
-func (r *searchDocRaw) assembleSearchDoc() outbound.SearchDoc {
-	parts := make([]string, 0, 4)
-	if v := strings.TrimSpace(string(r.nombreRaw)); v != "" {
-		parts = append(parts, v)
-	}
-	if v := strings.TrimSpace(string(r.calleRaw)); v != "" {
-		parts = append(parts, v)
-	}
-	if v := strings.TrimSpace(string(r.coloniaRaw)); v != "" {
-		parts = append(parts, v)
-	}
-	if v := strings.TrimSpace(string(r.poblRaw)); v != "" {
-		parts = append(parts, v)
-	}
-	return outbound.SearchDoc{
-		ClienteID: r.clienteID,
-		Texto:     strings.Join(parts, " "),
-	}
-}
-
 // ─── shared helpers ───────────────────────────────────────────────────────────
 
 // nullableIntVal converts sql.NullInt64 to int, returning 0 when not valid.

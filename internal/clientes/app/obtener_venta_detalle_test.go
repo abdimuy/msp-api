@@ -22,7 +22,7 @@ func TestObtenerVentaDetalle_PassThrough(t *testing.T) {
 		clienteByID: map[int]*domain.Cliente{},
 		detalleByID: map[int]outbound.VentaDetalle{55: detalle},
 	}
-	svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeSearchIndex{}, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	result, err := svc.ObtenerVentaDetalle(ctx, 55)
 	if err != nil {
@@ -41,7 +41,7 @@ func TestObtenerVentaDetalle_VentaNotFoundPropagada(t *testing.T) {
 		clienteByID: map[int]*domain.Cliente{},
 		detalleByID: map[int]outbound.VentaDetalle{},
 	}
-	svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeSearchIndex{}, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	_, err := svc.ObtenerVentaDetalle(ctx, 9999)
 
@@ -70,7 +70,7 @@ func TestObtenerVentaDetalle_InfraErrorWrapped(t *testing.T) {
 		detalleByID: map[int]outbound.VentaDetalle{},
 		detalleErr:  infraErr,
 	}
-	svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeSearchIndex{}, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	_, err := svc.ObtenerVentaDetalle(ctx, 55)
 

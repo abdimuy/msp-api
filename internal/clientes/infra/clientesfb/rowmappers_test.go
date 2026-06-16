@@ -85,45 +85,6 @@ func TestNullableIntVal_Invalid(t *testing.T) {
 	assert.Equal(t, 0, nullableIntVal(v))
 }
 
-// ─── searchDocRaw.assembleSearchDoc ──────────────────────────────────────────
-
-func TestSearchDocRaw_AllFields(t *testing.T) {
-	t.Parallel()
-	raw := searchDocRaw{
-		clienteID:  12345,
-		nombreRaw:  "GARCIA MARTINEZ JOSE",
-		calleRaw:   "CALLE INDEPENDENCIA",
-		coloniaRaw: "CENTRO",
-		poblRaw:    "TEHUACAN",
-	}
-	doc := raw.assembleSearchDoc()
-	assert.Equal(t, 12345, doc.ClienteID)
-	assert.Equal(t, "GARCIA MARTINEZ JOSE CALLE INDEPENDENCIA CENTRO TEHUACAN", doc.Texto)
-}
-
-func TestSearchDocRaw_EmptyFields_Skipped(t *testing.T) {
-	t.Parallel()
-	raw := searchDocRaw{
-		clienteID:  99,
-		nombreRaw:  "JUAN PEREZ",
-		calleRaw:   "",
-		coloniaRaw: "  ", // whitespace only → trimmed to empty → skipped
-		poblRaw:    "PUEBLA",
-	}
-	doc := raw.assembleSearchDoc()
-	assert.Equal(t, "JUAN PEREZ PUEBLA", doc.Texto)
-}
-
-func TestSearchDocRaw_OnlyNombre(t *testing.T) {
-	t.Parallel()
-	raw := searchDocRaw{
-		clienteID: 1,
-		nombreRaw: "SOLO NOMBRE",
-	}
-	doc := raw.assembleSearchDoc()
-	assert.Equal(t, "SOLO NOMBRE", doc.Texto)
-}
-
 // ─── scanIntFromAny ───────────────────────────────────────────────────────────
 
 func TestScanIntFromAny_Int32(t *testing.T) {

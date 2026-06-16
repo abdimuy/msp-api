@@ -45,14 +45,6 @@ func (stubRepo) ListarDirectorioCompleto(_ context.Context, _ outbound.FiltroDir
 	return nil, nil
 }
 
-func (stubRepo) BuscarClienteIDsBasico(_ context.Context, _ string, _ int) ([]int, error) {
-	return nil, nil
-}
-
-func (stubRepo) LeerDocumentosBusqueda(_ context.Context) ([]outbound.SearchDoc, error) {
-	return nil, nil
-}
-
 type stubAnalytics struct{}
 
 func (stubAnalytics) ObtenerPulso(_ context.Context, _ int) (analytics.ClientePulsoContract, bool, error) {
@@ -62,12 +54,6 @@ func (stubAnalytics) ObtenerPulso(_ context.Context, _ int) (analytics.ClientePu
 func (stubAnalytics) ObtenerPulsos(_ context.Context, _ []int) (map[int]analytics.ClientePulsoContract, error) {
 	return map[int]analytics.ClientePulsoContract{}, nil
 }
-
-type stubSearch struct{}
-
-func (stubSearch) EstaListo() bool                                             { return false }
-func (stubSearch) Buscar(_ context.Context, _ string, _ int) ([]int, error)    { return nil, nil }
-func (stubSearch) Reconciliar(_ context.Context, _ []outbound.SearchDoc) error { return nil }
 
 type stubDirectoryIndex struct{}
 
@@ -80,7 +66,7 @@ func (stubDirectoryIndex) Reconciliar(_ context.Context, _ []outbound.Directorio
 }
 
 func buildOpenAPITestService() *clientesapp.Service {
-	return clientesapp.NewService(stubRepo{}, stubAnalytics{}, stubSearch{}, stubDirectoryIndex{}, stubClock{})
+	return clientesapp.NewService(stubRepo{}, stubAnalytics{}, stubDirectoryIndex{}, stubClock{})
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

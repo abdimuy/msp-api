@@ -156,13 +156,4 @@ type ClientesRepo interface {
 	// including line items, credit contract, and payment history.
 	// Returns domain.ErrVentaNotFound when no row exists for doctoPVID.
 	ObtenerVentaDetalle(ctx context.Context, doctoPVID int) (VentaDetalle, error)
-
-	// BuscarClienteIDsBasico is the database-backed fallback for search when
-	// the SearchIndex is not yet ready. Returns up to limit matching client IDs.
-	BuscarClienteIDsBasico(ctx context.Context, query string, limit int) ([]int, error)
-
-	// LeerDocumentosBusqueda returns the full set of SearchDocs used to
-	// populate (or reconcile) the in-process SearchIndex. Called during
-	// background warm-up and periodic refresh.
-	LeerDocumentosBusqueda(ctx context.Context) ([]SearchDoc, error)
 }

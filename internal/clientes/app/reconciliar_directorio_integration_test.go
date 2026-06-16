@@ -72,13 +72,12 @@ func TestReconciliarDirectorio_LiveIntegration(t *testing.T) {
 	repo := clientesfb.NewClientesRepo(pool)
 	dirIdx := clientessearchmeili.NewMeilisearchDirectoryIndex(meiliClient, cfg.Meilisearch.IndexName)
 
-	// Reuse fakeAnalyticsClient and fakeSearchIndex from service_test.go
+	// Reuse fakeAnalyticsClient and fakeClientesRepo from service_test.go
 	// (same package: app_test). Both are zero-value fakes that return no errors
 	// and empty maps — adequate for this structural integration test.
 	svc := clientesapp.NewService(
 		repo,
 		&fakeAnalyticsClient{},
-		&fakeSearchIndex{},
 		dirIdx,
 		clientesoutbound.ProductionClock{},
 	)

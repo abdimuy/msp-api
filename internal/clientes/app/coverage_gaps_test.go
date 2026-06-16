@@ -98,7 +98,7 @@ func TestObtenerFicha_ClienteAppError(t *testing.T) {
 	dbErr := apperror.NewInternal("db_timeout", "timeout al leer cliente")
 	repo := &fakeClientesRepo{clienteErr: dbErr, clienteByID: map[int]*domain.Cliente{}}
 	anl := &fakeAnalyticsClient{}
-	svc := app.NewService(repo, anl, &fakeSearchIndex{}, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, anl, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	_, err := svc.ObtenerFicha(ctx, 1)
 	if err == nil {

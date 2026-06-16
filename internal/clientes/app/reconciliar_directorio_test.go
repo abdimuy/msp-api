@@ -24,7 +24,7 @@ func newReconcileService(
 	anl outbound.AnalyticsClient,
 	dirIdx outbound.DirectoryIndex,
 ) *app.Service {
-	return app.NewService(repo, anl, &fakeSearchIndex{}, dirIdx, fixedClock{T: fixedTime})
+	return app.NewService(repo, anl, dirIdx, fixedClock{T: fixedTime})
 }
 
 func TestReconciliarDirectorio_HappyPath(t *testing.T) {

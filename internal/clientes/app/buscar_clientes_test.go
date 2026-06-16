@@ -53,7 +53,6 @@ func buildSvc(di outbound.DirectoryIndex) *app.Service {
 	return app.NewService(
 		&fakeClientesRepo{},
 		&fakeAnalyticsClient{},
-		&fakeSearchIndex{},
 		di,
 		fixedClock{T: fixedTime},
 	)

@@ -201,13 +201,15 @@ func invokeFailedIntentOrphanSweep(
 		OnStart: func(ctx context.Context) error {
 			report, err := failedintentblobfs.SweepOrphans(ctx, blobs, store)
 			if err != nil {
-				slog.WarnContext(ctx,
+				slog.WarnContext(
+					ctx,
 					"failedintent: orphan sweep failed at boot",
 					"error", err,
 				)
 				return nil
 			}
-			slog.InfoContext(ctx,
+			slog.InfoContext(
+				ctx,
 				"failedintent: orphan sweep complete",
 				"scanned", report.Scanned,
 				"deleted", report.Deleted,

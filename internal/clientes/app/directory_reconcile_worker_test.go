@@ -30,31 +30,10 @@ func (f *countingDirectoryIndex) Reconciliar(_ context.Context, _ []outbound.Dir
 	return f.reconcileErr
 }
 
-// itemDirectorioRepo embeds countingRepo but overrides ListarDirectorioCompleto
-// to return a fixed list of DirectorioItems so the reconcile loop has work to do.
-type itemDirectorioRepo struct {
-	*countingRepo
-	items []outbound.DirectorioItem
-}
-
-func (r *itemDirectorioRepo) ListarDirectorioCompleto(_ context.Context, _ outbound.FiltroDirectorio) ([]outbound.DirectorioItem, error) {
-	return r.items, nil
-}
-
-// erroringDirectorioRepo embeds countingRepo but overrides ListarDirectorioCompleto
-// to return an error, simulating a DB failure during the warm-up reconcile.
-type erroringDirectorioRepo struct {
-	*countingRepo
-}
-
-func (r *erroringDirectorioRepo) ListarDirectorioCompleto(_ context.Context, _ outbound.FiltroDirectorio) ([]outbound.DirectorioItem, error) {
-	return nil, errors.New("firebird down")
-}
-
 // buildReconcileWorker wires a DirectoryReconcileWorker against any ClientesRepo
 // and countingDirectoryIndex (for Reconciliar).
 func buildReconcileWorker(repo outbound.ClientesRepo, dirIdx *countingDirectoryIndex, interval time.Duration) *app.DirectoryReconcileWorker {
-	svc := app.NewService(repo, &fakeAnalyticsClient{}, &controlledSearchIndex{}, dirIdx, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, &fakeAnalyticsClient{}, dirIdx, fixedClock{T: fixedTime})
 	return app.NewDirectoryReconcileWorker(svc, app.DirectoryReconcileWorkerConfig{Interval: interval}, nil)
 }
 
@@ -63,10 +42,9 @@ func buildReconcileWorker(repo outbound.ClientesRepo, dirIdx *countingDirectoryI
 func TestDirectoryReconcileWorker_StartStop(t *testing.T) {
 	t.Parallel()
 
-	// itemDirectorioRepo returns one item so ReconciliarDirectorio calls dirIdx.Reconciliar.
-	repo := &itemDirectorioRepo{
-		countingRepo: &countingRepo{},
-		items: []outbound.DirectorioItem{
+	// One directory item so ReconciliarDirectorio calls dirIdx.Reconciliar.
+	repo := &fakeClientesRepo{
+		dirCompleto: []outbound.DirectorioItem{
 			{Cliente: newCliente(1, "García López")},
 		},
 	}
@@ -90,7 +68,7 @@ func TestDirectoryReconcileWorker_StartStop(t *testing.T) {
 func TestDirectoryReconcileWorker_StartIdempotent(t *testing.T) {
 	t.Parallel()
 
-	repo := &countingRepo{docs: []outbound.SearchDoc{}}
+	repo := &fakeClientesRepo{}
 	dirIdx := &countingDirectoryIndex{}
 	w := buildReconcileWorker(repo, dirIdx, 10*time.Second)
 
@@ -108,7 +86,7 @@ func TestDirectoryReconcileWorker_StartIdempotent(t *testing.T) {
 func TestDirectoryReconcileWorker_StopWithoutStart(t *testing.T) {
 	t.Parallel()
 
-	repo := &countingRepo{}
+	repo := &fakeClientesRepo{}
 	dirIdx := &countingDirectoryIndex{}
 	w := buildReconcileWorker(repo, dirIdx, time.Second)
 
@@ -122,9 +100,9 @@ func TestDirectoryReconcileWorker_StopWithoutStart(t *testing.T) {
 func TestDirectoryReconcileWorker_WarmupFailsDegradesSafely(t *testing.T) {
 	t.Parallel()
 
-	repo := &erroringDirectorioRepo{countingRepo: &countingRepo{}}
+	repo := &fakeClientesRepo{dirCompletoErr: errors.New("firebird down")}
 	dirIdx := &countingDirectoryIndex{}
-	svc := app.NewService(repo, &fakeAnalyticsClient{}, &controlledSearchIndex{}, dirIdx, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, &fakeAnalyticsClient{}, dirIdx, fixedClock{T: fixedTime})
 	w := app.NewDirectoryReconcileWorker(svc, app.DirectoryReconcileWorkerConfig{Interval: 10 * time.Second}, nil)
 
 	ctx := context.Background()

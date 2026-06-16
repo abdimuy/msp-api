@@ -33,8 +33,8 @@ func (c *DirectoryReconcileWorkerConfig) applyDefaults() {
 // app still boots and the index falls back to empty until a successful reconcile.
 //
 // It satisfies lifecycle.Hooks (Start/Stop) and is registered with
-// lifecycle.Append by clientes_wiring.go, running ALONGSIDE the existing
-// ReindexWorker (Bleve) — both workers coexist.
+// lifecycle.Append by clientes_wiring.go. It is the sole background indexer for
+// the directory (the Meilisearch read model).
 type DirectoryReconcileWorker struct {
 	svc    *Service
 	cfg    DirectoryReconcileWorkerConfig
@@ -100,8 +100,7 @@ func (w *DirectoryReconcileWorker) Stop(ctx context.Context) error {
 }
 
 // loop runs until ctx is cancelled. It fires an immediate warm-up reconcile on
-// first entry, then continues on a ticker. Mirrors the ReindexWorker pattern
-// (initial tick before waiting).
+// first entry, then continues on a ticker (initial tick before waiting).
 func (w *DirectoryReconcileWorker) loop(ctx context.Context) {
 	defer close(w.done)
 	ticker := time.NewTicker(w.cfg.Interval)
@@ -125,12 +124,14 @@ func (w *DirectoryReconcileWorker) tick(ctx context.Context) {
 	start := time.Now()
 	n, err := w.svc.ReconciliarDirectorio(ctx)
 	if err != nil {
-		w.logger.WarnContext(ctx, "clientes_directory_reconcile_worker.tick_failed",
+		w.logger.WarnContext(
+			ctx, "clientes_directory_reconcile_worker.tick_failed",
 			slog.String("error", err.Error()),
 		)
 		return
 	}
-	w.logger.InfoContext(ctx, "clientes_directory_reconcile_worker.tick_done",
+	w.logger.InfoContext(
+		ctx, "clientes_directory_reconcile_worker.tick_done",
 		slog.Int("docs", n),
 		slog.Duration("elapsed", time.Since(start)),
 	)

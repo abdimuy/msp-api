@@ -163,7 +163,7 @@ func (h *Handlers) RefrescarBusqueda(ctx context.Context, input *RefrescarBusque
 		return nil, err
 	}
 
-	n, err := h.svc.ReindexarBusqueda(ctx)
+	n, err := h.svc.ReconciliarDirectorio(ctx)
 	if err != nil {
 		return nil, mapAppError(err)
 	}

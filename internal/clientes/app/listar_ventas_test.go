@@ -26,7 +26,7 @@ func TestListarVentas_PassThrough(t *testing.T) {
 		clienteByID: map[int]*domain.Cliente{1: newCliente(1, "Test")},
 		ventasPage:  page,
 	}
-	svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeSearchIndex{}, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	result, err := svc.ListarVentas(ctx, app.ListarVentasInput{
 		ClienteID:  1,
@@ -55,7 +55,7 @@ func TestListarVentas_InfraErrorWrapped(t *testing.T) {
 		clienteByID: map[int]*domain.Cliente{},
 		ventasErr:   infraErr,
 	}
-	svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeSearchIndex{}, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	_, err := svc.ListarVentas(ctx, app.ListarVentasInput{ClienteID: 1})
 

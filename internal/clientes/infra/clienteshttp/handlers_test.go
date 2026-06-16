@@ -57,12 +57,6 @@ type fakeRepo struct {
 
 	dirCompleto []outbound.DirectorioItem
 	dirComplErr error
-
-	basicIDs []int
-	basicErr error
-
-	docs    []outbound.SearchDoc
-	docsErr error
 }
 
 func (f *fakeRepo) ObtenerCliente(_ context.Context, _ int) (*domain.Cliente, error) {
@@ -104,20 +98,6 @@ func (f *fakeRepo) ListarDirectorioCompleto(_ context.Context, _ outbound.Filtro
 	return f.dirCompleto, nil
 }
 
-func (f *fakeRepo) BuscarClienteIDsBasico(_ context.Context, _ string, _ int) ([]int, error) {
-	if f.basicErr != nil {
-		return nil, f.basicErr
-	}
-	return f.basicIDs, nil
-}
-
-func (f *fakeRepo) LeerDocumentosBusqueda(_ context.Context) ([]outbound.SearchDoc, error) {
-	if f.docsErr != nil {
-		return nil, f.docsErr
-	}
-	return f.docs, nil
-}
-
 // ─── Fake analytics client ────────────────────────────────────────────────────
 
 type fakeAnalytics struct {
@@ -146,25 +126,6 @@ func (f *fakeAnalytics) ObtenerPulsos(_ context.Context, ids []int) (map[int]ana
 	return result, nil
 }
 
-// ─── Fake search index ────────────────────────────────────────────────────────
-
-type fakeSearch struct {
-	ready        bool
-	reconcileErr error
-	captured     []outbound.SearchDoc
-}
-
-func (f *fakeSearch) EstaListo() bool { return f.ready }
-
-func (f *fakeSearch) Buscar(_ context.Context, _ string, _ int) ([]int, error) {
-	return nil, nil
-}
-
-func (f *fakeSearch) Reconciliar(_ context.Context, docs []outbound.SearchDoc) error {
-	f.captured = docs
-	return f.reconcileErr
-}
-
 // ─── Fake directory index ─────────────────────────────────────────────────────
 
 // noopDirectoryIndex is a test stub that satisfies outbound.DirectoryIndex.
@@ -187,12 +148,12 @@ func (noopDirectoryIndex) Reconciliar(_ context.Context, _ []outbound.Directorio
 
 // ─── Service builder ──────────────────────────────────────────────────────────
 
-func buildService(repo outbound.ClientesRepo, ac outbound.AnalyticsClient, si outbound.SearchIndex) *clientesapp.Service {
-	return buildServiceWithDirIndex(repo, ac, si, noopDirectoryIndex{})
+func buildService(repo outbound.ClientesRepo, ac outbound.AnalyticsClient) *clientesapp.Service {
+	return buildServiceWithDirIndex(repo, ac, noopDirectoryIndex{})
 }
 
-func buildServiceWithDirIndex(repo outbound.ClientesRepo, ac outbound.AnalyticsClient, si outbound.SearchIndex, di outbound.DirectoryIndex) *clientesapp.Service {
-	return clientesapp.NewService(repo, ac, si, di, testClock{})
+func buildServiceWithDirIndex(repo outbound.ClientesRepo, ac outbound.AnalyticsClient, di outbound.DirectoryIndex) *clientesapp.Service {
+	return clientesapp.NewService(repo, ac, di, testClock{})
 }
 
 // ─── Auth helpers ─────────────────────────────────────────────────────────────
@@ -340,7 +301,7 @@ func TestListarClientes_HappyPath_200(t *testing.T) {
 		},
 	}
 
-	svc := buildServiceWithDirIndex(&fakeRepo{}, &fakeAnalytics{}, &fakeSearch{}, di)
+	svc := buildServiceWithDirIndex(&fakeRepo{}, &fakeAnalytics{}, di)
 	cu := userWith(auth.PermClientesLeer)
 	h := buildRouter(svc, cu)
 
@@ -391,7 +352,7 @@ func TestListarClientes_MeilisearchUnavailable_503(t *testing.T) {
 		),
 	}
 
-	svc := buildServiceWithDirIndex(&fakeRepo{}, &fakeAnalytics{}, &fakeSearch{}, di)
+	svc := buildServiceWithDirIndex(&fakeRepo{}, &fakeAnalytics{}, di)
 	cu := userWith(auth.PermClientesLeer)
 	h := buildRouter(svc, cu)
 
@@ -416,7 +377,7 @@ func TestListarClientes_NoPulso_ZeroScoreAndEmptySegmento(t *testing.T) {
 			Total: 1,
 		},
 	}
-	svc := buildServiceWithDirIndex(&fakeRepo{}, &fakeAnalytics{}, &fakeSearch{}, di)
+	svc := buildServiceWithDirIndex(&fakeRepo{}, &fakeAnalytics{}, di)
 	cu := userWith(auth.PermClientesLeer)
 	h := buildRouter(svc, cu)
 
@@ -461,7 +422,7 @@ func TestObtenerFicha_HappyPath_200(t *testing.T) {
 		resumen: resumen,
 	}
 	ac := &fakeAnalytics{pulsos: map[int]analytics.ClientePulsoContract{42: pulso}}
-	svc := buildService(repo, ac, &fakeSearch{})
+	svc := buildService(repo, ac)
 	cu := userWith(auth.PermClientesLeer)
 	h := buildRouter(svc, cu)
 
@@ -520,7 +481,7 @@ func TestObtenerFicha_NoPulso_PulsoFieldOmitted(t *testing.T) {
 	repo := &fakeRepo{cliente: c}
 	// No pulse for this client.
 	ac := &fakeAnalytics{pulsos: map[int]analytics.ClientePulsoContract{}}
-	svc := buildService(repo, ac, &fakeSearch{})
+	svc := buildService(repo, ac)
 	cu := userWith(auth.PermClientesLeer)
 	h := buildRouter(svc, cu)
 
@@ -540,7 +501,7 @@ func TestObtenerFicha_NotFound_404(t *testing.T) {
 
 	repo := &fakeRepo{clienteErr: domain.ErrClienteNotFound}
 	ac := &fakeAnalytics{}
-	svc := buildService(repo, ac, &fakeSearch{})
+	svc := buildService(repo, ac)
 	cu := userWith(auth.PermClientesLeer)
 	h := buildRouter(svc, cu)
 
@@ -560,7 +521,7 @@ func TestListarVentasCliente_HappyPath_200(t *testing.T) {
 			NextCursor: "o50",
 		},
 	}
-	svc := buildService(repo, &fakeAnalytics{}, &fakeSearch{})
+	svc := buildService(repo, &fakeAnalytics{})
 	cu := userWith(auth.PermClientesLeer)
 	h := buildRouter(svc, cu)
 
@@ -637,7 +598,7 @@ func TestObtenerVentaDetalle_HappyPath_200(t *testing.T) {
 			},
 		},
 	}
-	svc := buildService(repo, &fakeAnalytics{}, &fakeSearch{})
+	svc := buildService(repo, &fakeAnalytics{})
 	cu := userWith(auth.PermClientesLeer)
 	h := buildRouter(svc, cu)
 
@@ -693,7 +654,7 @@ func TestObtenerVentaDetalle_NotFound_404(t *testing.T) {
 	t.Parallel()
 
 	repo := &fakeRepo{detalleByID: map[int]outbound.VentaDetalle{}}
-	svc := buildService(repo, &fakeAnalytics{}, &fakeSearch{})
+	svc := buildService(repo, &fakeAnalytics{})
 	cu := userWith(auth.PermClientesLeer)
 	h := buildRouter(svc, cu)
 
@@ -716,7 +677,7 @@ func TestObtenerVentaDetalle_Contado_NilContrato(t *testing.T) {
 			200: {Venta: v, Productos: nil, Contrato: nil, Pagos: nil},
 		},
 	}
-	svc := buildService(repo, &fakeAnalytics{}, &fakeSearch{})
+	svc := buildService(repo, &fakeAnalytics{})
 	cu := userWith(auth.PermClientesLeer)
 	h := buildRouter(svc, cu)
 
@@ -735,13 +696,14 @@ func TestObtenerVentaDetalle_Contado_NilContrato(t *testing.T) {
 func TestRefrescarBusqueda_HappyPath_200(t *testing.T) {
 	t.Parallel()
 
-	docs := []outbound.SearchDoc{
-		{ClienteID: 1, Texto: "García López"},
-		{ClienteID: 2, Texto: "Martínez Reyes"},
+	// ReconciliarDirectorio reads ListarDirectorioCompleto; return 2 items so
+	// the response Documentos field equals 2.
+	items := []outbound.DirectorioItem{
+		{Cliente: newCliente(1), SaldoTotal: decimal.Zero},
+		{Cliente: newCliente(2), SaldoTotal: decimal.Zero},
 	}
-	repo := &fakeRepo{docs: docs}
-	si := &fakeSearch{}
-	svc := buildService(repo, &fakeAnalytics{}, si)
+	repo := &fakeRepo{dirCompleto: items}
+	svc := buildService(repo, &fakeAnalytics{})
 	cu := userWith(auth.PermClientesReindexar)
 	h := buildRouter(svc, cu)
 
@@ -760,8 +722,8 @@ func TestRefrescarBusqueda_HappyPath_200(t *testing.T) {
 func TestRefrescarBusqueda_RepoError_500(t *testing.T) {
 	t.Parallel()
 
-	repo := &fakeRepo{docsErr: errors.New("firebird unavailable")}
-	svc := buildService(repo, &fakeAnalytics{}, &fakeSearch{})
+	repo := &fakeRepo{dirComplErr: errors.New("firebird unavailable")}
+	svc := buildService(repo, &fakeAnalytics{})
 	cu := userWith(auth.PermClientesReindexar)
 	h := buildRouter(svc, cu)
 
@@ -774,7 +736,7 @@ func TestRefrescarBusqueda_RepoError_500(t *testing.T) {
 func TestListarClientes_Unauthenticated_401(t *testing.T) {
 	t.Parallel()
 	repo := &fakeRepo{}
-	svc := buildService(repo, &fakeAnalytics{}, &fakeSearch{})
+	svc := buildService(repo, &fakeAnalytics{})
 	h := buildRouterNoAuth(svc)
 	rec := doJSON(h, http.MethodGet, "/clientes", nil)
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
@@ -783,7 +745,7 @@ func TestListarClientes_Unauthenticated_401(t *testing.T) {
 func TestListarClientes_NoPermission_403(t *testing.T) {
 	t.Parallel()
 	repo := &fakeRepo{}
-	svc := buildService(repo, &fakeAnalytics{}, &fakeSearch{})
+	svc := buildService(repo, &fakeAnalytics{})
 	cu := userWith() // no perms
 	h := buildRouter(svc, cu)
 	rec := doJSON(h, http.MethodGet, "/clientes", nil)
@@ -793,7 +755,7 @@ func TestListarClientes_NoPermission_403(t *testing.T) {
 func TestObtenerFicha_NoPermission_403(t *testing.T) {
 	t.Parallel()
 	repo := &fakeRepo{cliente: newCliente(42)}
-	svc := buildService(repo, &fakeAnalytics{}, &fakeSearch{})
+	svc := buildService(repo, &fakeAnalytics{})
 	cu := userWith(auth.PermAnalyticsWinbackRead) // wrong perm
 	h := buildRouter(svc, cu)
 	rec := doJSON(h, http.MethodGet, "/clientes/42", nil)
@@ -803,7 +765,7 @@ func TestObtenerFicha_NoPermission_403(t *testing.T) {
 func TestObtenerFicha_Unauthenticated_401(t *testing.T) {
 	t.Parallel()
 	repo := &fakeRepo{cliente: newCliente(42)}
-	svc := buildService(repo, &fakeAnalytics{}, &fakeSearch{})
+	svc := buildService(repo, &fakeAnalytics{})
 	h := buildRouterNoAuth(svc)
 	rec := doJSON(h, http.MethodGet, "/clientes/42", nil)
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
@@ -812,7 +774,7 @@ func TestObtenerFicha_Unauthenticated_401(t *testing.T) {
 func TestListarVentasCliente_NoPermission_403(t *testing.T) {
 	t.Parallel()
 	repo := &fakeRepo{ventasPage: outbound.Page[*domain.VentaCliente]{}}
-	svc := buildService(repo, &fakeAnalytics{}, &fakeSearch{})
+	svc := buildService(repo, &fakeAnalytics{})
 	cu := userWith() // no perms
 	h := buildRouter(svc, cu)
 	rec := doJSON(h, http.MethodGet, "/clientes/42/ventas", nil)
@@ -822,7 +784,7 @@ func TestListarVentasCliente_NoPermission_403(t *testing.T) {
 func TestObtenerVentaDetalle_Unauthenticated_401(t *testing.T) {
 	t.Parallel()
 	repo := &fakeRepo{detalleByID: map[int]outbound.VentaDetalle{}}
-	svc := buildService(repo, &fakeAnalytics{}, &fakeSearch{})
+	svc := buildService(repo, &fakeAnalytics{})
 	h := buildRouterNoAuth(svc)
 	rec := doJSON(h, http.MethodGet, "/clientes/42/ventas/100", nil)
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
@@ -831,7 +793,7 @@ func TestObtenerVentaDetalle_Unauthenticated_401(t *testing.T) {
 func TestListarVentasCliente_Unauthenticated_401(t *testing.T) {
 	t.Parallel()
 	repo := &fakeRepo{ventasPage: outbound.Page[*domain.VentaCliente]{}}
-	svc := buildService(repo, &fakeAnalytics{}, &fakeSearch{})
+	svc := buildService(repo, &fakeAnalytics{})
 	h := buildRouterNoAuth(svc)
 	rec := doJSON(h, http.MethodGet, "/clientes/42/ventas", nil)
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
@@ -840,7 +802,7 @@ func TestListarVentasCliente_Unauthenticated_401(t *testing.T) {
 func TestObtenerVentaDetalle_NoPermission_403(t *testing.T) {
 	t.Parallel()
 	repo := &fakeRepo{detalleByID: map[int]outbound.VentaDetalle{}}
-	svc := buildService(repo, &fakeAnalytics{}, &fakeSearch{})
+	svc := buildService(repo, &fakeAnalytics{})
 	cu := userWith() // no perms
 	h := buildRouter(svc, cu)
 	rec := doJSON(h, http.MethodGet, "/clientes/42/ventas/100", nil)
@@ -850,7 +812,7 @@ func TestObtenerVentaDetalle_NoPermission_403(t *testing.T) {
 func TestRefrescarBusqueda_NoPermission_403(t *testing.T) {
 	t.Parallel()
 	repo := &fakeRepo{}
-	svc := buildService(repo, &fakeAnalytics{}, &fakeSearch{})
+	svc := buildService(repo, &fakeAnalytics{})
 	cu := userWith(auth.PermClientesLeer) // read perm, not reindex
 	h := buildRouter(svc, cu)
 	rec := doJSON(h, http.MethodPost, "/clientes/_search/refresh", nil)
@@ -860,7 +822,7 @@ func TestRefrescarBusqueda_NoPermission_403(t *testing.T) {
 func TestRefrescarBusqueda_Unauthenticated_401(t *testing.T) {
 	t.Parallel()
 	repo := &fakeRepo{}
-	svc := buildService(repo, &fakeAnalytics{}, &fakeSearch{})
+	svc := buildService(repo, &fakeAnalytics{})
 	h := buildRouterNoAuth(svc)
 	rec := doJSON(h, http.MethodPost, "/clientes/_search/refresh", nil)
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)

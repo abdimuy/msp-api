@@ -73,16 +73,6 @@ type fakeClientesRepo struct {
 	dirCompletoErr    error
 	lastFiltroComplet outbound.FiltroDirectorio
 	listarComplCalled bool // true after ListarDirectorioCompleto is invoked
-
-	// BuscarClienteIDsBasico
-	basicIDs     []int
-	basicErr     error
-	lastBasicQ   string
-	lastBasicLim int
-
-	// LeerDocumentosBusqueda
-	docs    []outbound.SearchDoc
-	docsErr error
 }
 
 func (f *fakeClientesRepo) ObtenerCliente(_ context.Context, clienteID int) (*domain.Cliente, error) {
@@ -130,22 +120,6 @@ func (f *fakeClientesRepo) ListarDirectorioCompleto(_ context.Context, fil outbo
 		return nil, f.dirCompletoErr
 	}
 	return f.dirCompleto, nil
-}
-
-func (f *fakeClientesRepo) BuscarClienteIDsBasico(_ context.Context, query string, limit int) ([]int, error) {
-	f.lastBasicQ = query
-	f.lastBasicLim = limit
-	if f.basicErr != nil {
-		return nil, f.basicErr
-	}
-	return f.basicIDs, nil
-}
-
-func (f *fakeClientesRepo) LeerDocumentosBusqueda(_ context.Context) ([]outbound.SearchDoc, error) {
-	if f.docsErr != nil {
-		return nil, f.docsErr
-	}
-	return f.docs, nil
 }
 
 // ─── fakeAnalyticsClient ─────────────────────────────────────────────────────
@@ -208,31 +182,5 @@ func (f *fakeDirectoryIndex) Reconciliar(_ context.Context, docs []outbound.Dire
 		return f.err
 	}
 	f.lastDocs = docs
-	return nil
-}
-
-// ─── fakeSearchIndex ─────────────────────────────────────────────────────────
-
-type fakeSearchIndex struct {
-	ready  bool
-	ids    []int
-	busErr error
-
-	lastQuery string
-	lastLimit int
-}
-
-func (f *fakeSearchIndex) EstaListo() bool { return f.ready }
-
-func (f *fakeSearchIndex) Buscar(_ context.Context, query string, limit int) ([]int, error) {
-	f.lastQuery = query
-	f.lastLimit = limit
-	if f.busErr != nil {
-		return nil, f.busErr
-	}
-	return f.ids, nil
-}
-
-func (f *fakeSearchIndex) Reconciliar(_ context.Context, _ []outbound.SearchDoc) error {
 	return nil
 }
