@@ -439,23 +439,24 @@ func TestBuscarClientes_BrowsePath_EnriquecidoYNextCursorCarryThrough(t *testing
 	}
 }
 
-func TestBuscarClientes_BrowsePath_PulsoFilterPageLocal(t *testing.T) {
+// When a pulse filter is active on the browse path, the service now takes the
+// GLOBAL path: it fetches the FULL matching set via ListarDirectorioCompleto,
+// applies the pulse filter globally, and offset-paginates. The filter is no
+// longer page-local.
+func TestBuscarClientes_GlobalPath_PulsoFilterGlobal(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// 3 items in the page; only 1 matches the pulse filter.
-	items := []outbound.DirectorioItem{
+	// Full set of 3; only 1 matches the pulse filter.
+	all := []outbound.DirectorioItem{
 		newDirItem(1, "A", zero),
 		newDirItem(2, "B", zero),
 		newDirItem(3, "C", zero),
 	}
-	clients := map[int]*domain.Cliente{1: items[0].Cliente, 2: items[1].Cliente, 3: items[2].Cliente}
+	clients := map[int]*domain.Cliente{1: all[0].Cliente, 2: all[1].Cliente, 3: all[2].Cliente}
 	repo := &fakeClientesRepo{
 		clienteByID: clients,
-		dirPage: outbound.Page[outbound.DirectorioItem]{
-			Items:      items,
-			NextCursor: "more",
-		},
+		dirCompleto: all,
 	}
 	anl := &fakeAnalyticsClient{
 		pulsos: map[int]analytics.ClientePulsoContract{
@@ -474,16 +475,23 @@ func TestBuscarClientes_BrowsePath_PulsoFilterPageLocal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	// The global path must have been taken (ListarDirectorioCompleto called).
+	if !repo.listarComplCalled {
+		t.Error("expected ListarDirectorioCompleto to be called on the global path")
+	}
+	if repo.listarDirCalled {
+		t.Error("expected ListarDirectorio NOT to be called on the global path")
+	}
 	// Only item 1 passes the filter.
 	if len(result.Items) != 1 {
-		t.Fatalf("expected 1 item after page-local pulse filter, got %d", len(result.Items))
+		t.Fatalf("expected 1 item after global pulse filter, got %d", len(result.Items))
 	}
 	if result.Items[0].Cliente.ClienteID() != 1 {
 		t.Errorf("expected clienteID=1, got %d", result.Items[0].Cliente.ClienteID())
 	}
-	// NextCursor from repo must be carried through.
-	if result.NextCursor != "more" {
-		t.Errorf("expected NextCursor more, got %q", result.NextCursor)
+	// No further pages: the matching set has only 1 item.
+	if result.NextCursor != "" {
+		t.Errorf("expected empty NextCursor, got %q", result.NextCursor)
 	}
 }
 
@@ -513,5 +521,399 @@ func TestBuscarClientes_BrowsePath_RepoError(t *testing.T) {
 	}
 	if appErr.Source != "clientes.BuscarClientes" {
 		t.Errorf("expected source clientes.BuscarClientes, got %q", appErr.Source)
+	}
+}
+
+// ─── Global path: sort + path selection ──────────────────────────────────────
+
+// dirItemZona builds a DirectorioItem with a zona name set (for zona sort tests).
+func dirItemZona(clienteID int, nombre, zona string, saldo decimal.Decimal) outbound.DirectorioItem {
+	c := domain.HydrateCliente(domain.HydrateClienteParams{
+		ClienteID:  clienteID,
+		Nombre:     nombre,
+		ZonaNombre: zona,
+	})
+	return outbound.DirectorioItem{Cliente: c, SaldoTotal: saldo}
+}
+
+// idsOf extracts the cliente IDs from a result page in order.
+func idsOf(items []app.DirectorioClienteItem) []int {
+	out := make([]int, 0, len(items))
+	for _, it := range items {
+		out = append(out, it.Cliente.ClienteID())
+	}
+	return out
+}
+
+// pulseWith builds a fully-specified pulse with score, recencia, segmento, estado.
+func pulseWith(clienteID, score, recencia int, segmento, estadoPago string) analytics.ClientePulsoContract {
+	return analytics.ClientePulsoContract{
+		ClienteID:    clienteID,
+		Score:        score,
+		RecenciaDias: recencia,
+		Segmento:     segmento,
+		EstadoPago:   estadoPago,
+	}
+}
+
+func TestBuscarClientes_GlobalPath_TakenWhenSortBySet(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	all := []outbound.DirectorioItem{newDirItem(1, "A", zero)}
+	repo := &fakeClientesRepo{
+		clienteByID: map[int]*domain.Cliente{1: all[0].Cliente},
+		dirCompleto: all,
+	}
+	svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeSearchIndex{}, fixedClock{T: fixedTime})
+
+	_, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
+		Q:          "",
+		SortBy:     "nombre",
+		Pagination: outbound.ListParams{PageSize: 10},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !repo.listarComplCalled {
+		t.Error("expected ListarDirectorioCompleto called when SortBy is set")
+	}
+	if repo.listarDirCalled {
+		t.Error("expected ListarDirectorio NOT called when SortBy is set")
+	}
+}
+
+func TestBuscarClientes_BrowsePath_TakenWhenNoSortNoFilter(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	items := []outbound.DirectorioItem{newDirItem(1, "A", zero)}
+	repo := &fakeClientesRepo{
+		clienteByID: map[int]*domain.Cliente{1: items[0].Cliente},
+		dirPage:     outbound.Page[outbound.DirectorioItem]{Items: items},
+	}
+	svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeSearchIndex{}, fixedClock{T: fixedTime})
+
+	_, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
+		Q:          "",
+		Pagination: outbound.ListParams{PageSize: 10},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !repo.listarDirCalled {
+		t.Error("expected ListarDirectorio (native cursor) called on the default browse path")
+	}
+	if repo.listarComplCalled {
+		t.Error("expected ListarDirectorioCompleto NOT called on the default browse path")
+	}
+}
+
+func TestBuscarClientes_InvalidSortBy_ReturnsValidation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	svc := app.NewService(&fakeClientesRepo{}, &fakeAnalyticsClient{}, &fakeSearchIndex{}, fixedClock{T: fixedTime})
+	_, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
+		SortBy:     "telefono",
+		Pagination: outbound.ListParams{PageSize: 10},
+	})
+	if err == nil {
+		t.Fatal("expected validation error for unknown sort_by")
+	}
+	appErr, ok := apperror.As(err)
+	if !ok {
+		t.Fatalf("expected *apperror.Error, got %T", err)
+	}
+	if appErr.Kind != apperror.KindValidation {
+		t.Errorf("expected KindValidation, got %v", appErr.Kind)
+	}
+	if appErr.Code != "sort_by_invalido" {
+		t.Errorf("expected code sort_by_invalido, got %q", appErr.Code)
+	}
+}
+
+// sortCase drives the native-column sort table test.
+func TestBuscarClientes_GlobalPath_NativeSorts(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		sortBy  string
+		order   string
+		all     []outbound.DirectorioItem
+		wantIDs []int
+	}{
+		{
+			name:   "nombre asc case-insensitive",
+			sortBy: "nombre", order: "asc",
+			all: []outbound.DirectorioItem{
+				newDirItem(1, "carlos", zero),
+				newDirItem(2, "Ana", zero),
+				newDirItem(3, "Beto", zero),
+			},
+			wantIDs: []int{2, 3, 1}, // Ana, Beto, carlos
+		},
+		{
+			name:   "nombre desc",
+			sortBy: "nombre", order: "desc",
+			all: []outbound.DirectorioItem{
+				newDirItem(1, "carlos", zero),
+				newDirItem(2, "Ana", zero),
+				newDirItem(3, "Beto", zero),
+			},
+			wantIDs: []int{1, 3, 2},
+		},
+		{
+			name:   "saldo asc",
+			sortBy: "saldo", order: "asc",
+			all: []outbound.DirectorioItem{
+				newDirItem(1, "A", decimal.NewFromInt(300)),
+				newDirItem(2, "B", decimal.NewFromInt(100)),
+				newDirItem(3, "C", decimal.NewFromInt(200)),
+			},
+			wantIDs: []int{2, 3, 1},
+		},
+		{
+			name:   "saldo desc",
+			sortBy: "saldo", order: "desc",
+			all: []outbound.DirectorioItem{
+				newDirItem(1, "A", decimal.NewFromInt(300)),
+				newDirItem(2, "B", decimal.NewFromInt(100)),
+				newDirItem(3, "C", decimal.NewFromInt(200)),
+			},
+			wantIDs: []int{1, 3, 2},
+		},
+		{
+			name:   "zona asc",
+			sortBy: "zona", order: "asc",
+			all: []outbound.DirectorioItem{
+				dirItemZona(1, "A", "Norte", zero),
+				dirItemZona(2, "B", "Centro", zero),
+				dirItemZona(3, "C", "Sur", zero),
+			},
+			wantIDs: []int{2, 1, 3}, // Centro, Norte, Sur
+		},
+		{
+			name:   "zona desc",
+			sortBy: "zona", order: "desc",
+			all: []outbound.DirectorioItem{
+				dirItemZona(1, "A", "Norte", zero),
+				dirItemZona(2, "B", "Centro", zero),
+				dirItemZona(3, "C", "Sur", zero),
+			},
+			wantIDs: []int{3, 1, 2},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			clients := map[int]*domain.Cliente{}
+			for _, it := range tc.all {
+				clients[it.Cliente.ClienteID()] = it.Cliente
+			}
+			repo := &fakeClientesRepo{clienteByID: clients, dirCompleto: tc.all}
+			svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeSearchIndex{}, fixedClock{T: fixedTime})
+
+			result, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
+				SortBy:     tc.sortBy,
+				SortOrder:  tc.order,
+				Pagination: outbound.ListParams{PageSize: 10},
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			got := idsOf(result.Items)
+			if len(got) != len(tc.wantIDs) {
+				t.Fatalf("expected %v, got %v", tc.wantIDs, got)
+			}
+			for i := range got {
+				if got[i] != tc.wantIDs[i] {
+					t.Fatalf("expected order %v, got %v", tc.wantIDs, got)
+				}
+			}
+		})
+	}
+}
+
+func TestBuscarClientes_GlobalPath_PulseSorts_NullLast(t *testing.T) {
+	t.Parallel()
+
+	// IDs 1,2,3 have pulse; ID 4 has no pulse → must sort LAST in both orders.
+	all := []outbound.DirectorioItem{
+		newDirItem(1, "A", zero),
+		newDirItem(2, "B", zero),
+		newDirItem(3, "C", zero),
+		newDirItem(4, "D", zero), // no pulse
+	}
+	clients := map[int]*domain.Cliente{}
+	for _, it := range all {
+		clients[it.Cliente.ClienteID()] = it.Cliente
+	}
+	pulsos := map[int]analytics.ClientePulsoContract{
+		1: pulseWith(1, 90, 5, "ACTIVO", "AL_CORRIENTE"),
+		2: pulseWith(2, 50, 30, "DORMIDO_VALIOSO", "ATRASADO"),
+		3: pulseWith(3, 70, 10, "LEAL_POR_LIQUIDAR", "MOROSO"),
+	}
+
+	cases := []struct {
+		name    string
+		sortBy  string
+		order   string
+		wantIDs []int // 4 (no pulse) always last
+	}{
+		{"score asc", "score", "asc", []int{2, 3, 1, 4}},
+		{"score desc", "score", "desc", []int{1, 3, 2, 4}},
+		{"recencia asc", "recencia", "asc", []int{1, 3, 2, 4}},
+		{"recencia desc", "recencia", "desc", []int{2, 3, 1, 4}},
+		// segmento ordinal: LEAL_POR_LIQUIDAR(0) < DORMIDO_VALIOSO(1) < ACTIVO(2)
+		{"segmento asc", "segmento", "asc", []int{3, 2, 1, 4}},
+		{"segmento desc", "segmento", "desc", []int{1, 2, 3, 4}},
+		// estado ordinal: AL_CORRIENTE(0) < ATRASADO(3) < MOROSO(4)
+		{"estado_pago asc", "estado_pago", "asc", []int{1, 2, 3, 4}},
+		{"estado_pago desc", "estado_pago", "desc", []int{3, 2, 1, 4}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			repo := &fakeClientesRepo{clienteByID: clients, dirCompleto: all}
+			anl := &fakeAnalyticsClient{pulsos: pulsos}
+			svc := app.NewService(repo, anl, &fakeSearchIndex{}, fixedClock{T: fixedTime})
+
+			result, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
+				SortBy:     tc.sortBy,
+				SortOrder:  tc.order,
+				Pagination: outbound.ListParams{PageSize: 10},
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			got := idsOf(result.Items)
+			if len(got) != len(tc.wantIDs) {
+				t.Fatalf("expected %v, got %v", tc.wantIDs, got)
+			}
+			for i := range got {
+				if got[i] != tc.wantIDs[i] {
+					t.Fatalf("expected order %v, got %v", tc.wantIDs, got)
+				}
+			}
+			// No-pulse item (4) must be last in BOTH orders.
+			if got[len(got)-1] != 4 {
+				t.Errorf("expected no-pulse clienteID=4 to sort last, got order %v", got)
+			}
+		})
+	}
+}
+
+func TestBuscarClientes_GlobalPath_OffsetPagination(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	// 4 items sorted by nombre asc → A,B,C,D (ids 1..4); page size 2.
+	all := []outbound.DirectorioItem{
+		newDirItem(3, "C", zero),
+		newDirItem(1, "A", zero),
+		newDirItem(4, "D", zero),
+		newDirItem(2, "B", zero),
+	}
+	clients := map[int]*domain.Cliente{}
+	for _, it := range all {
+		clients[it.Cliente.ClienteID()] = it.Cliente
+	}
+	repo := &fakeClientesRepo{clienteByID: clients, dirCompleto: all}
+	svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeSearchIndex{}, fixedClock{T: fixedTime})
+
+	page1, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
+		SortBy:     "nombre",
+		SortOrder:  "asc",
+		Pagination: outbound.ListParams{PageSize: 2},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := idsOf(page1.Items); len(got) != 2 || got[0] != 1 || got[1] != 2 {
+		t.Fatalf("expected page1 [1,2], got %v", idsOf(page1.Items))
+	}
+	if page1.NextCursor == "" {
+		t.Fatal("expected NextCursor for page 2")
+	}
+
+	page2, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
+		SortBy:     "nombre",
+		SortOrder:  "asc",
+		Pagination: outbound.ListParams{Cursor: page1.NextCursor, PageSize: 2},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error on page2: %v", err)
+	}
+	if got := idsOf(page2.Items); len(got) != 2 || got[0] != 3 || got[1] != 4 {
+		t.Fatalf("expected page2 [3,4], got %v", idsOf(page2.Items))
+	}
+	if page2.NextCursor != "" {
+		t.Errorf("expected empty NextCursor on last page, got %q", page2.NextCursor)
+	}
+}
+
+func TestBuscarClientes_GlobalPath_RepoError(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	repo := &fakeClientesRepo{dirCompletoErr: errors.New("boom")}
+	svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeSearchIndex{}, fixedClock{T: fixedTime})
+
+	_, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
+		SortBy:     "nombre",
+		Pagination: outbound.ListParams{PageSize: 10},
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	appErr, ok := apperror.As(err)
+	if !ok {
+		t.Fatal("expected *apperror.Error")
+	}
+	if appErr.Code != "directorio_list_completo_failed" {
+		t.Errorf("expected code directorio_list_completo_failed, got %q", appErr.Code)
+	}
+}
+
+// On the search path, an explicit SortBy overrides FTS rank (global sort over the
+// bounded search set).
+func TestBuscarClientes_SearchPath_SortByOverridesRank(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	// FTS rank order [3,1,2] but we sort by nombre asc → A(1),B(2),C(3).
+	idx := &fakeSearchIndex{ready: true, ids: []int{3, 1, 2}}
+	items := []outbound.DirectorioItem{
+		newDirItem(1, "A", zero),
+		newDirItem(2, "B", zero),
+		newDirItem(3, "C", zero),
+	}
+	clients := map[int]*domain.Cliente{}
+	for _, it := range items {
+		clients[it.Cliente.ClienteID()] = it.Cliente
+	}
+	repo := &fakeClientesRepo{
+		clienteByID: clients,
+		dirPage:     outbound.Page[outbound.DirectorioItem]{Items: items},
+	}
+	svc := app.NewService(repo, &fakeAnalyticsClient{}, idx, fixedClock{T: fixedTime})
+
+	result, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
+		Q:          "x",
+		SortBy:     "nombre",
+		SortOrder:  "asc",
+		Pagination: outbound.ListParams{PageSize: 10},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := idsOf(result.Items); len(got) != 3 || got[0] != 1 || got[1] != 2 || got[2] != 3 {
+		t.Fatalf("expected nombre-sorted [1,2,3], got %v", idsOf(result.Items))
 	}
 }

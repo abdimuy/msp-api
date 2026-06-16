@@ -191,6 +191,93 @@ func (r *ClientesRepo) ListarDirectorio(
 	}, nil
 }
 
+// ─── ListarDirectorioCompleto ─────────────────────────────────────────────────
+
+// buildDirectorioCompletoQuery constructs the unbounded directory query and its
+// argument list from the native filters. No FIRST / cursor — every matching row
+// is returned, ordered by NOMBRE then CLIENTE_ID. The grouped saldo derived table
+// supplies SALDO_TOTAL; ConSaldo wraps the result so only saldo>0 rows survive.
+func buildDirectorioCompletoQuery(f outbound.FiltroDirectorio) (string, []any) {
+	args := make([]any, 0, 4)
+	conditions := make([]string, 0, 3)
+
+	if len(f.ClienteIDs) > 0 {
+		placeholders := buildInPlaceholders(len(f.ClienteIDs))
+		conditions = append(conditions, "c.CLIENTE_ID IN "+placeholders)
+		for _, id := range f.ClienteIDs {
+			args = append(args, id)
+		}
+	} else {
+		if f.ZonaClienteID != nil {
+			conditions = append(conditions, "c.ZONA_CLIENTE_ID = ?")
+			args = append(args, *f.ZonaClienteID)
+		}
+		if f.CobradorID != nil {
+			conditions = append(conditions, "c.COBRADOR_ID = ?")
+			args = append(args, *f.CobradorID)
+		}
+	}
+
+	andClause := ""
+	if len(conditions) > 0 {
+		andClause = " AND " + strings.Join(conditions, " AND ")
+	}
+
+	if f.ConSaldo {
+		// Wrap in a derived table so the ConSaldo predicate applies to the
+		// already-computed SALDO_TOTAL. The inner query keeps the grouped join.
+		inner := queryListarDirectorioCompletoBase + andClause
+		query := `SELECT ` +
+			`d.CLIENTE_ID, d.NOMBRE, d.LIMITE_CREDITO, d.NOTAS, d.ESTATUS, ` +
+			`d.ZONA_CLIENTE_ID, d.ZONA_NOMBRE, d.COBRADOR_ID, d.COBRADOR_NOMBRE, ` +
+			`d.NOMBRE_CALLE, d.COLONIA, d.POBLACION, d.ESTADO_NOMBRE, d.TELEFONO1, ` +
+			`d.SALDO_TOTAL ` +
+			`FROM (` + inner + `) d WHERE d.SALDO_TOTAL > 0 ORDER BY d.NOMBRE, d.CLIENTE_ID`
+		return query, args
+	}
+
+	query := queryListarDirectorioCompletoBase + andClause + " ORDER BY c.NOMBRE, c.CLIENTE_ID"
+	return query, args
+}
+
+// ListarDirectorioCompleto returns ALL clients matching the native filters, each
+// with identity + SaldoTotal, with NO pagination. Saldo is computed with a single
+// grouped aggregation (see queryListarDirectorioCompletoBase for the measured
+// performance characteristics — sub-second when a zone/cobrador filter bounds the
+// set, ~tens of seconds for the unfiltered whole padrón).
+func (r *ClientesRepo) ListarDirectorioCompleto(
+	ctx context.Context,
+	f outbound.FiltroDirectorio,
+) ([]outbound.DirectorioItem, error) {
+	query, args := buildDirectorioCompletoQuery(f)
+
+	var items []outbound.DirectorioItem
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		rows, qerr := q.QueryContext(ctx, query, args...)
+		if qerr != nil {
+			return firebird.MapError(qerr)
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var raw directorioRowRaw
+			if serr := raw.scanFrom(rows); serr != nil {
+				return firebird.MapError(serr)
+			}
+			item, aerr := raw.assemble()
+			if aerr != nil {
+				return aerr
+			}
+			items = append(items, item)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 // ─── ObtenerResumenFicha ──────────────────────────────────────────────────────
 
 func (r *ClientesRepo) fetchFichaTotales(ctx context.Context, q firebird.Querier, clienteID int) (decimal.Decimal, decimal.Decimal, int, int, error) {

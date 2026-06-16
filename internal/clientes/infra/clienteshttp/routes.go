@@ -61,7 +61,7 @@ func registerOperations(api huma.API, h *Handlers) {
 		Method:        http.MethodGet,
 		Path:          "/clientes",
 		Summary:       "Listar directorio de clientes",
-		Description:   "Devuelve una página del directorio de clientes con enriquecimiento opcional de pulso analítico. Soporta búsqueda de texto completo, filtros de zona/cobrador/saldo y filtros de segmento/estado-pago/score.",
+		Description:   "Devuelve una página del directorio de clientes con enriquecimiento opcional de pulso analítico. Soporta búsqueda de texto completo, filtros de zona/cobrador/saldo, filtros de segmento/estado-pago/score y ordenamiento GLOBAL (sort_by/sort_order) sobre todo el conjunto que coincide, no solo la página cargada.",
 		Tags:          tags,
 		Security:      security,
 		DefaultStatus: http.StatusOK,

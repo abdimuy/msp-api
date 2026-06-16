@@ -44,6 +44,10 @@ func (r *countingRepo) ListarDirectorio(_ context.Context, _ outbound.ListParams
 	return outbound.Page[outbound.DirectorioItem]{}, nil
 }
 
+func (r *countingRepo) ListarDirectorioCompleto(_ context.Context, _ outbound.FiltroDirectorio) ([]outbound.DirectorioItem, error) {
+	return nil, nil
+}
+
 func (r *countingRepo) ObtenerResumenFicha(_ context.Context, _ int) (outbound.ResumenFicha, error) {
 	return outbound.ResumenFicha{}, nil
 }

@@ -73,6 +73,13 @@ type fakeClientesRepo struct {
 	dirErr     error
 	lastFiltro outbound.FiltroDirectorio
 
+	// ListarDirectorioCompleto
+	dirCompleto       []outbound.DirectorioItem
+	dirCompletoErr    error
+	lastFiltroComplet outbound.FiltroDirectorio
+	listarDirCalled   bool // true after ListarDirectorio is invoked
+	listarComplCalled bool // true after ListarDirectorioCompleto is invoked
+
 	// BuscarClienteIDsBasico
 	basicIDs     []int
 	basicErr     error
@@ -124,10 +131,20 @@ func (f *fakeClientesRepo) ObtenerVentaDetalle(_ context.Context, doctoPVID int)
 
 func (f *fakeClientesRepo) ListarDirectorio(_ context.Context, _ outbound.ListParams, fil outbound.FiltroDirectorio) (outbound.Page[outbound.DirectorioItem], error) {
 	f.lastFiltro = fil
+	f.listarDirCalled = true
 	if f.dirErr != nil {
 		return outbound.Page[outbound.DirectorioItem]{}, f.dirErr
 	}
 	return f.dirPage, nil
+}
+
+func (f *fakeClientesRepo) ListarDirectorioCompleto(_ context.Context, fil outbound.FiltroDirectorio) ([]outbound.DirectorioItem, error) {
+	f.lastFiltroComplet = fil
+	f.listarComplCalled = true
+	if f.dirCompletoErr != nil {
+		return nil, f.dirCompletoErr
+	}
+	return f.dirCompleto, nil
 }
 
 func (f *fakeClientesRepo) BuscarClienteIDsBasico(_ context.Context, query string, limit int) ([]int, error) {

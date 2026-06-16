@@ -164,6 +164,94 @@ func TestClientesRepo_ListarDirectorio_FilterClienteIDs(t *testing.T) {
 	})
 }
 
+// ─── ListarDirectorioCompleto ─────────────────────────────────────────────────
+
+// TestClientesRepo_ListarDirectorioCompleto_FilteredByZona verifies the unbounded
+// directory listing returns rows for a zone, with non-negative grouped saldo. A
+// zone filter keeps the grouped saldo aggregation sub-second (verified live).
+func TestClientesRepo_ListarDirectorioCompleto_FilteredByZona(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := clientesfb.NewClientesRepo(pool)
+
+	zona := 21566 // largest zone (~2.5k clients) — confirmed live
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		items, err := repo.ListarDirectorioCompleto(ctx, outbound.FiltroDirectorio{
+			ZonaClienteID: &zona,
+		})
+		require.NoError(t, err)
+		require.NotEmpty(t, items, "zone should return rows")
+
+		for _, it := range items {
+			require.NotNil(t, it.Cliente)
+			assert.NotEmpty(t, it.Cliente.Nombre())
+			assert.False(t, it.SaldoTotal.IsNegative(), "saldo should be >= 0")
+		}
+		t.Logf("ListarDirectorioCompleto zona=%d: %d items", zona, len(items))
+	})
+}
+
+// TestClientesRepo_ListarDirectorioCompleto_ConSaldo verifies the ConSaldo filter
+// keeps only clients with a positive grouped balance.
+func TestClientesRepo_ListarDirectorioCompleto_ConSaldo(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := clientesfb.NewClientesRepo(pool)
+
+	zona := 21566
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		items, err := repo.ListarDirectorioCompleto(ctx, outbound.FiltroDirectorio{
+			ZonaClienteID: &zona,
+			ConSaldo:      true,
+		})
+		require.NoError(t, err)
+		for _, it := range items {
+			assert.True(t, it.SaldoTotal.IsPositive(),
+				"ConSaldo must exclude zero-saldo clients (cliente %d had %s)",
+				it.Cliente.ClienteID(), it.SaldoTotal)
+		}
+		t.Logf("ListarDirectorioCompleto zona=%d con_saldo: %d items", zona, len(items))
+	})
+}
+
+// TestClientesRepo_ListarDirectorioCompleto_SaldoMatchesPerRow verifies the
+// grouped saldo for a sample client matches the per-row paginated listing's saldo
+// (both derive from the same IMPORTES_DOCTOS_CC formula).
+func TestClientesRepo_ListarDirectorioCompleto_SaldoMatchesPerRow(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := clientesfb.NewClientesRepo(pool)
+
+	target := 12440 // confirmed saldo 504666.60 (grouped == MSP_SALDOS_VENTAS)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		// Grouped path (ListarDirectorioCompleto with ClienteIDs filter).
+		completo, err := repo.ListarDirectorioCompleto(ctx, outbound.FiltroDirectorio{
+			ClienteIDs: []int{target},
+		})
+		require.NoError(t, err)
+		require.Len(t, completo, 1)
+
+		// Per-row path (paginated ListarDirectorio with the same ClienteIDs).
+		page, err := repo.ListarDirectorio(ctx,
+			outbound.ListParams{PageSize: 10},
+			outbound.FiltroDirectorio{ClienteIDs: []int{target}},
+		)
+		require.NoError(t, err)
+		require.Len(t, page.Items, 1)
+
+		grouped := completo[0].SaldoTotal
+		perRow := page.Items[0].SaldoTotal
+		assert.True(t, grouped.Equal(perRow),
+			"grouped saldo %s should equal per-row saldo %s for cliente %d",
+			grouped, perRow, target)
+		t.Logf("ListarDirectorioCompleto saldo match cliente %d: grouped=%s perRow=%s",
+			target, grouped, perRow)
+	})
+}
+
 // ─── ObtenerResumenFicha ──────────────────────────────────────────────────────
 
 // TestClientesRepo_ObtenerResumenFicha verifies the financial summary aggregation.

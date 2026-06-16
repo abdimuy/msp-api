@@ -45,6 +45,10 @@ func (stubRepo) ListarDirectorio(_ context.Context, _ outbound.ListParams, _ out
 	return outbound.Page[outbound.DirectorioItem]{}, nil
 }
 
+func (stubRepo) ListarDirectorioCompleto(_ context.Context, _ outbound.FiltroDirectorio) ([]outbound.DirectorioItem, error) {
+	return nil, nil
+}
+
 func (stubRepo) BuscarClienteIDsBasico(_ context.Context, _ string, _ int) ([]int, error) {
 	return nil, nil
 }

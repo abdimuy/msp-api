@@ -54,8 +54,10 @@ type fakeRepo struct {
 	detalleByID map[int]outbound.VentaDetalle
 	detalleErr  error
 
-	dirPage outbound.Page[outbound.DirectorioItem]
-	dirErr  error
+	dirPage     outbound.Page[outbound.DirectorioItem]
+	dirErr      error
+	dirCompleto []outbound.DirectorioItem
+	dirComplErr error
 
 	basicIDs []int
 	basicErr error
@@ -101,6 +103,13 @@ func (f *fakeRepo) ListarDirectorio(_ context.Context, _ outbound.ListParams, _ 
 		return outbound.Page[outbound.DirectorioItem]{}, f.dirErr
 	}
 	return f.dirPage, nil
+}
+
+func (f *fakeRepo) ListarDirectorioCompleto(_ context.Context, _ outbound.FiltroDirectorio) ([]outbound.DirectorioItem, error) {
+	if f.dirComplErr != nil {
+		return nil, f.dirComplErr
+	}
+	return f.dirCompleto, nil
 }
 
 func (f *fakeRepo) BuscarClienteIDsBasico(_ context.Context, _ string, _ int) ([]int, error) {

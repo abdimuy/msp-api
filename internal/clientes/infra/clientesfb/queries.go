@@ -107,6 +107,64 @@ const queryListarDirectorioInner = `
 SELECT ` + selectDirectorioCols + clienteFromClause + `
 WHERE c.ESTATUS IN ('A', 'B')`
 
+// ─── Directory listing (complete / unbounded) ────────────────────────────────
+
+// selectDirectorioColsGrouped is the directory projection backed by an EFFICIENT
+// grouped saldo aggregation instead of the per-row correlated subquery used by
+// selectDirectorioCols. A single derived table (sal) groups IMPORTES_DOCTOS_CC by
+// CLIENTE_ID once and is LEFT JOINed to CLIENTES, so saldo costs one aggregation
+// pass for the whole set rather than one sub-select per row.
+//
+// The saldo formula is identical to selectDirectorioCols (and to
+// MSP_SALDOS_VENTAS, verified live 2026-06-16 — cliente 12440: 504666.60):
+//
+//	SUM(IMPORTE+IMPUESTO WHERE TIPO_IMPTE='C') − SUM(IMPORTE WHERE TIPO_IMPTE='R')
+//
+// over non-cancelled cargos (CONCEPTO_CC_ID=5, CANCELADO='N') and non-cancelled
+// importes (CANCELADO='N'), floored at 0 via MAXVALUE(…,0). CAST is mandatory
+// (firebirdsql v0.9.19 returns unscaled *big.Int for aggregates).
+const selectDirectorioColsGrouped = selectClienteCols + `,
+	COALESCE(sal.SALDO_TOTAL, 0) AS SALDO_TOTAL`
+
+// directorioGroupedSaldoJoin is the single grouped-aggregation derived table that
+// supplies SALDO_TOTAL per client. Joined once (not correlated per row).
+const directorioGroupedSaldoJoin = `
+LEFT JOIN (
+	SELECT cargo.CLIENTE_ID,
+		CAST(
+			MAXVALUE(
+				SUM(CASE WHEN i.TIPO_IMPTE = 'C' THEN i.IMPORTE + i.IMPUESTO ELSE 0 END)
+				- SUM(CASE WHEN i.TIPO_IMPTE = 'R' THEN i.IMPORTE ELSE 0 END),
+				0
+			) AS NUMERIC(18,2)
+		) AS SALDO_TOTAL
+	FROM IMPORTES_DOCTOS_CC i
+	JOIN DOCTOS_CC cargo ON cargo.DOCTO_CC_ID = i.DOCTO_CC_ACR_ID
+	WHERE cargo.CONCEPTO_CC_ID = 5
+	  AND cargo.CANCELADO = 'N'
+	  AND i.CANCELADO = 'N'
+	GROUP BY cargo.CLIENTE_ID
+) sal ON sal.CLIENTE_ID = c.CLIENTE_ID`
+
+// queryListarDirectorioCompletoBase is the SELECT + FROM (with the grouped saldo
+// join) for the unbounded directory listing. No FIRST clause — every matching row
+// is returned. ESTATUS IN ('A','B') matches the paginated listing's rationale.
+//
+// PERFORMANCE (measured live 2026-06-16, FB 5.0):
+//   - Unfiltered (whole padrón, ~38k rows): ~56s. The grouped saldo aggregation
+//     alone scans the full IMPORTES_DOCTOS_CC table (~3.4M rows) so it is the
+//     dominant cost. This is pathological and only happens for a global sort with
+//     NO zone/cobrador filter.
+//   - Zone-filtered (e.g. ~2.5k clients): ~0.5s — the optimizer pushes the zone
+//     predicate into the join so saldo is aggregated only for in-zone clients.
+//
+// The office app's global sort / pulse-filter path is expected to carry a zone or
+// cobrador filter, which keeps this sub-second. A Fase-2 optimization would
+// materialize the pulse columns into MSP_* and ORDER BY at the DB level.
+const queryListarDirectorioCompletoBase = `
+SELECT ` + selectDirectorioColsGrouped + clienteFromClause + directorioGroupedSaldoJoin + `
+WHERE c.ESTATUS IN ('A', 'B')`
+
 // ─── ResumenFicha ─────────────────────────────────────────────────────────────
 
 // queryResumenFichaTotales returns the aggregate financial summary for a client.

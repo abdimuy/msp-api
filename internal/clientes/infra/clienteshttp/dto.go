@@ -28,6 +28,8 @@ type ListarClientesInput struct {
 	Segmento   string `query:"segmento"    doc:"Filtra por segmento RFM exacto (e.g. LEAL_POR_LIQUIDAR, DORMIDO_VALIOSO)"`
 	EstadoPago string `query:"estado_pago" doc:"Filtra por señal de solvencia (SIN_CREDITO, LIQUIDADO, AL_CORRIENTE, ATRASADO, MOROSO)"`
 	ScoreMin   int    `query:"score_min"   default:"-1" doc:"Mínimo score de pulso [0, 100]; -1 = sin filtro"`
+	SortBy     string `query:"sort_by"     enum:"nombre,saldo,zona,score,segmento,estado_pago,recencia" doc:"Columna de ordenamiento GLOBAL; vacío = orden por defecto (relevancia en búsqueda, nombre al navegar)"`
+	SortOrder  string `query:"sort_order"  enum:"asc,desc" default:"asc" doc:"Sentido del ordenamiento"`
 	Cursor     string `query:"cursor"      doc:"Cursor de paginación opaco devuelto por la respuesta anterior"`
 	Limit      int    `query:"limit"       default:"50" minimum:"1" maximum:"200" doc:"Máximo de registros devueltos"`
 }

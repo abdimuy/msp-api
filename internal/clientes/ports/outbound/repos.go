@@ -133,6 +133,18 @@ type ClientesRepo interface {
 	// enriched with their total outstanding balance.
 	ListarDirectorio(ctx context.Context, p ListParams, f FiltroDirectorio) (Page[DirectorioItem], error)
 
+	// ListarDirectorioCompleto returns ALL clients matching the native filters
+	// (ESTATUS IN ('A','B') plus ZonaClienteID / CobradorID / ConSaldo / ClienteIDs),
+	// each with identity + SaldoTotal, with NO pagination, ordered by NOMBRE.
+	//
+	// It is the unbounded fetch used by the app's global sort / global pulse-filter
+	// path: the caller enriches the full set with pulse, filters and sorts in-app,
+	// then offset-paginates. Saldo is computed with a single grouped aggregation
+	// (not a per-row correlated subquery) so it stays efficient when the native
+	// filters bound the set (e.g. a zone). The unfiltered case returns the whole
+	// padrón (~44k rows) and is expensive — see the impl note.
+	ListarDirectorioCompleto(ctx context.Context, f FiltroDirectorio) ([]DirectorioItem, error)
+
 	// ObtenerResumenFicha returns the pre-aggregated financial summary for
 	// a client's detail screen (ficha). Returns a zero-valued ResumenFicha
 	// (not an error) when the client has no records — the aggregate query
