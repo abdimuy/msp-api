@@ -42,6 +42,10 @@ services:
       # El .env apunta a la ruta del host. Adentro del contenedor el repo
       # está bind-mounted en /app, así que reescribimos a esa ruta.
       FIREBASE_SERVICE_ACCOUNT_PATH: /app/serviceAccountKey.json
+      # Meilisearch por nombre de servicio (resoluble en msp-api_default).
+      # El .env usa localhost:7700 para corridas nativas; aquí lo sobreescribimos
+      # porque dentro del contenedor localhost es el propio contenedor.
+      MEILISEARCH_URL: http://meilisearch:7700
     volumes:
       # Bind mount del repo entero para hot reload via air. Los caches
       # de Go viven en volumes nombrados para que no se descarte cada
