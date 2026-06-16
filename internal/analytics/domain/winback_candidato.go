@@ -118,6 +118,11 @@ func CrearWinbackCandidato(p CrearWinbackCandidatoParams) (*WinbackCandidato, er
 		fechaUltimoPago = p.FechaUltimoPago.UTC()
 	}
 
+	var fechaProxPago time.Time
+	if !p.FechaProxPago.IsZero() {
+		fechaProxPago = p.FechaProxPago.UTC()
+	}
+
 	return &WinbackCandidato{
 		id:                uuid.New(),
 		clienteID:         p.ClienteID,
@@ -138,7 +143,7 @@ func CrearWinbackCandidato(p CrearWinbackCandidatoParams) (*WinbackCandidato, er
 		cadenciaDias:      p.CadenciaDias,
 		diasAtrasoProm:    p.DiasAtrasoProm,
 		pctPagosATiempo:   p.PctPagosATiempo,
-		fechaProxPago:     p.FechaProxPago,
+		fechaProxPago:     fechaProxPago,
 		montoProxPago:     p.MontoProxPago,
 	}, nil
 }
@@ -262,7 +267,7 @@ func (w *WinbackCandidato) UpdatedAt() time.Time { return w.timestamps.UpdatedAt
 func (w *WinbackCandidato) NumPagos() int { return w.numPagos }
 
 // CadenciaDias returns the average days between consecutive payments.
-// Zero when fewer than 2 payments exist (insufficient data).
+// Zero when fewer than 2 payments exist (i.e. fewer than 1 gap — insufficient data).
 func (w *WinbackCandidato) CadenciaDias() int { return w.cadenciaDias }
 
 // DiasAtrasoProm returns the average positive lateness (days) relative to

@@ -10,12 +10,14 @@
 --
 -- Decisión de filtro (verificado en BD live):
 --   CANCELADO='N' AND APLICADO='S' captura 2,170,485 de 2,173,381 filas.
---   Los 2,896 excluidos son cancelaciones (CANCELADO='S'). No se filtra por
---   CONCEPTO_CC_ID — todos los conceptos encontrados representan abonos reales.
+--   Además se filtra por CONCEPTO_CC_ID IN (87327, 155, 11): solo abonos reales.
+--   87327 = Cobranza en ruta (~1.71M), 155 = Cobro en mostrador (~320k),
+--   11 = Cobro genérico legacy (~13k). Excluidos: enganches, condonaciones,
+--   cancelaciones de deuda — no son pagos recurrentes del cliente.
 --
 -- Columnas:
 --   NUM_PAGOS         — total de pagos aplicados (gaps computados = NUM_PAGOS - 1).
---   CADENCIA_DIAS     — promedio de días entre pagos consecutivos; NULL si <2 pagos.
+--   CADENCIA_DIAS     — promedio de días entre pagos consecutivos; NULL si <2 pagos (0 gaps).
 --   DIAS_ATRASO_PROM  — promedio de max(0, gap − cadencia) sobre todos los gaps;
 --                       NULL si no hay suficientes datos.
 --   PCT_PAGOS_A_TIEMPO — % de gaps dentro de cadencia + 7 días de tolerancia;

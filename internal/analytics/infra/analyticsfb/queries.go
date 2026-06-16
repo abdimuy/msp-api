@@ -298,13 +298,16 @@ const (
 //       computes consecutive gap in days for each payment.
 //   (2) cadencias CTE: AVG(gap_dias) per client → CADENCIA_DIAS, plus
 //       AVG(IMPORTE) → MONTO_PROX_PAGO and MAX(FECHA) → ULTIMA_FECHA.
-//       HAVING COUNT(*) >= 2 ensures at least one gap exists.
+//       HAVING COUNT(*) >= 1 ensures at least one gap exists (i.e. ≥2 payments).
 //   (3) atrasos CTE: joins gaps back to cadencias to classify each gap as
 //       on-time (≤ cadencia+7d) or late, and computes per-gap lateness.
 //   Final SELECT: groups over cadencias + atrasos to produce per-client signals.
 //
-// Performance: IDX_MSP_PAGOS_CLIENTE_FECHA (CLIENTE_ID, FECHA) covers both
-// the partition and order key. Full scan of 2.17M rows returns in <30s (verified live).
+// Performance: IDX_MSP_PAGOS_CLIENTE_FECHA (CLIENTE_ID, FECHA) covers the
+// partition and order key used by the LAG window function. Because window
+// functions force a full table materialization in Firebird before streaming,
+// the full-lifetime scan of 2.17M rows takes ~2m43s (verified live, dev machine).
+// This is acceptable for a nightly/manual refresh job but not for ad-hoc queries.
 //
 // Concept filter: restricted to abono concepts only (conceptoCobranzaRuta=87327,
 // conceptoCobro155=155, conceptoCobroGenerico=11). Enganche, condonaciones,
@@ -314,8 +317,8 @@ const (
 // Driver gotcha (reference_firebirdsql_sum_scale): AVG() over NUMERIC returns
 // unscaled *big.Int. Pattern: CAST(AVG(CAST(col AS NUMERIC(18,4))) AS NUMERIC(N,0)).
 //
-// Watermark handling: when since != nil the caller injects an extra AND clause
-// into the gaps CTE before leerCobranzaClose (same pattern as rfm/nbp CTEs).
+// Watermark handling: no watermark is applied — the full payment history is always
+// scanned so cadence and punctuality are computed over the client's lifetime.
 //
 // Column order (must match cobranzaRowRaw.scanFrom exactly):
 //
@@ -324,7 +327,7 @@ const (
 //	3  cadencia_dias      (INTEGER avg gap)
 //	4  dias_atraso_prom   (INTEGER avg positive lateness)
 //	5  pct_pagos_a_tiempo (NUMERIC(5,2))
-//	6  fecha_prox_pago    (TIMESTAMP = ultima_fecha + cadencia)
+//	6  ultima_fecha       (TIMESTAMP, raw last payment date for Go-side next-pago derivation)
 //	7  monto_prox_pago    (NUMERIC(18,2) avg importe)
 
 // leerCobranzaBase opens the WITH block and the gaps CTE through its WHERE clause.
@@ -360,7 +363,7 @@ cadencias AS (
   FROM gaps
   WHERE GAP_DIAS IS NOT NULL
   GROUP BY CLIENTE_ID
-  HAVING COUNT(*) >= 2
+  HAVING COUNT(*) >= 1
 ),
 atrasos AS (
   SELECT
@@ -382,7 +385,7 @@ SELECT
     100.0 * SUM(a.A_TIEMPO) / NULLIF(CAST(COUNT(*) AS NUMERIC(18,4)), 0)
     AS NUMERIC(5,2)
   )                                                                               AS PCT_PAGOS_A_TIEMPO,
-  DATEADD(DAY, c.CADENCIA_DIAS, c.ULTIMA_FECHA)                                  AS FECHA_PROX_PAGO,
+  c.ULTIMA_FECHA                                                                  AS ULTIMA_FECHA,
   c.AVG_IMPORTE                                                                   AS MONTO_PROX_PAGO
 FROM cadencias c
 JOIN atrasos a ON a.CLIENTE_ID = c.CLIENTE_ID

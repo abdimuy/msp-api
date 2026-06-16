@@ -294,11 +294,11 @@ func assembleAncla(r *anclaRowRaw) (outbound.AnclaCliente, error) {
 // Numeric aggregates are declared as any so the driver delivers its native type.
 type cobranzaRowRaw struct {
 	clienteID          int
-	numPagos           int // NUM_GAPS+1: driver delivers int directly for INTEGER expressions
+	numPagos           any // INTEGER arithmetic (NUM_GAPS+1); scanned via scanNullableIntDecimal for driver consistency
 	cadenciaDias       any // NUMERIC(10,0) aggregate
 	diasAtrasoProm     any // NUMERIC(10,0) aggregate
 	pctPagosATiempoRaw any // NUMERIC(5,2) aggregate
-	fechaProxPagoRaw   any // TIMESTAMP nullable (DATEADD may return NULL if cadencia is 0)
+	ultimaFechaRaw     any // TIMESTAMP nullable (raw last payment date; next-pago derived in Go)
 	montoProxPagoRaw   any // NUMERIC(18,2) aggregate
 }
 
@@ -309,12 +309,16 @@ func (r *cobranzaRowRaw) scanFrom(s rowScanner) error {
 		&r.cadenciaDias,
 		&r.diasAtrasoProm,
 		&r.pctPagosATiempoRaw,
-		&r.fechaProxPagoRaw,
+		&r.ultimaFechaRaw,
 		&r.montoProxPagoRaw,
 	)
 }
 
 func assembleCobranza(r *cobranzaRowRaw) (outbound.CobranzaSignals, error) {
+	numPagos, err := scanNullableIntDecimal(r.numPagos)
+	if err != nil {
+		return outbound.CobranzaSignals{}, err
+	}
 	cadenciaDias, err := scanNullableIntDecimal(r.cadenciaDias)
 	if err != nil {
 		return outbound.CobranzaSignals{}, err
@@ -327,17 +331,18 @@ func assembleCobranza(r *cobranzaRowRaw) (outbound.CobranzaSignals, error) {
 	if err != nil {
 		return outbound.CobranzaSignals{}, err
 	}
-	fechaProxPago, err := scanNullableTime(r.fechaProxPagoRaw)
+	ultimaFecha, err := scanNullableTime(r.ultimaFechaRaw)
 	if err != nil {
 		return outbound.CobranzaSignals{}, err
 	}
+	fechaProxPago := computeProxPago(ultimaFecha, cadenciaDias)
 	montoProxPago, err := scanNullableDecimal(r.montoProxPagoRaw)
 	if err != nil {
 		return outbound.CobranzaSignals{}, err
 	}
 	return outbound.CobranzaSignals{
 		ClienteID:       r.clienteID,
-		NumPagos:        r.numPagos,
+		NumPagos:        numPagos,
 		CadenciaDias:    cadenciaDias,
 		DiasAtrasoProm:  diasAtrasoProm,
 		PctPagosATiempo: pctPagosATiempo,

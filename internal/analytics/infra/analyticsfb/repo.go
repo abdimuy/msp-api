@@ -622,20 +622,12 @@ func (r *Repo) LeerAnclasDesde(ctx context.Context, since *time.Time) ([]outboun
 
 // leerCobranzaSignals queries MSP_PAGOS_VENTAS to compute per-client cadence
 // and punctuality facts using leerCobranzaBase + leerCobranzaClose.
-// since restricts to recently-active clients when non-nil (same boundary as
-// LeerAnclasDesde). Returns a map[clienteID → CobranzaSignals].
+// since is no longer used; the query always scans the full payment history for
+// lifetime cadence accuracy. Returns a map[clienteID → CobranzaSignals].
 func (r *Repo) leerCobranzaSignals(ctx context.Context, since *time.Time) (map[int]outbound.CobranzaSignals, error) {
-	var query string
+	query := leerCobranzaBase + leerCobranzaClose
 	var args []any
-
-	if since == nil {
-		query = leerCobranzaBase + leerCobranzaClose
-	} else {
-		boundary := since.Add(-watermarkOverlap)
-		datePredicate := "\n    AND FECHA >= ?"
-		query = leerCobranzaBase + datePredicate + leerCobranzaClose
-		args = append(args, firebird.ToWallClock(boundary))
-	}
+	_ = since // full-scan always; watermark not applied for cadence accuracy
 
 	result := make(map[int]outbound.CobranzaSignals)
 	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
