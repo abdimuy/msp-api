@@ -86,6 +86,10 @@ func (s *Service) ReconciliarDirectorio(ctx context.Context) (int, error) {
 			doc.Frecuencia = pulso.Frecuencia
 			doc.Monetary = pulso.Monetary
 			doc.NextBestProduct = pulso.NextBestProduct
+			// Cobranza intelligence signals (B2).
+			doc.TierRiesgo = pulso.TierRiesgo
+			doc.PctPagosATiempo = pulso.PctPagosATiempo
+			doc.FechaProxPago = pulso.FechaProxPago
 		}
 
 		docs = append(docs, doc)

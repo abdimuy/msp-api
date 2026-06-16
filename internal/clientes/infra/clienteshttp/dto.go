@@ -28,7 +28,8 @@ type ListarClientesInput struct {
 	Segmento   string `query:"segmento"    doc:"Filtra por segmento RFM exacto (e.g. LEAL_POR_LIQUIDAR, DORMIDO_VALIOSO)"`
 	EstadoPago string `query:"estado_pago" doc:"Filtra por señal de solvencia (SIN_CREDITO, LIQUIDADO, AL_CORRIENTE, ATRASADO, MOROSO)"`
 	ScoreMin   int    `query:"score_min"   default:"-1" doc:"Mínimo score de pulso [0, 100]; -1 = sin filtro"`
-	SortBy     string `query:"sort_by"     enum:"nombre,saldo,zona,score,segmento,estado_pago,recencia" doc:"Columna de ordenamiento GLOBAL; vacío = orden por defecto (relevancia en búsqueda, nombre al navegar)"`
+	Tier       string `query:"tier"        doc:"Filtra por tier de riesgo de cobranza (AL_DIA, VIGILANCIA, EN_RIESGO, CRITICO); vacío = sin filtro"`
+	SortBy     string `query:"sort_by"     enum:"nombre,saldo,zona,score,segmento,estado_pago,recencia,puntualidad,prox_pago" doc:"Columna de ordenamiento GLOBAL; vacío = orden por defecto (relevancia en búsqueda, nombre al navegar)"`
 	SortOrder  string `query:"sort_order"  enum:"asc,desc" default:"asc" doc:"Sentido del ordenamiento"`
 	Cursor     string `query:"cursor"      doc:"Cursor de paginación opaco devuelto por la respuesta anterior"`
 	Limit      int    `query:"limit"       default:"50" minimum:"1" maximum:"200" doc:"Máximo de registros devueltos"`
@@ -51,17 +52,21 @@ type ListarClientesOutput struct {
 // ClienteListItemDTO is the wire representation of one client in the directory
 // list. Monetary fields are JSON strings to avoid floating-point rounding.
 type ClienteListItemDTO struct {
-	ClienteID      int    `json:"cliente_id"       doc:"ID de Microsip del cliente"`
-	Nombre         string `json:"nombre"           doc:"Nombre del cliente"`
-	Zona           string `json:"zona"             doc:"Nombre de la zona de ventas"`
-	Telefono       string `json:"telefono"         doc:"Teléfono de contacto"`
-	DireccionCorta string `json:"direccion_corta"  doc:"Dirección abreviada (calle, colonia, ciudad)"`
-	Score          int    `json:"score"            doc:"Score de pulso [0, 100]; 0 cuando no hay pulso"`
-	Segmento       string `json:"segmento"         doc:"Segmento RFM; vacío cuando no hay pulso"`
-	EstadoPago     string `json:"estado_pago"      doc:"Señal de solvencia; vacío cuando no hay pulso"`
-	TienePulso     bool   `json:"tiene_pulso"      doc:"true cuando el cliente tiene datos materializados de analítica"`
-	RecenciaDias   int    `json:"recencia_dias"    doc:"Días desde la última compra; 0 cuando no hay pulso"`
-	Saldo          string `json:"saldo"            doc:"Saldo pendiente total (2 decimales)"`
+	ClienteID      int    `json:"cliente_id"            doc:"ID de Microsip del cliente"`
+	Nombre         string `json:"nombre"                doc:"Nombre del cliente"`
+	Zona           string `json:"zona"                  doc:"Nombre de la zona de ventas"`
+	Telefono       string `json:"telefono"              doc:"Teléfono de contacto"`
+	DireccionCorta string `json:"direccion_corta"       doc:"Dirección abreviada (calle, colonia, ciudad)"`
+	Score          int    `json:"score"                 doc:"Score de pulso [0, 100]; 0 cuando no hay pulso"`
+	Segmento       string `json:"segmento"              doc:"Segmento RFM; vacío cuando no hay pulso"`
+	EstadoPago     string `json:"estado_pago"           doc:"Señal de solvencia; vacío cuando no hay pulso"`
+	TienePulso     bool   `json:"tiene_pulso"           doc:"true cuando el cliente tiene datos materializados de analítica"`
+	RecenciaDias   int    `json:"recencia_dias"         doc:"Días desde la última compra; 0 cuando no hay pulso"`
+	Saldo          string `json:"saldo"                 doc:"Saldo pendiente total (2 decimales)"`
+	// Cobranza intelligence signals (B2). Empty/zero when TienePulso is false.
+	TierRiesgo      string `json:"tier_riesgo"          doc:"Tier de riesgo de cobranza: AL_DIA, VIGILANCIA, EN_RIESGO, CRITICO; vacío cuando no hay pulso"`
+	PctPagosATiempo string `json:"pct_pagos_a_tiempo"   doc:"Porcentaje de pagos a tiempo (2 decimales); vacío cuando no hay pulso"`
+	FechaProxPago   string `json:"fecha_prox_pago"      format:"date-time" doc:"RFC3339 UTC del próximo pago estimado; vacío si sin cadencia"`
 }
 
 // ─── Endpoint 2: GET /clientes/{id} ─────────────────────────────────────────

@@ -87,3 +87,11 @@ func (a *upsertOnlyAdapter) Close() {}
 
 // Compile-time assertion: upsertOnlyAdapter satisfies the full platform interface.
 var _ platformmeili.Client = (*upsertOnlyAdapter)(nil)
+
+// BuildFilterForTest exposes buildFilter for white-box unit tests.
+func BuildFilterForTest(q outbound.DirectorioQuery) string { return buildFilter(q) }
+
+// BuildSortForTest exposes buildSort for white-box unit tests.
+func BuildSortForTest(sortBy, sortOrder, query string) []string {
+	return buildSort(sortBy, sortOrder, query)
+}

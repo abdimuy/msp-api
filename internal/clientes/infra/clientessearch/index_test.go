@@ -3,6 +3,7 @@ package clientessearch_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
@@ -211,4 +212,100 @@ func TestMeilisearchDirectoryIndex_Reconciliar_SendsToCorrectIndex(t *testing.T)
 		{ClienteID: 1, Nombre: "TEST"},
 	})
 	assert.Equal(t, "my-clientes", rec.indexUID)
+}
+
+// ── B2: cobranza intelligence signal mapping ───────────────────────────────
+
+func TestMapDoc_TierRiesgo_Populated(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	idx := clientessearchmeili.NewMeilisearchDirectoryIndexForTest(rec, "clientes")
+
+	doc := outbound.DirectorioDoc{
+		ClienteID:  10,
+		TierRiesgo: "EN_RIESGO",
+		TienePulso: true,
+	}
+	err := idx.Reconciliar(context.Background(), []outbound.DirectorioDoc{doc})
+	require.NoError(t, err)
+	require.Len(t, rec.batches[0], 1)
+	got := rec.batches[0][0]
+	assert.Equal(t, "EN_RIESGO", got.TierRiesgo)
+}
+
+func TestMapDoc_PctPagosATiempo_FloatAndString(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	idx := clientessearchmeili.NewMeilisearchDirectoryIndexForTest(rec, "clientes")
+
+	doc := outbound.DirectorioDoc{
+		ClienteID:       11,
+		PctPagosATiempo: decimal.RequireFromString("87.50"),
+		TienePulso:      true,
+	}
+	err := idx.Reconciliar(context.Background(), []outbound.DirectorioDoc{doc})
+	require.NoError(t, err)
+	got := rec.batches[0][0]
+	assert.InEpsilon(t, 87.50, got.PctPagosATiempo, 0.001, "float sort key")
+	assert.Equal(t, "87.50", got.PctPagosATiempoStr, "exact display string")
+}
+
+func TestMapDoc_FechaProxPago_EpochAndDisplay(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	idx := clientessearchmeili.NewMeilisearchDirectoryIndexForTest(rec, "clientes")
+
+	fecha := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)
+	doc := outbound.DirectorioDoc{
+		ClienteID:     12,
+		FechaProxPago: fecha,
+		TienePulso:    true,
+	}
+	err := idx.Reconciliar(context.Background(), []outbound.DirectorioDoc{doc})
+	require.NoError(t, err)
+	got := rec.batches[0][0]
+	assert.Equal(t, fecha.Unix(), got.FechaProxPagoTs, "epoch-seconds sortable field")
+	assert.Equal(t, "2026-07-15T00:00:00Z", got.FechaProxPago, "RFC3339 display string")
+}
+
+func TestMapDoc_FechaProxPago_ZeroTime_SortsLast(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	idx := clientessearchmeili.NewMeilisearchDirectoryIndexForTest(rec, "clientes")
+
+	doc := outbound.DirectorioDoc{
+		ClienteID:  13,
+		TienePulso: false,
+		// FechaProxPago left at zero value
+	}
+	err := idx.Reconciliar(context.Background(), []outbound.DirectorioDoc{doc})
+	require.NoError(t, err)
+	got := rec.batches[0][0]
+	assert.Equal(t, int64(0), got.FechaProxPagoTs, "zero time → 0 epoch (sorts last)")
+	assert.Empty(t, got.FechaProxPago, "zero time → empty display string")
+}
+
+func TestClienteDocToDirectorioDoc_RoundTrip_CobranzaSignals(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	idx := clientessearchmeili.NewMeilisearchDirectoryIndexForTest(rec, "clientes")
+
+	fecha := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	in := outbound.DirectorioDoc{
+		ClienteID:       20,
+		TierRiesgo:      "CRITICO",
+		PctPagosATiempo: decimal.RequireFromString("33.33"),
+		FechaProxPago:   fecha,
+		TienePulso:      true,
+	}
+
+	err := idx.Reconciliar(context.Background(), []outbound.DirectorioDoc{in})
+	require.NoError(t, err)
+	stored := rec.batches[0][0]
+
+	out := clientessearchmeili.ClienteDocToDirectorioDocForTest(stored)
+	assert.Equal(t, "CRITICO", out.TierRiesgo)
+	assert.Equal(t, "33.33", out.PctPagosATiempo.StringFixed(2))
+	// FechaProxPago reconstructed from epoch — compare Unix seconds
+	assert.Equal(t, fecha.Unix(), out.FechaProxPago.UTC().Unix())
 }

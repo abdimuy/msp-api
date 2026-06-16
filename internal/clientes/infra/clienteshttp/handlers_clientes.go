@@ -55,6 +55,7 @@ func (h *Handlers) ListarClientes(ctx context.Context, input *ListarClientesInpu
 		Segmento:      input.Segmento,
 		EstadoPago:    input.EstadoPago,
 		ScoreMin:      scoreMinPtrOrNil(input.ScoreMin),
+		TierRiesgo:    input.Tier,
 		SortBy:        input.SortBy,
 		SortOrder:     input.SortOrder,
 		Pagination: outbound.ListParams{

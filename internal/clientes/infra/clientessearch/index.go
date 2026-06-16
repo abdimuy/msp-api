@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/abdimuy/msp-api/internal/clientes/ports/outbound"
 	platformmeili "github.com/abdimuy/msp-api/internal/platform/meilisearch"
@@ -65,9 +66,10 @@ func (idx *MeilisearchDirectoryIndex) Reconciliar(ctx context.Context, docs []ou
 }
 
 // mapDoc projects an outbound.DirectorioDoc to the wire-level ClienteDoc,
-// computing derived fields (ID string, ordinals, con_saldo, direccion_corta).
+// computing derived fields (ID string, ordinals, con_saldo, direccion_corta,
+// and cobranza intelligence signals added in B2).
 func mapDoc(d outbound.DirectorioDoc) ClienteDoc {
-	return ClienteDoc{
+	cd := ClienteDoc{
 		ID:                 strconv.Itoa(d.ClienteID),
 		ClienteID:          d.ClienteID,
 		Nombre:             d.Nombre,
@@ -94,7 +96,21 @@ func mapDoc(d outbound.DirectorioDoc) ClienteDoc {
 		Monetary:           d.Monetary.StringFixed(moneyScale),
 		NextBestProduct:    d.NextBestProduct,
 		TienePulso:         d.TienePulso,
+
+		// Cobranza intelligence signals (B2).
+		TierRiesgo:         d.TierRiesgo,
+		PctPagosATiempo:    d.PctPagosATiempo.InexactFloat64(), // sort key
+		PctPagosATiempoStr: d.PctPagosATiempo.StringFixed(moneyScale),
 	}
+
+	// Store FechaProxPago as epoch-seconds for sortable numeric, and as an
+	// RFC3339 UTC string for display. Zero time → 0 / empty (sorts last).
+	if !d.FechaProxPago.IsZero() {
+		cd.FechaProxPagoTs = d.FechaProxPago.UTC().Unix()
+		cd.FechaProxPago = d.FechaProxPago.UTC().Format(time.RFC3339)
+	}
+
+	return cd
 }
 
 // ── Ordinal helpers ────────────────────────────────────────────────────────────

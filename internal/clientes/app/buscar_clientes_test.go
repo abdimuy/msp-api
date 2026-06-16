@@ -408,3 +408,70 @@ func TestBuscarClientes_MeilisearchInternalError_Propagates(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+// ── B2: TierRiesgo filter + new sort values ───────────────────────────────────
+
+func TestBuscarClientes_TierRiesgo_ThreadedToQuery(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	di := &fakeDirectoryIndexWithBuscar{
+		resultado: outbound.DirectorioResultado{Items: []outbound.DirectorioDoc{}, Total: 0},
+	}
+	svc := buildSvc(di)
+
+	_, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
+		TierRiesgo: "CRITICO",
+		Pagination: outbound.ListParams{PageSize: 20},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if di.captured.TierRiesgo != "CRITICO" {
+		t.Errorf("TierRiesgo: got %q, want %q", di.captured.TierRiesgo, "CRITICO")
+	}
+}
+
+func TestBuscarClientes_SortByPuntualidad_IsValid(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	di := &fakeDirectoryIndexWithBuscar{
+		resultado: outbound.DirectorioResultado{Items: []outbound.DirectorioDoc{}, Total: 0},
+	}
+	svc := buildSvc(di)
+
+	_, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
+		SortBy:     "puntualidad",
+		SortOrder:  "asc",
+		Pagination: outbound.ListParams{PageSize: 20},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error for sort_by=puntualidad: %v", err)
+	}
+	if di.captured.SortBy != "puntualidad" {
+		t.Errorf("SortBy: got %q, want %q", di.captured.SortBy, "puntualidad")
+	}
+}
+
+func TestBuscarClientes_SortByProxPago_IsValid(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	di := &fakeDirectoryIndexWithBuscar{
+		resultado: outbound.DirectorioResultado{Items: []outbound.DirectorioDoc{}, Total: 0},
+	}
+	svc := buildSvc(di)
+
+	_, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
+		SortBy:     "prox_pago",
+		SortOrder:  "asc",
+		Pagination: outbound.ListParams{PageSize: 20},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error for sort_by=prox_pago: %v", err)
+	}
+	if di.captured.SortBy != "prox_pago" {
+		t.Errorf("SortBy: got %q, want %q", di.captured.SortBy, "prox_pago")
+	}
+}

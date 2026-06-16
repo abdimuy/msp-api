@@ -3,6 +3,7 @@ package outbound
 
 import (
 	"context"
+	"time"
 
 	"github.com/shopspring/decimal"
 )
@@ -50,6 +51,11 @@ type DirectorioDoc struct {
 	Monetary        decimal.Decimal
 	NextBestProduct string
 	TienePulso      bool
+
+	// Cobranza intelligence signals (B2). Zero/empty when TienePulso is false.
+	TierRiesgo      string // AL_DIA | VIGILANCIA | EN_RIESGO | CRITICO
+	PctPagosATiempo decimal.Decimal
+	FechaProxPago   time.Time // zero when no cadence
 }
 
 // DirectorioQuery carries all parameters for a single Meilisearch directory
@@ -70,6 +76,8 @@ type DirectorioQuery struct {
 	EstadoPago string
 	// ScoreMin keeps only items whose pulse Score >= this value. Nil = no filter.
 	ScoreMin *int
+	// TierRiesgo restricts to a specific cobranza risk tier (exact match). Empty = no filter.
+	TierRiesgo string
 	// SortBy is the sort column (e.g. "nombre", "saldo", "score"). Empty means
 	// default order (nombre:asc when Q is empty, Meilisearch relevance when Q is set).
 	SortBy string

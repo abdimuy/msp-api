@@ -130,6 +130,29 @@ type ClienteDoc struct {
 	// TienePulso indicates whether the analytics pulse record exists for
 	// this client. Display only.
 	TienePulso bool `json:"tiene_pulso"`
+
+	// ── Cobranza intelligence signals (B2) ───────────────────────────────
+
+	// TierRiesgo is the cobranza risk tier label (AL_DIA, VIGILANCIA,
+	// EN_RIESGO, CRITICO). Filterable + facetable + display.
+	TierRiesgo string `json:"tier_riesgo"`
+
+	// PctPagosATiempo is the fraction of payments made on time (0–100),
+	// stored as a float64 for Meilisearch numeric sorting. Use PctPagosATiempoStr
+	// for display to preserve the exact decimal value.
+	PctPagosATiempo float64 `json:"pct_pagos_a_tiempo"`
+
+	// PctPagosATiempoStr is the exact percentage string (StringFixed 2). Display.
+	PctPagosATiempoStr string `json:"pct_pagos_a_tiempo_str"`
+
+	// FechaProxPagoTs is the estimated next payment date as Unix epoch-seconds.
+	// Sortable. Zero when no cadence is available (sorts last with the
+	// Meilisearch default "null/zero last" behavior).
+	FechaProxPagoTs int64 `json:"fecha_prox_pago_ts"`
+
+	// FechaProxPago is the RFC3339 UTC display string for the next payment date.
+	// Empty when no cadence is available.
+	FechaProxPago string `json:"fecha_prox_pago"`
 }
 
 // defaultRankingRules is the ordered list of ranking rules applied to the
@@ -162,6 +185,7 @@ var filterableAttributes = []string{
 	"score",
 	"recencia_dias",
 	"estatus",
+	"tier_riesgo",
 }
 
 // sortableAttributes lists every attribute that can appear in sort clauses.
@@ -173,6 +197,8 @@ var sortableAttributes = []string{
 	"estado_pago_orden",
 	"recencia_dias",
 	"zona_id",
+	"pct_pagos_a_tiempo",
+	"fecha_prox_pago_ts",
 }
 
 // facetAttributes are the attributes returned in FacetDistribution by default.
@@ -183,6 +209,7 @@ var facetAttributes = []string{
 	"cobrador_id",
 	"segmento",
 	"estado_pago",
+	"tier_riesgo",
 }
 
 // FacetAttributes returns the canonical list of facet attributes for the

@@ -15,6 +15,8 @@ import (
 
 // dirDocToClienteListItemDTO maps a flat DirectorioDoc returned by Meilisearch
 // to its wire DTO. Saldo is rendered as a 2-decimal string.
+// Cobranza signals (tier_riesgo, pct_pagos_a_tiempo, fecha_prox_pago) are
+// populated only when TienePulso is true.
 func dirDocToClienteListItemDTO(doc outbound.DirectorioDoc) ClienteListItemDTO {
 	dto := ClienteListItemDTO{
 		ClienteID:      doc.ClienteID,
@@ -30,6 +32,9 @@ func dirDocToClienteListItemDTO(doc outbound.DirectorioDoc) ClienteListItemDTO {
 		dto.Segmento = doc.Segmento
 		dto.EstadoPago = doc.EstadoPago
 		dto.RecenciaDias = doc.RecenciaDias
+		dto.TierRiesgo = doc.TierRiesgo
+		dto.PctPagosATiempo = doc.PctPagosATiempo.StringFixed(pctScale)
+		dto.FechaProxPago = formatTime(doc.FechaProxPago)
 	}
 	return dto
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
@@ -210,4 +211,72 @@ func TestReconciliarDirectorio_UsesListarDirectorioCompleto(t *testing.T) {
 
 	_, _ = svc.ReconciliarDirectorio(context.Background())
 	assert.True(t, repo.listarComplCalled, "ReconciliarDirectorio must call ListarDirectorioCompleto")
+}
+
+// ── B2: cobranza signals in reconcile ────────────────────────────────────────
+
+func TestReconciliarDirectorio_CobranzaSignalsMappedFromPulso(t *testing.T) {
+	t.Parallel()
+
+	c1 := newCliente(50, "CLIENTE CON COBRANZA")
+
+	repo := &fakeClientesRepo{
+		dirCompleto: []outbound.DirectorioItem{
+			{Cliente: c1, SaldoTotal: decimal.NewFromFloat(5000)},
+		},
+	}
+
+	fechaProxPago := time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC)
+	pulso := analytics.ClientePulsoContract{
+		ClienteID:       50,
+		Score:           65,
+		Segmento:        "ACTIVO",
+		EstadoPago:      "ATRASADO",
+		RecenciaDias:    20,
+		Frecuencia:      3,
+		Monetary:        decimal.NewFromFloat(8000),
+		TierRiesgo:      "EN_RIESGO",
+		PctPagosATiempo: decimal.RequireFromString("60.00"),
+		FechaProxPago:   fechaProxPago,
+	}
+
+	anl := &fakeAnalyticsClient{
+		pulsosMap: map[int]analytics.ClientePulsoContract{50: pulso},
+	}
+	dirIdx := &fakeDirectoryIndex{}
+	svc := newReconcileService(repo, anl, dirIdx)
+
+	n, err := svc.ReconciliarDirectorio(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+	require.Len(t, dirIdx.lastDocs, 1)
+
+	doc := dirIdx.lastDocs[0]
+	assert.Equal(t, "EN_RIESGO", doc.TierRiesgo)
+	assert.Equal(t, "60.00", doc.PctPagosATiempo.StringFixed(2))
+	assert.Equal(t, fechaProxPago.Unix(), doc.FechaProxPago.Unix())
+}
+
+func TestReconciliarDirectorio_CobranzaSignalsZeroWhenNoPulso(t *testing.T) {
+	t.Parallel()
+
+	c := newCliente(51, "SIN PULSO COBRANZA")
+	repo := &fakeClientesRepo{
+		dirCompleto: []outbound.DirectorioItem{
+			{Cliente: c, SaldoTotal: decimal.Zero},
+		},
+	}
+	anl := &fakeAnalyticsClient{} // empty pulsosMap → no pulse for cliente 51
+	dirIdx := &fakeDirectoryIndex{}
+	svc := newReconcileService(repo, anl, dirIdx)
+
+	_, err := svc.ReconciliarDirectorio(context.Background())
+	require.NoError(t, err)
+	require.Len(t, dirIdx.lastDocs, 1)
+
+	doc := dirIdx.lastDocs[0]
+	assert.False(t, doc.TienePulso)
+	assert.Empty(t, doc.TierRiesgo, "no pulso → empty tier")
+	assert.True(t, doc.PctPagosATiempo.IsZero(), "no pulso → zero pct")
+	assert.True(t, doc.FechaProxPago.IsZero(), "no pulso → zero time")
 }

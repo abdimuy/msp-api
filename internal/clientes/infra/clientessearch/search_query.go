@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/shopspring/decimal"
 
@@ -29,6 +30,8 @@ var sortMapping = map[string]string{
 	"segmento":    "segmento_orden",
 	"estado_pago": "estado_pago_orden",
 	"recencia":    "recencia_dias",
+	"puntualidad": "pct_pagos_a_tiempo",
+	"prox_pago":   "fecha_prox_pago_ts",
 }
 
 // Buscar executes a directory search against the Meilisearch index and returns
@@ -129,6 +132,9 @@ func buildFilter(q outbound.DirectorioQuery) string {
 	if q.ScoreMin != nil {
 		clauses = append(clauses, fmt.Sprintf("score >= %d", *q.ScoreMin))
 	}
+	if q.TierRiesgo != "" {
+		clauses = append(clauses, fmt.Sprintf("tier_riesgo = %q", q.TierRiesgo))
+	}
 
 	return strings.Join(clauses, " AND ")
 }
@@ -173,8 +179,10 @@ func parseDecimal(s string) decimal.Decimal {
 // clienteDocToDirectorioDoc maps a ClienteDoc (hit from Meilisearch) to the
 // port-level DirectorioDoc. Saldo/Monetary are reconstructed from the exact
 // string fields (saldo_str, monetary) to avoid float round-trip precision loss.
+// PctPagosATiempo is reconstructed from pct_pagos_a_tiempo_str for the same
+// reason. FechaProxPago is reconstructed from the epoch-seconds field.
 func clienteDocToDirectorioDoc(cd ClienteDoc) outbound.DirectorioDoc {
-	return outbound.DirectorioDoc{
+	doc := outbound.DirectorioDoc{
 		ClienteID:          cd.ClienteID,
 		Nombre:             cd.Nombre,
 		ZonaID:             cd.ZonaID,
@@ -197,5 +205,14 @@ func clienteDocToDirectorioDoc(cd ClienteDoc) outbound.DirectorioDoc {
 		Monetary:           parseDecimal(cd.Monetary),
 		NextBestProduct:    cd.NextBestProduct,
 		TienePulso:         cd.TienePulso,
+		TierRiesgo:         cd.TierRiesgo,
+		PctPagosATiempo:    parseDecimal(cd.PctPagosATiempoStr),
 	}
+
+	// Reconstruct FechaProxPago from epoch-seconds; leave zero when absent.
+	if cd.FechaProxPagoTs != 0 {
+		doc.FechaProxPago = time.Unix(cd.FechaProxPagoTs, 0).UTC()
+	}
+
+	return doc
 }

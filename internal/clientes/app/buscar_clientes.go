@@ -16,13 +16,15 @@ import (
 // Empty SortBy means "default order": nombre:asc on the browse path, or
 // Meilisearch relevance when a text query is present.
 const (
-	sortByNombre     = "nombre"
-	sortBySaldo      = "saldo"
-	sortByZona       = "zona"
-	sortByScore      = "score"
-	sortBySegmento   = "segmento"
-	sortByEstadoPago = "estado_pago"
-	sortByRecencia   = "recencia"
+	sortByNombre      = "nombre"
+	sortBySaldo       = "saldo"
+	sortByZona        = "zona"
+	sortByScore       = "score"
+	sortBySegmento    = "segmento"
+	sortByEstadoPago  = "estado_pago"
+	sortByRecencia    = "recencia"
+	sortByPuntualidad = "puntualidad" // maps to pct_pagos_a_tiempo
+	sortByProxPago    = "prox_pago"   // maps to fecha_prox_pago_ts
 )
 
 // ErrSortByInvalido is returned when SortBy is not one of the allowed columns.
@@ -36,7 +38,8 @@ var ErrSortByInvalido = apperror.NewValidation(
 func validSortBy(sortBy string) bool {
 	switch sortBy {
 	case "", sortByNombre, sortBySaldo, sortByZona,
-		sortByScore, sortBySegmento, sortByEstadoPago, sortByRecencia:
+		sortByScore, sortBySegmento, sortByEstadoPago, sortByRecencia,
+		sortByPuntualidad, sortByProxPago:
 		return true
 	default:
 		return false
@@ -63,6 +66,8 @@ type BuscarClientesInput struct {
 	EstadoPago string
 	// ScoreMin keeps only items whose pulse Score >= this value. Nil = no filter.
 	ScoreMin *int
+	// TierRiesgo restricts to a specific cobranza risk tier (exact match). Empty = no filter.
+	TierRiesgo string
 
 	// SortBy selects the sort column. Empty = default (nombre:asc browse, relevance search).
 	// Allowed values: nombre, saldo, zona, score, segmento, estado_pago, recencia.
@@ -115,6 +120,7 @@ func (s *Service) BuscarClientes(ctx context.Context, in BuscarClientesInput) (B
 		Segmento:      in.Segmento,
 		EstadoPago:    in.EstadoPago,
 		ScoreMin:      in.ScoreMin,
+		TierRiesgo:    in.TierRiesgo,
 		SortBy:        in.SortBy,
 		SortOrder:     in.SortOrder,
 		Offset:        offset,
