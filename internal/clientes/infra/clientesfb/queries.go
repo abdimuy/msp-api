@@ -272,7 +272,12 @@ const selectVentaClienteCols = `
 	pv.CLIENTE_ID,
 	pv.FECHA,
 	pv.FOLIO,
-	pv.IMPORTE_NETO,
+	-- Total = importe neto + impuestos (lo que adeuda el cliente). IMPORTE_NETO
+	-- es el precio SIN IVA; el cliente debe el bruto, que además coincide con el
+	-- saldo (computado abajo con i.IMPORTE+i.IMPUESTO) y con el cargo en CC.
+	-- VERIFICADO vivo: N00002192 7586.21 + 1213.79 = 8800.00 (cerrado).
+	-- CAST por el bug de escala del driver firebirdsql en expresiones NUMERIC.
+	CAST(pv.IMPORTE_NETO + pv.TOTAL_IMPUESTOS AS NUMERIC(18,2)) AS TOTAL,
 	CASE WHEN EXISTS (
 		SELECT 1 FROM DOCTOS_PV_COBROS cob
 		WHERE cob.DOCTO_PV_ID = pv.DOCTO_PV_ID AND cob.FORMA_COBRO_ID = 71
