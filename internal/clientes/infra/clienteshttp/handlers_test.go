@@ -66,7 +66,7 @@ func (f *fakeRepo) ObtenerCliente(_ context.Context, _ int) (*domain.Cliente, er
 	return f.cliente, nil
 }
 
-func (f *fakeRepo) ObtenerResumenFicha(_ context.Context, _ int) (outbound.ResumenFicha, error) {
+func (f *fakeRepo) ObtenerResumenFicha(_ context.Context, _ int, _ outbound.RangoFechas) (outbound.ResumenFicha, error) {
 	if f.resumenErr != nil {
 		return outbound.ResumenFicha{}, f.resumenErr
 	}
@@ -729,6 +729,93 @@ func TestRefrescarBusqueda_RepoError_500(t *testing.T) {
 
 	rec := doJSON(h, http.MethodPost, "/clientes/_search/refresh", nil)
 	assert.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
+}
+
+// ─── Scenario 2b: GET /clientes/{id} date-range filtering ────────────────────
+
+// TestObtenerFicha_ConRangoFechas_200 verifies that valid desde/hasta query
+// params are accepted and the handler returns 200.
+func TestObtenerFicha_ConRangoFechas_200(t *testing.T) {
+	t.Parallel()
+
+	c := newCliente(42)
+	repo := &fakeRepo{cliente: c}
+	svc := buildService(repo, &fakeAnalytics{})
+	cu := userWith(auth.PermClientesLeer)
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/42?desde=2025-01-01&hasta=2025-12-31", nil)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+}
+
+// TestObtenerFicha_SinRango_200 verifies that the endpoint works without date
+// params (all-time aggregation).
+func TestObtenerFicha_SinRango_200(t *testing.T) {
+	t.Parallel()
+
+	c := newCliente(42)
+	repo := &fakeRepo{cliente: c}
+	svc := buildService(repo, &fakeAnalytics{})
+	cu := userWith(auth.PermClientesLeer)
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/42", nil)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+}
+
+// TestObtenerFicha_RangoInvertido_422 verifies that desde > hasta returns 422.
+func TestObtenerFicha_RangoInvertido_422(t *testing.T) {
+	t.Parallel()
+
+	c := newCliente(42)
+	repo := &fakeRepo{cliente: c}
+	svc := buildService(repo, &fakeAnalytics{})
+	cu := userWith(auth.PermClientesLeer)
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/42?desde=2025-12-31&hasta=2025-01-01", nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+}
+
+// TestObtenerFicha_DesdeInvalido_422 verifies that a malformed desde date returns 422.
+func TestObtenerFicha_DesdeInvalido_422(t *testing.T) {
+	t.Parallel()
+
+	c := newCliente(42)
+	repo := &fakeRepo{cliente: c}
+	svc := buildService(repo, &fakeAnalytics{})
+	cu := userWith(auth.PermClientesLeer)
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/42?desde=not-a-date", nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+}
+
+// TestObtenerFicha_UbicacionPresente verifies that ubicacion is present in the
+// ficha response. When the fake repo returns a zero-value Cliente (no GPS), the
+// field is still present with Disponible=false.
+func TestObtenerFicha_UbicacionPresente(t *testing.T) {
+	t.Parallel()
+
+	c := newCliente(42)
+	repo := &fakeRepo{cliente: c}
+	svc := buildService(repo, &fakeAnalytics{})
+	cu := userWith(auth.PermClientesLeer)
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/42", nil)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	var resp struct {
+		Ubicacion struct {
+			Lat        float64 `json:"lat"`
+			Lng        float64 `json:"lng"`
+			Disponible bool    `json:"disponible"`
+		} `json:"ubicacion"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	// newCliente builds with zero-value Ubicacion — Disponible must be false.
+	assert.False(t, resp.Ubicacion.Disponible)
 }
 
 // ─── Auth gate tests ──────────────────────────────────────────────────────────

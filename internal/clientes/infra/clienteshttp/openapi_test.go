@@ -29,7 +29,7 @@ func (stubRepo) ObtenerCliente(_ context.Context, _ int) (*domain.Cliente, error
 	return nil, domain.ErrClienteNotFound
 }
 
-func (stubRepo) ObtenerResumenFicha(_ context.Context, _ int) (outbound.ResumenFicha, error) {
+func (stubRepo) ObtenerResumenFicha(_ context.Context, _ int, _ outbound.RangoFechas) (outbound.ResumenFicha, error) {
 	return outbound.ResumenFicha{}, nil
 }
 

@@ -3,9 +3,11 @@ package clienteshttp
 
 import (
 	"context"
+	"time"
 
 	clientesapp "github.com/abdimuy/msp-api/internal/clientes/app"
 	"github.com/abdimuy/msp-api/internal/clientes/ports/outbound"
+	"github.com/abdimuy/msp-api/internal/platform/apperror"
 
 	"github.com/abdimuy/msp-api/internal/auth"
 )
@@ -89,7 +91,12 @@ func (h *Handlers) ObtenerFicha(ctx context.Context, input *ObtenerFichaInput) (
 		return nil, err
 	}
 
-	ficha, err := h.svc.ObtenerFicha(ctx, input.ID)
+	rango, err := parseFichaRango(input.Desde, input.Hasta)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+
+	ficha, err := h.svc.ObtenerFicha(ctx, input.ID, rango)
 	if err != nil {
 		return nil, mapAppError(err)
 	}
@@ -97,6 +104,47 @@ func (h *Handlers) ObtenerFicha(ctx context.Context, input *ObtenerFichaInput) (
 	out := &ObtenerFichaOutput{}
 	out.Body = toFichaDTO(ficha)
 	return out, nil
+}
+
+// parseFichaRango parses optional date-only strings (YYYY-MM-DD) into a RangoFechas.
+// Returns a validation error when both dates are present and desde > hasta.
+func parseFichaRango(desdeStr, hastaStr string) (outbound.RangoFechas, error) {
+	const layout = "2006-01-02"
+	var rango outbound.RangoFechas
+
+	if desdeStr != "" {
+		t, err := time.Parse(layout, desdeStr)
+		if err != nil {
+			return outbound.RangoFechas{}, apperror.NewValidation(
+				"ficha_rango_desde_invalido",
+				"el valor de desde no es una fecha válida (formato esperado: YYYY-MM-DD)",
+			)
+		}
+		tu := t.UTC()
+		rango.Desde = &tu
+	}
+	if hastaStr != "" {
+		t, err := time.Parse(layout, hastaStr)
+		if err != nil {
+			return outbound.RangoFechas{}, apperror.NewValidation(
+				"ficha_rango_hasta_invalido",
+				"el valor de hasta no es una fecha válida (formato esperado: YYYY-MM-DD)",
+			)
+		}
+		// Set end-of-day (23:59:59 UTC) to make hasta inclusive.
+		t = t.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
+		tu := t.UTC()
+		rango.Hasta = &tu
+	}
+
+	if rango.Desde != nil && rango.Hasta != nil && rango.Desde.After(*rango.Hasta) {
+		return outbound.RangoFechas{}, apperror.NewValidation(
+			"ficha_rango_invalido",
+			"el rango de fechas es inválido: desde debe ser anterior o igual a hasta",
+		)
+	}
+
+	return rango, nil
 }
 
 // ListarVentasCliente handles GET /clientes/{id}/ventas.

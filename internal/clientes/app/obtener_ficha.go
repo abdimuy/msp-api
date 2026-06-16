@@ -20,11 +20,16 @@ type FichaCliente struct {
 
 // ObtenerFicha assembles a Customer 360 view for the given clienteID.
 //
+// rango optionally restricts the activity aggregations (KPIs and time series)
+// to a date window. SaldoTotal is always the live outstanding balance and is
+// never range-bounded. A zero-value RangoFechas (both pointers nil) returns
+// all-time aggregations.
+//
 // The analytics pulse is fetched on a best-effort basis: if the client has no
 // materialized row in the analytics module (TienePulso=false) the ficha is still
 // returned successfully. Only a transport failure on ObtenerPulso is treated as
 // an error.
-func (s *Service) ObtenerFicha(ctx context.Context, clienteID int) (FichaCliente, error) {
+func (s *Service) ObtenerFicha(ctx context.Context, clienteID int, rango outbound.RangoFechas) (FichaCliente, error) {
 	const source = "clientes.ObtenerFicha"
 
 	// Step 1: fetch client identity.
@@ -38,7 +43,7 @@ func (s *Service) ObtenerFicha(ctx context.Context, clienteID int) (FichaCliente
 	}
 
 	// Step 2: fetch aggregated financial summary.
-	resumen, err := s.repo.ObtenerResumenFicha(ctx, clienteID)
+	resumen, err := s.repo.ObtenerResumenFicha(ctx, clienteID, rango)
 	if err != nil {
 		if appErr, ok := apperror.As(err); ok {
 			return FichaCliente{}, appErr.WithSource(source)

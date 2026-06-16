@@ -77,6 +77,11 @@ func toFichaDTO(ficha clientesapp.FichaCliente) FichaDTO {
 			Poblacion: c.Direccion().Poblacion(),
 			Estado:    c.Direccion().Estado(),
 		},
+		Ubicacion: UbicacionDTO{
+			Lat:        c.Ubicacion().Lat,
+			Lng:        c.Ubicacion().Lng,
+			Disponible: c.Ubicacion().Disponible,
+		},
 		Telefono:      c.Telefono(),
 		LimiteCredito: c.LimiteCredito().StringFixed(moneyScale),
 		Notas:         c.Notas(),

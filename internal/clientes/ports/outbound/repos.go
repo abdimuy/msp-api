@@ -3,11 +3,20 @@ package outbound
 
 import (
 	"context"
+	"time"
 
 	"github.com/shopspring/decimal"
 
 	"github.com/abdimuy/msp-api/internal/clientes/domain"
 )
+
+// RangoFechas is an optional inclusive date range for ficha activity aggregations.
+// Nil pointers mean "no bound on that end" (all-time).
+// SaldoTotal is never range-bounded — it is the live outstanding balance.
+type RangoFechas struct {
+	Desde *time.Time
+	Hasta *time.Time
+}
 
 // ListParams is the cursor-pagination input accepted by every List method.
 // Cursor is opaque to the caller (server encodes/decodes it); PageSize is the
@@ -146,7 +155,10 @@ type ClientesRepo interface {
 	// (not an error) when the client has no records — the aggregate query
 	// returns zero rows rather than ErrClienteNotFound. Callers that need
 	// existence validation must call ObtenerCliente first.
-	ObtenerResumenFicha(ctx context.Context, clienteID int) (ResumenFicha, error)
+	// rango is an optional inclusive date range for activity aggregations
+	// (TotalComprado, TotalAbonado, AbonosPorMes, CompradoVsAbonado);
+	// SaldoTotal is always the live outstanding balance, never range-bounded.
+	ObtenerResumenFicha(ctx context.Context, clienteID int, rango RangoFechas) (ResumenFicha, error)
 
 	// ListarVentas returns a cursor-paginated list of sale headers for a client,
 	// ordered by sale date descending.

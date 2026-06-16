@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/abdimuy/msp-api/internal/analytics"
 	"github.com/abdimuy/msp-api/internal/clientes/app"
@@ -34,7 +35,7 @@ func TestObtenerFicha_ClienteYPulsoPresentes(t *testing.T) {
 	}
 
 	svc := newFichaService(repo, anl)
-	ficha, err := svc.ObtenerFicha(ctx, 1)
+	ficha, err := svc.ObtenerFicha(ctx, 1, outbound.RangoFechas{})
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -64,7 +65,7 @@ func TestObtenerFicha_PulsoAusenteDegradasinError(t *testing.T) {
 	anl := &fakeAnalyticsClient{pulsos: map[int]analytics.ClientePulsoContract{}}
 
 	svc := newFichaService(repo, anl)
-	ficha, err := svc.ObtenerFicha(ctx, 2)
+	ficha, err := svc.ObtenerFicha(ctx, 2, outbound.RangoFechas{})
 	if err != nil {
 		t.Fatalf("expected no error on pulse degradation, got %v", err)
 	}
@@ -85,7 +86,7 @@ func TestObtenerFicha_ClienteNotFound(t *testing.T) {
 	anl := &fakeAnalyticsClient{}
 
 	svc := newFichaService(repo, anl)
-	_, err := svc.ObtenerFicha(ctx, 999)
+	_, err := svc.ObtenerFicha(ctx, 999, outbound.RangoFechas{})
 
 	if err == nil {
 		t.Fatal("expected error on missing cliente")
@@ -115,7 +116,7 @@ func TestObtenerFicha_ResumenInfraError(t *testing.T) {
 	anl := &fakeAnalyticsClient{}
 
 	svc := newFichaService(repo, anl)
-	_, err := svc.ObtenerFicha(ctx, 1)
+	_, err := svc.ObtenerFicha(ctx, 1, outbound.RangoFechas{})
 
 	if err == nil {
 		t.Fatal("expected error when resumen fetch fails")
@@ -144,7 +145,7 @@ func TestObtenerFicha_PulsoTransportError(t *testing.T) {
 	anl := &fakeAnalyticsClient{pulsoErr: transportErr}
 
 	svc := newFichaService(repo, anl)
-	_, err := svc.ObtenerFicha(ctx, 1)
+	_, err := svc.ObtenerFicha(ctx, 1, outbound.RangoFechas{})
 
 	if err == nil {
 		t.Fatal("expected error on analytics transport failure")
@@ -155,5 +156,38 @@ func TestObtenerFicha_PulsoTransportError(t *testing.T) {
 	}
 	if appErr.Kind != apperror.KindInternal {
 		t.Errorf("expected KindInternal for transport error, got %v", appErr.Kind)
+	}
+}
+
+// TestObtenerFicha_RangoPasadoAlRepo verifies that the RangoFechas is forwarded
+// to the repository unchanged, so the DB query uses the caller-supplied window.
+func TestObtenerFicha_RangoPasadoAlRepo(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	cliente := newCliente(1, "Rango Test")
+	repo := &fakeClientesRepo{
+		clienteByID: map[int]*domain.Cliente{1: cliente},
+	}
+	anl := &fakeAnalyticsClient{pulsos: map[int]analytics.ClientePulsoContract{}}
+
+	desde := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	hasta := time.Date(2025, 12, 31, 0, 0, 0, 0, time.UTC)
+	rango := outbound.RangoFechas{Desde: &desde, Hasta: &hasta}
+
+	svc := newFichaService(repo, anl)
+	_, err := svc.ObtenerFicha(ctx, 1, rango)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if repo.lastRango.Desde == nil {
+		t.Error("expected non-nil Desde forwarded to repo")
+	} else if !repo.lastRango.Desde.Equal(desde) {
+		t.Errorf("Desde: got %v, want %v", repo.lastRango.Desde, desde)
+	}
+	if repo.lastRango.Hasta == nil {
+		t.Error("expected non-nil Hasta forwarded to repo")
+	} else if !repo.lastRango.Hasta.Equal(hasta) {
+		t.Errorf("Hasta: got %v, want %v", repo.lastRango.Hasta, hasta)
 	}
 }

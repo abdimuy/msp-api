@@ -3,6 +3,7 @@ package clientesfb
 
 import (
 	"database/sql"
+	"strconv"
 	"strings"
 
 	"github.com/shopspring/decimal"
@@ -38,6 +39,9 @@ type clienteRowRaw struct {
 	poblRaw     firebird.Win1252
 	estadoRaw   firebird.Win1252
 	telefonoRaw firebird.Win1252
+	// GPS fields from LIBRES_CLIENTES (CHARACTER SET NONE, raw ASCII decimal text)
+	latRaw sql.NullString
+	lngRaw sql.NullString
 }
 
 func (r *clienteRowRaw) scanFrom(s scannable) error {
@@ -56,6 +60,8 @@ func (r *clienteRowRaw) scanFrom(s scannable) error {
 		&r.poblRaw,
 		&r.estadoRaw,
 		&r.telefonoRaw,
+		&r.latRaw,
+		&r.lngRaw,
 	)
 }
 
@@ -80,8 +86,28 @@ func (r *clienteRowRaw) assemble() (*domain.Cliente, error) {
 			Poblacion: string(r.poblRaw),
 			Estado:    string(r.estadoRaw),
 		}),
-		Telefono: string(r.telefonoRaw),
+		Telefono:  string(r.telefonoRaw),
+		Ubicacion: parseUbicacion(r.latRaw, r.lngRaw),
 	}), nil
+}
+
+// parseUbicacion parses GPS coordinate strings from LIBRES_CLIENTES.U_LATITUD /
+// U_LONGITUD (CHARACTER SET NONE, raw ASCII decimal text). Returns a zero-value
+// Ubicacion (Disponible=false) when either value is absent, empty, non-numeric,
+// or out of valid WGS-84 range.
+func parseUbicacion(latStr, lngStr sql.NullString) domain.Ubicacion {
+	if !latStr.Valid || !lngStr.Valid {
+		return domain.Ubicacion{}
+	}
+	lat, errLat := strconv.ParseFloat(strings.TrimSpace(latStr.String), 64)
+	lng, errLng := strconv.ParseFloat(strings.TrimSpace(lngStr.String), 64)
+	if errLat != nil || errLng != nil {
+		return domain.Ubicacion{}
+	}
+	if lat < -90 || lat > 90 || lng < -180 || lng > 180 {
+		return domain.Ubicacion{}
+	}
+	return domain.Ubicacion{Lat: lat, Lng: lng, Disponible: true}
 }
 
 // ─── directorioRowRaw ────────────────────────────────────────────────────────
@@ -109,6 +135,8 @@ func (r *directorioRowRaw) scanFrom(s scannable) error {
 		&r.poblRaw,
 		&r.estadoRaw,
 		&r.telefonoRaw,
+		&r.latRaw,
+		&r.lngRaw,
 		&r.saldoRaw,
 	)
 }

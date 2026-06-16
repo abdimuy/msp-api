@@ -91,11 +91,14 @@ func buildDirectorioCompletoQuery(f outbound.FiltroDirectorio) (string, []any) {
 	if f.ConSaldo {
 		// Wrap in a derived table so the ConSaldo predicate applies to the
 		// already-computed SALDO_TOTAL. The inner query keeps the grouped join.
+		// Column list must match selectDirectorioColsGrouped (selectClienteCols + SALDO_TOTAL),
+		// including the two GPS columns added to selectClienteCols.
 		inner := queryListarDirectorioCompletoBase + andClause
 		query := `SELECT ` +
 			`d.CLIENTE_ID, d.NOMBRE, d.LIMITE_CREDITO, d.NOTAS, d.ESTATUS, ` +
 			`d.ZONA_CLIENTE_ID, d.ZONA_NOMBRE, d.COBRADOR_ID, d.COBRADOR_NOMBRE, ` +
 			`d.NOMBRE_CALLE, d.COLONIA, d.POBLACION, d.ESTADO_NOMBRE, d.TELEFONO1, ` +
+			`d.U_LATITUD, d.U_LONGITUD, ` +
 			`d.SALDO_TOTAL ` +
 			`FROM (` + inner + `) d WHERE d.SALDO_TOTAL > 0 ORDER BY d.NOMBRE, d.CLIENTE_ID`
 		return query, args
@@ -145,9 +148,19 @@ func (r *ClientesRepo) ListarDirectorioCompleto(
 
 // ─── ObtenerResumenFicha ──────────────────────────────────────────────────────
 
-func (r *ClientesRepo) fetchFichaTotales(ctx context.Context, q firebird.Querier, clienteID int) (decimal.Decimal, decimal.Decimal, int, int, error) {
+func (r *ClientesRepo) fetchFichaTotales(ctx context.Context, q firebird.Querier, clienteID int, rango outbound.RangoFechas) (decimal.Decimal, decimal.Decimal, int, int, error) {
+	qry := queryResumenFichaTotales
+	args := []any{clienteID}
+	if rango.Desde != nil {
+		qry += "\n  AND cargo.FECHA >= ?"
+		args = append(args, firebird.ToWallClock(*rango.Desde))
+	}
+	if rango.Hasta != nil {
+		qry += "\n  AND cargo.FECHA <= ?"
+		args = append(args, firebird.ToWallClock(*rango.Hasta))
+	}
 	var totRow resumenFichaTotalesRaw
-	if serr := totRow.scanFrom(q.QueryRowContext(ctx, queryResumenFichaTotales, clienteID)); serr != nil {
+	if serr := totRow.scanFrom(q.QueryRowContext(ctx, qry, args...)); serr != nil {
 		return decimal.Zero, decimal.Zero, 0, 0, firebird.MapError(serr)
 	}
 	return totRow.assemble()
@@ -164,8 +177,19 @@ func (r *ClientesRepo) fetchFichaSaldo(ctx context.Context, q firebird.Querier, 
 	return firebird.ScanDecimal(saldoRaw, 2)
 }
 
-func (r *ClientesRepo) fetchAbonosPorMes(ctx context.Context, q firebird.Querier, clienteID int) ([]outbound.PuntoMensual, error) {
-	rows, err := q.QueryContext(ctx, queryAbonosPorMes, clienteID)
+func (r *ClientesRepo) fetchAbonosPorMes(ctx context.Context, q firebird.Querier, clienteID int, rango outbound.RangoFechas) ([]outbound.PuntoMensual, error) {
+	qry := queryAbonosPorMesBase
+	args := []any{clienteID}
+	if rango.Desde != nil {
+		qry += "\n  AND abono.FECHA >= ?"
+		args = append(args, firebird.ToWallClock(*rango.Desde))
+	}
+	if rango.Hasta != nil {
+		qry += "\n  AND abono.FECHA <= ?"
+		args = append(args, firebird.ToWallClock(*rango.Hasta))
+	}
+	qry += queryAbonosPorMesGroupOrder
+	rows, err := q.QueryContext(ctx, qry, args...)
 	if err != nil {
 		return nil, firebird.MapError(err)
 	}
@@ -188,8 +212,34 @@ func (r *ClientesRepo) fetchAbonosPorMes(ctx context.Context, q firebird.Querier
 	return pts, nil
 }
 
-func (r *ClientesRepo) fetchCompradoVsAbonado(ctx context.Context, q firebird.Querier, clienteID int) ([]outbound.PuntoCompradoAbonado, error) {
-	rows, err := q.QueryContext(ctx, queryCompradoVsAbonado, clienteID, clienteID)
+func (r *ClientesRepo) fetchCompradoVsAbonado(ctx context.Context, q firebird.Querier, clienteID int, rango outbound.RangoFechas) ([]outbound.PuntoCompradoAbonado, error) {
+	compradoExtra, abonadoExtra := "", ""
+	if rango.Desde != nil {
+		compradoExtra += "\n    AND cargo.FECHA >= ?"
+		abonadoExtra += "\n    AND abono.FECHA >= ?"
+	}
+	if rango.Hasta != nil {
+		compradoExtra += "\n    AND cargo.FECHA <= ?"
+		abonadoExtra += "\n    AND abono.FECHA <= ?"
+	}
+	qry := buildCompradoVsAbonadoQuery(compradoExtra, abonadoExtra)
+	// Build args: clienteID (comprado branch) + optional dates, then clienteID
+	// (abonado branch) + optional dates.
+	args := []any{clienteID}
+	if rango.Desde != nil {
+		args = append(args, firebird.ToWallClock(*rango.Desde))
+	}
+	if rango.Hasta != nil {
+		args = append(args, firebird.ToWallClock(*rango.Hasta))
+	}
+	args = append(args, clienteID)
+	if rango.Desde != nil {
+		args = append(args, firebird.ToWallClock(*rango.Desde))
+	}
+	if rango.Hasta != nil {
+		args = append(args, firebird.ToWallClock(*rango.Hasta))
+	}
+	rows, err := q.QueryContext(ctx, qry, args...)
 	if err != nil {
 		return nil, firebird.MapError(err)
 	}
@@ -214,12 +264,14 @@ func (r *ClientesRepo) fetchCompradoVsAbonado(ctx context.Context, q firebird.Qu
 
 // ObtenerResumenFicha returns the pre-aggregated financial summary for a client.
 // Uses a read-only snapshot transaction so all sub-queries see consistent data.
-func (r *ClientesRepo) ObtenerResumenFicha(ctx context.Context, clienteID int) (outbound.ResumenFicha, error) {
+// rango optionally filters activity aggregations (TotalComprado, TotalAbonado,
+// series) by date; SaldoTotal is always the live outstanding balance.
+func (r *ClientesRepo) ObtenerResumenFicha(ctx context.Context, clienteID int, rango outbound.RangoFechas) (outbound.ResumenFicha, error) {
 	var resumen outbound.ResumenFicha
 	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
 		q := firebird.GetQuerier(ctx, r.pool.DB)
 
-		totalComprado, totalAbonado, numVentas, numPagos, err := r.fetchFichaTotales(ctx, q, clienteID)
+		totalComprado, totalAbonado, numVentas, numPagos, err := r.fetchFichaTotales(ctx, q, clienteID, rango)
 		if err != nil {
 			return err
 		}
@@ -231,6 +283,7 @@ func (r *ClientesRepo) ObtenerResumenFicha(ctx context.Context, clienteID int) (
 		// SaldoTotal sourced from the MSP_SALDOS_VENTAS cache (user-approved
 		// exception) so the ficha saldo equals the directory saldo exactly,
 		// rather than re-deriving TotalComprado − TotalAbonado natively.
+		// SaldoTotal is NOT range-bounded — it is the live outstanding balance.
 		saldoTotal, err := r.fetchFichaSaldo(ctx, q, clienteID)
 		if err != nil {
 			return err
@@ -248,13 +301,13 @@ func (r *ClientesRepo) ObtenerResumenFicha(ctx context.Context, clienteID int) (
 			resumen.PctLiquidado = totalAbonado.Div(totalComprado).Mul(decimal.NewFromInt(100))
 		}
 
-		pts, err := r.fetchAbonosPorMes(ctx, q, clienteID)
+		pts, err := r.fetchAbonosPorMes(ctx, q, clienteID, rango)
 		if err != nil {
 			return err
 		}
 		resumen.AbonosPorMes = pts
 
-		cva, err := r.fetchCompradoVsAbonado(ctx, q, clienteID)
+		cva, err := r.fetchCompradoVsAbonado(ctx, q, clienteID, rango)
 		if err != nil {
 			return err
 		}

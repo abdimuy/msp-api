@@ -71,9 +71,11 @@ type ClienteListItemDTO struct {
 
 // ─── Endpoint 2: GET /clientes/{id} ─────────────────────────────────────────
 
-// ObtenerFichaInput collects the path parameters for GET /clientes/{id}.
+// ObtenerFichaInput collects the path and query parameters for GET /clientes/{id}.
 type ObtenerFichaInput struct {
-	ID int `path:"id" doc:"ID de Microsip del cliente"`
+	ID    int    `path:"id"    doc:"ID de Microsip del cliente"`
+	Desde string `query:"desde" doc:"Inicio del rango de fechas (YYYY-MM-DD); vacío = sin límite inferior"`
+	Hasta string `query:"hasta" doc:"Fin del rango de fechas (YYYY-MM-DD); vacío = sin límite superior"`
 }
 
 // ObtenerFichaOutput is the response for GET /clientes/{id}.
@@ -81,11 +83,20 @@ type ObtenerFichaOutput struct {
 	Body FichaDTO
 }
 
+// UbicacionDTO holds the GPS coordinates for a client.
+// Disponible is false when the client has no coordinates on record.
+type UbicacionDTO struct {
+	Lat        float64 `json:"lat"        doc:"Latitud WGS-84"`
+	Lng        float64 `json:"lng"        doc:"Longitud WGS-84"`
+	Disponible bool    `json:"disponible" doc:"true cuando el cliente tiene coordenadas GPS registradas"`
+}
+
 // FichaDTO is the full 360 view of a client.
 type FichaDTO struct {
 	ClienteID     int          `json:"cliente_id"      doc:"ID de Microsip del cliente"`
 	Nombre        string       `json:"nombre"          doc:"Nombre del cliente"`
 	Direccion     DireccionDTO `json:"direccion"       doc:"Componentes de la dirección"`
+	Ubicacion     UbicacionDTO `json:"ubicacion"       doc:"Coordenadas GPS del domicilio del cliente"`
 	Telefono      string       `json:"telefono"        doc:"Teléfono de contacto"`
 	LimiteCredito string       `json:"limite_credito"  doc:"Límite de crédito aprobado (2 decimales)"`
 	Notas         string       `json:"notas"           doc:"Notas del cliente en Microsip"`

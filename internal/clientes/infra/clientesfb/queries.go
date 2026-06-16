@@ -32,6 +32,9 @@ package clientesfb
 // NONE column with a UTF-8 connection literal causes Firebird to attempt
 // transliteration, failing on bytes such as ñ (0xF1). The columns are selected
 // bare and scanned as firebird.Win1252, which handles NULL → "" internally.
+// GPS columns (U_LATITUD, U_LONGITUD) are VARCHAR CHARACTER SET NONE in
+// LIBRES_CLIENTES — raw ASCII decimal text (e.g. "18.5032044"). Scanned as
+// sql.NullString and parsed to float64 by parseUbicacion in rowmappers.go.
 const selectClienteCols = `
 	c.CLIENTE_ID,
 	c.NOMBRE,
@@ -46,14 +49,17 @@ const selectClienteCols = `
 	d.COLONIA,
 	d.POBLACION,
 	e.NOMBRE                   AS ESTADO_NOMBRE,
-	d.TELEFONO1`
+	d.TELEFONO1,
+	lc.U_LATITUD,
+	lc.U_LONGITUD`
 
 const clienteFromClause = `
 FROM CLIENTES c
 LEFT JOIN ZONAS_CLIENTES z    ON z.ZONA_CLIENTE_ID = c.ZONA_CLIENTE_ID
 LEFT JOIN COBRADORES cob      ON cob.COBRADOR_ID   = c.COBRADOR_ID
 LEFT JOIN DIRS_CLIENTES d     ON d.CLIENTE_ID      = c.CLIENTE_ID AND d.ES_DIR_PPAL = 'S'
-LEFT JOIN ESTADOS e           ON e.ESTADO_ID       = d.ESTADO_ID`
+LEFT JOIN ESTADOS e           ON e.ESTADO_ID       = d.ESTADO_ID
+LEFT JOIN LIBRES_CLIENTES lc  ON lc.CLIENTE_ID     = c.CLIENTE_ID`
 
 const queryObtenerCliente = `
 SELECT ` + selectClienteCols + clienteFromClause + `
@@ -156,10 +162,10 @@ FROM MSP_SALDOS_VENTAS s
 WHERE s.CLIENTE_ID = ?
   AND s.CARGO_CANCELADO = 'N'`
 
-// queryAbonosPorMes returns monthly payment totals for the trailing chart.
-// Grouped by (EXTRACT YEAR, EXTRACT MONTH) of the pago document's FECHA.
-// Ordered ascending so the UI can render a left-to-right timeline.
-const queryAbonosPorMes = `
+// queryAbonosPorMesBase is the date-range-filterable base for the monthly
+// payment totals query. It ends after the last WHERE condition so the repo can
+// append optional AND abono.FECHA >= ? / <= ? before the GROUP BY / ORDER BY.
+const queryAbonosPorMesBase = `
 SELECT
   EXTRACT(YEAR FROM abono.FECHA)                                            AS ANIO,
   EXTRACT(MONTH FROM abono.FECHA)                                           AS MES,
@@ -171,21 +177,26 @@ WHERE cargo.CLIENTE_ID = ?
   AND cargo.CONCEPTO_CC_ID = 5
   AND cargo.CANCELADO = 'N'
   AND i.TIPO_IMPTE = 'R'
-  AND i.CANCELADO = 'N'
+  AND i.CANCELADO = 'N'`
+
+// queryAbonosPorMesGroupOrder is the GROUP BY + ORDER BY suffix appended after
+// any optional date-range conditions.
+const queryAbonosPorMesGroupOrder = `
 GROUP BY EXTRACT(YEAR FROM abono.FECHA), EXTRACT(MONTH FROM abono.FECHA)
 ORDER BY ANIO, MES`
 
-// queryCompradoVsAbonado returns paired (comprado, abonado) monthly data for
-// the dual-series ficha chart.
+// buildCompradoVsAbonadoQuery returns a dual-series comprado/abonado query with
+// optional date range clauses injected into both UNION branches.
 //
-// Comprado is bucketed by cargo.FECHA (the sale date, a DATE column).
-// Abonado  is bucketed by abono.FECHA (the payment date, also DATE).
-// Two aggregations are UNION-ed then re-grouped at the outer level.
+// compradoExtra is appended after the last WHERE condition of the comprado
+// branch (cargo.FECHA); abonadoExtra is appended to the abonado branch
+// (abono.FECHA). Both are empty strings when the rango is unbounded.
 //
 // VERIFY-AT-CHECKPOINT: DOCTOS_CC.FECHA is type DATE (not TIMESTAMP) per B2
 // research. EXTRACT(YEAR/MONTH FROM DATE) is valid in Firebird — confirm no
 // cast needed.
-const queryCompradoVsAbonado = `
+func buildCompradoVsAbonadoQuery(compradoExtra, abonadoExtra string) string {
+	return `
 SELECT
   ANIO, MES,
   CAST(SUM(COMPRADO) AS NUMERIC(18,2)) AS COMPRADO,
@@ -202,7 +213,7 @@ FROM (
     AND cargo.CONCEPTO_CC_ID = 5
     AND cargo.CANCELADO = 'N'
     AND i.TIPO_IMPTE = 'C'
-    AND i.CANCELADO = 'N'
+    AND i.CANCELADO = 'N'` + compradoExtra + `
   UNION ALL
   SELECT
     EXTRACT(YEAR FROM abono.FECHA)  AS ANIO,
@@ -216,10 +227,11 @@ FROM (
     AND cargo.CONCEPTO_CC_ID = 5
     AND cargo.CANCELADO = 'N'
     AND i.TIPO_IMPTE = 'R'
-    AND i.CANCELADO = 'N'
+    AND i.CANCELADO = 'N'` + abonadoExtra + `
 ) t
 GROUP BY ANIO, MES
 ORDER BY ANIO, MES`
+}
 
 // ─── ListarVentas ─────────────────────────────────────────────────────────────
 

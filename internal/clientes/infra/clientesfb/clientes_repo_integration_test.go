@@ -155,7 +155,7 @@ func TestClientesRepo_ObtenerResumenFicha(t *testing.T) {
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		// Use a known credit client from B2 research sample.
-		resumen, err := repo.ObtenerResumenFicha(ctx, 2782515)
+		resumen, err := repo.ObtenerResumenFicha(ctx, 2782515, outbound.RangoFechas{})
 		require.NoError(t, err)
 
 		// Totals should be positive for a known active credit client.

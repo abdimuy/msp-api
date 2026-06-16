@@ -10,9 +10,17 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+// Ubicacion holds the GPS coordinates of a client's address.
+// Disponible is false when the client has no valid GPS coordinates on record.
+type Ubicacion struct {
+	Lat        float64
+	Lng        float64
+	Disponible bool
+}
+
 // Cliente is a read-only identity projection built from the native Microsip
-// tables CLIENTES, DIRS_CLIENTES, ZONAS_CLIENTES, and COBRADORES. The module
-// never creates or mutates clientes — Microsip is the owner.
+// tables CLIENTES, DIRS_CLIENTES, ZONAS_CLIENTES, COBRADORES, and LIBRES_CLIENTES.
+// The module never creates or mutates clientes — Microsip is the owner.
 //
 // Deliberately deviates from the Type A/B/C entity standards:
 //   - No audit embed (we own no timestamps — Microsip does).
@@ -30,6 +38,7 @@ type Cliente struct {
 	cobradorNombre string
 	direccion      Direccion
 	telefono       string
+	ubicacion      Ubicacion
 }
 
 // HydrateClienteParams holds all fields needed to reconstruct a Cliente from
@@ -46,6 +55,7 @@ type HydrateClienteParams struct {
 	CobradorNombre string
 	Direccion      Direccion
 	Telefono       string
+	Ubicacion      Ubicacion
 }
 
 // HydrateCliente reconstructs a Cliente from Microsip persistence with zero
@@ -63,6 +73,7 @@ func HydrateCliente(p HydrateClienteParams) *Cliente {
 		cobradorNombre: p.CobradorNombre,
 		direccion:      p.Direccion,
 		telefono:       p.Telefono,
+		ubicacion:      p.Ubicacion,
 	}
 }
 
@@ -100,3 +111,7 @@ func (c *Cliente) Direccion() Direccion { return c.direccion }
 
 // Telefono returns the primary phone number for this client.
 func (c *Cliente) Telefono() string { return c.telefono }
+
+// Ubicacion returns the GPS coordinates for this client's address.
+// Disponible is false when no valid GPS is on record.
+func (c *Cliente) Ubicacion() Ubicacion { return c.ubicacion }

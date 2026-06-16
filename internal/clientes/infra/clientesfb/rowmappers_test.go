@@ -132,6 +132,83 @@ func TestScanNullDecimalOrZero_Int64_ScalesCorrectly(t *testing.T) {
 	assert.Equal(t, "8.5", d.String())
 }
 
+// ─── parseUbicacion ───────────────────────────────────────────────────────────
+
+func TestParseUbicacion_ValidCoordinates(t *testing.T) {
+	t.Parallel()
+	got := parseUbicacion(
+		sql.NullString{String: "18.5032044", Valid: true},
+		sql.NullString{String: "-97.3987927", Valid: true},
+	)
+	if !got.Disponible {
+		t.Error("expected Disponible=true for valid coordinates")
+	}
+	if got.Lat != 18.5032044 {
+		t.Errorf("Lat: got %v, want 18.5032044", got.Lat)
+	}
+	if got.Lng != -97.3987927 {
+		t.Errorf("Lng: got %v, want -97.3987927", got.Lng)
+	}
+}
+
+func TestParseUbicacion_EmptyStrings(t *testing.T) {
+	t.Parallel()
+	got := parseUbicacion(
+		sql.NullString{String: "", Valid: true},
+		sql.NullString{String: "", Valid: true},
+	)
+	if got.Disponible {
+		t.Error("expected Disponible=false for empty strings")
+	}
+}
+
+func TestParseUbicacion_NullValues(t *testing.T) {
+	t.Parallel()
+	got := parseUbicacion(
+		sql.NullString{Valid: false},
+		sql.NullString{Valid: false},
+	)
+	if got.Disponible {
+		t.Error("expected Disponible=false for null values")
+	}
+}
+
+func TestParseUbicacion_OutOfRangeLatitude(t *testing.T) {
+	t.Parallel()
+	got := parseUbicacion(
+		sql.NullString{String: "999", Valid: true},
+		sql.NullString{String: "-97.3987927", Valid: true},
+	)
+	if got.Disponible {
+		t.Error("expected Disponible=false for out-of-range latitude")
+	}
+}
+
+func TestParseUbicacion_GarbageValue(t *testing.T) {
+	t.Parallel()
+	got := parseUbicacion(
+		sql.NullString{String: "n/a", Valid: true},
+		sql.NullString{String: "-97.3987927", Valid: true},
+	)
+	if got.Disponible {
+		t.Error("expected Disponible=false for non-numeric latitude")
+	}
+}
+
+func TestParseUbicacion_WhitespaceHandled(t *testing.T) {
+	t.Parallel()
+	got := parseUbicacion(
+		sql.NullString{String: "  18.4583612  ", Valid: true},
+		sql.NullString{String: "  -97.376794  ", Valid: true},
+	)
+	if !got.Disponible {
+		t.Error("expected Disponible=true when coordinates have surrounding whitespace")
+	}
+	if got.Lat != 18.4583612 {
+		t.Errorf("Lat: got %v, want 18.4583612", got.Lat)
+	}
+}
+
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 func nullableInt64(v int64) sql.NullInt64 {

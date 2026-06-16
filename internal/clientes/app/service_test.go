@@ -57,6 +57,7 @@ type fakeClientesRepo struct {
 	// ObtenerResumenFicha
 	resumen    outbound.ResumenFicha
 	resumenErr error
+	lastRango  outbound.RangoFechas
 
 	// ListarVentas
 	ventasPage    outbound.Page[*domain.VentaCliente]
@@ -86,7 +87,8 @@ func (f *fakeClientesRepo) ObtenerCliente(_ context.Context, clienteID int) (*do
 	return c, nil
 }
 
-func (f *fakeClientesRepo) ObtenerResumenFicha(_ context.Context, _ int) (outbound.ResumenFicha, error) {
+func (f *fakeClientesRepo) ObtenerResumenFicha(_ context.Context, _ int, rango outbound.RangoFechas) (outbound.ResumenFicha, error) {
+	f.lastRango = rango
 	if f.resumenErr != nil {
 		return outbound.ResumenFicha{}, f.resumenErr
 	}

@@ -100,7 +100,7 @@ func TestObtenerFicha_ClienteAppError(t *testing.T) {
 	anl := &fakeAnalyticsClient{}
 	svc := app.NewService(repo, anl, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
-	_, err := svc.ObtenerFicha(ctx, 1)
+	_, err := svc.ObtenerFicha(ctx, 1, outbound.RangoFechas{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
