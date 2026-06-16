@@ -94,7 +94,13 @@ LEFT JOIN (
 
 // queryListarDirectorioCompletoBase is the SELECT + FROM (with the grouped saldo
 // join) for the unbounded directory listing. No FIRST clause — every matching row
-// is returned. ESTATUS IN ('A','B') matches the paginated listing's rationale.
+// is returned.
+//
+// ESTATUS IN ('A','B') keeps both ALTA (A = active) and BAJA (B = dado de baja)
+// clients, excluding only vendor-route pseudo-clients (V) and cancelled (C).
+// Clients dados de baja (B) are intentionally retained: a large share of clients
+// that still carry outstanding saldo are ESTATUS='B', and cobradores must be able
+// to find them in the directory to collect. (B is "baja", not "bloqueado".)
 //
 // PERFORMANCE (measured live 2026-06-16, FB 5.0):
 //   - Unfiltered (whole padrón, ~38k rows): sub-second now that the grouped saldo
