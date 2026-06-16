@@ -146,9 +146,10 @@ type ClienteDoc struct {
 	PctPagosATiempoStr string `json:"pct_pagos_a_tiempo_str"`
 
 	// FechaProxPagoTs is the estimated next payment date as Unix epoch-seconds.
-	// Sortable. Zero when no cadence is available (sorts last with the
-	// Meilisearch default "null/zero last" behavior).
-	FechaProxPagoTs int64 `json:"fecha_prox_pago_ts"`
+	// Sortable. omitempty drops the field when zero (no cadence) so the document
+	// has NO sort value → Meilisearch ranks absent-attribute docs LAST in both
+	// asc and desc, keeping clients with no scheduled payment out of the way.
+	FechaProxPagoTs int64 `json:"fecha_prox_pago_ts,omitempty"`
 
 	// FechaProxPago is the RFC3339 UTC display string for the next payment date.
 	// Empty when no cadence is available.

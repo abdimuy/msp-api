@@ -210,8 +210,17 @@ func TestReconciliarDirectorio_B2_CobranzaSignalsInIndex(t *testing.T) {
 	assert.Contains(t, sample, "tier_riesgo", "doc must have tier_riesgo")
 	assert.Contains(t, sample, "pct_pagos_a_tiempo", "doc must have pct_pagos_a_tiempo")
 	assert.Contains(t, sample, "pct_pagos_a_tiempo_str", "doc must have pct_pagos_a_tiempo_str")
-	assert.Contains(t, sample, "fecha_prox_pago_ts", "doc must have fecha_prox_pago_ts")
 	assert.Contains(t, sample, "fecha_prox_pago", "doc must have fecha_prox_pago")
+	// fecha_prox_pago_ts uses omitempty: it is present (>0) only when a próximo
+	// pago exists, and ABSENT otherwise so no-cadence docs have no sort value and
+	// Meilisearch ranks them last. Assert that contract against the display string.
+	if sample["fecha_prox_pago"] != "" {
+		assert.Contains(t, sample, "fecha_prox_pago_ts",
+			"a doc with a próximo pago must carry the sortable epoch field")
+	} else {
+		assert.NotContains(t, sample, "fecha_prox_pago_ts",
+			"a no-cadence doc must omit fecha_prox_pago_ts (omitempty → sorts last)")
+	}
 
 	// (b) Filter by tier_riesgo — Meilisearch must accept the filter clause.
 	// Count hits per tier; log totals (candidatos table may be empty on first run).

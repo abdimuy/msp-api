@@ -70,7 +70,8 @@ type BuscarClientesInput struct {
 	TierRiesgo string
 
 	// SortBy selects the sort column. Empty = default (nombre:asc browse, relevance search).
-	// Allowed values: nombre, saldo, zona, score, segmento, estado_pago, recencia.
+	// Allowed values: nombre, saldo, zona, score, segmento, estado_pago, recencia,
+	// puntualidad, prox_pago.
 	SortBy string
 	// SortOrder is "asc" (default) or "desc".
 	SortOrder string
