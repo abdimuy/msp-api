@@ -73,8 +73,14 @@ func (stubSearch) EstaListo() bool                                             {
 func (stubSearch) Buscar(_ context.Context, _ string, _ int) ([]int, error)    { return nil, nil }
 func (stubSearch) Reconciliar(_ context.Context, _ []outbound.SearchDoc) error { return nil }
 
+type stubDirectoryIndex struct{}
+
+func (stubDirectoryIndex) Reconciliar(_ context.Context, _ []outbound.DirectorioDoc) error {
+	return nil
+}
+
 func buildOpenAPITestService() *clientesapp.Service {
-	return clientesapp.NewService(stubRepo{}, stubAnalytics{}, stubSearch{}, stubClock{})
+	return clientesapp.NewService(stubRepo{}, stubAnalytics{}, stubSearch{}, stubDirectoryIndex{}, stubClock{})
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

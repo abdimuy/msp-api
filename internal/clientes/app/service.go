@@ -19,6 +19,7 @@ type Service struct {
 	repo      outbound.ClientesRepo
 	analytics outbound.AnalyticsClient
 	search    outbound.SearchIndex
+	dirIndex  outbound.DirectoryIndex
 	// clock is injected per the module Service convention. Phase 1 reads derive
 	// no values from the wall clock (recencia and date math live in the analytics
 	// pulse), so it is currently unused; it is reserved for the Fase 2 date-range
@@ -26,18 +27,20 @@ type Service struct {
 	clock outbound.Clock
 }
 
-// NewService builds a Service wired against the given ports. All four ports are
+// NewService builds a Service wired against the given ports. All five ports are
 // required in production; tests may pass fakes.
 func NewService(
 	repo outbound.ClientesRepo,
 	analytics outbound.AnalyticsClient,
 	search outbound.SearchIndex,
+	dirIndex outbound.DirectoryIndex,
 	clock outbound.Clock,
 ) *Service {
 	return &Service{
 		repo:      repo,
 		analytics: analytics,
 		search:    search,
+		dirIndex:  dirIndex,
 		clock:     clock,
 	}
 }

@@ -173,10 +173,21 @@ func (f *fakeSearch) Reconciliar(_ context.Context, docs []outbound.SearchDoc) e
 	return f.reconcileErr
 }
 
+// ─── Fake directory index ─────────────────────────────────────────────────────
+
+// noopDirectoryIndex is a test stub that satisfies outbound.DirectoryIndex
+// without doing anything. Used when the handler under test does not exercise
+// the Meilisearch reconcile path.
+type noopDirectoryIndex struct{}
+
+func (noopDirectoryIndex) Reconciliar(_ context.Context, _ []outbound.DirectorioDoc) error {
+	return nil
+}
+
 // ─── Service builder ──────────────────────────────────────────────────────────
 
 func buildService(repo outbound.ClientesRepo, ac outbound.AnalyticsClient, si outbound.SearchIndex) *clientesapp.Service {
-	return clientesapp.NewService(repo, ac, si, testClock{})
+	return clientesapp.NewService(repo, ac, si, noopDirectoryIndex{}, testClock{})
 }
 
 // ─── Auth helpers ─────────────────────────────────────────────────────────────

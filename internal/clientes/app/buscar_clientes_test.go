@@ -50,7 +50,7 @@ func TestBuscarClientes_SearchPath_IndexListo_UsaBuscar(t *testing.T) {
 	}
 	anl := &fakeAnalyticsClient{pulsos: map[int]analytics.ClientePulsoContract{}}
 
-	svc := app.NewService(repo, anl, idx, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, anl, idx, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 	result, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
 		Q:          "carlos",
 		Pagination: outbound.ListParams{PageSize: 10},
@@ -90,7 +90,7 @@ func TestBuscarClientes_SearchPath_IndexError_Propaga(t *testing.T) {
 	repo := &fakeClientesRepo{}
 	anl := &fakeAnalyticsClient{pulsos: map[int]analytics.ClientePulsoContract{}}
 
-	svc := app.NewService(repo, anl, idx, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, anl, idx, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 	_, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
 		Q:          "garcia",
 		Pagination: outbound.ListParams{PageSize: 10},
@@ -121,7 +121,7 @@ func TestBuscarClientes_SearchPath_IndexNoListo_UsaFallback(t *testing.T) {
 	}
 	anl := &fakeAnalyticsClient{pulsos: map[int]analytics.ClientePulsoContract{}}
 
-	svc := app.NewService(repo, anl, idx, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, anl, idx, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 	result, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
 		Q:          "ana",
 		Pagination: outbound.ListParams{PageSize: 10},
@@ -145,7 +145,7 @@ func TestBuscarClientes_SearchPath_ZeroIDs_EmptyPage(t *testing.T) {
 	repo := &fakeClientesRepo{clienteByID: map[int]*domain.Cliente{}}
 	anl := &fakeAnalyticsClient{}
 
-	svc := app.NewService(repo, anl, idx, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, anl, idx, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 	result, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
 		Q:          "xyz",
 		Pagination: outbound.ListParams{PageSize: 10},
@@ -182,7 +182,7 @@ func TestBuscarClientes_SearchPath_OffsetCursorPagination(t *testing.T) {
 		dirPage:     outbound.Page[outbound.DirectorioItem]{Items: items},
 	}
 	anl := &fakeAnalyticsClient{pulsos: map[int]analytics.ClientePulsoContract{}}
-	svc := app.NewService(repo, anl, idx, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, anl, idx, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	// First page.
 	page1, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
@@ -246,7 +246,7 @@ func TestBuscarClientes_SearchPath_PulsoFiltersSegmento(t *testing.T) {
 			// 3 has no pulse row → excluded when Segmento filter is set
 		},
 	}
-	svc := app.NewService(repo, anl, idx, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, anl, idx, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	result, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
 		Q:          "x",
@@ -284,7 +284,7 @@ func TestBuscarClientes_SearchPath_PulsoFiltersEstadoPago(t *testing.T) {
 			2: newPulso(2, 40, "ACTIVO", "ATRASADO"),
 		},
 	}
-	svc := app.NewService(repo, anl, idx, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, anl, idx, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	result, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
 		Q:          "x",
@@ -324,7 +324,7 @@ func TestBuscarClientes_SearchPath_PulsoFiltersScoreMin(t *testing.T) {
 			// 3 has no pulse → excluded with any pulse filter active
 		},
 	}
-	svc := app.NewService(repo, anl, idx, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, anl, idx, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	result, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
 		Q:          "x",
@@ -362,7 +362,7 @@ func TestBuscarClientes_SearchPath_NoPulsoFilter_IncludesNoPulsoItems(t *testing
 			// 2 has no row
 		},
 	}
-	svc := app.NewService(repo, anl, idx, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, anl, idx, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	result, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
 		Q:          "x",
@@ -406,7 +406,7 @@ func TestBuscarClientes_BrowsePath_EnriquecidoYNextCursorCarryThrough(t *testing
 		},
 	}
 	idx := &fakeSearchIndex{ready: false}
-	svc := app.NewService(repo, anl, idx, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, anl, idx, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	result, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
 		Q:          "",
@@ -465,7 +465,7 @@ func TestBuscarClientes_GlobalPath_PulsoFilterGlobal(t *testing.T) {
 			// 3 has no pulse → excluded (pulse filter active)
 		},
 	}
-	svc := app.NewService(repo, anl, &fakeSearchIndex{}, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, anl, &fakeSearchIndex{}, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	result, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
 		Q:          "",
@@ -503,7 +503,7 @@ func TestBuscarClientes_BrowsePath_RepoError(t *testing.T) {
 		clienteByID: map[int]*domain.Cliente{},
 		dirErr:      errors.New("connection reset"),
 	}
-	svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeSearchIndex{}, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeSearchIndex{}, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	_, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
 		Q:          "",
@@ -565,7 +565,7 @@ func TestBuscarClientes_GlobalPath_TakenWhenSortBySet(t *testing.T) {
 		clienteByID: map[int]*domain.Cliente{1: all[0].Cliente},
 		dirCompleto: all,
 	}
-	svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeSearchIndex{}, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeSearchIndex{}, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	_, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
 		Q:          "",
@@ -592,7 +592,7 @@ func TestBuscarClientes_BrowsePath_TakenWhenNoSortNoFilter(t *testing.T) {
 		clienteByID: map[int]*domain.Cliente{1: items[0].Cliente},
 		dirPage:     outbound.Page[outbound.DirectorioItem]{Items: items},
 	}
-	svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeSearchIndex{}, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeSearchIndex{}, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	_, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
 		Q:          "",
@@ -613,7 +613,7 @@ func TestBuscarClientes_InvalidSortBy_ReturnsValidation(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	svc := app.NewService(&fakeClientesRepo{}, &fakeAnalyticsClient{}, &fakeSearchIndex{}, fixedClock{T: fixedTime})
+	svc := app.NewService(&fakeClientesRepo{}, &fakeAnalyticsClient{}, &fakeSearchIndex{}, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 	_, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
 		SortBy:     "telefono",
 		Pagination: outbound.ListParams{PageSize: 10},
@@ -715,7 +715,7 @@ func TestBuscarClientes_GlobalPath_NativeSorts(t *testing.T) {
 				clients[it.Cliente.ClienteID()] = it.Cliente
 			}
 			repo := &fakeClientesRepo{clienteByID: clients, dirCompleto: tc.all}
-			svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeSearchIndex{}, fixedClock{T: fixedTime})
+			svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeSearchIndex{}, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 			result, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
 				SortBy:     tc.sortBy,
@@ -782,7 +782,7 @@ func TestBuscarClientes_GlobalPath_PulseSorts_NullLast(t *testing.T) {
 			ctx := context.Background()
 			repo := &fakeClientesRepo{clienteByID: clients, dirCompleto: all}
 			anl := &fakeAnalyticsClient{pulsos: pulsos}
-			svc := app.NewService(repo, anl, &fakeSearchIndex{}, fixedClock{T: fixedTime})
+			svc := app.NewService(repo, anl, &fakeSearchIndex{}, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 			result, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
 				SortBy:     tc.sortBy,
@@ -825,7 +825,7 @@ func TestBuscarClientes_GlobalPath_OffsetPagination(t *testing.T) {
 		clients[it.Cliente.ClienteID()] = it.Cliente
 	}
 	repo := &fakeClientesRepo{clienteByID: clients, dirCompleto: all}
-	svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeSearchIndex{}, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeSearchIndex{}, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	page1, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
 		SortBy:     "nombre",
@@ -863,7 +863,7 @@ func TestBuscarClientes_GlobalPath_RepoError(t *testing.T) {
 	ctx := context.Background()
 
 	repo := &fakeClientesRepo{dirCompletoErr: errors.New("boom")}
-	svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeSearchIndex{}, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, &fakeAnalyticsClient{}, &fakeSearchIndex{}, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	_, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
 		SortBy:     "nombre",
@@ -902,7 +902,7 @@ func TestBuscarClientes_SearchPath_SortByOverridesRank(t *testing.T) {
 		clienteByID: clients,
 		dirPage:     outbound.Page[outbound.DirectorioItem]{Items: items},
 	}
-	svc := app.NewService(repo, &fakeAnalyticsClient{}, idx, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, &fakeAnalyticsClient{}, idx, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	result, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
 		Q:          "x",

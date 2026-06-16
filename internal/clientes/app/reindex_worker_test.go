@@ -69,7 +69,7 @@ func (r *countingRepo) BuscarClienteIDsBasico(_ context.Context, _ string, _ int
 // buildWorkerFromCountingRepo wires a ReindexWorker against countingRepo so
 // that LeerDocumentosBusqueda calls are tracked through the counting wrapper.
 func buildWorkerFromCountingRepo(repo *countingRepo, idx *controlledSearchIndex, interval time.Duration) *app.ReindexWorker {
-	svc := app.NewService(repo, &fakeAnalyticsClient{}, idx, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, &fakeAnalyticsClient{}, idx, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 	return app.NewReindexWorker(svc, fixedClock{T: fixedTime}, app.ReindexWorkerConfig{Interval: interval}, nil)
 }
 

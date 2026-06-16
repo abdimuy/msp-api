@@ -32,7 +32,7 @@ func TestBuscarClientes_SearchPath_PageSizeDefault(t *testing.T) {
 	}
 	anl := &fakeAnalyticsClient{pulsos: map[int]analytics.ClientePulsoContract{}}
 
-	svc := app.NewService(repo, anl, idx, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, anl, idx, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	// PageSize=0 → should default to 20, return all 3 items.
 	result, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
@@ -59,7 +59,7 @@ func TestBuscarClientes_SearchPath_OffsetBeyondTotal(t *testing.T) {
 		dirPage:     outbound.Page[outbound.DirectorioItem]{Items: items},
 	}
 	anl := &fakeAnalyticsClient{pulsos: map[int]analytics.ClientePulsoContract{}}
-	svc := app.NewService(repo, anl, idx, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, anl, idx, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	// offset=50 > total=1 → empty page.
 	result, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
@@ -86,7 +86,7 @@ func TestBuscarClientes_SearchPath_FetchError(t *testing.T) {
 		dirErr:      errors.New("db fetch error"),
 	}
 	anl := &fakeAnalyticsClient{}
-	svc := app.NewService(repo, anl, idx, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, anl, idx, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	_, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
 		Q:          "x",
@@ -116,7 +116,7 @@ func TestBuscarClientes_BrowsePath_EnrichError(t *testing.T) {
 		dirPage:     outbound.Page[outbound.DirectorioItem]{Items: items},
 	}
 	anl := &fakeAnalyticsClient{pulsosErr: errors.New("analytics down")}
-	svc := app.NewService(repo, anl, &fakeSearchIndex{}, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, anl, &fakeSearchIndex{}, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	_, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
 		Q:          "",
@@ -147,7 +147,7 @@ func TestBuscarClientes_SearchPath_EnrichError(t *testing.T) {
 		dirPage:     outbound.Page[outbound.DirectorioItem]{Items: items},
 	}
 	anl := &fakeAnalyticsClient{pulsosErr: errors.New("analytics timeout")}
-	svc := app.NewService(repo, anl, idx, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, anl, idx, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	_, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
 		Q:          "x",
@@ -168,7 +168,7 @@ func TestObtenerFicha_ClienteAppError(t *testing.T) {
 	dbErr := apperror.NewInternal("db_timeout", "timeout al leer cliente")
 	repo := &fakeClientesRepo{clienteErr: dbErr, clienteByID: map[int]*domain.Cliente{}}
 	anl := &fakeAnalyticsClient{}
-	svc := app.NewService(repo, anl, &fakeSearchIndex{}, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, anl, &fakeSearchIndex{}, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	_, err := svc.ObtenerFicha(ctx, 1)
 	if err == nil {
@@ -204,7 +204,7 @@ func TestBuscarClientes_SearchPath_SortUnranked(t *testing.T) {
 		dirPage:     outbound.Page[outbound.DirectorioItem]{Items: items},
 	}
 	anl := &fakeAnalyticsClient{pulsos: map[int]analytics.ClientePulsoContract{}}
-	svc := app.NewService(repo, anl, idx, fixedClock{T: fixedTime})
+	svc := app.NewService(repo, anl, idx, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 
 	result, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
 		Q:          "q",

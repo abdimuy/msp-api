@@ -201,6 +201,23 @@ func (f *fakeAnalyticsClient) ObtenerPulsos(_ context.Context, clienteIDs []int)
 	return result, nil
 }
 
+// ─── fakeDirectoryIndex ──────────────────────────────────────────────────────
+
+// fakeDirectoryIndex is a test double for outbound.DirectoryIndex that records
+// calls to Reconciliar for assertion in unit tests.
+type fakeDirectoryIndex struct {
+	lastDocs []outbound.DirectorioDoc
+	err      error
+}
+
+func (f *fakeDirectoryIndex) Reconciliar(_ context.Context, docs []outbound.DirectorioDoc) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.lastDocs = docs
+	return nil
+}
+
 // ─── fakeSearchIndex ─────────────────────────────────────────────────────────
 
 type fakeSearchIndex struct {

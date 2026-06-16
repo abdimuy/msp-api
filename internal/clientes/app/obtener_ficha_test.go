@@ -14,7 +14,7 @@ import (
 )
 
 func newFichaService(repo outbound.ClientesRepo, anl outbound.AnalyticsClient) *app.Service {
-	return app.NewService(repo, anl, &fakeSearchIndex{}, fixedClock{T: fixedTime})
+	return app.NewService(repo, anl, &fakeSearchIndex{}, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 }
 
 func TestObtenerFicha_ClienteYPulsoPresentes(t *testing.T) {

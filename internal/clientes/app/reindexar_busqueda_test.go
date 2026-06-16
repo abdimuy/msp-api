@@ -37,7 +37,7 @@ func (c *controlledSearchIndex) Reconciliar(_ context.Context, docs []outbound.S
 
 // buildReindexSvc constructs a *app.Service wired to the given fakes.
 func buildReindexSvc(repo *fakeClientesRepo, idx *controlledSearchIndex) *app.Service {
-	return app.NewService(repo, &fakeAnalyticsClient{}, idx, fixedClock{T: fixedTime})
+	return app.NewService(repo, &fakeAnalyticsClient{}, idx, &fakeDirectoryIndex{}, fixedClock{T: fixedTime})
 }
 
 func TestReindexarBusqueda_HappyPath(t *testing.T) {

@@ -13,10 +13,13 @@ import (
 	analyticsdomain "github.com/abdimuy/msp-api/internal/analytics/domain"
 	clientesapp "github.com/abdimuy/msp-api/internal/clientes/app"
 	clientesfb "github.com/abdimuy/msp-api/internal/clientes/infra/clientesfb"
+	clientessearchmeili "github.com/abdimuy/msp-api/internal/clientes/infra/clientessearch"
 	clientessearch "github.com/abdimuy/msp-api/internal/clientes/infra/search"
 	clientesoutbound "github.com/abdimuy/msp-api/internal/clientes/ports/outbound"
+	"github.com/abdimuy/msp-api/internal/platform/config"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 	"github.com/abdimuy/msp-api/internal/platform/lifecycle"
+	platformmeili "github.com/abdimuy/msp-api/internal/platform/meilisearch"
 )
 
 // ── cross-module adapter ──────────────────────────────────────────────────────
@@ -86,14 +89,24 @@ func provideClientesClock() clientesoutbound.Clock {
 	return clientesoutbound.ProductionClock{}
 }
 
+// provideClientesDirectoryIndex builds the Meilisearch-backed directory index
+// implementation for the clientes module.
+func provideClientesDirectoryIndex(
+	client platformmeili.Client,
+	cfg *config.Config,
+) clientesoutbound.DirectoryIndex {
+	return clientessearchmeili.NewMeilisearchDirectoryIndex(client, cfg.Meilisearch.IndexName)
+}
+
 // provideClientesService assembles the clientes read-only query service.
 func provideClientesService(
 	repo clientesoutbound.ClientesRepo,
 	analyticsClient clientesoutbound.AnalyticsClient,
 	search clientesoutbound.SearchIndex,
+	dirIndex clientesoutbound.DirectoryIndex,
 	clock clientesoutbound.Clock,
 ) *clientesapp.Service {
-	return clientesapp.NewService(repo, analyticsClient, search, clock)
+	return clientesapp.NewService(repo, analyticsClient, search, dirIndex, clock)
 }
 
 // provideClientesReindexWorker builds the background worker that periodically
@@ -111,4 +124,31 @@ func provideClientesReindexWorker(
 // lifecycle so it starts with the application and stops cleanly on shutdown.
 func registerClientesReindexWorkerLifecycle(lc fx.Lifecycle, w *clientesapp.ReindexWorker) {
 	lifecycle.Append(lc, "clientes-reindex-worker", w)
+}
+
+// provideClientesDirectoryReconcileWorker builds the background worker that
+// periodically materializes the Meilisearch directory index from Firebird.
+// The interval is taken from cfg.Meilisearch.SyncInterval (default 5m).
+// This worker runs ALONGSIDE the ReindexWorker (Bleve) — both coexist.
+func provideClientesDirectoryReconcileWorker(
+	svc *clientesapp.Service,
+	clock clientesoutbound.Clock,
+	cfg *config.Config,
+	logger *slog.Logger,
+) *clientesapp.DirectoryReconcileWorker {
+	return clientesapp.NewDirectoryReconcileWorker(
+		svc,
+		clock,
+		clientesapp.DirectoryReconcileWorkerConfig{Interval: cfg.Meilisearch.SyncInterval},
+		logger,
+	)
+}
+
+// registerClientesDirectoryReconcileWorkerLifecycle hooks the directory reconcile
+// worker into the fx lifecycle alongside the Bleve reindex worker.
+func registerClientesDirectoryReconcileWorkerLifecycle(
+	lc fx.Lifecycle,
+	w *clientesapp.DirectoryReconcileWorker,
+) {
+	lifecycle.Append(lc, "clientes-directory-reconcile-worker", w)
 }
