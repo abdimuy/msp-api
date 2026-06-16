@@ -87,7 +87,7 @@ func (r *clienteRowRaw) assemble() (*domain.Cliente, error) {
 // ─── directorioRowRaw ────────────────────────────────────────────────────────
 
 // directorioRowRaw extends clienteRowRaw with the aggregated saldo field.
-// Ordering matches selectDirectorioCols: all clienteCols then saldo.
+// Ordering matches selectDirectorioColsGrouped: all clienteCols then saldo.
 type directorioRowRaw struct {
 	clienteRowRaw
 	saldoRaw any

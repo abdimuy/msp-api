@@ -54,8 +54,6 @@ type fakeRepo struct {
 	detalleByID map[int]outbound.VentaDetalle
 	detalleErr  error
 
-	dirPage     outbound.Page[outbound.DirectorioItem]
-	dirErr      error
 	dirCompleto []outbound.DirectorioItem
 	dirComplErr error
 
@@ -96,13 +94,6 @@ func (f *fakeRepo) ObtenerVentaDetalle(_ context.Context, doctoPVID int) (outbou
 		return outbound.VentaDetalle{}, domain.ErrVentaNotFound
 	}
 	return d, nil
-}
-
-func (f *fakeRepo) ListarDirectorio(_ context.Context, _ outbound.ListParams, _ outbound.FiltroDirectorio) (outbound.Page[outbound.DirectorioItem], error) {
-	if f.dirErr != nil {
-		return outbound.Page[outbound.DirectorioItem]{}, f.dirErr
-	}
-	return f.dirPage, nil
 }
 
 func (f *fakeRepo) ListarDirectorioCompleto(_ context.Context, _ outbound.FiltroDirectorio) ([]outbound.DirectorioItem, error) {
@@ -760,7 +751,7 @@ func TestRefrescarBusqueda_RepoError_500(t *testing.T) {
 
 func TestListarClientes_Unauthenticated_401(t *testing.T) {
 	t.Parallel()
-	repo := &fakeRepo{dirPage: outbound.Page[outbound.DirectorioItem]{}}
+	repo := &fakeRepo{}
 	svc := buildService(repo, &fakeAnalytics{}, &fakeSearch{})
 	h := buildRouterNoAuth(svc)
 	rec := doJSON(h, http.MethodGet, "/clientes", nil)
@@ -769,7 +760,7 @@ func TestListarClientes_Unauthenticated_401(t *testing.T) {
 
 func TestListarClientes_NoPermission_403(t *testing.T) {
 	t.Parallel()
-	repo := &fakeRepo{dirPage: outbound.Page[outbound.DirectorioItem]{}}
+	repo := &fakeRepo{}
 	svc := buildService(repo, &fakeAnalytics{}, &fakeSearch{})
 	cu := userWith() // no perms
 	h := buildRouter(svc, cu)

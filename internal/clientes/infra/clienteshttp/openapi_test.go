@@ -41,10 +41,6 @@ func (stubRepo) ObtenerVentaDetalle(_ context.Context, _ int) (outbound.VentaDet
 	return outbound.VentaDetalle{}, domain.ErrVentaNotFound
 }
 
-func (stubRepo) ListarDirectorio(_ context.Context, _ outbound.ListParams, _ outbound.FiltroDirectorio) (outbound.Page[outbound.DirectorioItem], error) {
-	return outbound.Page[outbound.DirectorioItem]{}, nil
-}
-
 func (stubRepo) ListarDirectorioCompleto(_ context.Context, _ outbound.FiltroDirectorio) ([]outbound.DirectorioItem, error) {
 	return nil, nil
 }

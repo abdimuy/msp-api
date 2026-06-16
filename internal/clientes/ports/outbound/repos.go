@@ -24,7 +24,7 @@ type Page[T any] struct {
 	NextCursor string
 }
 
-// FiltroDirectorio is the structured filter set accepted by ClientesRepo.ListarDirectorio.
+// FiltroDirectorio is the structured filter set accepted by ClientesRepo.ListarDirectorioCompleto.
 // All pointer fields are optional: nil disables that filter.
 // ClienteIDs, when non-empty, restricts to exactly those client IDs regardless
 // of other filters.

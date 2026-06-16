@@ -210,5 +210,4 @@ func TestReconciliarDirectorio_UsesListarDirectorioCompleto(t *testing.T) {
 
 	_, _ = svc.ReconciliarDirectorio(context.Background())
 	assert.True(t, repo.listarComplCalled, "ReconciliarDirectorio must call ListarDirectorioCompleto")
-	assert.False(t, repo.listarDirCalled, "must NOT call ListarDirectorio (paginated)")
 }

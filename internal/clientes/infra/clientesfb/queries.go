@@ -3,7 +3,7 @@
 // never writes to Microsip. The one read-only exception (user-approved 2026-06-16,
 // for performance) is the directory + ficha total saldo, which is read from the
 // MSP_SALDOS_VENTAS cobranza cache — a read-model OF native cargo facts, verified
-// to match the native saldo formula exactly. See selectDirectorioCols. The cache
+// to match the native saldo formula exactly. See selectDirectorioColsGrouped. The cache
 // is a plain MSP_ table (CHARACTER SET UTF8, NUMERIC) — no Win1252 decoding.
 // Text columns in native Microsip tables are CHARACTER SET NONE (raw Windows-1252
 // bytes) and must be scanned with firebird.Win1252.
@@ -60,53 +60,6 @@ SELECT ` + selectClienteCols + clienteFromClause + `
 WHERE c.CLIENTE_ID = ?`
 
 // ─── Directory listing ────────────────────────────────────────────────────────
-
-// selectDirectorioCols extends selectClienteCols with the aggregated balance.
-//
-// Saldo source — MSP_SALDOS_VENTAS cache (USER-APPROVED EXCEPTION 2026-06-16):
-// Per-client total saldo is SUM(MSP_SALDOS_VENTAS.SALDO) over non-cancelled
-// cargos (CARGO_CANCELADO='N'), grouped by CLIENTE_ID.
-//
-// This is an explicit, user-approved exception to CLAUDE.md hard rule #1
-// ("saldo nativo, nunca MSP_*"). MSP_SALDOS_VENTAS is a read-model cache OF the
-// native cargo facts (one row per cargo/venta, maintained by cobranza via
-// MSP_RECOMPUTE_SALDO_VENTA) — not invented business logic. It encodes the same
-// native formula the directory used before:
-//
-//	SUM(IMPORTE+IMPUESTO WHERE TIPO_IMPTE='C') − SUM(IMPORTE WHERE TIPO_IMPTE='R')
-//
-// over non-cancelled cargos (CONCEPTO_CC_ID=5). VERIFIED live 2026-06-16 to match
-// the native formula exactly (cliente 12440: 504666.60 = 504666.60).
-//
-// Rationale: the native aggregation scans the full ~3.4M-row IMPORTES_DOCTOS_CC,
-// making the unfiltered global directory path ~56s. MSP_SALDOS_VENTAS is small
-// (~103k rows) and indexed on CLIENTE_ID → the same path is now sub-second.
-//
-// CAST(SUM) is mandatory because the firebirdsql v0.9.19 driver returns unscaled
-// *big.Int for aggregates; firebird.ScanDecimal(raw, 2) reads the scaled result.
-const selectDirectorioCols = selectClienteCols + `,
-	COALESCE((
-		SELECT CAST(SUM(s.SALDO) AS NUMERIC(18,2))
-		FROM MSP_SALDOS_VENTAS s
-		WHERE s.CLIENTE_ID = c.CLIENTE_ID
-		  AND s.CARGO_CANCELADO = 'N'
-	), 0) AS SALDO_TOTAL`
-
-// queryListarDirectorioBase is the SELECT + FROM for the directory listing.
-// ESTATUS IN ('A','B') excludes vendor-route pseudo-clients (ESTATUS='V') and
-// cancelled clients (ESTATUS='C'). ESTATUS='B' (bloqueados) is intentionally
-// kept — 63% of clients with saldo are bloqueados and cobradores need to find
-// them.
-const queryListarDirectorioBase = `
-SELECT FIRST ? ` + selectDirectorioCols + clienteFromClause + `
-WHERE c.ESTATUS IN ('A', 'B')`
-
-// queryListarDirectorioInner is the unbounded SELECT (no FIRST ?) used when
-// the ConSaldo derived-table wrapper is needed. The derived table applies
-// WHERE SALDO_TOTAL > 0 so the outer FIRST ? operates on pre-filtered rows.
-const queryListarDirectorioInner = `
-SELECT ` + selectDirectorioCols + clienteFromClause + `
-WHERE c.ESTATUS IN ('A', 'B')`
 
 // ─── Directory listing (complete / unbounded) ────────────────────────────────
 

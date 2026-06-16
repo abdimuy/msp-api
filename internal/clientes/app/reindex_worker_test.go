@@ -40,10 +40,6 @@ func (r *countingRepo) ObtenerCliente(_ context.Context, _ int) (*domain.Cliente
 	return nil, domain.ErrClienteNotFound
 }
 
-func (r *countingRepo) ListarDirectorio(_ context.Context, _ outbound.ListParams, _ outbound.FiltroDirectorio) (outbound.Page[outbound.DirectorioItem], error) {
-	return outbound.Page[outbound.DirectorioItem]{}, nil
-}
-
 func (r *countingRepo) ListarDirectorioCompleto(_ context.Context, _ outbound.FiltroDirectorio) ([]outbound.DirectorioItem, error) {
 	return nil, nil
 }
