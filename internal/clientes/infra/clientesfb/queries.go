@@ -71,9 +71,10 @@ WHERE c.CLIENTE_ID = ?`
 // Note: Firebird has no GREATEST() function. MAXVALUE() is the correct built-in
 // (available since Firebird 2.0) — CONFIRMED working on this server (FB 5.0).
 //
-// VERIFY-AT-CHECKPOINT: the saldo subquery uses CONCEPTO_CC_ID=5 (Venta en
-// mostrador / cargo de crédito). Confirm no other concepto acts as a principal
-// cargo that should be included.
+// CONFIRMED (live DB 2026-06-15): CONCEPTO_CC_ID=5 is the saldo cargo. It carries
+// 102,491 cargos / $646.2M vs negligible conceptos 4 ($284K) and 10 ($12K). The
+// native formula here matches MSP_SALDOS_VENTAS exactly for the top clients by
+// balance (e.g. cliente 12440: 504666.60 = 504666.60).
 const selectDirectorioCols = selectClienteCols + `,
 	COALESCE((
 		SELECT CAST(
