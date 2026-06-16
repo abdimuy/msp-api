@@ -77,7 +77,7 @@ func mapDoc(d outbound.DirectorioDoc) ClienteDoc {
 		ConSaldo:           d.ConSaldo,
 		Segmento:           d.Segmento,
 		EstadoPago:         d.EstadoPago,
-		Score:              float64(d.Score),
+		Score:              d.Score,
 		RecenciaDias:       d.RecenciaDias,
 		Estatus:            d.Estatus,
 		SegmentoOrden:      segmentoOrdinal(d.Segmento),

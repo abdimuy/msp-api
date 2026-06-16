@@ -132,13 +132,11 @@ func registerClientesReindexWorkerLifecycle(lc fx.Lifecycle, w *clientesapp.Rein
 // This worker runs ALONGSIDE the ReindexWorker (Bleve) — both coexist.
 func provideClientesDirectoryReconcileWorker(
 	svc *clientesapp.Service,
-	clock clientesoutbound.Clock,
 	cfg *config.Config,
 	logger *slog.Logger,
 ) *clientesapp.DirectoryReconcileWorker {
 	return clientesapp.NewDirectoryReconcileWorker(
 		svc,
-		clock,
 		clientesapp.DirectoryReconcileWorkerConfig{Interval: cfg.Meilisearch.SyncInterval},
 		logger,
 	)

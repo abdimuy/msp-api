@@ -91,7 +91,6 @@ func TestMeilisearchDirectoryIndex_Reconciliar_MapsFieldsCorrectly(t *testing.T)
 		ClienteID:          42,
 		Nombre:             "JUAN PEREZ",
 		ZonaID:             5,
-		ZonaNombre:         "ZONA NORTE",
 		CobradorID:         11,
 		Estatus:            "A",
 		Telefono:           "3311112222",
@@ -129,7 +128,7 @@ func TestMeilisearchDirectoryIndex_Reconciliar_MapsFieldsCorrectly(t *testing.T)
 	assert.Equal(t, "AL_CORRIENTE", got.EstadoPago)
 	assert.Equal(t, 0, got.EstadoPagoOrden, "AL_CORRIENTE should map to ordinal 0")
 	assert.InEpsilon(t, 1500.50, got.Saldo, 0.001)
-	assert.InEpsilon(t, 72.0, got.Score, 0.001)
+	assert.Equal(t, 72, got.Score)
 	assert.Equal(t, 30, got.RecenciaDias)
 	assert.Equal(t, 5, got.Frecuencia)
 	assert.True(t, got.TienePulso)
@@ -163,8 +162,8 @@ func TestMeilisearchDirectoryIndex_Reconciliar_NoPulse(t *testing.T) {
 	// Unknown/empty segmento and estado_pago → sort-last ordinals.
 	assert.Equal(t, 6, got.SegmentoOrden, "empty segmento should map to sort-last ordinal 6")
 	assert.Equal(t, 5, got.EstadoPagoOrden, "empty estado_pago should map to sort-last ordinal 5")
-	// Zero pulse fields: use InDelta for float comparisons.
-	assert.InDelta(t, 0.0, got.Score, 1e-9)
+	// Zero pulse fields.
+	assert.Equal(t, 0, got.Score)
 	assert.InDelta(t, 0.0, got.Monetary, 1e-9)
 }
 

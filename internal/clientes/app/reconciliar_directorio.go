@@ -64,7 +64,6 @@ func (s *Service) ReconciliarDirectorio(ctx context.Context) (int, error) {
 			ClienteID:          c.ClienteID(),
 			Nombre:             c.Nombre(),
 			ZonaID:             c.ZonaClienteID(),
-			ZonaNombre:         c.ZonaNombre(),
 			CobradorID:         c.CobradorID(),
 			Estatus:            c.Estatus(),
 			Telefono:           c.Telefono(),

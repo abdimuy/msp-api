@@ -6,8 +6,6 @@ import (
 	"log/slog"
 	"sync"
 	"time"
-
-	"github.com/abdimuy/msp-api/internal/clientes/ports/outbound"
 )
 
 // DirectoryReconcileWorkerConfig tunes the worker's cadence. Zero values fall
@@ -39,7 +37,6 @@ func (c *DirectoryReconcileWorkerConfig) applyDefaults() {
 // ReindexWorker (Bleve) — both workers coexist.
 type DirectoryReconcileWorker struct {
 	svc    *Service
-	clock  outbound.Clock
 	cfg    DirectoryReconcileWorkerConfig
 	logger *slog.Logger
 
@@ -52,7 +49,6 @@ type DirectoryReconcileWorker struct {
 // NewDirectoryReconcileWorker builds a worker. cfg zero values are replaced with defaults.
 func NewDirectoryReconcileWorker(
 	svc *Service,
-	clock outbound.Clock,
 	cfg DirectoryReconcileWorkerConfig,
 	logger *slog.Logger,
 ) *DirectoryReconcileWorker {
@@ -62,7 +58,6 @@ func NewDirectoryReconcileWorker(
 	}
 	return &DirectoryReconcileWorker{
 		svc:    svc,
-		clock:  clock,
 		cfg:    cfg,
 		logger: logger,
 	}

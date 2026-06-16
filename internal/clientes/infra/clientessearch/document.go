@@ -71,7 +71,7 @@ type ClienteDoc struct {
 	EstadoPago string `json:"estado_pago"`
 
 	// Score is the analytics winback score [0–100]. Filterable + sortable.
-	Score float64 `json:"score"`
+	Score int `json:"score"`
 
 	// RecenciaDias is the number of days since last purchase. Filterable +
 	// sortable.

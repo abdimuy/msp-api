@@ -19,7 +19,6 @@ type DirectorioDoc struct {
 	ClienteID  int
 	Nombre     string
 	ZonaID     int
-	ZonaNombre string
 	CobradorID int
 	Estatus    string
 	Telefono   string

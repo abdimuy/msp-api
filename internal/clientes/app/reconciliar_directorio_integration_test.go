@@ -92,24 +92,27 @@ func TestReconciliarDirectorio_LiveIntegration(t *testing.T) {
 	assert.Positive(t, n, "should index at least one document")
 	assert.Less(t, elapsed, 120*time.Second, "full reconcile should complete within 2 minutes")
 
-	// Wait briefly for Meilisearch to process the async indexing task.
-	time.Sleep(3 * time.Second)
-
-	// Verify the index has approximately the expected number of documents via
-	// the Meilisearch stats endpoint.
+	// Poll until Meilisearch has processed all documents (or 30s timeout).
 	indexName := cfg.Meilisearch.IndexName
 	statsURL := fmt.Sprintf("%s/indexes/%s/stats", cfg.Meilisearch.URL, indexName)
-	resp, err := http.Get(statsURL) //nolint:noctx // test-only convenience call
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode, "stats endpoint should return 200")
-
-	var stats struct {
-		NumberOfDocuments int64 `json:"numberOfDocuments"` //nolint:tagliatelle // Meilisearch API uses camelCase
+	var finalCount int64
+	pollDeadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(pollDeadline) {
+		resp, pollErr := http.Get(statsURL) //nolint:noctx // test-only convenience call
+		require.NoError(t, pollErr)
+		var stats struct {
+			NumberOfDocuments int64 `json:"numberOfDocuments"` //nolint:tagliatelle // Meilisearch API uses camelCase
+		}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&stats))
+		_ = resp.Body.Close()
+		finalCount = stats.NumberOfDocuments
+		if finalCount >= int64(n) {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&stats))
-	t.Logf("Meilisearch index %q: numberOfDocuments=%d", indexName, stats.NumberOfDocuments)
-	assert.GreaterOrEqual(t, stats.NumberOfDocuments, int64(1000),
+	t.Logf("Meilisearch index %q: numberOfDocuments=%d (reconciled %d)", indexName, finalCount, n)
+	assert.GreaterOrEqual(t, finalCount, int64(1000),
 		"index should contain at least 1000 documents after reconcile")
 
 	// Fetch one document and verify it has the expected fields.
