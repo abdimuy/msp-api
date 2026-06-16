@@ -407,35 +407,44 @@ func (r *pagoRowRaw) assemble() (*domain.Pago, error) {
 	}), nil
 }
 
-// ─── resumenFichaTotalesRaw ───────────────────────────────────────────────────
+// ─── resumenFichaCompradoRaw / resumenFichaAbonadoRaw ────────────────────────
 
-// resumenFichaTotalesRaw holds raw scan targets for the ficha totals query.
-type resumenFichaTotalesRaw struct {
+// resumenFichaCompradoRaw holds raw scan targets for queryResumenFichaComprado
+// (TotalComprado + NumVentas, filtered by cargo.FECHA / sale date).
+type resumenFichaCompradoRaw struct {
 	totalCompradoRaw any
-	totalAbonadoRaw  any
 	numVentasRaw     int
-	numPagosRaw      int
 }
 
-func (r *resumenFichaTotalesRaw) scanFrom(s scannable) error {
-	return s.Scan(
-		&r.totalCompradoRaw,
-		&r.totalAbonadoRaw,
-		&r.numVentasRaw,
-		&r.numPagosRaw,
-	)
+func (r *resumenFichaCompradoRaw) scanFrom(s scannable) error {
+	return s.Scan(&r.totalCompradoRaw, &r.numVentasRaw)
 }
 
-func (r *resumenFichaTotalesRaw) assemble() (decimal.Decimal, decimal.Decimal, int, int, error) {
+func (r *resumenFichaCompradoRaw) assemble() (decimal.Decimal, int, error) {
 	totalComprado, err := firebird.ScanDecimal(r.totalCompradoRaw, 2)
 	if err != nil {
-		return decimal.Zero, decimal.Zero, 0, 0, err
+		return decimal.Zero, 0, err
 	}
+	return totalComprado, r.numVentasRaw, nil
+}
+
+// resumenFichaAbonadoRaw holds raw scan targets for queryResumenFichaAbonado
+// (TotalAbonado + NumPagos, filtered by abono.FECHA / payment date).
+type resumenFichaAbonadoRaw struct {
+	totalAbonadoRaw any
+	numPagosRaw     int
+}
+
+func (r *resumenFichaAbonadoRaw) scanFrom(s scannable) error {
+	return s.Scan(&r.totalAbonadoRaw, &r.numPagosRaw)
+}
+
+func (r *resumenFichaAbonadoRaw) assemble() (decimal.Decimal, int, error) {
 	totalAbonado, err := firebird.ScanDecimal(r.totalAbonadoRaw, 2)
 	if err != nil {
-		return decimal.Zero, decimal.Zero, 0, 0, err
+		return decimal.Zero, 0, err
 	}
-	return totalComprado, totalAbonado, r.numVentasRaw, r.numPagosRaw, nil
+	return totalAbonado, r.numPagosRaw, nil
 }
 
 // ─── abonoMesRowRaw ───────────────────────────────────────────────────────────

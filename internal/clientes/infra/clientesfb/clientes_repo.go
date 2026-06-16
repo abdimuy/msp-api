@@ -148,22 +148,60 @@ func (r *ClientesRepo) ListarDirectorioCompleto(
 
 // ─── ObtenerResumenFicha ──────────────────────────────────────────────────────
 
+// fetchFichaTotales returns TotalComprado, TotalAbonado, NumVentas, NumPagos.
+//
+// Two separate queries are used so that each KPI is gated by the correct date:
+//   - TotalComprado / NumVentas → cargo.FECHA (sale/charge date)
+//   - TotalAbonado  / NumPagos  → abono.FECHA (payment date)
+//
+// This makes the header KPIs definitionally consistent with the chart queries
+// (queryAbonosPorMesBase, buildCompradoVsAbonadoQuery) which already filter
+// abonado activity by abono.FECHA. Without this split, a date range would count
+// "payments on sales created in range" (wrong) instead of "payments made in
+// range" (correct), causing a visible mismatch between the KPI totals and the
+// sum of the chart series.
 func (r *ClientesRepo) fetchFichaTotales(ctx context.Context, q firebird.Querier, clienteID int, rango outbound.RangoFechas) (decimal.Decimal, decimal.Decimal, int, int, error) {
-	qry := queryResumenFichaTotales
-	args := []any{clienteID}
+	// ── Query 1: TotalComprado + NumVentas, filtered by cargo.FECHA ──────────
+	compradoQry := queryResumenFichaComprado
+	compradoArgs := []any{clienteID}
 	if rango.Desde != nil {
-		qry += "\n  AND cargo.FECHA >= ?"
-		args = append(args, firebird.ToWallClock(*rango.Desde))
+		compradoQry += "\n  AND cargo.FECHA >= ?"
+		compradoArgs = append(compradoArgs, firebird.ToWallClock(*rango.Desde))
 	}
 	if rango.Hasta != nil {
-		qry += "\n  AND cargo.FECHA <= ?"
-		args = append(args, firebird.ToWallClock(*rango.Hasta))
+		compradoQry += "\n  AND cargo.FECHA <= ?"
+		compradoArgs = append(compradoArgs, firebird.ToWallClock(*rango.Hasta))
 	}
-	var totRow resumenFichaTotalesRaw
-	if serr := totRow.scanFrom(q.QueryRowContext(ctx, qry, args...)); serr != nil {
+	var compRow resumenFichaCompradoRaw
+	if serr := compRow.scanFrom(q.QueryRowContext(ctx, compradoQry, compradoArgs...)); serr != nil {
 		return decimal.Zero, decimal.Zero, 0, 0, firebird.MapError(serr)
 	}
-	return totRow.assemble()
+	totalComprado, numVentas, err := compRow.assemble()
+	if err != nil {
+		return decimal.Zero, decimal.Zero, 0, 0, err
+	}
+
+	// ── Query 2: TotalAbonado + NumPagos, filtered by abono.FECHA ────────────
+	abonadoQry := queryResumenFichaAbonado
+	abonadoArgs := []any{clienteID}
+	if rango.Desde != nil {
+		abonadoQry += "\n  AND abono.FECHA >= ?"
+		abonadoArgs = append(abonadoArgs, firebird.ToWallClock(*rango.Desde))
+	}
+	if rango.Hasta != nil {
+		abonadoQry += "\n  AND abono.FECHA <= ?"
+		abonadoArgs = append(abonadoArgs, firebird.ToWallClock(*rango.Hasta))
+	}
+	var aboRow resumenFichaAbonadoRaw
+	if serr := aboRow.scanFrom(q.QueryRowContext(ctx, abonadoQry, abonadoArgs...)); serr != nil {
+		return decimal.Zero, decimal.Zero, 0, 0, firebird.MapError(serr)
+	}
+	totalAbonado, numPagos, err := aboRow.assemble()
+	if err != nil {
+		return decimal.Zero, decimal.Zero, 0, 0, err
+	}
+
+	return totalComprado, totalAbonado, numVentas, numPagos, nil
 }
 
 // fetchFichaSaldo returns the ficha's total saldo from the MSP_SALDOS_VENTAS cache

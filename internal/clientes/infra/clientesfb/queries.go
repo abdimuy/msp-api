@@ -123,31 +123,47 @@ WHERE c.ESTATUS IN ('A', 'B')`
 
 // ─── ResumenFicha ─────────────────────────────────────────────────────────────
 
-// queryResumenFichaTotales returns the aggregate financial summary for a client.
+// queryResumenFichaComprado returns TotalComprado and NumVentas for a client,
+// filtered by cargo.FECHA (sale date). Optional date-range predicates on
+// cargo.FECHA are appended by fetchFichaTotales.
 //
-// TotalComprado = SUM of IMPORTE+IMPUESTO of all cargos concepto 5 (native).
-// TotalAbonado  = SUM of IMPORTE of all abonos (TIPO_IMPTE='R') (native).
-// NumVentas     = COUNT DISTINCT of cargo DOCTO_CC_ACR_ID.
-// NumPagos      = COUNT DISTINCT of TIPO_IMPTE='R' rows.
-//
-// NOTE: SaldoTotal is NOT derived here from TotalComprado − TotalAbonado anymore.
-// It is sourced from the MSP_SALDOS_VENTAS cache (queryResumenFichaSaldo below)
-// so the ficha saldo equals the directory saldo exactly. TotalComprado /
-// TotalAbonado / PctLiquidado stay native (PctLiquidado = abonado/comprado, not
-// derived from saldo, so it is unaffected).
+// Separated from the abonado query so that TotalAbonado/NumPagos can be
+// independently filtered by abono.FECHA (payment date), matching the date
+// semantics of queryAbonosPorMesBase and buildCompradoVsAbonadoQuery.
 //
 // All SUM casts are required (v0.9.19 driver scale bug).
-const queryResumenFichaTotales = `
+const queryResumenFichaComprado = `
 SELECT
-  CAST(COALESCE(SUM(CASE WHEN i.TIPO_IMPTE = 'C' THEN i.IMPORTE + i.IMPUESTO ELSE 0 END), 0) AS NUMERIC(18,2)) AS TOTAL_COMPRADO,
-  CAST(COALESCE(SUM(CASE WHEN i.TIPO_IMPTE = 'R' THEN i.IMPORTE ELSE 0 END), 0) AS NUMERIC(18,2)) AS TOTAL_ABONADO,
-  COUNT(DISTINCT CASE WHEN i.TIPO_IMPTE = 'C' THEN i.DOCTO_CC_ACR_ID END)                       AS NUM_VENTAS,
-  COUNT(DISTINCT CASE WHEN i.TIPO_IMPTE = 'R' THEN i.IMPTE_DOCTO_CC_ID END)                      AS NUM_PAGOS
+  CAST(COALESCE(SUM(i.IMPORTE + i.IMPUESTO), 0) AS NUMERIC(18,2)) AS TOTAL_COMPRADO,
+  COUNT(DISTINCT i.DOCTO_CC_ACR_ID)                                AS NUM_VENTAS
 FROM IMPORTES_DOCTOS_CC i
 JOIN DOCTOS_CC cargo ON cargo.DOCTO_CC_ID = i.DOCTO_CC_ACR_ID
 WHERE cargo.CLIENTE_ID = ?
   AND cargo.CONCEPTO_CC_ID = 5
   AND cargo.CANCELADO = 'N'
+  AND i.TIPO_IMPTE = 'C'
+  AND i.CANCELADO = 'N'`
+
+// queryResumenFichaAbonado returns TotalAbonado and NumPagos for a client,
+// filtered by abono.FECHA (payment date). The abono doc is joined via
+// DOCTOS_CC abono ON abono.DOCTO_CC_ID = i.DOCTO_CC_ID so that optional
+// date-range predicates appended by fetchFichaTotales target the payment date,
+// not the sale/cargo date. This makes the header KPIs definitionally consistent
+// with queryAbonosPorMesBase and buildCompradoVsAbonadoQuery.
+//
+// cargo is still joined for CLIENTE_ID and CONCEPTO_CC_ID scoping.
+// All SUM casts are required (v0.9.19 driver scale bug).
+const queryResumenFichaAbonado = `
+SELECT
+  CAST(COALESCE(SUM(i.IMPORTE), 0) AS NUMERIC(18,2)) AS TOTAL_ABONADO,
+  COUNT(DISTINCT i.IMPTE_DOCTO_CC_ID)                 AS NUM_PAGOS
+FROM IMPORTES_DOCTOS_CC i
+JOIN DOCTOS_CC cargo ON cargo.DOCTO_CC_ID = i.DOCTO_CC_ACR_ID
+JOIN DOCTOS_CC abono ON abono.DOCTO_CC_ID = i.DOCTO_CC_ID
+WHERE cargo.CLIENTE_ID = ?
+  AND cargo.CONCEPTO_CC_ID = 5
+  AND cargo.CANCELADO = 'N'
+  AND i.TIPO_IMPTE = 'R'
   AND i.CANCELADO = 'N'`
 
 // queryResumenFichaSaldo returns the ficha's total saldo from the MSP_SALDOS_VENTAS
