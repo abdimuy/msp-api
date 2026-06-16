@@ -149,6 +149,8 @@ func appOptions() []fx.Option {
 			provideAnalyticsTxRunner,
 			provideAnalyticsService,
 			provideAnalyticsRefreshWorker,
+			// Meilisearch.
+			provideMeilisearchClient,
 			// Clients hub module.
 			provideClientesRepo,
 			provideClientesSearchIndex,
@@ -187,6 +189,7 @@ func appOptions() []fx.Option {
 			registerCobranzaFbEventSourceLifecycle,
 			registerCobranzaFbEventListenerLifecycle,
 			registerAnalyticsRefreshWorkerLifecycle,
+			registerMeilisearchBootstrapLifecycle,
 			registerClientesReindexWorkerLifecycle,
 			registerHTTPLifecycle,
 			registerProbes,

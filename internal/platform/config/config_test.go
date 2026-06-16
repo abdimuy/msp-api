@@ -26,6 +26,8 @@ func clearAmbientEnv(t *testing.T) {
 		"HTTP_MAX_BODY_SIZE_MB", "HTTP_CORS_ORIGINS",
 		"FB_DATABASE", "FB_HOST", "FB_PORT", "FB_USER", "FB_PASSWORD", "FB_CHARSET",
 		"FIREBASE_PROJECT_ID", "FIREBASE_DEV_MODE", "FIREBASE_ALLOW_UNCONFIGURED",
+		"MEILISEARCH_URL", "MEILISEARCH_API_KEY", "MEILISEARCH_INDEX_NAME",
+		"MEILISEARCH_SYNC_INTERVAL", "MEILISEARCH_ALLOW_UNCONFIGURED",
 		"STORAGE_DIR",
 	} {
 		t.Setenv(k, "")
@@ -36,6 +38,8 @@ func setMinimal(t *testing.T) {
 	t.Helper()
 	clearAmbientEnv(t)
 	t.Setenv("FIREBASE_PROJECT_ID", "test-project")
+	// Opt out of Meilisearch in unit tests so they don't require a live server.
+	t.Setenv("MEILISEARCH_ALLOW_UNCONFIGURED", "true")
 }
 
 func TestLoad_MinimalEnv_Succeeds(t *testing.T) { //nolint:paralleltest // uses t.Setenv
@@ -133,6 +137,8 @@ func setMinimalNoFirebase(t *testing.T) {
 	t.Setenv("PG_USER", "msp")
 	t.Setenv("PG_PASSWORD", "msp")
 	t.Setenv("PG_DATABASE", "msp_dev")
+	// Opt out of Meilisearch in unit tests so they don't require a live server.
+	t.Setenv("MEILISEARCH_ALLOW_UNCONFIGURED", "true")
 }
 
 func TestLoad_FirebaseRequiredInProduction(t *testing.T) { //nolint:paralleltest // uses t.Setenv

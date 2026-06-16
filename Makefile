@@ -1,4 +1,4 @@
-.PHONY: help setup build run dev test test-unit test-mutation test-mutation-domain test-mutation-app test-mutation-ventas test-mutation-ventas-domain test-mutation-ventas-app test-mutation-cobranza test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-cobranza-eventbus test-mutation-httpdispatch lint lint-fix fmt generate clean test-firebird test-firebird-all test-firebird-ventas coverage-auth coverage-auth-full coverage-ventas coverage-ventas-full precommit-strict fb-migrate-up fb-migrate-down fb-migrate-status fb-seed-admin fb-snapshot fb-snapshot-list fb-restore fb-snapshot-delete fb-emu-up fb-emu-down fb-emu-logs
+.PHONY: help setup build run dev test test-unit test-mutation test-mutation-domain test-mutation-app test-mutation-ventas test-mutation-ventas-domain test-mutation-ventas-app test-mutation-cobranza test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-cobranza-eventbus test-mutation-httpdispatch lint lint-fix fmt generate clean test-firebird test-firebird-all test-firebird-ventas coverage-auth coverage-auth-full coverage-ventas coverage-ventas-full precommit-strict fb-migrate-up fb-migrate-down fb-migrate-status fb-seed-admin fb-snapshot fb-snapshot-list fb-restore fb-snapshot-delete fb-emu-up fb-emu-down fb-emu-logs meilisearch-up meilisearch-down test-meilisearch
 
 # ── Config ───────────────────────────────────────────────────────────
 APP_NAME      := msp-api
@@ -312,6 +312,20 @@ test-mutation-cobranza-eventbus: ## Run mutation testing on cobranza/app/eventbu
 
 test-mutation-httpdispatch: ## Run mutation testing on platform/httpdispatch
 	gremlins unleash ./internal/platform/httpdispatch
+
+# ── Meilisearch (dev) ────────────────────────────────────────────────
+meilisearch-up: ## Start Meilisearch dev container (http://localhost:7700)
+	docker compose up -d meilisearch
+	@echo "✔ Meilisearch listening on http://localhost:7700"
+
+meilisearch-down: ## Stop and remove the Meilisearch dev container
+	docker compose rm -sf meilisearch
+
+# Gate on MEILISEARCH_URL so integration tests are skipped when the
+# container is not running (mirrors the FB_DATABASE gate for Firebird tests).
+test-meilisearch: ## Run Meilisearch integration tests (requires MEILISEARCH_URL)
+	@[ -n "$(MEILISEARCH_URL)" ] || (echo "❌ MEILISEARCH_URL not set — run 'make meilisearch-up' and source .env first" && exit 1)
+	$(GO) test ./internal/platform/meilisearch/... ./internal/clientes/infra/clientessearch/... -race -count=1 -timeout 60s
 
 # ── Clean ────────────────────────────────────────────────────────────
 clean: ## Remove build artifacts

@@ -125,6 +125,8 @@ linters:
     misspell:
       ignore-rules:
         - inventario
+        - clientes
+        - Clientes
 
     # ── revive ───────────────────────────────────────────────────────
     revive:
@@ -264,6 +266,12 @@ linters:
           alias: clienteshttp
         - pkg: github.com/abdimuy/msp-api/internal/clientes/infra/search
           alias: clientessearch
+        - pkg: github.com/abdimuy/msp-api/internal/clientes/infra/clientessearch
+          alias: clientessearchmeili
+        - pkg: github.com/abdimuy/msp-api/internal/platform/meilisearch
+          alias: platformmeili
+        - pkg: github.com/meilisearch/meilisearch-go
+          alias: meili
         - pkg: github.com/go-playground/validator/v10
           alias: pv
         - pkg: firebase.google.com/go/v4

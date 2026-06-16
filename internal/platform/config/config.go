@@ -25,8 +25,11 @@ var (
 		"FIREBASE_ALLOW_UNCONFIGURED=true to explicitly opt into 401 responses)")
 	errFirebaseDevModeOnlyInDev = errors.New("config: FIREBASE_DEV_MODE=true is " +
 		"only permitted when APP_ENV=development (refusing to boot)")
-	errStorageDirRequired = errors.New("config: STORAGE_DIR is required")
-	errImageProcessor     = errors.New("config: invalid IMAGEPROCESSOR_* configuration")
+	errStorageDirRequired     = errors.New("config: STORAGE_DIR is required")
+	errImageProcessor         = errors.New("config: invalid IMAGEPROCESSOR_* configuration")
+	errMeilisearchURLRequired = errors.New("config: MEILISEARCH_URL is required " +
+		"in this environment (set MEILISEARCH_ALLOW_UNCONFIGURED=true to explicitly " +
+		"opt out of Meilisearch-backed search)")
 )
 
 // Environment is the runtime environment.
@@ -56,6 +59,7 @@ type Config struct {
 	HTTP           HTTP
 	Firebird       Firebird
 	Firebase       Firebase
+	Meilisearch    Meilisearch
 	Sync           Sync
 	Storage        Storage
 	ImageProcessor ImageProcessor
@@ -252,6 +256,47 @@ func (f Firebird) DSN() string {
 	)
 }
 
+// Meilisearch holds settings for the Meilisearch full-text search engine used
+// by the clientes directory hub.
+//
+// URL is conditionally required by [Config.validate]:
+//
+//   - APP_ENV=production: required (no escape hatch).
+//   - Anywhere else: required unless MEILISEARCH_ALLOW_UNCONFIGURED=true,
+//     which boots with the NotConfigured client that returns
+//     ErrMeilisearchNotConfigured on every call. Use only for environments
+//     where search is not needed.
+type Meilisearch struct {
+	// URL is the base URL of the Meilisearch instance (e.g. http://localhost:7700).
+	URL string `env:"MEILISEARCH_URL"`
+	// APIKey is the Meilisearch master key or API key. Optional for local
+	// development when MEILI_ENV=development (no auth required).
+	APIKey string `env:"MEILISEARCH_API_KEY"`
+	// IndexName is the UID of the clientes index. Defaults to "clientes".
+	IndexName string `env:"MEILISEARCH_INDEX_NAME" envDefault:"clientes"`
+	// SyncInterval is how often the background reconcile worker pushes
+	// updates from Firebird into Meilisearch. Defaults to 5 minutes.
+	SyncInterval time.Duration `env:"MEILISEARCH_SYNC_INTERVAL" envDefault:"5m"`
+	// AllowUnconfigured opts into the NotConfigured client when URL is unset.
+	// Mutually exclusive with URL being set. Default false.
+	AllowUnconfigured bool `env:"MEILISEARCH_ALLOW_UNCONFIGURED" envDefault:"false"`
+}
+
+// validate enforces that the Meilisearch configuration is internally
+// consistent. See the [Meilisearch] type doc for the conditional-URL matrix.
+func (m Meilisearch) validate(appEnv Environment) error {
+	if m.URL != "" {
+		return nil
+	}
+	if appEnv == EnvProduction {
+		return errMeilisearchURLRequired
+	}
+	if m.AllowUnconfigured {
+		return nil
+	}
+	return errMeilisearchURLRequired
+}
+
 // Firebase holds Firebase Admin SDK settings.
 //
 // ProjectID is conditionally required by [Config.validate]:
@@ -317,6 +362,10 @@ func (c *Config) validate() error {
 	}
 
 	if err := c.Firebase.validate(c.App.Env); err != nil {
+		errs = append(errs, err)
+	}
+
+	if err := c.Meilisearch.validate(c.App.Env); err != nil {
 		errs = append(errs, err)
 	}
 

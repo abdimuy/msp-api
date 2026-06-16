@@ -58,11 +58,37 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  # Meilisearch (dev only). In production, run meilisearch.exe via nssm on
+  # Windows Server 2016. Expose on the same network so the api container can
+  # resolve it by service name.
+  #
+  # Production note: download meilisearch.exe from
+  # https://github.com/meilisearch/meilisearch/releases, install via nssm
+  # with MEILI_ENV=production and MEILI_MASTER_KEY set. Data persists in a
+  # directory configured via --db-path. No Docker required.
+  meilisearch:
+    image: getmeili/meilisearch:v1.13
+    container_name: msp-meilisearch
+    restart: unless-stopped
+    environment:
+      MEILI_ENV: development
+      # Set MEILI_MASTER_KEY to require an API key in development.
+      # Leave empty to run without auth (fine for local dev).
+      MEILI_MASTER_KEY: ""
+    ports:
+      - "7700:7700"
+    volumes:
+      - meilisearch-data:/meili_data
+    networks:
+      - default
+
 volumes:
   api-go-cache:
     name: msp-api-go-cache
   api-build-cache:
     name: msp-api-build-cache
+  meilisearch-data:
+    name: msp-meilisearch-data
 
 # firebird_default es una red creada externamente cuando el contenedor
 # mueblera-firebird se levantó manualmente. Compose la referencia como
