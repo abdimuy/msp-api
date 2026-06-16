@@ -286,7 +286,7 @@ const selectVentaClienteCols = `
 		SELECT CAST(
 			MAXVALUE(
 				SUM(CASE WHEN i.TIPO_IMPTE = 'C' THEN i.IMPORTE + i.IMPUESTO ELSE 0 END)
-				- SUM(CASE WHEN i.TIPO_IMPTE = 'R' THEN i.IMPORTE ELSE 0 END),
+				- SUM(CASE WHEN i.TIPO_IMPTE = 'R' THEN i.IMPORTE + i.IMPUESTO ELSE 0 END),
 				0
 			) AS NUMERIC(18,2))
 		FROM DOCTOS_ENTRE_SIS des
@@ -344,15 +344,22 @@ WHERE pv.DOCTO_PV_ID = ?
 // component zero-price), ROL='N' (normal). Confirm there are no other values
 // (e.g. ROL='D' for devolucion) that should also be filtered.
 //
-// UNIDADES scale=5, PRECIO_UNITARIO scale=6, PRECIO_TOTAL_NETO scale=2,
+// Precio unitario e IMPORTE se muestran CON IVA (bruto), igual que el total de
+// la venta. PRECIO_UNITARIO_IMPTO es el precio unitario con impuesto (NUMERIC(18,6),
+// misma escala que PRECIO_UNITARIO), 100% poblado (verificado: 121,811/121,811
+// líneas) y redondo (ej. moto G52: 7413.79 neto → 8600.00 con IVA). El IMPORTE de
+// línea = precio_unitario_impto * unidades * (1 - dscto/100), espejo de cómo
+// PRECIO_TOTAL_NETO se deriva del neto. CAST por el bug de escala del driver.
+//
+// UNIDADES scale=5, PRECIO_UNITARIO_IMPTO scale=6, IMPORTE scale=2,
 // PCTJE_DSCTO scale=6 — scanned with appropriate ScanDecimal calls.
 const queryProductos = `
 SELECT
 	det.ARTICULO_ID,
 	a.NOMBRE,
 	det.UNIDADES,
-	det.PRECIO_UNITARIO,
-	det.PRECIO_TOTAL_NETO,
+	det.PRECIO_UNITARIO_IMPTO,
+	CAST(det.PRECIO_UNITARIO_IMPTO * det.UNIDADES * (1 - det.PCTJE_DSCTO / 100) AS NUMERIC(18,2)) AS IMPORTE,
 	det.PCTJE_DSCTO
 FROM DOCTOS_PV_DET det
 JOIN ARTICULOS a ON a.ARTICULO_ID = det.ARTICULO_ID
@@ -436,7 +443,11 @@ const queryPagos = `
 SELECT
 	pago.DOCTO_CC_ID,
 	pago.FECHA,
-	CAST(COALESCE(i.IMPORTE, 0) AS NUMERIC(18,2)) AS IMPORTE,
+	-- Importe del pago = lo que el cliente realmente abonó = IMPORTE + IMPUESTO
+	-- (los abonos R traen su porción de IVA en i.IMPUESTO). Verificado: abono
+	-- 7241.38 + 1158.62 = 8400.00. Esto cuadra con el saldo per-venta, que ahora
+	-- también resta el abono bruto (cargo bruto − abono bruto = SALDO del cache).
+	CAST(COALESCE(i.IMPORTE + i.IMPUESTO, 0) AS NUMERIC(18,2)) AS IMPORTE,
 	COALESCE((
 		SELECT fc.NOMBRE
 		FROM FORMAS_COBRO_DOCTOS fcd
