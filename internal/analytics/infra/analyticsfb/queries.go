@@ -6,6 +6,8 @@
 //nolint:misspell // Spanish domain vocabulary (candidato, cohorte, zona, etc.) by project convention.
 package analyticsfb
 
+import "fmt"
+
 // ─── MSP_AN_WINBACK_CANDIDATOS ────────────────────────────────────────────────
 
 // candidatoCols is the canonical SELECT column list for MSP_AN_WINBACK_CANDIDATOS.
@@ -253,6 +255,40 @@ LEFT JOIN nbp                ON nbp.CLIENTE_ID = rfm.CLIENTE_ID`
 // It is assembled by concatenating the CTE parts with no additional predicates.
 const leerAnclasBase = leerAnclasRFMBase + leerAnclasRFMClose + leerAnclasNBPBase + leerAnclasNBPClose
 
+// ─── Cobranza signals: abono concept filter ────────────────────────────────────
+//
+// MSP_PAGOS_VENTAS mixes recurring customer payments (abonos) with one-time or
+// non-payment transactions (enganches, condonaciones, write-offs, refunds).
+// Only abono concepts reflect the customer's actual payment cadence and
+// punctuality. All other concepts distort cadence, punctuality %, and
+// MONTO_PROX_PAGO if included.
+//
+// The three recognized abono concepts (94% of rows by volume):
+//
+//	87327 – Cobranza en ruta   (~1.71M rows): cobrador collects at customer site.
+//	  155 – Cobro en mostrador (~320k rows):  customer pays at the store counter.
+//	   11 – Cobro              (~13k rows):   generic legacy payment concept.
+//
+// Excluded (must NOT appear in cadence/punctuality aggregation):
+//
+//	Enganche:      down-payment concept (24533 and others); recorded once at
+//	               sale creation, not a recurring payment — inflates cadence.
+//	Condonación:   partial or full debt forgiveness; not a customer payment.
+//	Write-off:     bad-debt cancellation; not a customer payment.
+//	Refund/credit: reversal concepts; distort the running average importe.
+const (
+	// conceptoCobranzaRuta is the "Cobranza en ruta" abono concept (1.71M rows).
+	// Cobrador collects payment at the customer's location.
+	conceptoCobranzaRuta = 87327
+
+	// conceptoCobro155 is the "Cobro en mostrador" abono concept (320k rows).
+	// Customer pays at the store counter (mostrador).
+	conceptoCobro155 = 155
+
+	// conceptoCobroGenerico is the legacy generic "Cobro" abono concept (13k rows).
+	conceptoCobroGenerico = 11
+)
+
 // ─── Cobranza signals query ────────────────────────────────────────────────────
 //
 // leerCobranzaBase / leerCobranzaClose query MSP_PAGOS_VENTAS to compute
@@ -269,6 +305,11 @@ const leerAnclasBase = leerAnclasRFMBase + leerAnclasRFMClose + leerAnclasNBPBas
 //
 // Performance: IDX_MSP_PAGOS_CLIENTE_FECHA (CLIENTE_ID, FECHA) covers both
 // the partition and order key. Full scan of 2.17M rows returns in <30s (verified live).
+//
+// Concept filter: restricted to abono concepts only (conceptoCobranzaRuta=87327,
+// conceptoCobro155=155, conceptoCobroGenerico=11). Enganche, condonaciones,
+// write-offs, and refunds are excluded because they are not recurring customer
+// payments and would distort cadence, punctuality %, and MONTO_PROX_PAGO.
 //
 // Driver gotcha (reference_firebirdsql_sum_scale): AVG() over NUMERIC returns
 // unscaled *big.Int. Pattern: CAST(AVG(CAST(col AS NUMERIC(18,4))) AS NUMERIC(N,0)).
@@ -288,7 +329,11 @@ const leerAnclasBase = leerAnclasRFMBase + leerAnclasRFMClose + leerAnclasNBPBas
 
 // leerCobranzaBase opens the WITH block and the gaps CTE through its WHERE clause.
 // The caller appends an optional FECHA predicate then leerCobranzaClose.
-const leerCobranzaBase = `
+// Built via fmt.Sprintf so the abono concept constants are referenced directly,
+// keeping the SQL literals and the named constants in sync at compile time.
+//
+//nolint:gochecknoglobals // query fragment; value is immutable after init.
+var leerCobranzaBase = fmt.Sprintf(`
 WITH gaps AS (
   SELECT
     CLIENTE_ID,
@@ -297,7 +342,9 @@ WITH gaps AS (
     DATEDIFF(DAY, LAG(FECHA) OVER (PARTITION BY CLIENTE_ID ORDER BY FECHA), FECHA) AS GAP_DIAS
   FROM MSP_PAGOS_VENTAS
   WHERE CANCELADO = 'N'
-    AND APLICADO  = 'S'`
+    AND APLICADO  = 'S'
+    AND CONCEPTO_CC_ID IN (%d, %d, %d)`,
+	conceptoCobranzaRuta, conceptoCobro155, conceptoCobroGenerico)
 
 // leerCobranzaClose closes the gaps CTE, adds cadencias + atrasos CTEs,
 // and the final SELECT aggregating per-client cobranza signals.
