@@ -12,10 +12,6 @@ import (
 	"github.com/abdimuy/msp-api/internal/platform/apperror"
 )
 
-// maxTotalHits is the pagination cap for the clientes directory. Must match
-// clientessearch.maxTotalHits (50000). Offset+Limit beyond this is silent EOF.
-const maxTotalHits = 50_000
-
 // Sortable column identifiers accepted in BuscarClientesInput.SortBy.
 // Empty SortBy means "default order": nombre:asc on the browse path, or
 // Meilisearch relevance when a text query is present.
@@ -134,7 +130,7 @@ func (s *Service) BuscarClientes(ctx context.Context, in BuscarClientesInput) (B
 	// have not reached the index's pagination cap.
 	var nextCursor string
 	nextOffset := offset + limit
-	if nextOffset < resultado.Total && nextOffset < maxTotalHits {
+	if nextOffset < resultado.Total && nextOffset < outbound.MaxTotalHitsDirectorio {
 		nextCursor = encodeCursor(nextOffset)
 	}
 

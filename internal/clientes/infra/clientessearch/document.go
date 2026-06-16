@@ -8,10 +8,12 @@
 //     ranking/faceting/pagination) to apply at boot via EnsureIndex.
 //
 // It must NOT import domain/, app/, or any other module — only the platform
-// meilisearch package for the IndexConfig type.
+// meilisearch package for the IndexConfig type, and the ports/outbound package
+// for shared constants.
 package clientessearch
 
 import (
+	"github.com/abdimuy/msp-api/internal/clientes/ports/outbound"
 	platformmeili "github.com/abdimuy/msp-api/internal/platform/meilisearch"
 )
 
@@ -93,8 +95,13 @@ type ClienteDoc struct {
 
 	// ── Sortable (not searchable/filterable) ────────────────────────────
 
-	// Saldo is the outstanding balance amount. Sortable.
+	// Saldo is the outstanding balance amount. Sortable. This float64 exists
+	// ONLY for Meilisearch numeric sorting — render SaldoStr instead, which is
+	// exact (a decimal→float64→decimal round-trip loses precision on money).
 	Saldo float64 `json:"saldo"`
+
+	// SaldoStr is the exact outstanding balance (StringFixed 2). Display.
+	SaldoStr string `json:"saldo_str"`
 
 	// ── Display-only (not searchable/filterable/sortable) ───────────────
 
@@ -112,8 +119,9 @@ type ClienteDoc struct {
 	// Display only.
 	Frecuencia int `json:"frecuencia"`
 
-	// Monetary is the total spend in the reference period. Display only.
-	Monetary float64 `json:"monetary"`
+	// Monetary is the total spend in the reference period (exact, StringFixed
+	// 2). Display only — stored as a string to avoid float precision loss.
+	Monetary string `json:"monetary"`
 
 	// NextBestProduct is the analytics-suggested next product category.
 	// Display only.
@@ -185,10 +193,6 @@ func FacetAttributes() []string {
 	return out
 }
 
-// maxTotalHits is the pagination cap for the clientes index. The padron is
-// ~38k; 50000 gives comfortable headroom.
-const maxTotalHits = 50000
-
 // maxValuesPerFacet is the maximum number of distinct values returned per
 // facet in a search response.
 const maxValuesPerFacet = 200
@@ -205,6 +209,6 @@ func DefaultIndexConfig(indexName string) platformmeili.IndexConfig {
 		SortableAttributes:        sortableAttributes,
 		RankingRules:              defaultRankingRules,
 		FacetingMaxValuesPerFacet: maxValuesPerFacet,
-		PaginationMaxTotalHits:    maxTotalHits,
+		PaginationMaxTotalHits:    outbound.MaxTotalHitsDirectorio,
 	}
 }

@@ -18,6 +18,10 @@ import (
 // range and keeps individual payloads under ~5 MB for typical ClienteDoc sizes.
 const upsertBatchSize = 10_000
 
+// moneyScale is the number of decimal places for monetary fields stored as
+// exact strings in the index (saldo_str, monetary).
+const moneyScale int32 = 2
+
 // MeilisearchDirectoryIndex implements outbound.DirectoryIndex using the
 // platform Meilisearch client. It maps outbound.DirectorioDoc → ClienteDoc and
 // bulk-upserts in batches of upsertBatchSize.
@@ -83,10 +87,11 @@ func mapDoc(d outbound.DirectorioDoc) ClienteDoc {
 		Estatus:            d.Estatus,
 		SegmentoOrden:      segmentoOrdinal(d.Segmento),
 		EstadoPagoOrden:    estadoPagoOrdinal(d.EstadoPago),
-		Saldo:              d.Saldo.InexactFloat64(),
+		Saldo:              d.Saldo.InexactFloat64(), // numeric: sort key only
+		SaldoStr:           d.Saldo.StringFixed(moneyScale),
 		Telefono:           d.Telefono,
 		Frecuencia:         d.Frecuencia,
-		Monetary:           d.Monetary.InexactFloat64(),
+		Monetary:           d.Monetary.StringFixed(moneyScale),
 		NextBestProduct:    d.NextBestProduct,
 		TienePulso:         d.TienePulso,
 	}
@@ -94,11 +99,10 @@ func mapDoc(d outbound.DirectorioDoc) ClienteDoc {
 
 // ── Ordinal helpers ────────────────────────────────────────────────────────────
 //
-// These mirror the ordering in internal/clientes/app/buscar_clientes.go
-// (segmentoOrdinal / estadoPagoOrdinal). They are duplicated here so the
-// index can store a sortable integer alongside the string label; the app
-// layer's sort still uses its own copy to avoid a cross-layer import.
-// If the ordering ever changes, update BOTH sites.
+// These encode the analytics segmento / estado_pago wire vocabulary as a
+// sortable integer so Meilisearch can ORDER BY the ordinal while the index
+// still stores the human-readable label. The ordering must match the analytics
+// segmento/estado_pago vocabulary.
 
 // Canonical segmento string values (analytics wire vocabulary).
 const (

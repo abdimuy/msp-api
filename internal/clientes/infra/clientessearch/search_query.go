@@ -158,8 +158,21 @@ func buildSort(sortBy, sortOrder, query string) []string {
 	return nil
 }
 
+// parseDecimal parses an exact decimal string from the index, returning a zero
+// decimal on a malformed value rather than panicking — the index is our own
+// data, so a parse failure means a bug, not user input, and EOF-safe degradation
+// to zero is preferable to crashing a directory read.
+func parseDecimal(s string) decimal.Decimal {
+	d, err := decimal.NewFromString(s)
+	if err != nil {
+		return decimal.Zero
+	}
+	return d
+}
+
 // clienteDocToDirectorioDoc maps a ClienteDoc (hit from Meilisearch) to the
-// port-level DirectorioDoc. Saldo is reconstructed as a decimal from float64.
+// port-level DirectorioDoc. Saldo/Monetary are reconstructed from the exact
+// string fields (saldo_str, monetary) to avoid float round-trip precision loss.
 func clienteDocToDirectorioDoc(cd ClienteDoc) outbound.DirectorioDoc {
 	return outbound.DirectorioDoc{
 		ClienteID:          cd.ClienteID,
@@ -174,14 +187,14 @@ func clienteDocToDirectorioDoc(cd ClienteDoc) outbound.DirectorioDoc {
 		DireccionColonia:   cd.DireccionColonia,
 		DireccionPoblacion: cd.DireccionPoblacion,
 		DireccionCorta:     cd.DireccionCorta,
-		Saldo:              decimal.NewFromFloat(cd.Saldo),
+		Saldo:              parseDecimal(cd.SaldoStr),
 		ConSaldo:           cd.ConSaldo,
 		Score:              cd.Score,
 		Segmento:           cd.Segmento,
 		EstadoPago:         cd.EstadoPago,
 		RecenciaDias:       cd.RecenciaDias,
 		Frecuencia:         cd.Frecuencia,
-		Monetary:           decimal.NewFromFloat(cd.Monetary),
+		Monetary:           parseDecimal(cd.Monetary),
 		NextBestProduct:    cd.NextBestProduct,
 		TienePulso:         cd.TienePulso,
 	}

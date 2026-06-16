@@ -23,6 +23,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/clientes/domain"
 	"github.com/abdimuy/msp-api/internal/clientes/infra/clienteshttp"
 	"github.com/abdimuy/msp-api/internal/clientes/ports/outbound"
+	"github.com/abdimuy/msp-api/internal/platform/apperror"
 )
 
 // ─── Fixed timestamps ─────────────────────────────────────────────────────────
@@ -375,6 +376,27 @@ func TestListarClientes_HappyPath_200(t *testing.T) {
 	assert.Equal(t, 45, it.RecenciaDias)
 	assert.Equal(t, "8000.00", it.Saldo)
 	assert.Equal(t, 200, resp.Facets["zona_id"]["1"])
+}
+
+// TestListarClientes_MeilisearchUnavailable_503 verifies the directory has NO
+// SQL fallback: when the search index returns a service-unavailable apperror,
+// the endpoint surfaces HTTP 503 instead of degrading to a partial result.
+func TestListarClientes_MeilisearchUnavailable_503(t *testing.T) {
+	t.Parallel()
+
+	di := noopDirectoryIndex{
+		buscarErr: apperror.NewServiceUnavailable(
+			"directorio_search_unavailable",
+			"el directorio no está disponible temporalmente",
+		),
+	}
+
+	svc := buildServiceWithDirIndex(&fakeRepo{}, &fakeAnalytics{}, &fakeSearch{}, di)
+	cu := userWith(auth.PermClientesLeer)
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes", nil)
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code, "body: %s", rec.Body.String())
 }
 
 // TestListarClientes_NoPulso_ZeroScoreAndEmptySegmento verifies that when the

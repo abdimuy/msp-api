@@ -127,7 +127,9 @@ func TestMeilisearchDirectoryIndex_Reconciliar_MapsFieldsCorrectly(t *testing.T)
 	assert.Equal(t, 2, got.SegmentoOrden, "ACTIVO should map to ordinal 2")
 	assert.Equal(t, "AL_CORRIENTE", got.EstadoPago)
 	assert.Equal(t, 0, got.EstadoPagoOrden, "AL_CORRIENTE should map to ordinal 0")
-	assert.InEpsilon(t, 1500.50, got.Saldo, 0.001)
+	assert.InEpsilon(t, 1500.50, got.Saldo, 0.001) // numeric sort key
+	assert.Equal(t, "1500.50", got.SaldoStr)       // exact display value
+	assert.Equal(t, "20000.00", got.Monetary)      // exact display value
 	assert.Equal(t, 72, got.Score)
 	assert.Equal(t, 30, got.RecenciaDias)
 	assert.Equal(t, 5, got.Frecuencia)
@@ -164,7 +166,30 @@ func TestMeilisearchDirectoryIndex_Reconciliar_NoPulse(t *testing.T) {
 	assert.Equal(t, 5, got.EstadoPagoOrden, "empty estado_pago should map to sort-last ordinal 5")
 	// Zero pulse fields.
 	assert.Equal(t, 0, got.Score)
-	assert.InDelta(t, 0.0, got.Monetary, 1e-9)
+	assert.Equal(t, "0.00", got.Monetary)
+}
+
+func TestMeilisearchDirectoryIndex_MoneyRoundTripExact(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	idx := clientessearchmeili.NewMeilisearchDirectoryIndexForTest(rec, "clientes")
+
+	// Values chosen so the float64 binary representation is NOT exact — proving
+	// the string round-trip (not the numeric saldo) is what preserves precision.
+	in := outbound.DirectorioDoc{
+		ClienteID: 1,
+		Saldo:     decimal.RequireFromString("12345.67"),
+		Monetary:  decimal.RequireFromString("999999.99"),
+	}
+	require.NoError(t, idx.Reconciliar(context.Background(), []outbound.DirectorioDoc{in}))
+
+	stored := rec.batches[0][0]
+	assert.Equal(t, "12345.67", stored.SaldoStr)
+	assert.Equal(t, "999999.99", stored.Monetary)
+
+	out := clientessearchmeili.ClienteDocToDirectorioDocForTest(stored)
+	assert.Equal(t, "12345.67", out.Saldo.StringFixed(2))
+	assert.Equal(t, "999999.99", out.Monetary.StringFixed(2))
 }
 
 func TestMeilisearchDirectoryIndex_Reconciliar_EmptyInput(t *testing.T) {

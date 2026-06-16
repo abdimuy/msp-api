@@ -5,11 +5,18 @@ package clientessearch
 import (
 	"context"
 
+	"github.com/abdimuy/msp-api/internal/clientes/ports/outbound"
 	platformmeili "github.com/abdimuy/msp-api/internal/platform/meilisearch"
 )
 
 // SegmentoOrdinalForTest exposes segmentoOrdinal for unit tests.
 func SegmentoOrdinalForTest(s string) int { return segmentoOrdinal(s) }
+
+// ClienteDocToDirectorioDocForTest exposes the read-path mapping (Meilisearch
+// hit → port doc) so tests can assert the exact money round-trip.
+func ClienteDocToDirectorioDocForTest(cd ClienteDoc) outbound.DirectorioDoc {
+	return clienteDocToDirectorioDoc(cd)
+}
 
 // EstadoPagoOrdinalForTest exposes estadoPagoOrdinal for unit tests.
 func EstadoPagoOrdinalForTest(s string) int { return estadoPagoOrdinal(s) }

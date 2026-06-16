@@ -7,6 +7,12 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+// MaxTotalHitsDirectorio is the pagination cap shared between the Meilisearch
+// index settings (PaginationMaxTotalHits) and the cursor-emission guard in the
+// app layer. The padron is ~38k active clients; 50000 gives comfortable headroom.
+// Both sites must use this constant so they stay in sync automatically.
+const MaxTotalHitsDirectorio = 50_000
+
 // DirectorioDoc is the ports-level contract document for the Meilisearch
 // directory index. It is a plain struct with no JSON tags and no meilisearch
 // import — infra maps it to the wire shape (clientessearch.ClienteDoc).
