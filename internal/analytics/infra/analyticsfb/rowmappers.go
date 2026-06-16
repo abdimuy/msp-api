@@ -44,6 +44,12 @@ type candidatoRowRaw struct {
 	createdAtRaw       any   // TIMESTAMP NOT NULL
 	updatedAtRaw       any   // TIMESTAMP NOT NULL
 	fechaUltimoPagoRaw any   // TIMESTAMP nullable
+	numPagosRaw        any   // INTEGER nullable
+	cadenciaDiasRaw    any   // INTEGER nullable
+	diasAtrasoProm     any   // INTEGER nullable
+	pctPagosATiempoRaw any   // NUMERIC(5,2) nullable
+	fechaProxPagoRaw   any   // TIMESTAMP nullable
+	montoProxPagoRaw   any   // NUMERIC(18,2) nullable
 }
 
 func (r *candidatoRowRaw) scanFrom(s rowScanner) error {
@@ -64,7 +70,60 @@ func (r *candidatoRowRaw) scanFrom(s rowScanner) error {
 		&r.createdAtRaw,
 		&r.updatedAtRaw,
 		&r.fechaUltimoPagoRaw,
+		&r.numPagosRaw,
+		&r.cadenciaDiasRaw,
+		&r.diasAtrasoProm,
+		&r.pctPagosATiempoRaw,
+		&r.fechaProxPagoRaw,
+		&r.montoProxPagoRaw,
 	)
+}
+
+// candidatoCobranzaScanned holds decoded cobranza signal fields for assembleCandidato.
+type candidatoCobranzaScanned struct {
+	fechaUltimoPago time.Time
+	numPagos        int
+	cadenciaDias    int
+	diasAtrasoProm  int
+	pctPagosATiempo decimal.Decimal
+	fechaProxPago   time.Time
+	montoProxPago   decimal.Decimal
+}
+
+// scanCandidatoCobranza decodes the 6 nullable cobranza signal columns from r.
+// Extracted to keep assembleCandidato's cyclomatic complexity within limits.
+func scanCandidatoCobranza(r *candidatoRowRaw) (candidatoCobranzaScanned, error) {
+	var out candidatoCobranzaScanned
+	var err error
+	out.fechaUltimoPago, err = scanNullableTime(r.fechaUltimoPagoRaw)
+	if err != nil {
+		return out, err
+	}
+	out.numPagos, err = scanNullableIntDecimal(r.numPagosRaw)
+	if err != nil {
+		return out, err
+	}
+	out.cadenciaDias, err = scanNullableIntDecimal(r.cadenciaDiasRaw)
+	if err != nil {
+		return out, err
+	}
+	out.diasAtrasoProm, err = scanNullableIntDecimal(r.diasAtrasoProm)
+	if err != nil {
+		return out, err
+	}
+	out.pctPagosATiempo, err = scanNullableDecimal(r.pctPagosATiempoRaw)
+	if err != nil {
+		return out, err
+	}
+	out.fechaProxPago, err = scanNullableTime(r.fechaProxPagoRaw)
+	if err != nil {
+		return out, err
+	}
+	out.montoProxPago, err = scanNullableDecimal(r.montoProxPagoRaw)
+	if err != nil {
+		return out, err
+	}
+	return out, nil
 }
 
 func assembleCandidato(r *candidatoRowRaw) (*domain.WinbackCandidato, error) {
@@ -80,7 +139,7 @@ func assembleCandidato(r *candidatoRowRaw) (*domain.WinbackCandidato, error) {
 	if err != nil {
 		return nil, err
 	}
-	porLiquidarPct, err := scanNullableDecimal(r.porLiquidarPctRaw, 2)
+	porLiquidarPct, err := scanNullableDecimal(r.porLiquidarPctRaw)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +159,7 @@ func assembleCandidato(r *candidatoRowRaw) (*domain.WinbackCandidato, error) {
 	if err != nil {
 		return nil, err
 	}
-	fechaUltimoPago, err := scanNullableTime(r.fechaUltimoPagoRaw)
+	cob, err := scanCandidatoCobranza(r)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +179,13 @@ func assembleCandidato(r *candidatoRowRaw) (*domain.WinbackCandidato, error) {
 		CohorteFecha:      cohorteFecha,
 		CreatedAt:         createdAt,
 		UpdatedAt:         updatedAt,
-		FechaUltimoPago:   fechaUltimoPago,
+		FechaUltimoPago:   cob.fechaUltimoPago,
+		NumPagos:          cob.numPagos,
+		CadenciaDias:      cob.cadenciaDias,
+		DiasAtrasoProm:    cob.diasAtrasoProm,
+		PctPagosATiempo:   cob.pctPagosATiempo,
+		FechaProxPago:     cob.fechaProxPago,
+		MontoProxPago:     cob.montoProxPago,
 	}), nil
 }
 
@@ -191,7 +256,7 @@ func assembleAncla(r *anclaRowRaw) (outbound.AnclaCliente, error) {
 	if err != nil {
 		return outbound.AnclaCliente{}, err
 	}
-	porLiquidarPct, err := scanNullableDecimal(r.porLiquidarRaw, 2)
+	porLiquidarPct, err := scanNullableDecimal(r.porLiquidarRaw)
 	if err != nil {
 		return outbound.AnclaCliente{}, err
 	}
@@ -220,6 +285,64 @@ func assembleAncla(r *anclaRowRaw) (outbound.AnclaCliente, error) {
 		PorLiquidarPct:    porLiquidarPct,
 		NextBestProduct:   string(r.nextBestProduct),
 		FechaUltimoPago:   fechaUltimoPago,
+	}, nil
+}
+
+// ─── CobranzaSignals row mapper ───────────────────────────────────────────────
+
+// cobranzaRowRaw is the intermediate scan target for one row from leerCobranzaBase+leerCobranzaClose.
+// Numeric aggregates are declared as any so the driver delivers its native type.
+type cobranzaRowRaw struct {
+	clienteID          int
+	numPagos           int // NUM_GAPS+1: driver delivers int directly for INTEGER expressions
+	cadenciaDias       any // NUMERIC(10,0) aggregate
+	diasAtrasoProm     any // NUMERIC(10,0) aggregate
+	pctPagosATiempoRaw any // NUMERIC(5,2) aggregate
+	fechaProxPagoRaw   any // TIMESTAMP nullable (DATEADD may return NULL if cadencia is 0)
+	montoProxPagoRaw   any // NUMERIC(18,2) aggregate
+}
+
+func (r *cobranzaRowRaw) scanFrom(s rowScanner) error {
+	return s.Scan(
+		&r.clienteID,
+		&r.numPagos,
+		&r.cadenciaDias,
+		&r.diasAtrasoProm,
+		&r.pctPagosATiempoRaw,
+		&r.fechaProxPagoRaw,
+		&r.montoProxPagoRaw,
+	)
+}
+
+func assembleCobranza(r *cobranzaRowRaw) (outbound.CobranzaSignals, error) {
+	cadenciaDias, err := scanNullableIntDecimal(r.cadenciaDias)
+	if err != nil {
+		return outbound.CobranzaSignals{}, err
+	}
+	diasAtrasoProm, err := scanNullableIntDecimal(r.diasAtrasoProm)
+	if err != nil {
+		return outbound.CobranzaSignals{}, err
+	}
+	pctPagosATiempo, err := scanNullableDecimal(r.pctPagosATiempoRaw)
+	if err != nil {
+		return outbound.CobranzaSignals{}, err
+	}
+	fechaProxPago, err := scanNullableTime(r.fechaProxPagoRaw)
+	if err != nil {
+		return outbound.CobranzaSignals{}, err
+	}
+	montoProxPago, err := scanNullableDecimal(r.montoProxPagoRaw)
+	if err != nil {
+		return outbound.CobranzaSignals{}, err
+	}
+	return outbound.CobranzaSignals{
+		ClienteID:       r.clienteID,
+		NumPagos:        r.numPagos,
+		CadenciaDias:    cadenciaDias,
+		DiasAtrasoProm:  diasAtrasoProm,
+		PctPagosATiempo: pctPagosATiempo,
+		FechaProxPago:   fechaProxPago,
+		MontoProxPago:   montoProxPago,
 	}, nil
 }
 
@@ -259,11 +382,26 @@ func scanNullableTime(src any) (time.Time, error) {
 	return firebird.ScanUTCTime(src)
 }
 
-// scanNullableDecimal scans a nullable NUMERIC column. Returns
+// scanNullableDecimal scans a nullable NUMERIC(N,2) column. Returns
 // decimal.Zero when the column is NULL.
-func scanNullableDecimal(src any, scale int) (decimal.Decimal, error) {
+func scanNullableDecimal(src any) (decimal.Decimal, error) {
 	if src == nil {
 		return decimal.Zero, nil
 	}
-	return firebird.ScanDecimal(src, scale)
+	return firebird.ScanDecimal(src, 2)
+}
+
+// scanNullableIntDecimal scans a nullable NUMERIC(N,0) integer aggregate.
+// Returns 0 when the column is NULL (insufficient data for cadence computation).
+// The SQL uses CAST(AVG(CAST(x AS NUMERIC(18,4))) AS NUMERIC(10,0)) to avoid the
+// nakagami driver's unscaled-aggregate bug (reference_firebirdsql_sum_scale).
+func scanNullableIntDecimal(src any) (int, error) {
+	if src == nil {
+		return 0, nil
+	}
+	d, err := firebird.ScanDecimal(src, 0)
+	if err != nil {
+		return 0, err
+	}
+	return int(d.IntPart()), nil
 }

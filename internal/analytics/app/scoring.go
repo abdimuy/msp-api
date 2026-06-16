@@ -271,6 +271,79 @@ func clamp01(v float64) float64 {
 	}
 }
 
+// ─── Cobranza tier constants ──────────────────────────────────────────────────
+
+const (
+	// tierCadencia1x is the cadence multiplier for the AL_DIA boundary.
+	// Clients whose days-since-payment ≤ 1×cadencia are current.
+	tierCadencia1x = 1
+
+	// tierCadencia2x is the cadence multiplier for the VIGILANCIA boundary.
+	tierCadencia2x = 2
+
+	// tierCadencia3x is the cadence multiplier for the EN_RIESGO boundary.
+	// Beyond 3× → CRITICO.
+	tierCadencia3x = 3
+)
+
+// computeCobranzaTier computes the TierRiesgo for a client based on their
+// personal payment cadence relative to days elapsed since last payment.
+//
+// Fallback hierarchy:
+//  1. saldo == 0 → AL_DIA (no outstanding balance)
+//  2. cadenciaDias == 0 (insufficient payment history) → fall back to
+//     EstadoPago classification:
+//     AL_CORRIENTE / LIQUIDADO / SIN_CREDITO → AL_DIA
+//     ATRASADO → VIGILANCIA
+//     MOROSO (or unknown) → CRITICO
+//  3. cadenciaDias > 0 → compare diasSincePago to N × cadenciaDias:
+//     ≤ 1× → AL_DIA
+//     ≤ 2× → VIGILANCIA
+//     ≤ 3× → EN_RIESGO
+//     >  3× → CRITICO
+//
+// now must be UTC. Zero fechaUltimoPago with saldo > 0 is treated as MOROSO → CRITICO.
+func computeCobranzaTier(c *domain.WinbackCandidato, now time.Time) domain.TierRiesgo {
+	if !c.Saldo().IsPositive() {
+		return domain.TierRiesgoAlDia
+	}
+
+	cadencia := c.CadenciaDias()
+	if cadencia == 0 {
+		// No cadence data — fall back to EstadoPago-based classification.
+		ep := estadoPagoFor(c.Saldo(), c.FechaUltimoPago(), now)
+		switch ep {
+		case domain.EstadoPagoAlCorriente, domain.EstadoPagoLiquidado, domain.EstadoPagoSinCredito:
+			return domain.TierRiesgoAlDia
+		case domain.EstadoPagoAtrasado:
+			return domain.TierRiesgoVigilancia
+		case domain.EstadoPagoMoroso:
+			return domain.TierRiesgoCritico
+		default: // unknown — treat as critical
+			return domain.TierRiesgoCritico
+		}
+	}
+
+	// Cadence available: classify by how many cadence multiples have elapsed.
+	if c.FechaUltimoPago().IsZero() {
+		return domain.TierRiesgoCritico // has balance but has never paid
+	}
+	diasSincePago := int(now.Sub(c.FechaUltimoPago()).Hours() / 24)
+	if diasSincePago < 0 {
+		diasSincePago = 0
+	}
+	switch {
+	case diasSincePago <= cadencia*tierCadencia1x:
+		return domain.TierRiesgoAlDia
+	case diasSincePago <= cadencia*tierCadencia2x:
+		return domain.TierRiesgoVigilancia
+	case diasSincePago <= cadencia*tierCadencia3x:
+		return domain.TierRiesgoEnRiesgo
+	default:
+		return domain.TierRiesgoCritico
+	}
+}
+
 // estadoPagoFor computes the EstadoPago solvency signal from saldo and the
 // client's most recent payment date.
 //

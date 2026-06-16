@@ -55,7 +55,7 @@ var (
 // ─── WinbackRepo — MSP_AN_WINBACK_CANDIDATOS ─────────────────────────────────
 
 // upsertChunkSize is the number of candidatos sent per EXECUTE BLOCK call.
-// 20 rows × 16 params = 320 positional params per block. Each row references
+// 20 rows × 22 params = 440 positional params per block. Each row references
 // MSP_AN_WINBACK_CANDIDATOS twice (UPDATE + conditional INSERT), so 20 rows =
 // 40 Relation contexts — safely below Firebird's 256-context-per-statement limit.
 // Empirically the optimal chunk size for this workload against Firebird 5 is
@@ -116,12 +116,12 @@ func (r *Repo) upsertChunk(ctx context.Context, q firebird.Querier, chunk []*dom
 //
 // Each row i uses params named p{i}_id, p{i}_cid, etc. to avoid collisions
 // across rows in the same block body. Args are bound in exact param-declaration
-// order (16 per row). The UPDATE omits EN_CONTROL and COHORTE_FECHA so those
+// order (22 per row). The UPDATE omits EN_CONTROL and COHORTE_FECHA so those
 // columns are only set on first INSERT and survive subsequent refreshes.
 // FECHA_ULTIMO_PAGO IS mutable and IS updated on each refresh.
 func buildUpsertBlock(chunk []*domain.WinbackCandidato) (string, []any) {
 	n := len(chunk)
-	args := make([]any, 0, n*16)
+	args := make([]any, 0, n*22)
 
 	var header strings.Builder
 	var body strings.Builder
@@ -145,7 +145,7 @@ func buildUpsertBlock(chunk []*domain.WinbackCandidato) (string, []any) {
 	return header.String() + "\n" + body.String(), args
 }
 
-// appendUpsertParamDecls writes the 16 typed EXECUTE BLOCK input-parameter
+// appendUpsertParamDecls writes the 22 typed EXECUTE BLOCK input-parameter
 // declarations for a single row prefix p into w.
 func appendUpsertParamDecls(w *strings.Builder, p string) {
 	_, _ = fmt.Fprintf(
@@ -165,11 +165,18 @@ func appendUpsertParamDecls(w *strings.Builder, p string) {
 			"  %s_coh TIMESTAMP      = ?,\n"+
 			"  %s_cat TIMESTAMP      = ?,\n"+
 			"  %s_upd TIMESTAMP      = ?,\n"+
-			"  %s_fup TIMESTAMP      = ?",
+			"  %s_fup TIMESTAMP      = ?,\n"+
+			"  %s_npg INTEGER        = ?,\n"+
+			"  %s_cad INTEGER        = ?,\n"+
+			"  %s_atr INTEGER        = ?,\n"+
+			"  %s_pct NUMERIC(5,2)   = ?,\n"+
+			"  %s_fpp TIMESTAMP      = ?,\n"+
+			"  %s_mpp NUMERIC(18,2)  = ?",
 		p, p, p, p, p,
 		p, p, p, p, p,
 		p, p, p, p, p,
-		p,
+		p, p, p, p, p,
+		p, p,
 	)
 }
 
@@ -185,30 +192,40 @@ func appendUpsertBodyStmt(w *strings.Builder, p string) {
 			"    MONETARY=:%s_mon, SALDO=:%s_sal,\n"+
 			"    POR_LIQUIDAR_PCT=:%s_plp, NEXT_BEST_PRODUCT=:%s_nbp,\n"+
 			"    FECHA_ULTIMO_PAGO=COALESCE(:%s_fup, FECHA_ULTIMO_PAGO),\n"+
+			"    NUM_PAGOS=:%s_npg, CADENCIA_DIAS=:%s_cad,\n"+
+			"    DIAS_ATRASO_PROM=:%s_atr, PCT_PAGOS_A_TIEMPO=:%s_pct,\n"+
+			"    FECHA_PROX_PAGO=:%s_fpp, MONTO_PROX_PAGO=:%s_mpp,\n"+
 			"    UPDATED_AT=:%s_upd\n"+
 			"  WHERE CLIENTE_ID=:%s_cid;\n"+
 			"  IF (ROW_COUNT=0) THEN\n"+
 			"    INSERT INTO MSP_AN_WINBACK_CANDIDATOS\n"+
 			"      (ID,CLIENTE_ID,NOMBRE,ZONA,TELEFONO,FECHA_ULTIMA_COMPRA,\n"+
 			"       FRECUENCIA,MONETARY,SALDO,POR_LIQUIDAR_PCT,NEXT_BEST_PRODUCT,\n"+
-			"       EN_CONTROL,COHORTE_FECHA,CREATED_AT,UPDATED_AT,FECHA_ULTIMO_PAGO)\n"+
+			"       EN_CONTROL,COHORTE_FECHA,CREATED_AT,UPDATED_AT,FECHA_ULTIMO_PAGO,\n"+
+			"       NUM_PAGOS,CADENCIA_DIAS,DIAS_ATRASO_PROM,PCT_PAGOS_A_TIEMPO,\n"+
+			"       FECHA_PROX_PAGO,MONTO_PROX_PAGO)\n"+
 			"    VALUES(:%s_id,:%s_cid,:%s_nom,:%s_zon,:%s_tel,:%s_fuc,\n"+
 			"           :%s_frq,:%s_mon,:%s_sal,:%s_plp,:%s_nbp,\n"+
-			"           :%s_enc,:%s_coh,:%s_cat,:%s_upd,:%s_fup);\n",
+			"           :%s_enc,:%s_coh,:%s_cat,:%s_upd,:%s_fup,\n"+
+			"           :%s_npg,:%s_cad,:%s_atr,:%s_pct,:%s_fpp,:%s_mpp);\n",
 		p, p, p,
 		p, p,
 		p, p,
 		p, p,
 		p,
+		p, p,
+		p, p,
+		p, p,
 		p,
 		p,
 		p, p, p, p, p, p,
 		p, p, p, p, p,
 		p, p, p, p, p,
+		p, p, p, p, p, p,
 	)
 }
 
-// appendUpsertArgs appends the 16 bound arguments for candidato c (in
+// appendUpsertArgs appends the 22 bound arguments for candidato c (in
 // param-declaration order) to args and returns the extended slice.
 func appendUpsertArgs(args []any, c *domain.WinbackCandidato) []any {
 	enControl := 0
@@ -233,6 +250,12 @@ func appendUpsertArgs(args []any, c *domain.WinbackCandidato) []any {
 		firebird.ToWallClock(c.CreatedAt()),    // _cat
 		firebird.ToWallClock(c.UpdatedAt()),    // _upd
 		nullableWallClockArg(wallClockPtrFromTime(c.FechaUltimoPago())), // _fup
+		c.NumPagos(),        // _npg
+		c.CadenciaDias(),    // _cad
+		c.DiasAtrasoProm(),  // _atr
+		c.PctPagosATiempo(), // _pct
+		nullableWallClockArg(wallClockPtrFromTime(c.FechaProxPago())), // _fpp
+		c.MontoProxPago(), // _mpp
 	)
 }
 
@@ -569,6 +592,69 @@ func (r *Repo) LeerAnclasDesde(ctx context.Context, since *time.Time) ([]outboun
 				return serr
 			}
 			result = append(result, ancla)
+		}
+		return firebird.MapError(rows.Err())
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Fetch cobranza signals and merge into the ancla results.
+	signals, err := r.leerCobranzaSignals(ctx, since)
+	if err != nil {
+		return nil, err
+	}
+	for i := range result {
+		sig, ok := signals[result[i].ClienteID]
+		if !ok {
+			continue
+		}
+		result[i].NumPagos = sig.NumPagos
+		result[i].CadenciaDias = sig.CadenciaDias
+		result[i].DiasAtrasoProm = sig.DiasAtrasoProm
+		result[i].PctPagosATiempo = sig.PctPagosATiempo
+		result[i].FechaProxPago = sig.FechaProxPago
+		result[i].MontoProxPago = sig.MontoProxPago
+	}
+
+	return result, nil
+}
+
+// leerCobranzaSignals queries MSP_PAGOS_VENTAS to compute per-client cadence
+// and punctuality facts using leerCobranzaBase + leerCobranzaClose.
+// since restricts to recently-active clients when non-nil (same boundary as
+// LeerAnclasDesde). Returns a map[clienteID → CobranzaSignals].
+func (r *Repo) leerCobranzaSignals(ctx context.Context, since *time.Time) (map[int]outbound.CobranzaSignals, error) {
+	var query string
+	var args []any
+
+	if since == nil {
+		query = leerCobranzaBase + leerCobranzaClose
+	} else {
+		boundary := since.Add(-watermarkOverlap)
+		datePredicate := "\n    AND FECHA >= ?"
+		query = leerCobranzaBase + datePredicate + leerCobranzaClose
+		args = append(args, firebird.ToWallClock(boundary))
+	}
+
+	result := make(map[int]outbound.CobranzaSignals)
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		rows, qerr := q.QueryContext(ctx, query, args...)
+		if qerr != nil {
+			return firebird.MapError(qerr)
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var raw cobranzaRowRaw
+			if serr := raw.scanFrom(rows); serr != nil {
+				return firebird.MapError(serr)
+			}
+			sig, serr := assembleCobranza(&raw)
+			if serr != nil {
+				return serr
+			}
+			result[sig.ClienteID] = sig
 		}
 		return firebird.MapError(rows.Err())
 	})

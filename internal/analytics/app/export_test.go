@@ -27,3 +27,9 @@ func ExportDeterministicControl(clienteID int) bool {
 func ExportEstadoPagoFor(saldo decimal.Decimal, fechaUltimoPago, now time.Time) domain.EstadoPago {
 	return estadoPagoFor(saldo, fechaUltimoPago, now)
 }
+
+// ExportComputeCobranzaTier exposes the internal computeCobranzaTier function
+// for table-driven tests in the app_test package.
+func ExportComputeCobranzaTier(c *domain.WinbackCandidato, now time.Time) domain.TierRiesgo {
+	return computeCobranzaTier(c, now)
+}

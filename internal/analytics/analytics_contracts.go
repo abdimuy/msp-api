@@ -66,4 +66,13 @@ type ClientePulsoContract struct {
 	FechaUltimaCompra time.Time // zero if none
 	FechaUltimoPago   time.Time // zero if none
 	NextBestProduct   string
+
+	// ─── Cobranza intelligence signals (Task B1) ─────────────────────────────────
+	NumPagos        int
+	CadenciaDias    int
+	DiasAtrasoProm  int
+	PctPagosATiempo decimal.Decimal
+	FechaProxPago   time.Time // zero if no cadencia
+	MontoProxPago   decimal.Decimal
+	TierRiesgo      string // domain.TierRiesgo → string; computed at read time
 }

@@ -40,6 +40,15 @@ type WinbackCandidato struct {
 	enControl         bool
 	cohorteFecha      time.Time
 	timestamps        audit.Timestamped
+	// ─── Cobranza intelligence facts (Task B1) ───────────────────────────────────
+	// Materialized from MSP_PAGOS_VENTAS (CANCELADO='N' AND APLICADO='S').
+	// Zero sentinels: 0 integer = unknown/insufficient data; zero decimal = absent.
+	numPagos        int             // total applied payments; 0 when not computed
+	cadenciaDias    int             // avg days between consecutive payments; 0 if <2 payments
+	diasAtrasoProm  int             // avg of max(0, gap − cadencia) per gap; 0 if insufficient
+	pctPagosATiempo decimal.Decimal // % of gaps within cadencia + 7d tolerance; zero if insufficient
+	fechaProxPago   time.Time       // last payment + cadencia; zero if no cadencia
+	montoProxPago   decimal.Decimal // avg installment amount as proxy; zero if unknown
 }
 
 // ─── Crear constructor ────────────────────────────────────────────────────────
@@ -64,6 +73,16 @@ type CrearWinbackCandidatoParams struct {
 	FechaUltimoPago time.Time
 	CohorteFecha    time.Time
 	Now             time.Time
+	// ─── Cobranza intelligence facts ─────────────────────────────────────────────
+	// All are optional (zero = not available). NumPagos/CadenciaDias/DiasAtrasoProm
+	// use 0 as the absent sentinel. PctPagosATiempo, FechaProxPago, MontoProxPago
+	// use their zero values similarly.
+	NumPagos        int
+	CadenciaDias    int
+	DiasAtrasoProm  int
+	PctPagosATiempo decimal.Decimal
+	FechaProxPago   time.Time
+	MontoProxPago   decimal.Decimal
 }
 
 // CrearWinbackCandidato validates all invariants, generates a new UUID, and
@@ -115,6 +134,12 @@ func CrearWinbackCandidato(p CrearWinbackCandidatoParams) (*WinbackCandidato, er
 		enControl:         p.EnControl,
 		cohorteFecha:      p.CohorteFecha.UTC(),
 		timestamps:        audit.NewTimestamped(p.Now),
+		numPagos:          p.NumPagos,
+		cadenciaDias:      p.CadenciaDias,
+		diasAtrasoProm:    p.DiasAtrasoProm,
+		pctPagosATiempo:   p.PctPagosATiempo,
+		fechaProxPago:     p.FechaProxPago,
+		montoProxPago:     p.MontoProxPago,
 	}, nil
 }
 
@@ -141,6 +166,12 @@ type HydrateWinbackCandidatoParams struct {
 	CohorteFecha    time.Time
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+	NumPagos        int
+	CadenciaDias    int
+	DiasAtrasoProm  int
+	PctPagosATiempo decimal.Decimal
+	FechaProxPago   time.Time
+	MontoProxPago   decimal.Decimal
 }
 
 // HydrateWinbackCandidato reconstructs a WinbackCandidato from persistence
@@ -162,6 +193,12 @@ func HydrateWinbackCandidato(p HydrateWinbackCandidatoParams) *WinbackCandidato 
 		enControl:         p.EnControl,
 		cohorteFecha:      p.CohorteFecha,
 		timestamps:        audit.HydrateTimestamped(p.CreatedAt, p.UpdatedAt),
+		numPagos:          p.NumPagos,
+		cadenciaDias:      p.CadenciaDias,
+		diasAtrasoProm:    p.DiasAtrasoProm,
+		pctPagosATiempo:   p.PctPagosATiempo,
+		fechaProxPago:     p.FechaProxPago,
+		montoProxPago:     p.MontoProxPago,
 	}
 }
 
@@ -220,3 +257,26 @@ func (w *WinbackCandidato) CreatedAt() time.Time { return w.timestamps.CreatedAt
 
 // UpdatedAt returns the UTC timestamp of the last projection refresh.
 func (w *WinbackCandidato) UpdatedAt() time.Time { return w.timestamps.UpdatedAt() }
+
+// NumPagos returns the total count of applied payments. Zero when not computed.
+func (w *WinbackCandidato) NumPagos() int { return w.numPagos }
+
+// CadenciaDias returns the average days between consecutive payments.
+// Zero when fewer than 2 payments exist (insufficient data).
+func (w *WinbackCandidato) CadenciaDias() int { return w.cadenciaDias }
+
+// DiasAtrasoProm returns the average positive lateness (days) relative to
+// the client's own payment cadence. Zero when insufficient data.
+func (w *WinbackCandidato) DiasAtrasoProm() int { return w.diasAtrasoProm }
+
+// PctPagosATiempo returns the percentage of payments made within the cadence
+// plus a 7-day tolerance window. Zero when insufficient data.
+func (w *WinbackCandidato) PctPagosATiempo() decimal.Decimal { return w.pctPagosATiempo }
+
+// FechaProxPago returns the estimated next payment date (last payment + cadencia).
+// Zero when no cadencia is available.
+func (w *WinbackCandidato) FechaProxPago() time.Time { return w.fechaProxPago }
+
+// MontoProxPago returns the expected installment amount (average of past payments).
+// Zero when no payment history is available.
+func (w *WinbackCandidato) MontoProxPago() decimal.Decimal { return w.montoProxPago }

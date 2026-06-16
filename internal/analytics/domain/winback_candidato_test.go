@@ -189,6 +189,59 @@ func TestHydrateWinbackCandidato(t *testing.T) {
 	assert.Equal(t, updatedAt, got.UpdatedAt())
 }
 
+func TestWinbackCandidatoCobranzaFields(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
+
+	c, err := domain.CrearWinbackCandidato(domain.CrearWinbackCandidatoParams{
+		ClienteID:         11511,
+		Nombre:            "Cliente Puntual",
+		Zona:              "Z1",
+		Telefono:          "555-1111",
+		FechaUltimaCompra: now.AddDate(0, 0, -400),
+		Frecuencia:        242,
+		Monetary:          decimal.NewFromFloat(38_000),
+		Saldo:             decimal.NewFromFloat(3_000),
+		PorLiquidarPct:    decimal.NewFromFloat(7.9),
+		NextBestProduct:   "Sala de 3 piezas",
+		EnControl:         false,
+		FechaUltimoPago:   now.AddDate(0, 0, -5),
+		CohorteFecha:      now,
+		Now:               now,
+		// Cobranza facts
+		NumPagos:        242,
+		CadenciaDias:    8,
+		DiasAtrasoProm:  2,
+		PctPagosATiempo: decimal.NewFromFloat(97.50),
+		FechaProxPago:   now.AddDate(0, 0, 3),
+		MontoProxPago:   decimal.NewFromFloat(157.85),
+	})
+	if err != nil {
+		t.Fatalf("CrearWinbackCandidato failed: %v", err)
+	}
+
+	if c.NumPagos() != 242 {
+		t.Errorf("NumPagos: got %d, want 242", c.NumPagos())
+	}
+	if c.CadenciaDias() != 8 {
+		t.Errorf("CadenciaDias: got %d, want 8", c.CadenciaDias())
+	}
+	if c.DiasAtrasoProm() != 2 {
+		t.Errorf("DiasAtrasoProm: got %d, want 2", c.DiasAtrasoProm())
+	}
+	if !c.PctPagosATiempo().Equal(decimal.NewFromFloat(97.50)) {
+		t.Errorf("PctPagosATiempo: got %s, want 97.50", c.PctPagosATiempo())
+	}
+	wantProxPago := now.AddDate(0, 0, 3).UTC()
+	if !c.FechaProxPago().Equal(wantProxPago) {
+		t.Errorf("FechaProxPago: got %v, want %v", c.FechaProxPago(), wantProxPago)
+	}
+	if !c.MontoProxPago().Equal(decimal.NewFromFloat(157.85)) {
+		t.Errorf("MontoProxPago: got %s, want 157.85", c.MontoProxPago())
+	}
+}
+
 func TestWinbackCandidato_FechaUltimoPago(t *testing.T) {
 	t.Parallel()
 

@@ -56,6 +56,50 @@ type AnclaCliente struct {
 	// MAX(sv.FECHA_ULT_PAGO) per CLIENTE_ID. Zero if the client has never made
 	// a payment.
 	FechaUltimoPago time.Time
+
+	// ─── Cobranza intelligence facts ─────────────────────────────────────────────
+	// Computed from MSP_PAGOS_VENTAS (CANCELADO='N' AND APLICADO='S') using a
+	// windowed LAG aggregation. All values are zero when insufficient data exists
+	// (< 2 consecutive payments for cadencia-based metrics).
+
+	// NumPagos is the total count of applied payments.
+	NumPagos int
+
+	// CadenciaDias is the average days between consecutive payments.
+	// Zero when fewer than 2 payments exist.
+	CadenciaDias int
+
+	// DiasAtrasoProm is the average of max(0, gap − cadencia) over all gaps.
+	// Zero when insufficient data.
+	DiasAtrasoProm int
+
+	// PctPagosATiempo is the percentage of payment gaps within cadencia + 7 days.
+	// Zero when insufficient data.
+	PctPagosATiempo decimal.Decimal
+
+	// FechaProxPago is the estimated next payment date (last payment + cadencia).
+	// Zero when no cadencia is available.
+	FechaProxPago time.Time
+
+	// MontoProxPago is the average payment amount used as the installment proxy.
+	// Zero when no payment history is available.
+	MontoProxPago decimal.Decimal
+}
+
+// CobranzaSignals holds the per-client cadence and punctuality facts computed
+// from MSP_PAGOS_VENTAS. Returned alongside AnclaCliente anchors by the
+// extended LeerAnclasDesde implementation.
+//
+// All integer fields use 0 as the "not available" sentinel (they are always
+// non-negative when computed). Decimal fields use decimal.Zero similarly.
+type CobranzaSignals struct {
+	ClienteID       int
+	NumPagos        int
+	CadenciaDias    int
+	DiasAtrasoProm  int
+	PctPagosATiempo decimal.Decimal
+	FechaProxPago   time.Time
+	MontoProxPago   decimal.Decimal
 }
 
 // MicrosipReader is the analytics module's read-only view of Microsip.

@@ -481,6 +481,159 @@ func TestSolvenciaMultiplier(t *testing.T) {
 	}
 }
 
+// TestComputeCobranzaTier verifies all tier classification rules.
+//
+// TierRiesgo rules (from scoring.go):
+//
+//	saldo == 0 → AL_DIA (regardless of cadencia or payment date)
+//	saldo > 0, cadenciaDias == 0 (no data) → falls back to EstadoPago:
+//	  AL_CORRIENTE → AL_DIA
+//	  ATRASADO     → VIGILANCIA
+//	  MOROSO       → CRITICO
+//	saldo > 0, cadenciaDias > 0:
+//	  diasSincePago <= 1×cadencia  → AL_DIA
+//	  diasSincePago <= 2×cadencia  → VIGILANCIA
+//	  diasSincePago <= 3×cadencia  → EN_RIESGO
+//	  diasSincePago >  3×cadencia  → CRITICO
+func TestComputeCobranzaTier(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
+
+	type tc struct {
+		name            string
+		saldo           decimal.Decimal
+		cadenciaDias    int
+		fechaUltimoPago time.Time
+		wantTier        domain.TierRiesgo
+	}
+
+	tests := []tc{
+		// saldo == 0 branch
+		{
+			name:            "saldo=0 → AL_DIA always",
+			saldo:           decimal.Zero,
+			cadenciaDias:    30,
+			fechaUltimoPago: base.AddDate(0, 0, -90),
+			wantTier:        domain.TierRiesgoAlDia,
+		},
+		// no cadencia (0) — fallback to EstadoPago
+		{
+			name:            "saldo>0, no cadencia, pagó hace 10d → AL_DIA (AL_CORRIENTE)",
+			saldo:           decimal.NewFromInt(5_000),
+			cadenciaDias:    0,
+			fechaUltimoPago: base.AddDate(0, 0, -10),
+			wantTier:        domain.TierRiesgoAlDia,
+		},
+		{
+			name:            "saldo>0, no cadencia, pagó hace 60d → VIGILANCIA (ATRASADO)",
+			saldo:           decimal.NewFromInt(5_000),
+			cadenciaDias:    0,
+			fechaUltimoPago: base.AddDate(0, 0, -60),
+			wantTier:        domain.TierRiesgoVigilancia,
+		},
+		{
+			name:            "saldo>0, no cadencia, sin pagos → CRITICO (MOROSO)",
+			saldo:           decimal.NewFromInt(5_000),
+			cadenciaDias:    0,
+			fechaUltimoPago: time.Time{},
+			wantTier:        domain.TierRiesgoCritico,
+		},
+		// cadencia-based branch
+		{
+			name:            "saldo>0, cadencia=30, pagó hace 20d (≤1×) → AL_DIA",
+			saldo:           decimal.NewFromInt(5_000),
+			cadenciaDias:    30,
+			fechaUltimoPago: base.AddDate(0, 0, -20),
+			wantTier:        domain.TierRiesgoAlDia,
+		},
+		{
+			name:            "saldo>0, cadencia=30, pagó hace 30d (=1×) → AL_DIA",
+			saldo:           decimal.NewFromInt(5_000),
+			cadenciaDias:    30,
+			fechaUltimoPago: base.AddDate(0, 0, -30),
+			wantTier:        domain.TierRiesgoAlDia,
+		},
+		{
+			name:            "saldo>0, cadencia=30, pagó hace 31d (>1×, ≤2×) → VIGILANCIA",
+			saldo:           decimal.NewFromInt(5_000),
+			cadenciaDias:    30,
+			fechaUltimoPago: base.AddDate(0, 0, -31),
+			wantTier:        domain.TierRiesgoVigilancia,
+		},
+		{
+			name:            "saldo>0, cadencia=30, pagó hace 60d (=2×) → VIGILANCIA",
+			saldo:           decimal.NewFromInt(5_000),
+			cadenciaDias:    30,
+			fechaUltimoPago: base.AddDate(0, 0, -60),
+			wantTier:        domain.TierRiesgoVigilancia,
+		},
+		{
+			name:            "saldo>0, cadencia=30, pagó hace 61d (>2×, ≤3×) → EN_RIESGO",
+			saldo:           decimal.NewFromInt(5_000),
+			cadenciaDias:    30,
+			fechaUltimoPago: base.AddDate(0, 0, -61),
+			wantTier:        domain.TierRiesgoEnRiesgo,
+		},
+		{
+			name:            "saldo>0, cadencia=30, pagó hace 90d (=3×) → EN_RIESGO",
+			saldo:           decimal.NewFromInt(5_000),
+			cadenciaDias:    30,
+			fechaUltimoPago: base.AddDate(0, 0, -90),
+			wantTier:        domain.TierRiesgoEnRiesgo,
+		},
+		{
+			name:            "saldo>0, cadencia=30, pagó hace 91d (>3×) → CRITICO",
+			saldo:           decimal.NewFromInt(5_000),
+			cadenciaDias:    30,
+			fechaUltimoPago: base.AddDate(0, 0, -91),
+			wantTier:        domain.TierRiesgoCritico,
+		},
+		{
+			name:            "saldo>0, cadencia=7 (semanal), pagó hace 4d → AL_DIA",
+			saldo:           decimal.NewFromInt(2_000),
+			cadenciaDias:    7,
+			fechaUltimoPago: base.AddDate(0, 0, -4),
+			wantTier:        domain.TierRiesgoAlDia,
+		},
+		{
+			name:            "saldo>0, cadencia=7 (semanal), pagó hace 8d → VIGILANCIA",
+			saldo:           decimal.NewFromInt(2_000),
+			cadenciaDias:    7,
+			fechaUltimoPago: base.AddDate(0, 0, -8),
+			wantTier:        domain.TierRiesgoVigilancia,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			c := mustCandidato(domain.CrearWinbackCandidatoParams{
+				ClienteID:         1,
+				Nombre:            "Test",
+				Zona:              "Z1",
+				FechaUltimaCompra: base.AddDate(0, 0, -400),
+				Frecuencia:        10,
+				Monetary:          decimal.NewFromInt(20_000),
+				Saldo:             tt.saldo,
+				PorLiquidarPct:    decimal.Zero,
+				EnControl:         false,
+				CohorteFecha:      base.AddDate(-1, 0, 0),
+				Now:               base,
+				FechaUltimoPago:   tt.fechaUltimoPago,
+				CadenciaDias:      tt.cadenciaDias,
+			})
+
+			got := app.ExportComputeCobranzaTier(c, base)
+			if got != tt.wantTier {
+				t.Errorf("TierRiesgo: got %q, want %q", got, tt.wantTier)
+			}
+		})
+	}
+}
+
 // TestEstadoPagoFor covers all branches of the estadoPagoFor pure function.
 // All inputs are deterministic UTC times to guarantee no TZ sensitivity.
 func TestEstadoPagoFor(t *testing.T) {

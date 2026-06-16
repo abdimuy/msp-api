@@ -41,9 +41,10 @@ func ToWinbackCandidatoContracts(candidates []*domain.WinbackCandidato) []Winbac
 
 // ToClientePulsoContract projects a WinbackCandidato plus the read-time computed
 // pulse values into the cross-module ClientePulsoContract. The computed values
-// (segmento, score, recenciaDias, estadoPago) are produced by the analytics app
-// scoring layer and passed in — this mapper only assembles the flat struct.
-func ToClientePulsoContract(c *domain.WinbackCandidato, segmento string, score, recenciaDias int, estadoPago string) ClientePulsoContract {
+// (segmento, score, recenciaDias, estadoPago, tierRiesgo) are produced by the
+// analytics app scoring layer and passed in — this mapper only assembles the
+// flat struct.
+func ToClientePulsoContract(c *domain.WinbackCandidato, segmento string, score, recenciaDias int, estadoPago, tierRiesgo string) ClientePulsoContract {
 	return ClientePulsoContract{
 		ClienteID:         c.ClienteID(),
 		Score:             score,
@@ -57,5 +58,12 @@ func ToClientePulsoContract(c *domain.WinbackCandidato, segmento string, score, 
 		FechaUltimaCompra: c.FechaUltimaCompra(),
 		FechaUltimoPago:   c.FechaUltimoPago(),
 		NextBestProduct:   c.NextBestProduct(),
+		NumPagos:          c.NumPagos(),
+		CadenciaDias:      c.CadenciaDias(),
+		DiasAtrasoProm:    c.DiasAtrasoProm(),
+		PctPagosATiempo:   c.PctPagosATiempo(),
+		FechaProxPago:     c.FechaProxPago(),
+		MontoProxPago:     c.MontoProxPago(),
+		TierRiesgo:        tierRiesgo,
 	}
 }

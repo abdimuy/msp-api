@@ -26,7 +26,13 @@ const candidatoCols = `
 	COHORTE_FECHA,
 	CREATED_AT,
 	UPDATED_AT,
-	FECHA_ULTIMO_PAGO`
+	FECHA_ULTIMO_PAGO,
+	NUM_PAGOS,
+	CADENCIA_DIAS,
+	DIAS_ATRASO_PROM,
+	PCT_PAGOS_A_TIEMPO,
+	FECHA_PROX_PAGO,
+	MONTO_PROX_PAGO`
 
 // Note on upsert strategy: the nakagami/firebirdsql driver returns SQL error
 // -804 ("Data type unknown") when parameters appear inside the USING SELECT
@@ -246,3 +252,91 @@ LEFT JOIN nbp                ON nbp.CLIENTE_ID = rfm.CLIENTE_ID`
 // leerAnclasBase is the complete query for the since=nil (full-DB) case.
 // It is assembled by concatenating the CTE parts with no additional predicates.
 const leerAnclasBase = leerAnclasRFMBase + leerAnclasRFMClose + leerAnclasNBPBase + leerAnclasNBPClose
+
+// ─── Cobranza signals query ────────────────────────────────────────────────────
+//
+// leerCobranzaBase / leerCobranzaClose query MSP_PAGOS_VENTAS to compute
+// per-client cadence and punctuality facts using a three-CTE windowed approach:
+//
+//   (1) gaps CTE: LAG(FECHA) OVER (PARTITION BY CLIENTE_ID ORDER BY FECHA)
+//       computes consecutive gap in days for each payment.
+//   (2) cadencias CTE: AVG(gap_dias) per client → CADENCIA_DIAS, plus
+//       AVG(IMPORTE) → MONTO_PROX_PAGO and MAX(FECHA) → ULTIMA_FECHA.
+//       HAVING COUNT(*) >= 2 ensures at least one gap exists.
+//   (3) atrasos CTE: joins gaps back to cadencias to classify each gap as
+//       on-time (≤ cadencia+7d) or late, and computes per-gap lateness.
+//   Final SELECT: groups over cadencias + atrasos to produce per-client signals.
+//
+// Performance: IDX_MSP_PAGOS_CLIENTE_FECHA (CLIENTE_ID, FECHA) covers both
+// the partition and order key. Full scan of 2.17M rows returns in <30s (verified live).
+//
+// Driver gotcha (reference_firebirdsql_sum_scale): AVG() over NUMERIC returns
+// unscaled *big.Int. Pattern: CAST(AVG(CAST(col AS NUMERIC(18,4))) AS NUMERIC(N,0)).
+//
+// Watermark handling: when since != nil the caller injects an extra AND clause
+// into the gaps CTE before leerCobranzaClose (same pattern as rfm/nbp CTEs).
+//
+// Column order (must match cobranzaRowRaw.scanFrom exactly):
+//
+//	1  cliente_id
+//	2  num_pagos          (NUM_GAPS + 1: total payments including the first)
+//	3  cadencia_dias      (INTEGER avg gap)
+//	4  dias_atraso_prom   (INTEGER avg positive lateness)
+//	5  pct_pagos_a_tiempo (NUMERIC(5,2))
+//	6  fecha_prox_pago    (TIMESTAMP = ultima_fecha + cadencia)
+//	7  monto_prox_pago    (NUMERIC(18,2) avg importe)
+
+// leerCobranzaBase opens the WITH block and the gaps CTE through its WHERE clause.
+// The caller appends an optional FECHA predicate then leerCobranzaClose.
+const leerCobranzaBase = `
+WITH gaps AS (
+  SELECT
+    CLIENTE_ID,
+    FECHA,
+    IMPORTE,
+    DATEDIFF(DAY, LAG(FECHA) OVER (PARTITION BY CLIENTE_ID ORDER BY FECHA), FECHA) AS GAP_DIAS
+  FROM MSP_PAGOS_VENTAS
+  WHERE CANCELADO = 'N'
+    AND APLICADO  = 'S'`
+
+// leerCobranzaClose closes the gaps CTE, adds cadencias + atrasos CTEs,
+// and the final SELECT aggregating per-client cobranza signals.
+const leerCobranzaClose = `
+),
+cadencias AS (
+  SELECT
+    CLIENTE_ID,
+    COUNT(*)                                                                      AS NUM_GAPS,
+    CAST(AVG(CAST(GAP_DIAS AS NUMERIC(18,4))) AS NUMERIC(10,0))                  AS CADENCIA_DIAS,
+    CAST(AVG(CAST(IMPORTE  AS NUMERIC(18,4))) AS NUMERIC(18,2))                  AS AVG_IMPORTE,
+    MAX(FECHA)                                                                    AS ULTIMA_FECHA
+  FROM gaps
+  WHERE GAP_DIAS IS NOT NULL
+  GROUP BY CLIENTE_ID
+  HAVING COUNT(*) >= 2
+),
+atrasos AS (
+  SELECT
+    g.CLIENTE_ID,
+    CASE WHEN g.GAP_DIAS > (c.CADENCIA_DIAS + 7)
+         THEN g.GAP_DIAS - c.CADENCIA_DIAS
+         ELSE 0 END                                                               AS ATRASO_DIAS,
+    CASE WHEN g.GAP_DIAS <= (c.CADENCIA_DIAS + 7) THEN 1 ELSE 0 END              AS A_TIEMPO
+  FROM gaps g
+  JOIN cadencias c ON c.CLIENTE_ID = g.CLIENTE_ID
+  WHERE g.GAP_DIAS IS NOT NULL
+)
+SELECT
+  c.CLIENTE_ID,
+  (c.NUM_GAPS + 1)                                                                AS NUM_PAGOS,
+  c.CADENCIA_DIAS,
+  CAST(AVG(CAST(a.ATRASO_DIAS AS NUMERIC(18,4))) AS NUMERIC(10,0))               AS DIAS_ATRASO_PROM,
+  CAST(
+    100.0 * SUM(a.A_TIEMPO) / NULLIF(CAST(COUNT(*) AS NUMERIC(18,4)), 0)
+    AS NUMERIC(5,2)
+  )                                                                               AS PCT_PAGOS_A_TIEMPO,
+  DATEADD(DAY, c.CADENCIA_DIAS, c.ULTIMA_FECHA)                                  AS FECHA_PROX_PAGO,
+  c.AVG_IMPORTE                                                                   AS MONTO_PROX_PAGO
+FROM cadencias c
+JOIN atrasos a ON a.CLIENTE_ID = c.CLIENTE_ID
+GROUP BY c.CLIENTE_ID, c.NUM_GAPS, c.CADENCIA_DIAS, c.AVG_IMPORTE, c.ULTIMA_FECHA`

@@ -68,4 +68,10 @@ var (
 		"winback_candidato_not_found",
 		"candidato winback no encontrado",
 	)
+
+	// ErrTierRiesgoInvalido is returned when an unrecognized TierRiesgo value is parsed.
+	ErrTierRiesgoInvalido = apperror.NewValidation(
+		"tier_riesgo_invalido",
+		"el tier de riesgo de cobranza no es válido",
+	)
 )

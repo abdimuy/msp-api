@@ -104,6 +104,13 @@ func toFichaDTO(ficha clientesapp.FichaCliente) FichaDTO {
 			FechaUltimaCompra: formatTime(p.FechaUltimaCompra),
 			FechaUltimoPago:   formatTime(p.FechaUltimoPago),
 			NextBestProduct:   p.NextBestProduct,
+			NumPagos:          p.NumPagos,
+			CadenciaDias:      p.CadenciaDias,
+			DiasAtrasoProm:    p.DiasAtrasoProm,
+			PctPagosATiempo:   p.PctPagosATiempo.StringFixed(pctScale),
+			FechaProxPago:     formatTime(p.FechaProxPago),
+			MontoProxPago:     p.MontoProxPago.StringFixed(moneyScale),
+			TierRiesgo:        p.TierRiesgo,
 		}
 	}
 

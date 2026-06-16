@@ -28,8 +28,9 @@ func (s *Service) ObtenerPulsoCliente(ctx context.Context, clienteID int) (analy
 
 	now := s.clock.Now()
 	seg, score, recencia, ep := computeSegmentoScore(c, now)
+	tier := computeCobranzaTier(c, now)
 
-	return analytics.ToClientePulsoContract(c, seg.String(), score.Int(), recencia, ep.String()), nil
+	return analytics.ToClientePulsoContract(c, seg.String(), score.Int(), recencia, ep.String(), tier.String()), nil
 }
 
 // ObtenerPulsosClientes returns a map keyed by clienteID with the pulse for each
@@ -55,7 +56,8 @@ func (s *Service) ObtenerPulsosClientes(ctx context.Context, clienteIDs []int) (
 	result := make(map[int]analytics.ClientePulsoContract, len(candidates))
 	for _, c := range candidates {
 		seg, score, recencia, ep := computeSegmentoScore(c, now)
-		result[c.ClienteID()] = analytics.ToClientePulsoContract(c, seg.String(), score.Int(), recencia, ep.String())
+		tier := computeCobranzaTier(c, now)
+		result[c.ClienteID()] = analytics.ToClientePulsoContract(c, seg.String(), score.Int(), recencia, ep.String(), tier.String())
 	}
 	return result, nil
 }

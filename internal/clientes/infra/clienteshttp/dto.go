@@ -145,6 +145,15 @@ type PulsoDTO struct {
 	FechaUltimaCompra string `json:"fecha_ultima_compra" format:"date-time" doc:"RFC3339 UTC de la última compra; vacío si sin historial"`
 	FechaUltimoPago   string `json:"fecha_ultimo_pago"   format:"date-time" doc:"RFC3339 UTC del último pago; vacío si sin historial de pagos"`
 	NextBestProduct   string `json:"next_best_product"   doc:"Producto recomendado para siguiente contacto"`
+
+	// ─── Cobranza intelligence signals ───────────────────────────────────────────
+	NumPagos        int    `json:"num_pagos"          doc:"Total de pagos aplicados en historial; 0 si sin datos"`
+	CadenciaDias    int    `json:"cadencia_dias"       doc:"Días promedio entre pagos consecutivos; 0 si sin datos"`
+	DiasAtrasoProm  int    `json:"dias_atraso_prom"    doc:"Días de atraso promedio respecto a cadencia; 0 si sin datos"`
+	PctPagosATiempo string `json:"pct_pagos_a_tiempo"  doc:"Porcentaje de pagos dentro de cadencia + 7 días (2 decimales); 0.00 si sin datos"`
+	FechaProxPago   string `json:"fecha_prox_pago"     format:"date-time" doc:"RFC3339 UTC del próximo pago estimado; vacío si sin cadencia"`
+	MontoProxPago   string `json:"monto_prox_pago"     doc:"Monto estimado del próximo pago — promedio histórico (2 decimales)"`
+	TierRiesgo      string `json:"tier_riesgo"         doc:"Tier de riesgo de cobranza: AL_DIA, VIGILANCIA, EN_RIESGO, CRITICO"`
 }
 
 // ─── Endpoint 3: GET /clientes/{id}/ventas ───────────────────────────────────
