@@ -21,6 +21,10 @@ type countingDirectoryIndex struct {
 	reconcileErr error
 }
 
+func (f *countingDirectoryIndex) Buscar(_ context.Context, _ outbound.DirectorioQuery) (outbound.DirectorioResultado, error) {
+	return outbound.DirectorioResultado{Items: []outbound.DirectorioDoc{}, Total: 0}, nil
+}
+
 func (f *countingDirectoryIndex) Reconciliar(_ context.Context, _ []outbound.DirectorioDoc) error {
 	f.calls.Add(1)
 	return f.reconcileErr

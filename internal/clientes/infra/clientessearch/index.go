@@ -73,6 +73,7 @@ func mapDoc(d outbound.DirectorioDoc) ClienteDoc {
 		DireccionPoblacion: d.DireccionPoblacion,
 		DireccionCorta:     d.DireccionCorta,
 		ZonaID:             d.ZonaID,
+		ZonaNombre:         d.ZonaNombre,
 		CobradorID:         d.CobradorID,
 		ConSaldo:           d.ConSaldo,
 		Segmento:           d.Segmento,

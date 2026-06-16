@@ -11,6 +11,29 @@ import (
 	"github.com/abdimuy/msp-api/internal/clientes/ports/outbound"
 )
 
+// ─── Endpoint 1: directory item (from Meilisearch DirectorioDoc) ─────────────
+
+// dirDocToClienteListItemDTO maps a flat DirectorioDoc returned by Meilisearch
+// to its wire DTO. Saldo is rendered as a 2-decimal string.
+func dirDocToClienteListItemDTO(doc outbound.DirectorioDoc) ClienteListItemDTO {
+	dto := ClienteListItemDTO{
+		ClienteID:      doc.ClienteID,
+		Nombre:         doc.Nombre,
+		Zona:           doc.ZonaNombre,
+		Telefono:       doc.Telefono,
+		DireccionCorta: doc.DireccionCorta,
+		TienePulso:     doc.TienePulso,
+		Saldo:          doc.Saldo.StringFixed(moneyScale),
+	}
+	if doc.TienePulso {
+		dto.Score = doc.Score
+		dto.Segmento = doc.Segmento
+		dto.EstadoPago = doc.EstadoPago
+		dto.RecenciaDias = doc.RecenciaDias
+	}
+	return dto
+}
+
 // ─── Decimal scale constants ──────────────────────────────────────────────────
 
 const (
@@ -31,28 +54,6 @@ func formatTime(t time.Time) string {
 		return ""
 	}
 	return t.UTC().Format(time.RFC3339Nano)
-}
-
-// ─── Endpoint 1: directory item ──────────────────────────────────────────────
-
-// toClienteListItemDTO maps a DirectorioClienteItem to its wire DTO.
-func toClienteListItemDTO(item clientesapp.DirectorioClienteItem) ClienteListItemDTO {
-	dto := ClienteListItemDTO{
-		ClienteID:      item.Cliente.ClienteID(),
-		Nombre:         item.Cliente.Nombre(),
-		Zona:           item.Cliente.ZonaNombre(),
-		Telefono:       item.Cliente.Telefono(),
-		DireccionCorta: item.Cliente.Direccion().Corta(),
-		TienePulso:     item.TienePulso,
-		Saldo:          item.SaldoTotal.StringFixed(moneyScale),
-	}
-	if item.TienePulso {
-		dto.Score = item.Pulso.Score
-		dto.Segmento = item.Pulso.Segmento
-		dto.EstadoPago = item.Pulso.EstadoPago
-		dto.RecenciaDias = item.Pulso.RecenciaDias
-	}
-	return dto
 }
 
 // ─── Endpoint 2: ficha ───────────────────────────────────────────────────────

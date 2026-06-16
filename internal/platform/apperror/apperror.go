@@ -29,6 +29,10 @@ const (
 	KindForbidden
 	// KindInternal maps to 500 Internal Server Error.
 	KindInternal
+	// KindServiceUnavailable maps to 503 Service Unavailable.
+	// Used when a required downstream dependency (e.g. Meilisearch) is
+	// temporarily unavailable and there is no fallback.
+	KindServiceUnavailable
 )
 
 // HTTPStatus returns the HTTP status code matching this kind.
@@ -44,6 +48,8 @@ func (k Kind) HTTPStatus() int {
 		return http.StatusUnauthorized
 	case KindForbidden:
 		return http.StatusForbidden
+	case KindServiceUnavailable:
+		return http.StatusServiceUnavailable
 	case KindInternal, KindUnknown:
 		return http.StatusInternalServerError
 	}
@@ -142,6 +148,13 @@ func NewForbidden(code, message string) *Error {
 // NewInternal creates an internal error (500).
 func NewInternal(code, message string) *Error {
 	return &Error{Kind: KindInternal, Code: code, Message: message}
+}
+
+// NewServiceUnavailable creates a service-unavailable error (503).
+// Use when a required downstream dependency is temporarily unreachable and
+// there is no local fallback (e.g. Meilisearch not configured or transient).
+func NewServiceUnavailable(code, message string) *Error {
+	return &Error{Kind: KindServiceUnavailable, Code: code, Message: message}
 }
 
 // As extracts an *Error from any error in the chain.

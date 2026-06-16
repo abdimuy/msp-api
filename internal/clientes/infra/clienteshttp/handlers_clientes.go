@@ -47,7 +47,7 @@ func (h *Handlers) ListarClientes(ctx context.Context, input *ListarClientesInpu
 		return nil, err
 	}
 
-	page, err := h.svc.BuscarClientes(ctx, clientesapp.BuscarClientesInput{
+	resultado, err := h.svc.BuscarClientes(ctx, clientesapp.BuscarClientesInput{
 		Q:             input.Q,
 		ZonaClienteID: intPtrOrNil(input.Zona),
 		CobradorID:    intPtrOrNil(input.Cobrador),
@@ -66,14 +66,15 @@ func (h *Handlers) ListarClientes(ctx context.Context, input *ListarClientesInpu
 		return nil, mapAppError(err)
 	}
 
-	items := make([]ClienteListItemDTO, 0, len(page.Items))
-	for _, item := range page.Items {
-		items = append(items, toClienteListItemDTO(item))
+	items := make([]ClienteListItemDTO, 0, len(resultado.Items))
+	for _, doc := range resultado.Items {
+		items = append(items, dirDocToClienteListItemDTO(doc))
 	}
 
 	out := &ListarClientesOutput{}
 	out.Body.Items = items
-	out.Body.NextCursor = page.NextCursor
+	out.Body.NextCursor = resultado.NextCursor
+	out.Body.Facets = resultado.Facets
 	return out, nil
 }
 

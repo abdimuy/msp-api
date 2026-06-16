@@ -98,6 +98,10 @@ type ClienteDoc struct {
 
 	// ── Display-only (not searchable/filterable/sortable) ───────────────
 
+	// ZonaNombre is the display name of the client's zone. Display only —
+	// sorting uses the numeric zona_id sortable attribute.
+	ZonaNombre string `json:"zona_nombre"`
+
 	// Telefono is the primary phone number for display.
 	Telefono string `json:"telefono"`
 

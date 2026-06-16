@@ -34,9 +34,18 @@ type ListarClientesInput struct {
 	Limit      int    `query:"limit"       default:"50" minimum:"1" maximum:"200" doc:"Máximo de registros devueltos"`
 }
 
+// DirectorioResponseBody is the response body for GET /clientes.
+// It extends the basic paginated list with per-attribute facet counts from
+// Meilisearch so the frontend can render filter chips without a second round-trip.
+type DirectorioResponseBody struct {
+	Items      []ClienteListItemDTO      `json:"items"                  doc:"Página de clientes del directorio"`
+	NextCursor string                    `json:"next_cursor,omitempty"  doc:"Cursor opaco para la página siguiente; ausente en la última página"`
+	Facets     map[string]map[string]int `json:"facets,omitempty"     doc:"Conteos de valores por atributo (zona_id, cobrador_id, segmento, estado_pago)"`
+}
+
 // ListarClientesOutput is the response for GET /clientes.
 type ListarClientesOutput struct {
-	Body ListResponse[ClienteListItemDTO]
+	Body DirectorioResponseBody
 }
 
 // ClienteListItemDTO is the wire representation of one client in the directory

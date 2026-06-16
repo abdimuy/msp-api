@@ -175,10 +175,19 @@ func (f *fakeSearch) Reconciliar(_ context.Context, docs []outbound.SearchDoc) e
 
 // ─── Fake directory index ─────────────────────────────────────────────────────
 
-// noopDirectoryIndex is a test stub that satisfies outbound.DirectoryIndex
-// without doing anything. Used when the handler under test does not exercise
-// the Meilisearch reconcile path.
-type noopDirectoryIndex struct{}
+// noopDirectoryIndex is a test stub that satisfies outbound.DirectoryIndex.
+// Buscar returns the configured result/error; Reconciliar is a no-op.
+type noopDirectoryIndex struct {
+	resultado outbound.DirectorioResultado
+	buscarErr error
+}
+
+func (n noopDirectoryIndex) Buscar(_ context.Context, _ outbound.DirectorioQuery) (outbound.DirectorioResultado, error) {
+	if n.buscarErr != nil {
+		return outbound.DirectorioResultado{}, n.buscarErr
+	}
+	return n.resultado, nil
+}
 
 func (noopDirectoryIndex) Reconciliar(_ context.Context, _ []outbound.DirectorioDoc) error {
 	return nil
@@ -187,7 +196,11 @@ func (noopDirectoryIndex) Reconciliar(_ context.Context, _ []outbound.Directorio
 // ─── Service builder ──────────────────────────────────────────────────────────
 
 func buildService(repo outbound.ClientesRepo, ac outbound.AnalyticsClient, si outbound.SearchIndex) *clientesapp.Service {
-	return clientesapp.NewService(repo, ac, si, noopDirectoryIndex{}, testClock{})
+	return buildServiceWithDirIndex(repo, ac, si, noopDirectoryIndex{})
+}
+
+func buildServiceWithDirIndex(repo outbound.ClientesRepo, ac outbound.AnalyticsClient, si outbound.SearchIndex, di outbound.DirectoryIndex) *clientesapp.Service {
+	return clientesapp.NewService(repo, ac, si, di, testClock{})
 }
 
 // ─── Auth helpers ─────────────────────────────────────────────────────────────
@@ -311,21 +324,31 @@ func newPulso(clienteID int) analytics.ClientePulsoContract {
 func TestListarClientes_HappyPath_200(t *testing.T) {
 	t.Parallel()
 
-	c := newCliente(42)
-	item := outbound.DirectorioItem{
-		Cliente:    c,
-		SaldoTotal: decimal.NewFromInt(8000),
+	doc := outbound.DirectorioDoc{
+		ClienteID:      42,
+		Nombre:         "García López Ramón",
+		ZonaNombre:     "NORTE",
+		Telefono:       "3312345678",
+		DireccionCorta: "Av. Juárez 123, Centro",
+		TienePulso:     true,
+		Score:          75,
+		Segmento:       "ACTIVO",
+		EstadoPago:     "AL_CORRIENTE",
+		RecenciaDias:   45,
+		Saldo:          decimal.NewFromInt(8000),
 	}
-	pulso := newPulso(42)
-
-	repo := &fakeRepo{
-		dirPage: outbound.Page[outbound.DirectorioItem]{
-			Items:      []outbound.DirectorioItem{item},
-			NextCursor: "",
+	facets := map[string]map[string]int{
+		"zona_id": {"1": 200},
+	}
+	di := noopDirectoryIndex{
+		resultado: outbound.DirectorioResultado{
+			Items:  []outbound.DirectorioDoc{doc},
+			Facets: facets,
+			Total:  1,
 		},
 	}
-	ac := &fakeAnalytics{pulsos: map[int]analytics.ClientePulsoContract{42: pulso}}
-	svc := buildService(repo, ac, &fakeSearch{})
+
+	svc := buildServiceWithDirIndex(&fakeRepo{}, &fakeAnalytics{}, &fakeSearch{}, di)
 	cu := userWith(auth.PermClientesLeer)
 	h := buildRouter(svc, cu)
 
@@ -344,7 +367,8 @@ func TestListarClientes_HappyPath_200(t *testing.T) {
 			RecenciaDias int    `json:"recencia_dias"`
 			Saldo        string `json:"saldo"`
 		} `json:"items"`
-		NextCursor string `json:"next_cursor"`
+		NextCursor string                    `json:"next_cursor"`
+		Facets     map[string]map[string]int `json:"facets"`
 	}
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
 	require.Len(t, resp.Items, 1)
@@ -359,21 +383,27 @@ func TestListarClientes_HappyPath_200(t *testing.T) {
 	assert.True(t, it.TienePulso)
 	assert.Equal(t, 45, it.RecenciaDias)
 	assert.Equal(t, "8000.00", it.Saldo)
+	assert.Equal(t, 200, resp.Facets["zona_id"]["1"])
 }
 
 // TestListarClientes_NoPulso_ZeroScoreAndEmptySegmento verifies that when the
-// client has no analytics pulse, score=0, segmento="" and tiene_pulso=false.
+// document has no pulse, score=0, segmento="" and tiene_pulso=false.
 func TestListarClientes_NoPulso_ZeroScoreAndEmptySegmento(t *testing.T) {
 	t.Parallel()
 
-	c := newCliente(7)
-	item := outbound.DirectorioItem{Cliente: c, SaldoTotal: decimal.Zero}
-	repo := &fakeRepo{
-		dirPage: outbound.Page[outbound.DirectorioItem]{Items: []outbound.DirectorioItem{item}},
+	doc := outbound.DirectorioDoc{
+		ClienteID:  7,
+		Nombre:     "Sin Pulso",
+		TienePulso: false,
+		Saldo:      decimal.Zero,
 	}
-	// No pulse for ID 7.
-	ac := &fakeAnalytics{pulsos: map[int]analytics.ClientePulsoContract{}}
-	svc := buildService(repo, ac, &fakeSearch{})
+	di := noopDirectoryIndex{
+		resultado: outbound.DirectorioResultado{
+			Items: []outbound.DirectorioDoc{doc},
+			Total: 1,
+		},
+	}
+	svc := buildServiceWithDirIndex(&fakeRepo{}, &fakeAnalytics{}, &fakeSearch{}, di)
 	cu := userWith(auth.PermClientesLeer)
 	h := buildRouter(svc, cu)
 

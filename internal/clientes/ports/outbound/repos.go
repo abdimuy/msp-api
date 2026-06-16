@@ -129,10 +129,6 @@ type ClientesRepo interface {
 	// Returns domain.ErrClienteNotFound when no row exists for clienteID.
 	ObtenerCliente(ctx context.Context, clienteID int) (*domain.Cliente, error)
 
-	// ListarDirectorio returns a cursor-paginated list of clients, each
-	// enriched with their total outstanding balance.
-	ListarDirectorio(ctx context.Context, p ListParams, f FiltroDirectorio) (Page[DirectorioItem], error)
-
 	// ListarDirectorioCompleto returns ALL clients matching the native filters
 	// (ESTATUS IN ('A','B') plus ZonaClienteID / CobradorID / ConSaldo / ClienteIDs),
 	// each with identity + SaldoTotal, with NO pagination, ordered by NOMBRE.

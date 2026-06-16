@@ -75,6 +75,10 @@ func (stubSearch) Reconciliar(_ context.Context, _ []outbound.SearchDoc) error {
 
 type stubDirectoryIndex struct{}
 
+func (stubDirectoryIndex) Buscar(_ context.Context, _ outbound.DirectorioQuery) (outbound.DirectorioResultado, error) {
+	return outbound.DirectorioResultado{Items: []outbound.DirectorioDoc{}, Total: 0}, nil
+}
+
 func (stubDirectoryIndex) Reconciliar(_ context.Context, _ []outbound.DirectorioDoc) error {
 	return nil
 }
