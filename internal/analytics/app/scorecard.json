@@ -1,0 +1,39 @@
+{
+  "version": "v0-placeholder",
+  "intercept": -2.2,
+  "features": [
+    {
+      "name": "SALDO_FRAC",
+      "label": "saldo alto pendiente",
+      "weight": 1.4,
+      "mean": 0.45,
+      "std": 0.30
+    },
+    {
+      "name": "COBERTURA_PLAN",
+      "label": "baja cobertura del plan de pago",
+      "weight": -1.1,
+      "mean": 1.0,
+      "std": 0.50
+    },
+    {
+      "name": "PCT_PAGOS_A_TIEMPO_6M",
+      "label": "pocos pagos a tiempo recientes",
+      "weight": -1.6,
+      "mean": 0.70,
+      "std": 0.22
+    },
+    {
+      "name": "DIAS_ATRASO_PROM",
+      "label": "atraso promedio elevado",
+      "weight": 0.9,
+      "mean": 8.0,
+      "std": 12.0
+    }
+  ],
+  "bands": {
+    "bajo_min": 75,
+    "medio_min": 50,
+    "alto_min": 25
+  }
+}

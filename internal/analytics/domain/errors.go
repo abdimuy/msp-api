@@ -74,4 +74,22 @@ var (
 		"tier_riesgo_invalido",
 		"el tier de riesgo de cobranza no es válido",
 	)
+
+	// ErrScoreCreditoFueraDeRango is returned when a credit score is not in [0, 100].
+	ErrScoreCreditoFueraDeRango = apperror.NewValidation(
+		"score_credito_fuera_de_rango",
+		"el score de crédito debe estar entre 0 y 100",
+	)
+
+	// ErrBandaCreditoInvalida is returned when an unrecognized BandaCredito value is parsed.
+	ErrBandaCreditoInvalida = apperror.NewValidation(
+		"banda_credito_invalida",
+		"la banda de riesgo de crédito no es válida",
+	)
+
+	// ErrScorecardInvalido is returned when the embedded scorecard cannot be parsed or is structurally invalid.
+	ErrScorecardInvalido = apperror.NewInternal(
+		"scorecard_invalido",
+		"el scorecard de crédito embebido no es válido",
+	)
 )
