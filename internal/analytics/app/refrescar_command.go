@@ -137,6 +137,8 @@ func buildCandidatos(
 			PctPagosATiempo:   a.PctPagosATiempo,
 			FechaProxPago:     a.FechaProxPago,
 			MontoProxPago:     a.MontoProxPago,
+			Pagos90D:          a.Pagos90D,
+			FechaPrimerCargo:  a.FechaPrimerCargo,
 			EnControl:         enControl,
 			CohorteFecha:      now,
 			Now:               now,

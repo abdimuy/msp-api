@@ -124,7 +124,7 @@ func (sc Scorecard) Loaded() bool { return sc.raw.Version != "" && len(sc.raw.Fe
 // that push risk UP the most).
 //
 // Feature vector semantics:
-//   - Keys are the feature names defined in the scorecard (e.g. "SALDO_FRAC").
+//   - Keys are the feature names defined in the scorecard (e.g. "DIAS_SIN_PAGAR").
 //   - Missing features are treated as their training mean (z_i = 0, no logit
 //     contribution). This keeps the scorer robust to partial feature availability.
 //   - Non-finite values (NaN, ±Inf) are treated as the training mean (z_i = 0)

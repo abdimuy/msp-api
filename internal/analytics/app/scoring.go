@@ -274,32 +274,79 @@ func clamp01(v float64) float64 {
 // ─── Credit risk scoring ──────────────────────────────────────────────────────
 
 // buildCreditoFeatures assembles the read-time feature vector for the credit
-// scorecard from the candidate's materialized B1 facts. The keys MUST match the
-// feature names in scorecard.json and are the canonical definitions the offline
-// trainer (R4) reproduces. Pure and deterministic.
-func buildCreditoFeatures(c *domain.WinbackCandidato) map[string]float64 {
-	saldoFrac := clamp01(c.PorLiquidarPct().InexactFloat64() / 100.0)
+// scorecard v1 (v1-pit-20260617) from the candidate's materialized facts.
+//
+// Feature definitions:
+//
+//	DIAS_SIN_PAGAR        — days since last real payment; if FechaUltimoPago is
+//	                        zero, falls back to ANTIGUEDAD_DIAS (days since first cargo).
+//	PAGOS_90D             — count of real payments in the trailing 90 days.
+//	PCT_PAGOS_A_TIEMPO_6M — PctPagosATiempo / 100 (fraction 0–1).
+//	CADENCIA_DIAS         — average days between consecutive payments (raw).
+//	NUM_PAGOS_TOTAL       — total applied payment count.
+//	ANTIGUEDAD_DIAS       — days since first cargo (FechaPrimerCargo); 0 when zero.
+//
+// The keys MUST match the feature names in scorecard.json. Pure and deterministic.
+func buildCreditoFeatures(c *domain.WinbackCandidato, now time.Time) map[string]float64 {
+	antiguedadDias := daysSince(c.FechaPrimerCargo(), now)
+	diasSinPagar := daysSince(c.FechaUltimoPago(), now)
+	if c.FechaUltimoPago().IsZero() {
+		diasSinPagar = antiguedadDias
+	}
 	return map[string]float64{
-		"SALDO_FRAC":            saldoFrac,
-		"COBERTURA_PLAN":        clamp01(1.0 - saldoFrac),
-		"PCT_PAGOS_A_TIEMPO_6M": clamp01(c.PctPagosATiempo().InexactFloat64() / 100.0),
-		"DIAS_ATRASO_PROM":      float64(c.DiasAtrasoProm()),
+		"DIAS_SIN_PAGAR":        diasSinPagar,
+		"PAGOS_90D":             float64(c.Pagos90D()),
+		"PCT_PAGOS_A_TIEMPO_6M": c.PctPagosATiempo().InexactFloat64() / 100.0,
+		"CADENCIA_DIAS":         float64(c.CadenciaDias()),
+		"NUM_PAGOS_TOTAL":       float64(c.NumPagos()),
+		"ANTIGUEDAD_DIAS":       antiguedadDias,
 	}
 }
 
-// computeCreditoScore applies the embedded scorecard to a candidate's features.
-// Returns aplica=false (zero score, empty banda, nil drivers) when the client has
-// no credit relationship (EstadoPago == SIN_CREDITO) or the scorecard failed to
-// load — the caller renders "no aplica". now must be UTC.
-func computeCreditoScore(c *domain.WinbackCandidato, now time.Time, sc Scorecard) (domain.ScoreCredito, domain.BandaCredito, []string, bool) {
-	ep := estadoPagoFor(c.Saldo(), c.FechaUltimoPago(), now)
-	if ep == domain.EstadoPagoSinCredito {
-		return domain.ScoreCredito{}, domain.BandaCredito(""), nil, false
+// daysSince returns the number of days from t to now, or 0 if t is zero or in the future.
+func daysSince(t, now time.Time) float64 {
+	if t.IsZero() {
+		return 0
 	}
+	d := now.Sub(t).Hours() / 24
+	if d < 0 {
+		return 0
+	}
+	return d
+}
+
+// creditoPerformingMaxDias is the maximum days since last payment for the credit
+// scorecard to apply. It matches the offline trainer's eligibility window
+// (PERFORMING_MAX_DIAS): the model was fit on clients with an active, performing
+// credit relationship, so serving it outside that window is out-of-distribution.
+// Long-dormant owers have already defaulted and are surfaced by the cobranza
+// TierRiesgo (CRITICO), not by this forward-looking default-prediction score.
+const creditoPerformingMaxDias = 180
+
+// computeCreditoScore applies the embedded scorecard to a candidate's features.
+// Returns aplica=false (zero score, empty banda, nil drivers) when the credit
+// score does not apply — i.e. any of:
+//   - the scorecard failed to load;
+//   - the client has no current credit exposure (saldo == 0: liquidado or contado);
+//   - the client is not performing (never paid, or last payment older than
+//     creditoPerformingMaxDias) — out of the trained distribution.
+//
+// The caller renders "no aplica". now must be UTC. This gate keeps the served
+// population aligned with the offline training population so the score bands are
+// meaningful (see project_credito_scorecard_pit).
+func computeCreditoScore(c *domain.WinbackCandidato, now time.Time, sc Scorecard) (domain.ScoreCredito, domain.BandaCredito, []string, bool) {
 	if !sc.Loaded() {
 		return domain.ScoreCredito{}, domain.BandaCredito(""), nil, false
 	}
-	features := buildCreditoFeatures(c)
+	// No current outstanding balance → no credit exposure to assess.
+	if !c.Saldo().IsPositive() {
+		return domain.ScoreCredito{}, domain.BandaCredito(""), nil, false
+	}
+	// Must be performing (paid recently) to be in the trained distribution.
+	if c.FechaUltimoPago().IsZero() || daysSince(c.FechaUltimoPago(), now) > creditoPerformingMaxDias {
+		return domain.ScoreCredito{}, domain.BandaCredito(""), nil, false
+	}
+	features := buildCreditoFeatures(c, now)
 	score, banda, drivers := sc.Aplicar(features)
 	return score, banda, drivers, true
 }

@@ -1,39 +1,53 @@
 {
-  "version": "v0-placeholder",
-  "intercept": -2.2,
+  "version": "v1-pit-20260617",
+  "intercept": 0.327737,
   "features": [
     {
-      "name": "SALDO_FRAC",
-      "label": "saldo alto pendiente",
-      "weight": 1.4,
-      "mean": 0.45,
-      "std": 0.30
+      "name": "DIAS_SIN_PAGAR",
+      "label": "muchos días sin pagar",
+      "weight": 3.414523,
+      "mean": 31.378534,
+      "std": 46.192899
     },
     {
-      "name": "COBERTURA_PLAN",
-      "label": "baja cobertura del plan de pago",
-      "weight": -1.1,
-      "mean": 1.0,
-      "std": 0.50
+      "name": "PAGOS_90D",
+      "label": "pocos pagos recientes",
+      "weight": -0.487373,
+      "mean": 5.928479,
+      "std": 4.446559
     },
     {
       "name": "PCT_PAGOS_A_TIEMPO_6M",
-      "label": "pocos pagos a tiempo recientes",
-      "weight": -1.6,
-      "mean": 0.70,
-      "std": 0.22
+      "label": "pocos pagos a tiempo",
+      "weight": -0.078555,
+      "mean": 0.880435,
+      "std": 0.088616
     },
     {
-      "name": "DIAS_ATRASO_PROM",
-      "label": "atraso promedio elevado",
-      "weight": 0.9,
-      "mean": 8.0,
-      "std": 12.0
+      "name": "CADENCIA_DIAS",
+      "label": "cobranza espaciada",
+      "weight": 0.109994,
+      "mean": 20.781609,
+      "std": 45.270641
+    },
+    {
+      "name": "NUM_PAGOS_TOTAL",
+      "label": "pocos pagos históricos",
+      "weight": 0.013004,
+      "mean": 55.352495,
+      "std": 40.0383
+    },
+    {
+      "name": "ANTIGUEDAD_DIAS",
+      "label": "cliente reciente",
+      "weight": 0.077864,
+      "mean": 813.160351,
+      "std": 427.083546
     }
   ],
   "bands": {
-    "bajo_min": 75,
-    "medio_min": 50,
-    "alto_min": 25
+    "bajo_min": 87,
+    "medio_min": 76,
+    "alto_min": 18
   }
 }

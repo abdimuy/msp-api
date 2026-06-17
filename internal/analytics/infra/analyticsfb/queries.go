@@ -34,7 +34,9 @@ const candidatoCols = `
 	DIAS_ATRASO_PROM,
 	PCT_PAGOS_A_TIEMPO,
 	FECHA_PROX_PAGO,
-	MONTO_PROX_PAGO`
+	MONTO_PROX_PAGO,
+	PAGOS_90D,
+	FECHA_PRIMER_CARGO`
 
 // Note on upsert strategy: the nakagami/firebirdsql driver returns SQL error
 // -804 ("Data type unknown") when parameters appear inside the USING SELECT
@@ -152,6 +154,7 @@ VALUES (?, ?, ?)`
 //	9  por_liquidar   (NUMERIC(5,2), 0–100)
 //	10 next_best_product (Win1252, may be '')
 //	11 fecha_ultimo_pago (TIMESTAMP, may be NULL)
+//	12 fecha_primer_cargo (TIMESTAMP, may be NULL)
 
 // leerAnclasRFMBase is the opening of the WITH block through the end of the
 // rfm CTE. The caller appends an optional FECHA predicate then leerAnclasRFMClose.
@@ -180,7 +183,8 @@ saldo_cte AS (
          ELSE 0
     END                                        AS SALDO,
     CAST(SUM(sv.PRECIO_TOTAL) AS NUMERIC(18,2)) AS PRECIO_TOTAL_SUM,
-    MAX(sv.FECHA_ULT_PAGO)                      AS FECHA_ULTIMO_PAGO
+    MAX(sv.FECHA_ULT_PAGO)                      AS FECHA_ULTIMO_PAGO,
+    MIN(sv.FECHA_CARGO)                         AS FECHA_PRIMER_CARGO
   FROM MSP_SALDOS_VENTAS sv
   WHERE sv.CARGO_CANCELADO = 'N'
   GROUP BY sv.CLIENTE_ID
@@ -243,7 +247,8 @@ SELECT
        ELSE 0
   END                                                                AS POR_LIQUIDAR_PCT,
   SUBSTRING(COALESCE(nbp.ARTICULO_NOMBRE, '') FROM 1 FOR 120)        AS NEXT_BEST_PRODUCT,
-  sc.FECHA_ULTIMO_PAGO                                               AS FECHA_ULTIMO_PAGO
+  sc.FECHA_ULTIMO_PAGO                                               AS FECHA_ULTIMO_PAGO,
+  sc.FECHA_PRIMER_CARGO                                              AS FECHA_PRIMER_CARGO
 FROM rfm
 JOIN CLIENTES c ON c.CLIENTE_ID = rfm.CLIENTE_ID
 LEFT JOIN ZONAS_CLIENTES z   ON z.ZONA_CLIENTE_ID = c.ZONA_CLIENTE_ID
@@ -329,6 +334,7 @@ const (
 //	5  pct_pagos_a_tiempo (NUMERIC(5,2))
 //	6  ultima_fecha       (TIMESTAMP, raw last payment date for Go-side next-pago derivation)
 //	7  monto_prox_pago    (NUMERIC(18,2) avg importe)
+//	8  pagos_90d          (INTEGER COALESCE to 0; param: cutoff date 90 days before refresh_now)
 
 // leerCobranzaBase opens the WITH block and the gaps CTE through its WHERE clause.
 // The caller appends an optional FECHA predicate then leerCobranzaClose.
@@ -349,9 +355,22 @@ WITH gaps AS (
     AND CONCEPTO_CC_ID IN (%d, %d, %d)`,
 	conceptoCobranzaRuta, conceptoCobro155, conceptoCobroGenerico)
 
-// leerCobranzaClose closes the gaps CTE, adds cadencias + atrasos CTEs,
+// leerCobranzaClose closes the gaps CTE, adds cadencias, atrasos, and pagos90 CTEs,
 // and the final SELECT aggregating per-client cobranza signals.
-const leerCobranzaClose = `
+//
+// Column order (must match cobranzaRowRaw.scanFrom exactly):
+//
+//	1  cliente_id
+//	2  num_pagos          (NUM_GAPS + 1: total payments including the first)
+//	3  cadencia_dias      (INTEGER avg gap)
+//	4  dias_atraso_prom   (INTEGER avg positive lateness)
+//	5  pct_pagos_a_tiempo (NUMERIC(5,2))
+//	6  ultima_fecha       (TIMESTAMP, raw last payment date for Go-side next-pago derivation)
+//	7  monto_prox_pago    (NUMERIC(18,2) avg importe)
+//	8  pagos_90d          (INTEGER COALESCE to 0; param: cutoff date 90 days before refresh_now)
+//
+//nolint:gochecknoglobals // query fragment; value is immutable after init.
+var leerCobranzaClose = fmt.Sprintf(`
 ),
 cadencias AS (
   SELECT
@@ -375,6 +394,15 @@ atrasos AS (
   FROM gaps g
   JOIN cadencias c ON c.CLIENTE_ID = g.CLIENTE_ID
   WHERE g.GAP_DIAS IS NOT NULL
+),
+pagos90 AS (
+  SELECT CLIENTE_ID, COUNT(*) AS PAGOS_90D
+  FROM MSP_PAGOS_VENTAS
+  WHERE CANCELADO = 'N'
+    AND APLICADO  = 'S'
+    AND CONCEPTO_CC_ID IN (%d, %d, %d)
+    AND FECHA >= ?
+  GROUP BY CLIENTE_ID
 )
 SELECT
   c.CLIENTE_ID,
@@ -386,7 +414,10 @@ SELECT
     AS NUMERIC(5,2)
   )                                                                               AS PCT_PAGOS_A_TIEMPO,
   c.ULTIMA_FECHA                                                                  AS ULTIMA_FECHA,
-  c.AVG_IMPORTE                                                                   AS MONTO_PROX_PAGO
+  c.AVG_IMPORTE                                                                   AS MONTO_PROX_PAGO,
+  COALESCE(p90.PAGOS_90D, 0)                                                      AS PAGOS_90D
 FROM cadencias c
 JOIN atrasos a ON a.CLIENTE_ID = c.CLIENTE_ID
-GROUP BY c.CLIENTE_ID, c.NUM_GAPS, c.CADENCIA_DIAS, c.AVG_IMPORTE, c.ULTIMA_FECHA`
+LEFT JOIN pagos90 p90 ON p90.CLIENTE_ID = c.CLIENTE_ID
+GROUP BY c.CLIENTE_ID, c.NUM_GAPS, c.CADENCIA_DIAS, c.AVG_IMPORTE, c.ULTIMA_FECHA, p90.PAGOS_90D`,
+	conceptoCobranzaRuta, conceptoCobro155, conceptoCobroGenerico)

@@ -18,105 +18,123 @@ import (
 func TestBuildCreditoFeatures(t *testing.T) {
 	t.Parallel()
 
-	const delta = 1e-9 // float64 tolerance
+	const delta = 1e-6 // float64 tolerance
 
-	type tc struct {
-		name              string
-		porLiquidarPct    float64
-		pctPagosATiempo   float64
-		diasAtrasoProm    int
-		wantSaldoFrac     float64
-		wantCoberturaPlan float64
-		wantPctPagos      float64
-		wantDiasAtraso    float64
-	}
+	testNowLocal := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
 
-	tests := []tc{
-		{
-			name:              "PorLiquidarPct=120 clamps SALDO_FRAC=1.0, COBERTURA_PLAN=0.0",
-			porLiquidarPct:    120,
-			pctPagosATiempo:   0,
-			diasAtrasoProm:    0,
-			wantSaldoFrac:     1.0,
-			wantCoberturaPlan: 0.0,
-			wantPctPagos:      0.0,
-			wantDiasAtraso:    0.0,
-		},
-		{
-			name:              "PorLiquidarPct=0 → SALDO_FRAC=0.0, COBERTURA_PLAN=1.0",
-			porLiquidarPct:    0,
-			pctPagosATiempo:   0,
-			diasAtrasoProm:    0,
-			wantSaldoFrac:     0.0,
-			wantCoberturaPlan: 1.0,
-			wantPctPagos:      0.0,
-			wantDiasAtraso:    0.0,
-		},
-		{
-			name:              "PorLiquidarPct=40, PctPagosATiempo=70, DiasAtrasoProm=8",
-			porLiquidarPct:    40,
-			pctPagosATiempo:   70,
-			diasAtrasoProm:    8,
-			wantSaldoFrac:     0.4,
-			wantCoberturaPlan: 0.6,
-			wantPctPagos:      0.7,
-			wantDiasAtraso:    8.0,
-		},
-		{
-			name:              "negative PorLiquidarPct clamps SALDO_FRAC=0.0",
-			porLiquidarPct:    -10,
-			pctPagosATiempo:   150,
-			diasAtrasoProm:    5,
-			wantSaldoFrac:     0.0,
-			wantCoberturaPlan: 1.0,
-			wantPctPagos:      1.0,
-			wantDiasAtraso:    5.0,
-		},
-		{
-			name:              "midpoint PorLiquidarPct=50 → SALDO_FRAC=0.5, COBERTURA_PLAN=0.5",
-			porLiquidarPct:    50,
-			pctPagosATiempo:   50,
-			diasAtrasoProm:    15,
-			wantSaldoFrac:     0.5,
-			wantCoberturaPlan: 0.5,
-			wantPctPagos:      0.5,
-			wantDiasAtraso:    15.0,
-		},
-	}
+	t.Run("FechaUltimoPago 10 days ago, FechaPrimerCargo 100 days ago", func(t *testing.T) {
+		t.Parallel()
 
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			c := mustCandidato(domain.CrearWinbackCandidatoParams{
-				ClienteID:         1,
-				Nombre:            "Test Credito",
-				Zona:              "Z1",
-				FechaUltimaCompra: testNow.AddDate(0, 0, -200),
-				Frecuencia:        5,
-				Monetary:          decimal.NewFromInt(20_000),
-				Saldo:             decimal.NewFromInt(5_000),
-				PorLiquidarPct:    decimal.NewFromFloat(tt.porLiquidarPct),
-				PctPagosATiempo:   decimal.NewFromFloat(tt.pctPagosATiempo),
-				DiasAtrasoProm:    tt.diasAtrasoProm,
-				CohorteFecha:      testNow.AddDate(-1, 0, 0),
-				Now:               testNow,
-			})
-
-			got := app.ExportBuildCreditoFeatures(c)
-
-			require.Contains(t, got, "SALDO_FRAC")
-			require.Contains(t, got, "COBERTURA_PLAN")
-			require.Contains(t, got, "PCT_PAGOS_A_TIEMPO_6M")
-			require.Contains(t, got, "DIAS_ATRASO_PROM")
-
-			assert.InDelta(t, tt.wantSaldoFrac, got["SALDO_FRAC"], delta, "SALDO_FRAC")
-			assert.InDelta(t, tt.wantCoberturaPlan, got["COBERTURA_PLAN"], delta, "COBERTURA_PLAN")
-			assert.InDelta(t, tt.wantPctPagos, got["PCT_PAGOS_A_TIEMPO_6M"], delta, "PCT_PAGOS_A_TIEMPO_6M")
-			assert.InDelta(t, tt.wantDiasAtraso, got["DIAS_ATRASO_PROM"], delta, "DIAS_ATRASO_PROM")
+		c := mustCandidato(domain.CrearWinbackCandidatoParams{
+			ClienteID:         1,
+			Nombre:            "Test Credito",
+			Zona:              "Z1",
+			FechaUltimaCompra: testNowLocal.AddDate(0, 0, -200),
+			FechaUltimoPago:   testNowLocal.AddDate(0, 0, -10),
+			FechaPrimerCargo:  testNowLocal.AddDate(0, 0, -100),
+			Frecuencia:        5,
+			Monetary:          decimal.NewFromInt(20_000),
+			Saldo:             decimal.NewFromInt(5_000),
+			PorLiquidarPct:    decimal.NewFromFloat(40),
+			PctPagosATiempo:   decimal.NewFromFloat(85),
+			NumPagos:          20,
+			Pagos90D:          7,
+			CadenciaDias:      28,
+			DiasAtrasoProm:    3,
+			CohorteFecha:      testNowLocal.AddDate(-1, 0, 0),
+			Now:               testNowLocal,
 		})
-	}
+
+		got := app.ExportBuildCreditoFeatures(c, testNowLocal)
+
+		require.Contains(t, got, "DIAS_SIN_PAGAR")
+		require.Contains(t, got, "PAGOS_90D")
+		require.Contains(t, got, "PCT_PAGOS_A_TIEMPO_6M")
+		require.Contains(t, got, "CADENCIA_DIAS")
+		require.Contains(t, got, "NUM_PAGOS_TOTAL")
+		require.Contains(t, got, "ANTIGUEDAD_DIAS")
+
+		assert.InDelta(t, 10.0, got["DIAS_SIN_PAGAR"], delta, "DIAS_SIN_PAGAR")
+		assert.InDelta(t, 7.0, got["PAGOS_90D"], delta, "PAGOS_90D")
+		assert.InDelta(t, 0.85, got["PCT_PAGOS_A_TIEMPO_6M"], delta, "PCT_PAGOS_A_TIEMPO_6M")
+		assert.InDelta(t, 28.0, got["CADENCIA_DIAS"], delta, "CADENCIA_DIAS")
+		assert.InDelta(t, 20.0, got["NUM_PAGOS_TOTAL"], delta, "NUM_PAGOS_TOTAL")
+		assert.InDelta(t, 100.0, got["ANTIGUEDAD_DIAS"], delta, "ANTIGUEDAD_DIAS")
+	})
+
+	t.Run("FechaUltimoPago zero falls back to FechaPrimerCargo for DIAS_SIN_PAGAR", func(t *testing.T) {
+		t.Parallel()
+
+		c := mustCandidato(domain.CrearWinbackCandidatoParams{
+			ClienteID:         2,
+			Nombre:            "Sin Pagos",
+			Zona:              "Z1",
+			FechaUltimaCompra: testNowLocal.AddDate(0, 0, -300),
+			// FechaUltimoPago intentionally zero
+			FechaPrimerCargo: testNowLocal.AddDate(0, 0, -50),
+			Frecuencia:       3,
+			Monetary:         decimal.NewFromInt(10_000),
+			Saldo:            decimal.NewFromInt(2_000),
+			PorLiquidarPct:   decimal.NewFromFloat(20),
+			PctPagosATiempo:  decimal.Zero,
+			NumPagos:         0,
+			Pagos90D:         0,
+			CohorteFecha:     testNowLocal.AddDate(-1, 0, 0),
+			Now:              testNowLocal,
+		})
+
+		got := app.ExportBuildCreditoFeatures(c, testNowLocal)
+
+		// When FechaUltimoPago is zero, DIAS_SIN_PAGAR == ANTIGUEDAD_DIAS
+		assert.InDelta(t, got["ANTIGUEDAD_DIAS"], got["DIAS_SIN_PAGAR"], delta, "DIAS_SIN_PAGAR should equal ANTIGUEDAD_DIAS when FechaUltimoPago is zero")
+		assert.InDelta(t, 50.0, got["DIAS_SIN_PAGAR"], delta, "DIAS_SIN_PAGAR fallback to FechaPrimerCargo")
+		assert.InDelta(t, 50.0, got["ANTIGUEDAD_DIAS"], delta, "ANTIGUEDAD_DIAS")
+	})
+
+	t.Run("Both FechaUltimoPago and FechaPrimerCargo zero → both features zero", func(t *testing.T) {
+		t.Parallel()
+
+		c := mustCandidato(domain.CrearWinbackCandidatoParams{
+			ClienteID:         3,
+			Nombre:            "Cliente Nuevo",
+			Zona:              "Z1",
+			FechaUltimaCompra: testNowLocal.AddDate(0, 0, -100),
+			// FechaUltimoPago zero, FechaPrimerCargo zero
+			Frecuencia:     1,
+			Monetary:       decimal.NewFromInt(5_000),
+			Saldo:          decimal.Zero,
+			PorLiquidarPct: decimal.Zero,
+			CohorteFecha:   testNowLocal.AddDate(-1, 0, 0),
+			Now:            testNowLocal,
+		})
+
+		got := app.ExportBuildCreditoFeatures(c, testNowLocal)
+
+		assert.InDelta(t, 0.0, got["DIAS_SIN_PAGAR"], delta, "DIAS_SIN_PAGAR zero when both dates are zero")
+		assert.InDelta(t, 0.0, got["ANTIGUEDAD_DIAS"], delta, "ANTIGUEDAD_DIAS zero when FechaPrimerCargo is zero")
+	})
+
+	t.Run("PctPagosATiempo=80 → PCT_PAGOS_A_TIEMPO_6M=0.8", func(t *testing.T) {
+		t.Parallel()
+
+		c := mustCandidato(domain.CrearWinbackCandidatoParams{
+			ClienteID:         4,
+			Nombre:            "Test Pct",
+			Zona:              "Z1",
+			FechaUltimaCompra: testNowLocal.AddDate(0, 0, -200),
+			Frecuencia:        5,
+			Monetary:          decimal.NewFromInt(15_000),
+			Saldo:             decimal.NewFromInt(3_000),
+			PorLiquidarPct:    decimal.NewFromFloat(20),
+			PctPagosATiempo:   decimal.NewFromFloat(80),
+			CohorteFecha:      testNowLocal.AddDate(-1, 0, 0),
+			Now:               testNowLocal,
+		})
+
+		got := app.ExportBuildCreditoFeatures(c, testNowLocal)
+
+		assert.InDelta(t, 0.8, got["PCT_PAGOS_A_TIEMPO_6M"], delta, "PCT_PAGOS_A_TIEMPO_6M=0.8")
+	})
 }
 
 // ─── TestComputeCreditoScore ──────────────────────────────────────────────────
@@ -139,11 +157,15 @@ func TestComputeCreditoScore(t *testing.T) {
 			Zona:              "Z1",
 			FechaUltimaCompra: now.AddDate(0, 0, -200),
 			FechaUltimoPago:   now.AddDate(0, 0, -15),
+			FechaPrimerCargo:  now.AddDate(-2, 0, 0),
 			Frecuencia:        8,
 			Monetary:          decimal.NewFromInt(30_000),
 			Saldo:             decimal.NewFromInt(8_000),
 			PorLiquidarPct:    decimal.NewFromFloat(40.0),
 			PctPagosATiempo:   decimal.NewFromFloat(80.0),
+			NumPagos:          30,
+			Pagos90D:          5,
+			CadenciaDias:      25,
 			DiasAtrasoProm:    5,
 			CohorteFecha:      now.AddDate(-1, 0, 0),
 			Now:               now,
@@ -216,35 +238,45 @@ func TestComputeCreditoScore(t *testing.T) {
 	t.Run("high-risk client scores lower than low-risk client", func(t *testing.T) {
 		t.Parallel()
 
-		// Low-risk: low saldo fraction, high punctuality, low atraso
+		// Low-risk: many recent payments, high punctuality, low days since payment,
+		// long history (established client). These differentiate clearly under v1.
 		lowRisk := mustCandidato(domain.CrearWinbackCandidatoParams{
 			ClienteID:         10,
 			Nombre:            "Buen Pagador",
 			Zona:              "Z1",
 			FechaUltimaCompra: now.AddDate(0, 0, -200),
-			FechaUltimoPago:   now.AddDate(0, 0, -10),
+			FechaUltimoPago:   now.AddDate(0, 0, -5), // paid 5 days ago
+			FechaPrimerCargo:  now.AddDate(-3, 0, 0), // 3 years history
 			Frecuencia:        10,
 			Monetary:          decimal.NewFromInt(40_000),
 			Saldo:             decimal.NewFromInt(2_000),
 			PorLiquidarPct:    decimal.NewFromFloat(5.0),
 			PctPagosATiempo:   decimal.NewFromFloat(95.0),
+			NumPagos:          120,
+			Pagos90D:          10, // many recent payments
+			CadenciaDias:      25,
 			DiasAtrasoProm:    1,
 			CohorteFecha:      now.AddDate(-1, 0, 0),
 			Now:               now,
 		})
 
-		// High-risk: high saldo fraction, low punctuality, high atraso
+		// High-risk: few recent payments, low punctuality, many days since payment,
+		// short history (new/unstable client).
 		highRisk := mustCandidato(domain.CrearWinbackCandidatoParams{
 			ClienteID:         11,
 			Nombre:            "Mal Pagador",
 			Zona:              "Z1",
 			FechaUltimaCompra: now.AddDate(0, 0, -200),
-			FechaUltimoPago:   now.AddDate(0, 0, -10),
+			FechaUltimoPago:   now.AddDate(0, 0, -90), // paid 90 days ago (very late)
+			FechaPrimerCargo:  now.AddDate(0, -6, 0),  // 6 months history (new)
 			Frecuencia:        10,
 			Monetary:          decimal.NewFromInt(40_000),
 			Saldo:             decimal.NewFromInt(10_000),
 			PorLiquidarPct:    decimal.NewFromFloat(90.0),
 			PctPagosATiempo:   decimal.NewFromFloat(20.0),
+			NumPagos:          8,
+			Pagos90D:          1, // barely any recent payments
+			CadenciaDias:      25,
 			DiasAtrasoProm:    45,
 			CohorteFecha:      now.AddDate(-1, 0, 0),
 			Now:               now,

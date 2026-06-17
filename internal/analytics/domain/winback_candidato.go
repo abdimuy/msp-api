@@ -43,12 +43,14 @@ type WinbackCandidato struct {
 	// ─── Cobranza intelligence facts (Task B1) ───────────────────────────────────
 	// Materialized from MSP_PAGOS_VENTAS (CANCELADO='N' AND APLICADO='S').
 	// Zero sentinels: 0 integer = unknown/insufficient data; zero decimal = absent.
-	numPagos        int             // total applied payments; 0 when not computed
-	cadenciaDias    int             // avg days between consecutive payments; 0 if <2 payments
-	diasAtrasoProm  int             // avg of max(0, gap − cadencia) per gap; 0 if insufficient
-	pctPagosATiempo decimal.Decimal // % of gaps within cadencia + 7d tolerance; zero if insufficient
-	fechaProxPago   time.Time       // last payment + cadencia; zero if no cadencia
-	montoProxPago   decimal.Decimal // avg installment amount as proxy; zero if unknown
+	numPagos         int             // total applied payments; 0 when not computed
+	cadenciaDias     int             // avg days between consecutive payments; 0 if <2 payments
+	diasAtrasoProm   int             // avg of max(0, gap − cadencia) per gap; 0 if insufficient
+	pctPagosATiempo  decimal.Decimal // % of gaps within cadencia + 7d tolerance; zero if insufficient
+	fechaProxPago    time.Time       // last payment + cadencia; zero if no cadencia
+	montoProxPago    decimal.Decimal // avg installment amount as proxy; zero if unknown
+	pagos90d         int             // count of real payments in trailing 90 days; 0 when unknown
+	fechaPrimerCargo time.Time       // UTC date of first cargo; zero when none
 }
 
 // ─── Crear constructor ────────────────────────────────────────────────────────
@@ -77,12 +79,14 @@ type CrearWinbackCandidatoParams struct {
 	// All are optional (zero = not available). NumPagos/CadenciaDias/DiasAtrasoProm
 	// use 0 as the absent sentinel. PctPagosATiempo, FechaProxPago, MontoProxPago
 	// use their zero values similarly.
-	NumPagos        int
-	CadenciaDias    int
-	DiasAtrasoProm  int
-	PctPagosATiempo decimal.Decimal
-	FechaProxPago   time.Time
-	MontoProxPago   decimal.Decimal
+	NumPagos         int
+	CadenciaDias     int
+	DiasAtrasoProm   int
+	PctPagosATiempo  decimal.Decimal
+	FechaProxPago    time.Time
+	MontoProxPago    decimal.Decimal
+	Pagos90D         int
+	FechaPrimerCargo time.Time
 }
 
 // CrearWinbackCandidato validates all invariants, generates a new UUID, and
@@ -123,6 +127,11 @@ func CrearWinbackCandidato(p CrearWinbackCandidatoParams) (*WinbackCandidato, er
 		fechaProxPago = p.FechaProxPago.UTC()
 	}
 
+	var fechaPrimerCargo time.Time
+	if !p.FechaPrimerCargo.IsZero() {
+		fechaPrimerCargo = p.FechaPrimerCargo.UTC()
+	}
+
 	return &WinbackCandidato{
 		id:                uuid.New(),
 		clienteID:         p.ClienteID,
@@ -145,6 +154,8 @@ func CrearWinbackCandidato(p CrearWinbackCandidatoParams) (*WinbackCandidato, er
 		pctPagosATiempo:   p.PctPagosATiempo,
 		fechaProxPago:     fechaProxPago,
 		montoProxPago:     p.MontoProxPago,
+		pagos90d:          p.Pagos90D,
+		fechaPrimerCargo:  fechaPrimerCargo,
 	}, nil
 }
 
@@ -161,22 +172,24 @@ type HydrateWinbackCandidatoParams struct {
 	FechaUltimaCompra time.Time
 	// FechaUltimoPago is the most recent payment date from persistence.
 	// Zero when the column is NULL (no payment history).
-	FechaUltimoPago time.Time
-	Frecuencia      int
-	Monetary        decimal.Decimal
-	Saldo           decimal.Decimal
-	PorLiquidarPct  decimal.Decimal
-	NextBestProduct string
-	EnControl       bool
-	CohorteFecha    time.Time
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	NumPagos        int
-	CadenciaDias    int
-	DiasAtrasoProm  int
-	PctPagosATiempo decimal.Decimal
-	FechaProxPago   time.Time
-	MontoProxPago   decimal.Decimal
+	FechaUltimoPago  time.Time
+	Frecuencia       int
+	Monetary         decimal.Decimal
+	Saldo            decimal.Decimal
+	PorLiquidarPct   decimal.Decimal
+	NextBestProduct  string
+	EnControl        bool
+	CohorteFecha     time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	NumPagos         int
+	CadenciaDias     int
+	DiasAtrasoProm   int
+	PctPagosATiempo  decimal.Decimal
+	FechaProxPago    time.Time
+	MontoProxPago    decimal.Decimal
+	Pagos90D         int
+	FechaPrimerCargo time.Time
 }
 
 // HydrateWinbackCandidato reconstructs a WinbackCandidato from persistence
@@ -204,6 +217,8 @@ func HydrateWinbackCandidato(p HydrateWinbackCandidatoParams) *WinbackCandidato 
 		pctPagosATiempo:   p.PctPagosATiempo,
 		fechaProxPago:     p.FechaProxPago,
 		montoProxPago:     p.MontoProxPago,
+		pagos90d:          p.Pagos90D,
+		fechaPrimerCargo:  p.FechaPrimerCargo,
 	}
 }
 
@@ -285,3 +300,11 @@ func (w *WinbackCandidato) FechaProxPago() time.Time { return w.fechaProxPago }
 // MontoProxPago returns the expected installment amount (average of past payments).
 // Zero when no payment history is available.
 func (w *WinbackCandidato) MontoProxPago() decimal.Decimal { return w.montoProxPago }
+
+// Pagos90D returns the count of real abono payments made in the trailing 90
+// days. Zero when no recent payment history is available.
+func (w *WinbackCandidato) Pagos90D() int { return w.pagos90d }
+
+// FechaPrimerCargo returns the UTC timestamp of the client's earliest cargo
+// in MSP_SALDOS_VENTAS. Zero when no cargo history is available.
+func (w *WinbackCandidato) FechaPrimerCargo() time.Time { return w.fechaPrimerCargo }

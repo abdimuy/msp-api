@@ -292,3 +292,90 @@ func TestWinbackCandidato_FechaUltimoPago(t *testing.T) {
 		assert.True(t, got.FechaUltimoPago().IsZero())
 	})
 }
+
+func TestWinbackCandidato_FechaPrimerCargo(t *testing.T) {
+	t.Parallel()
+
+	fechaCargo := time.Date(2023, 5, 15, 0, 0, 0, 0, time.UTC)
+
+	t.Run("Crear sets fechaPrimerCargo to UTC", func(t *testing.T) {
+		t.Parallel()
+		p := validParams()
+		p.FechaPrimerCargo = fechaCargo
+		got, err := domain.CrearWinbackCandidato(p)
+		require.NoError(t, err)
+		assert.Equal(t, fechaCargo.UTC(), got.FechaPrimerCargo(), "fechaPrimerCargo must be UTC")
+	})
+
+	t.Run("Crear with zero fechaPrimerCargo remains zero", func(t *testing.T) {
+		t.Parallel()
+		p := validParams()
+		p.FechaPrimerCargo = time.Time{}
+		got, err := domain.CrearWinbackCandidato(p)
+		require.NoError(t, err)
+		assert.True(t, got.FechaPrimerCargo().IsZero(), "zero fechaPrimerCargo must remain zero")
+	})
+
+	t.Run("Hydrate round-trips fechaPrimerCargo", func(t *testing.T) {
+		t.Parallel()
+		p := domain.HydrateWinbackCandidatoParams{
+			ID:               uuid.New(),
+			ClienteID:        10,
+			CohorteFecha:     now,
+			FechaPrimerCargo: fechaCargo,
+			CreatedAt:        now,
+			UpdatedAt:        now,
+		}
+		got := domain.HydrateWinbackCandidato(p)
+		assert.Equal(t, fechaCargo, got.FechaPrimerCargo())
+	})
+
+	t.Run("Hydrate with zero fechaPrimerCargo is zero", func(t *testing.T) {
+		t.Parallel()
+		p := domain.HydrateWinbackCandidatoParams{
+			ID:           uuid.New(),
+			ClienteID:    10,
+			CohorteFecha: now,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}
+		got := domain.HydrateWinbackCandidato(p)
+		assert.True(t, got.FechaPrimerCargo().IsZero())
+	})
+}
+
+func TestWinbackCandidato_Pagos90D(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Crear sets pagos90d from params", func(t *testing.T) {
+		t.Parallel()
+		p := validParams()
+		p.Pagos90D = 12
+		got, err := domain.CrearWinbackCandidato(p)
+		require.NoError(t, err)
+		assert.Equal(t, 12, got.Pagos90D())
+	})
+
+	t.Run("Crear with zero pagos90d is zero", func(t *testing.T) {
+		t.Parallel()
+		p := validParams()
+		p.Pagos90D = 0
+		got, err := domain.CrearWinbackCandidato(p)
+		require.NoError(t, err)
+		assert.Equal(t, 0, got.Pagos90D())
+	})
+
+	t.Run("Hydrate round-trips Pagos90D", func(t *testing.T) {
+		t.Parallel()
+		p := domain.HydrateWinbackCandidatoParams{
+			ID:           uuid.New(),
+			ClienteID:    10,
+			CohorteFecha: now,
+			Pagos90D:     7,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}
+		got := domain.HydrateWinbackCandidato(p)
+		assert.Equal(t, 7, got.Pagos90D())
+	})
+}

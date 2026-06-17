@@ -36,8 +36,8 @@ func ExportComputeCobranzaTier(c *domain.WinbackCandidato, now time.Time) domain
 
 // ExportBuildCreditoFeatures exposes the internal buildCreditoFeatures function
 // for table-driven tests in the app_test package.
-func ExportBuildCreditoFeatures(c *domain.WinbackCandidato) map[string]float64 {
-	return buildCreditoFeatures(c)
+func ExportBuildCreditoFeatures(c *domain.WinbackCandidato, now time.Time) map[string]float64 {
+	return buildCreditoFeatures(c, now)
 }
 
 // ExportComputeCreditoScore exposes the internal computeCreditoScore function

@@ -1,10 +1,11 @@
 # Offline credit-scorecard fitting harness (R4) — dev-only
 # Run from repo root: pip install -r analysis/creditscorecard/requirements.txt
 #
-# Pin compatible, recent versions.  Update after verifying the full pipeline
-# produces consistent scorecard.json output.
+# The harness trains on CSVs exported by `go run ./cmd/analytics-export-creditdata`
+# (the pure-Go Firebird driver avoids needing a native fbclient on macOS), so no
+# Python Firebird driver is required.
 
-firebird-driver>=1.10.0,<2.0
 scikit-learn>=1.4.0,<2.0
 pandas>=2.2.0,<3.0
 numpy>=1.26.0,<3.0
+python-dateutil>=2.8,<3.0

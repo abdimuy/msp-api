@@ -84,6 +84,14 @@ type AnclaCliente struct {
 	// MontoProxPago is the average payment amount used as the installment proxy.
 	// Zero when no payment history is available.
 	MontoProxPago decimal.Decimal
+
+	// FechaPrimerCargo is the earliest FECHA_CARGO from MSP_SALDOS_VENTAS for
+	// this client. Zero if the client has no cargo history.
+	FechaPrimerCargo time.Time
+
+	// Pagos90D is the count of real abono payments (concepts 87327/155/11) made
+	// in the trailing 90 days. Zero when none exist.
+	Pagos90D int
 }
 
 // CobranzaSignals holds the per-client cadence and punctuality facts computed
@@ -100,6 +108,7 @@ type CobranzaSignals struct {
 	PctPagosATiempo decimal.Decimal
 	FechaProxPago   time.Time
 	MontoProxPago   decimal.Decimal
+	Pagos90D        int
 }
 
 // MicrosipReader is the analytics module's read-only view of Microsip.

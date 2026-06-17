@@ -55,7 +55,7 @@ var (
 // ─── WinbackRepo — MSP_AN_WINBACK_CANDIDATOS ─────────────────────────────────
 
 // upsertChunkSize is the number of candidatos sent per EXECUTE BLOCK call.
-// 20 rows × 22 params = 440 positional params per block. Each row references
+// 20 rows × 24 params = 480 positional params per block. Each row references
 // MSP_AN_WINBACK_CANDIDATOS twice (UPDATE + conditional INSERT), so 20 rows =
 // 40 Relation contexts — safely below Firebird's 256-context-per-statement limit.
 // Empirically the optimal chunk size for this workload against Firebird 5 is
@@ -116,12 +116,12 @@ func (r *Repo) upsertChunk(ctx context.Context, q firebird.Querier, chunk []*dom
 //
 // Each row i uses params named p{i}_id, p{i}_cid, etc. to avoid collisions
 // across rows in the same block body. Args are bound in exact param-declaration
-// order (22 per row). The UPDATE omits EN_CONTROL and COHORTE_FECHA so those
+// order (24 per row). The UPDATE omits EN_CONTROL and COHORTE_FECHA so those
 // columns are only set on first INSERT and survive subsequent refreshes.
 // FECHA_ULTIMO_PAGO IS mutable and IS updated on each refresh.
 func buildUpsertBlock(chunk []*domain.WinbackCandidato) (string, []any) {
 	n := len(chunk)
-	args := make([]any, 0, n*22)
+	args := make([]any, 0, n*24)
 
 	var header strings.Builder
 	var body strings.Builder
@@ -145,7 +145,7 @@ func buildUpsertBlock(chunk []*domain.WinbackCandidato) (string, []any) {
 	return header.String() + "\n" + body.String(), args
 }
 
-// appendUpsertParamDecls writes the 22 typed EXECUTE BLOCK input-parameter
+// appendUpsertParamDecls writes the 24 typed EXECUTE BLOCK input-parameter
 // declarations for a single row prefix p into w.
 func appendUpsertParamDecls(w *strings.Builder, p string) {
 	_, _ = fmt.Fprintf(
@@ -171,12 +171,14 @@ func appendUpsertParamDecls(w *strings.Builder, p string) {
 			"  %s_atr INTEGER        = ?,\n"+
 			"  %s_pct NUMERIC(5,2)   = ?,\n"+
 			"  %s_fpp TIMESTAMP      = ?,\n"+
-			"  %s_mpp NUMERIC(18,2)  = ?",
+			"  %s_mpp NUMERIC(18,2)  = ?,\n"+
+			"  %s_p90 INTEGER        = ?,\n"+
+			"  %s_fpc TIMESTAMP      = ?",
 		p, p, p, p, p,
 		p, p, p, p, p,
 		p, p, p, p, p,
 		p, p, p, p, p,
-		p, p,
+		p, p, p, p,
 	)
 }
 
@@ -195,6 +197,7 @@ func appendUpsertBodyStmt(w *strings.Builder, p string) {
 			"    NUM_PAGOS=:%s_npg, CADENCIA_DIAS=:%s_cad,\n"+
 			"    DIAS_ATRASO_PROM=:%s_atr, PCT_PAGOS_A_TIEMPO=:%s_pct,\n"+
 			"    FECHA_PROX_PAGO=:%s_fpp, MONTO_PROX_PAGO=:%s_mpp,\n"+
+			"    PAGOS_90D=:%s_p90, FECHA_PRIMER_CARGO=:%s_fpc,\n"+
 			"    UPDATED_AT=:%s_upd\n"+
 			"  WHERE CLIENTE_ID=:%s_cid;\n"+
 			"  IF (ROW_COUNT=0) THEN\n"+
@@ -203,11 +206,11 @@ func appendUpsertBodyStmt(w *strings.Builder, p string) {
 			"       FRECUENCIA,MONETARY,SALDO,POR_LIQUIDAR_PCT,NEXT_BEST_PRODUCT,\n"+
 			"       EN_CONTROL,COHORTE_FECHA,CREATED_AT,UPDATED_AT,FECHA_ULTIMO_PAGO,\n"+
 			"       NUM_PAGOS,CADENCIA_DIAS,DIAS_ATRASO_PROM,PCT_PAGOS_A_TIEMPO,\n"+
-			"       FECHA_PROX_PAGO,MONTO_PROX_PAGO)\n"+
+			"       FECHA_PROX_PAGO,MONTO_PROX_PAGO,PAGOS_90D,FECHA_PRIMER_CARGO)\n"+
 			"    VALUES(:%s_id,:%s_cid,:%s_nom,:%s_zon,:%s_tel,:%s_fuc,\n"+
 			"           :%s_frq,:%s_mon,:%s_sal,:%s_plp,:%s_nbp,\n"+
 			"           :%s_enc,:%s_coh,:%s_cat,:%s_upd,:%s_fup,\n"+
-			"           :%s_npg,:%s_cad,:%s_atr,:%s_pct,:%s_fpp,:%s_mpp);\n",
+			"           :%s_npg,:%s_cad,:%s_atr,:%s_pct,:%s_fpp,:%s_mpp,:%s_p90,:%s_fpc);\n",
 		p, p, p,
 		p, p,
 		p, p,
@@ -216,16 +219,17 @@ func appendUpsertBodyStmt(w *strings.Builder, p string) {
 		p, p,
 		p, p,
 		p, p,
+		p, p,
 		p,
 		p,
 		p, p, p, p, p, p,
 		p, p, p, p, p,
 		p, p, p, p, p,
-		p, p, p, p, p, p,
+		p, p, p, p, p, p, p, p,
 	)
 }
 
-// appendUpsertArgs appends the 22 bound arguments for candidato c (in
+// appendUpsertArgs appends the 24 bound arguments for candidato c (in
 // param-declaration order) to args and returns the extended slice.
 func appendUpsertArgs(args []any, c *domain.WinbackCandidato) []any {
 	enControl := 0
@@ -256,6 +260,8 @@ func appendUpsertArgs(args []any, c *domain.WinbackCandidato) []any {
 		c.PctPagosATiempo(), // _pct
 		nullableWallClockArg(wallClockPtrFromTime(c.FechaProxPago())), // _fpp
 		c.MontoProxPago(), // _mpp
+		c.Pagos90D(),      // _p90
+		nullableWallClockArg(wallClockPtrFromTime(c.FechaPrimerCargo())), // _fpc
 	)
 }
 
@@ -599,8 +605,13 @@ func (r *Repo) LeerAnclasDesde(ctx context.Context, since *time.Time) ([]outboun
 		return nil, err
 	}
 
-	// Fetch cobranza signals and merge into the ancla results.
-	signals, err := r.leerCobranzaSignals(ctx, since)
+	// Fetch cobranza signals and merge into the ancla results. The PAGOS_90D
+	// cutoff is a rolling 90-day window anchored at the refresh moment
+	// (time.Now()), not a watermark — intentional for the nightly batch, so it
+	// is derived here at infra read time rather than threaded through the port.
+	// (FechaPrimerCargo is NOT a cobranza signal — it arrives via the anclas
+	// saldo_cte MIN(FECHA_CARGO) path, so it is not merged from signals below.)
+	signals, err := r.leerCobranzaSignals(ctx, time.Now().UTC().AddDate(0, 0, -90))
 	if err != nil {
 		return nil, err
 	}
@@ -615,6 +626,7 @@ func (r *Repo) LeerAnclasDesde(ctx context.Context, since *time.Time) ([]outboun
 		result[i].PctPagosATiempo = sig.PctPagosATiempo
 		result[i].FechaProxPago = sig.FechaProxPago
 		result[i].MontoProxPago = sig.MontoProxPago
+		result[i].Pagos90D = sig.Pagos90D
 	}
 
 	return result, nil
@@ -622,12 +634,13 @@ func (r *Repo) LeerAnclasDesde(ctx context.Context, since *time.Time) ([]outboun
 
 // leerCobranzaSignals queries MSP_PAGOS_VENTAS to compute per-client cadence
 // and punctuality facts using leerCobranzaBase + leerCobranzaClose.
-// since is no longer used; the query always scans the full payment history for
-// lifetime cadence accuracy. Returns a map[clienteID → CobranzaSignals].
-func (r *Repo) leerCobranzaSignals(ctx context.Context, since *time.Time) (map[int]outbound.CobranzaSignals, error) {
+// cutoff is bound as the single positional parameter (? in leerCobranzaClose)
+// that filters the PAGOS_90D subquery to payments on or after that date.
+// The lifetime cadence/punctuality aggregation is always a full scan.
+// Returns a map[clienteID → CobranzaSignals].
+func (r *Repo) leerCobranzaSignals(ctx context.Context, cutoff time.Time) (map[int]outbound.CobranzaSignals, error) {
 	query := leerCobranzaBase + leerCobranzaClose
-	var args []any
-	_ = since // full-scan always; watermark not applied for cadence accuracy
+	args := []any{firebird.ToWallClock(cutoff)}
 
 	result := make(map[int]outbound.CobranzaSignals)
 	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {

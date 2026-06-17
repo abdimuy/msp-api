@@ -1,4 +1,4 @@
-# Credit Scorecard Fitting Harness (R4)
+# Credit Scorecard Fitting Harness (R4) — point-in-time
 
 Offline Python tool that trains the logistic-regression credit-risk scorecard
 and writes `internal/analytics/app/scorecard.json`, which the Go API embeds at
@@ -9,123 +9,131 @@ binary (CLAUDE.md rule #5).
 
 ---
 
-## What it does
+## Why point-in-time (the leakage trap)
 
-1. Reads the materialized feature columns from `MSP_AN_WINBACK_CANDIDATOS` (same
-   table the Go scorer reads at serve time).
-2. Builds the same four-feature vector that `buildCreditoFeatures` in
-   `internal/analytics/app/scoring.go` builds:
+The "bad" label is a **formal castigo** (`CONCEPTO_CC_ID IN (27968 Mal Cliente,
+27967 Fugas)`). A castigo **zeroes the client's balance**, and a separate massive
+**condonación** (27969, ~70% of accounts) also zeroes balances. So the *current*
+saldo cannot be a feature — it is an effect of the very outcome we predict
+(circular). A naive snapshot fit produced Gini 0.41 with absurd collinear weights.
 
-   | Scorecard key | Source column | Transform |
-   |---|---|---|
-   | `SALDO_FRAC` | `POR_LIQUIDAR_PCT` | `clamp01(v / 100)` |
-   | `COBERTURA_PLAN` | `POR_LIQUIDAR_PCT` | `clamp01(1 − SALDO_FRAC)` |
-   | `PCT_PAGOS_A_TIEMPO_6M` | `PCT_PAGOS_A_TIEMPO` | `clamp01(v / 100)` |
-   | `DIAS_ATRASO_PROM` | `DIAS_ATRASO_PROM` | raw (not clamped) |
+The correct design (Siddiqi / Thomas / Basel II) used here:
 
-   NULL columns → 0.0 (matches Go reading a zero decimal/int).
+- **Observation point + performance window.** For each of several staggered
+  historical dates `T`, features are reconstructed from data **≤ T only**; the
+  label comes from the window **(T, T+WINDOW_MONTHS]**. Never the current state.
+- **Roll-to-non-performing label** (not the lagged write-off, which trails the
+  real default by a median ~25 months): bad = castigo in the window OR a stretch
+  of ≥ `DELINQ_DAYS` with no real payment while still owing.
+- **Performing population.** Eligible at `T` = owes (`saldo > SALDO_MIN`), has
+  ≥ `MIN_HISTORY_DAYS` of history, paid within `PERFORMING_MAX_DIAS` (not already
+  dead), and not yet castigo'd. This is the population the model serves.
+- **Out-of-time validation** (train on early panels, validate on the latest) +
+  vintage check.
 
-3. Derives the label from `MSP_PAGOS_VENTAS`: label=1 if a client has any
-   write-off payment (`CONCEPTO_CC_ID IN (27968, 27967)`).
-
-4. Fits `sklearn.linear_model.LogisticRegression` with `class_weight="balanced"`
-   (the label rate is ~6%, balancing prevents the model from predicting "good"
-   for everything).
-
-5. Reports AUC, Gini, and KS on a 30% random holdout and on an out-of-time
-   holdout (clients whose last payment is after `OOT_CUTOFF_DATE = 2024-07-01`).
-   Also prints a 10-decile vintage table.
-
-6. Writes `internal/analytics/app/scorecard.json` in the exact schema the Go
-   `Scorecard` type parses. Commit the updated file to embed the new model.
+OOT result: Gini ≈ 0.86, KS ≈ 0.73, monotonic deciles (riskiest decile ~98% bad,
+safest ~2%).
 
 ---
 
-## Prerequisite — cobranza signals must be materialized
+## The 6 behavioral features (must match Go `buildCreditoFeatures`)
 
-`PCT_PAGOS_A_TIEMPO` and `DIAS_ATRASO_PROM` are computed by the analytics full
-refresh job (`leerCobranzaBase` query in
-`internal/analytics/infra/analyticsfb/queries.go`). If those columns are NULL
-in the dev DB, two of four features are zero for every client, and the resulting
-scorecard is degenerate.
+All client-level, point-in-time at `T` (serve-time: as-of `now`). Pure behavior —
+**no saldo feature** (that was the leakage source).
 
-The script warns loudly when this is the case:
+| Scorecard key | Definition |
+|---|---|
+| `DIAS_SIN_PAGAR` | days since last real payment; falls back to `ANTIGUEDAD_DIAS` when never paid |
+| `PAGOS_90D` | count of real payments in the trailing 90 days |
+| `PCT_PAGOS_A_TIEMPO_6M` | fraction (0–1) of payment gaps within cadence+7d (= Go `PctPagosATiempo / 100`) |
+| `CADENCIA_DIAS` | **mean** gap between consecutive real payments (matches Go B1 `AVG`) |
+| `NUM_PAGOS_TOTAL` | total real payment count |
+| `ANTIGUEDAD_DIAS` | days since first cargo (`MIN(FECHA_CARGO)`) |
 
-```
-WARNING: feature 'PCT_PAGOS_A_TIEMPO_6M' is NULL for 100.0% of the population.
-The cobranza signals (PCT_PAGOS_A_TIEMPO, DIAS_ATRASO_PROM) are NOT yet
-materialized in the dev DB.  Run the analytics full refresh first.
-```
-
-**Run the analytics full refresh before fitting.** This is the known-pending
-"materializar cobranza en dev" item from the Fase 2 backlog.
+Real payments = `CONCEPTO_CC_ID IN (87327, 155, 11)`, `CANCELADO='N'`, `APLICADO='S'`.
+Everything is client-level: castigo/condonación rows do **not** join cargos by
+`DOCTO_CC_ID` (0% match) — only by `CLIENTE_ID`.
 
 ---
 
-## Setup
+## Workflow
+
+The Python Firebird driver needs a native `fbclient` (absent on macOS), so the
+data is exported to CSV by a Go tool (pure-Go driver), then the harness trains
+on the CSVs.
 
 ```bash
-cd /path/to/msp-api       # repo root
-
-python3 -m venv analysis/creditscorecard/.venv
-source analysis/creditscorecard/.venv/bin/activate
-pip install -r analysis/creditscorecard/requirements.txt
-```
-
----
-
-## Run
-
-Export DB credentials from `.env`, then run from the repo root:
-
-```bash
+cd /path/to/msp-api        # repo root
 set -a; . ./.env; set +a
 
-# Full fit + write scorecard.json
-python analysis/creditscorecard/fit_scorecard.py --version v1-20250616
+# 0. one-time: venv
+python3 -m venv analysis/creditscorecard/.venv
+analysis/creditscorecard/.venv/bin/pip install -r analysis/creditscorecard/requirements.txt
 
-# Preview metrics without writing scorecard.json
-python analysis/creditscorecard/fit_scorecard.py --version v1-20250616 --dry-run
+# 1. Make sure cobranza signals are materialized in dev (writes MSP_AN_*; snapshot first):
+make fb-snapshot NAME=pre_recalibracion
+go run ./cmd/analytics-refresh --full
+
+# 2. Export raw cargos + abonos to analysis/creditscorecard/.data/ (read-only):
+go run ./cmd/analytics-export-creditdata --dir analysis/creditscorecard/.data
+
+# 3. Fit + write internal/analytics/app/scorecard.json:
+analysis/creditscorecard/.venv/bin/python analysis/creditscorecard/pit_scorecard.py --write
+#    (omit --write for a dry run that only prints metrics)
+
+# 4. (optional) Explore the data:
+analysis/creditscorecard/.venv/bin/python analysis/creditscorecard/eda2.py
 ```
 
-The script reads credentials from the environment:
+Tunables live as UPPERCASE constants at the top of `pit_scorecard.py`
+(`OBSERVATION_DATES`, `WINDOW_MONTHS`, `DELINQ_DAYS`, `MIN_HISTORY_DAYS`,
+`PERFORMING_MAX_DIAS`, `SALDO_MIN`, train/OOT split). A sensitivity grid over
+`DELINQ_DAYS` × `WINDOW_MONTHS` is printed each run.
 
-| Env var | Default |
-|---|---|
-| `FB_HOST` | `localhost` |
-| `FB_PORT` | `3050` |
-| `FB_DATABASE` | `/firebird/data/MUEBLERA.FDB` |
-| `FB_USER` | `SYSDBA` |
-| `FB_PASSWORD` | `masterkey` |
+**`PERFORMING_MAX_DIAS` must match the Go serving gate** `creditoPerformingMaxDias`
+in `internal/analytics/app/scoring.go` (currently 180). If you change one, change
+both — the bands are calibrated on the population that gate selects.
 
-The dev DB is the Dockerized Firebird container on `localhost:3050`.
+---
+
+## Serve-time population & the stale-snapshot caveat
+
+The score applies only to clients with `saldo > 0` who paid within
+`creditoPerformingMaxDias` (= the trained "performing" population). Liquidated /
+contado clients → "no aplica"; long-dormant owers are surfaced by the cobranza
+`TierRiesgo`, not this forward-looking score.
+
+⚠️ A dev DB whose cobranza data is **stale** (owers' last payments frozen months
+before wall-clock) will inflate `DIAS_SIN_PAGAR` for every ower and saturate the
+score to CRITICO. That is a data-freshness artifact, not a model defect — in
+production with live data, performing owers sit near the training mean and the
+bands spread normally. Validate against the OOT metrics (historical panels,
+unaffected by staleness), not the live `--dist` over a stale dev DB.
+
+`go run ./cmd/analytics-refresh --dist` logs the live band distribution.
 
 ---
 
 ## Recalibration cadence
 
-Recalibrate approximately quarterly (every 3 months) or sooner if population
-stability (PSI) drifts.
+Approximately quarterly, or sooner if population stability (PSI) drifts.
 
-Steps:
-
-1. Run the analytics full refresh so cobranza signals are current.
-2. Run `fit_scorecard.py --dry-run` and inspect KS / Gini / AUC. Target:
-   Gini ≥ 0.70 (expected ~0.74 per the validation spike). If Gini drops below
-   0.60, investigate data quality before writing a new scorecard.
-3. Check the decile table: worst 2 deciles should capture ~70% of losses; top
-   4 deciles should show near-zero bad rate.
-4. Check PSI if you have the previous score distribution saved: PSI < 0.10 is
-   stable, 0.10–0.25 warrants monitoring, > 0.25 indicates significant drift.
-5. If metrics are acceptable, run without `--dry-run`, bump `--version`, and
-   commit the new `internal/analytics/app/scorecard.json`.
+1. Run steps 1–3 above.
+2. Inspect OOT KS / Gini / AUC. Target Gini ≥ 0.70 (achieved ~0.86). If it drops
+   below ~0.60, investigate data quality before writing a new scorecard.
+3. Check the decile table: riskiest deciles should concentrate the bads
+   monotonically; safest deciles near-zero.
+4. Check PSI vs the previous score distribution if saved (<0.10 stable,
+   0.10–0.25 monitor, >0.25 drift).
+5. If acceptable, run with `--write` and commit the new
+   `internal/analytics/app/scorecard.json` (the `version` is date-stamped).
 
 ---
 
 ## Consistency contract
 
-Features are read from `MSP_AN_WINBACK_CANDIDATOS` — the same materialized
-columns the Go scorer reads. Do NOT recompute features from raw Microsip tables
-(`DOCTOS_CC`, `DOCTOS_PV`, `MSP_PAGOS_VENTAS`). Recomputing from raw data
-would introduce drift between training-time and serve-time feature values,
-invalidating the model calibration.
+Features are computed identically in Python (training) and Go (serving). The Go
+`buildCreditoFeatures` is the canonical definition; this harness mirrors it. Keep
+units aligned: `CADENCIA_DIAS` = mean gap, `PCT_PAGOS_A_TIEMPO_6M` = fraction,
+days in days. The `mean`/`std` in `scorecard.json` are the TRAIN-split
+standardization stats; Go standardizes `(x − mean)/std` before applying weights.

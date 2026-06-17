@@ -28,28 +28,30 @@ type rowScanner interface {
 // MSP_AN_WINBACK_CANDIDATOS columns are CHARACTER SET UTF8 — plain string /
 // sql.NullString is the correct scan target (no Win1252 decoding needed).
 type candidatoRowRaw struct {
-	idRaw              string
-	clienteID          int
-	nombre             sql.NullString
-	zona               sql.NullString
-	telefono           sql.NullString
-	fechaUltimaCompra  any // TIMESTAMP nullable
-	frecuencia         int
-	monetaryRaw        any // NUMERIC(18,2)
-	saldoRaw           any // NUMERIC(18,2)
-	porLiquidarPctRaw  any // NUMERIC(5,2) nullable
-	nextBestProduct    sql.NullString
-	enControl          int16 // SMALLINT; 0=false 1=true
-	cohorteFechaRaw    any   // TIMESTAMP NOT NULL
-	createdAtRaw       any   // TIMESTAMP NOT NULL
-	updatedAtRaw       any   // TIMESTAMP NOT NULL
-	fechaUltimoPagoRaw any   // TIMESTAMP nullable
-	numPagosRaw        any   // INTEGER nullable
-	cadenciaDiasRaw    any   // INTEGER nullable
-	diasAtrasoProm     any   // INTEGER nullable
-	pctPagosATiempoRaw any   // NUMERIC(5,2) nullable
-	fechaProxPagoRaw   any   // TIMESTAMP nullable
-	montoProxPagoRaw   any   // NUMERIC(18,2) nullable
+	idRaw               string
+	clienteID           int
+	nombre              sql.NullString
+	zona                sql.NullString
+	telefono            sql.NullString
+	fechaUltimaCompra   any // TIMESTAMP nullable
+	frecuencia          int
+	monetaryRaw         any // NUMERIC(18,2)
+	saldoRaw            any // NUMERIC(18,2)
+	porLiquidarPctRaw   any // NUMERIC(5,2) nullable
+	nextBestProduct     sql.NullString
+	enControl           int16 // SMALLINT; 0=false 1=true
+	cohorteFechaRaw     any   // TIMESTAMP NOT NULL
+	createdAtRaw        any   // TIMESTAMP NOT NULL
+	updatedAtRaw        any   // TIMESTAMP NOT NULL
+	fechaUltimoPagoRaw  any   // TIMESTAMP nullable
+	numPagosRaw         any   // INTEGER nullable
+	cadenciaDiasRaw     any   // INTEGER nullable
+	diasAtrasoProm      any   // INTEGER nullable
+	pctPagosATiempoRaw  any   // NUMERIC(5,2) nullable
+	fechaProxPagoRaw    any   // TIMESTAMP nullable
+	montoProxPagoRaw    any   // NUMERIC(18,2) nullable
+	pagos90dRaw         any   // INTEGER nullable
+	fechaPrimerCargoRaw any   // TIMESTAMP nullable
 }
 
 func (r *candidatoRowRaw) scanFrom(s rowScanner) error {
@@ -76,18 +78,22 @@ func (r *candidatoRowRaw) scanFrom(s rowScanner) error {
 		&r.pctPagosATiempoRaw,
 		&r.fechaProxPagoRaw,
 		&r.montoProxPagoRaw,
+		&r.pagos90dRaw,
+		&r.fechaPrimerCargoRaw,
 	)
 }
 
 // candidatoCobranzaScanned holds decoded cobranza signal fields for assembleCandidato.
 type candidatoCobranzaScanned struct {
-	fechaUltimoPago time.Time
-	numPagos        int
-	cadenciaDias    int
-	diasAtrasoProm  int
-	pctPagosATiempo decimal.Decimal
-	fechaProxPago   time.Time
-	montoProxPago   decimal.Decimal
+	fechaUltimoPago  time.Time
+	numPagos         int
+	cadenciaDias     int
+	diasAtrasoProm   int
+	pctPagosATiempo  decimal.Decimal
+	fechaProxPago    time.Time
+	montoProxPago    decimal.Decimal
+	pagos90d         int
+	fechaPrimerCargo time.Time
 }
 
 // scanCandidatoCobranza decodes the 6 nullable cobranza signal columns from r.
@@ -120,6 +126,14 @@ func scanCandidatoCobranza(r *candidatoRowRaw) (candidatoCobranzaScanned, error)
 		return out, err
 	}
 	out.montoProxPago, err = scanNullableDecimal(r.montoProxPagoRaw)
+	if err != nil {
+		return out, err
+	}
+	out.pagos90d, err = scanNullableIntDecimal(r.pagos90dRaw)
+	if err != nil {
+		return out, err
+	}
+	out.fechaPrimerCargo, err = scanNullableTime(r.fechaPrimerCargoRaw)
 	if err != nil {
 		return out, err
 	}
@@ -186,6 +200,8 @@ func assembleCandidato(r *candidatoRowRaw) (*domain.WinbackCandidato, error) {
 		PctPagosATiempo:   cob.pctPagosATiempo,
 		FechaProxPago:     cob.fechaProxPago,
 		MontoProxPago:     cob.montoProxPago,
+		Pagos90D:          cob.pagos90d,
+		FechaPrimerCargo:  cob.fechaPrimerCargo,
 	}), nil
 }
 
@@ -218,17 +234,18 @@ func scanCandidatoRows(rows *sql.Rows) ([]*domain.WinbackCandidato, error) {
 //
 // Column order must match leerAnclasBase SELECT list exactly.
 type anclaRowRaw struct {
-	clienteID          int
-	nombre             firebird.Win1252  // Win1252: CLIENTES.NOMBRE
-	zona               firebird.Win1252  // Win1252: ZONAS_CLIENTES.NOMBRE (COALESCE to '')
-	telefono           *firebird.Win1252 // Win1252 nullable: DIRS_CLIENTES.TELEFONO1
-	fechaUltimaCompra  any               // DATE from DOCTOS_PV.FECHA MAX
-	frecuencia         int               // COUNT(DISTINCT …)
-	monetaryRaw        any               // CAST(SUM(IMPORTE_NETO) AS NUMERIC(18,2))
-	saldoRaw           any               // CAST(… AS NUMERIC(18,2))
-	porLiquidarRaw     any               // CAST(… AS NUMERIC(5,2))
-	nextBestProduct    firebird.Win1252  // Win1252: ARTICULOS.NOMBRE (COALESCE to '')
-	fechaUltimoPagoRaw any               // TIMESTAMP nullable: MAX(sv.FECHA_ULT_PAGO)
+	clienteID           int
+	nombre              firebird.Win1252  // Win1252: CLIENTES.NOMBRE
+	zona                firebird.Win1252  // Win1252: ZONAS_CLIENTES.NOMBRE (COALESCE to '')
+	telefono            *firebird.Win1252 // Win1252 nullable: DIRS_CLIENTES.TELEFONO1
+	fechaUltimaCompra   any               // DATE from DOCTOS_PV.FECHA MAX
+	frecuencia          int               // COUNT(DISTINCT …)
+	monetaryRaw         any               // CAST(SUM(IMPORTE_NETO) AS NUMERIC(18,2))
+	saldoRaw            any               // CAST(… AS NUMERIC(18,2))
+	porLiquidarRaw      any               // CAST(… AS NUMERIC(5,2))
+	nextBestProduct     firebird.Win1252  // Win1252: ARTICULOS.NOMBRE (COALESCE to '')
+	fechaUltimoPagoRaw  any               // TIMESTAMP nullable: MAX(sv.FECHA_ULT_PAGO)
+	fechaPrimerCargoRaw any               // TIMESTAMP nullable: MIN(sv.FECHA_CARGO)
 }
 
 func (r *anclaRowRaw) scanFrom(s rowScanner) error {
@@ -244,6 +261,7 @@ func (r *anclaRowRaw) scanFrom(s rowScanner) error {
 		&r.porLiquidarRaw,
 		&r.nextBestProduct,
 		&r.fechaUltimoPagoRaw,
+		&r.fechaPrimerCargoRaw,
 	)
 }
 
@@ -268,6 +286,10 @@ func assembleAncla(r *anclaRowRaw) (outbound.AnclaCliente, error) {
 	if err != nil {
 		return outbound.AnclaCliente{}, err
 	}
+	fechaPrimerCargo, err := scanNullableTime(r.fechaPrimerCargoRaw)
+	if err != nil {
+		return outbound.AnclaCliente{}, err
+	}
 	// Decode Win1252 nullable telefono.
 	var telefono string
 	if r.telefono != nil {
@@ -285,6 +307,7 @@ func assembleAncla(r *anclaRowRaw) (outbound.AnclaCliente, error) {
 		PorLiquidarPct:    porLiquidarPct,
 		NextBestProduct:   string(r.nextBestProduct),
 		FechaUltimoPago:   fechaUltimoPago,
+		FechaPrimerCargo:  fechaPrimerCargo,
 	}, nil
 }
 
@@ -300,6 +323,7 @@ type cobranzaRowRaw struct {
 	pctPagosATiempoRaw any // NUMERIC(5,2) aggregate
 	ultimaFechaRaw     any // TIMESTAMP nullable (raw last payment date; next-pago derived in Go)
 	montoProxPagoRaw   any // NUMERIC(18,2) aggregate
+	pagos90Raw         any // INTEGER (COALESCE to 0 in SQL)
 }
 
 func (r *cobranzaRowRaw) scanFrom(s rowScanner) error {
@@ -311,6 +335,7 @@ func (r *cobranzaRowRaw) scanFrom(s rowScanner) error {
 		&r.pctPagosATiempoRaw,
 		&r.ultimaFechaRaw,
 		&r.montoProxPagoRaw,
+		&r.pagos90Raw,
 	)
 }
 
@@ -340,6 +365,10 @@ func assembleCobranza(r *cobranzaRowRaw) (outbound.CobranzaSignals, error) {
 	if err != nil {
 		return outbound.CobranzaSignals{}, err
 	}
+	pagos90, err := scanNullableIntDecimal(r.pagos90Raw)
+	if err != nil {
+		return outbound.CobranzaSignals{}, err
+	}
 	return outbound.CobranzaSignals{
 		ClienteID:       r.clienteID,
 		NumPagos:        numPagos,
@@ -348,6 +377,7 @@ func assembleCobranza(r *cobranzaRowRaw) (outbound.CobranzaSignals, error) {
 		PctPagosATiempo: pctPagosATiempo,
 		FechaProxPago:   fechaProxPago,
 		MontoProxPago:   montoProxPago,
+		Pagos90D:        pagos90,
 	}, nil
 }
 
