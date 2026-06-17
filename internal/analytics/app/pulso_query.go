@@ -29,8 +29,20 @@ func (s *Service) ObtenerPulsoCliente(ctx context.Context, clienteID int) (analy
 	now := s.clock.Now()
 	seg, score, recencia, ep := computeSegmentoScore(c, now)
 	tier := computeCobranzaTier(c, now)
+	cScore, cBanda, cDrivers, _ := computeCreditoScore(c, now, s.scorecard)
 
-	return analytics.ToClientePulsoContract(c, seg.String(), score.Int(), recencia, ep.String(), tier.String()), nil
+	comp := analytics.PulsoComputado{
+		Segmento:       seg.String(),
+		Score:          score.Int(),
+		RecenciaDias:   recencia,
+		EstadoPago:     ep.String(),
+		TierRiesgo:     tier.String(),
+		ScoreCredito:   cScore.Int(),
+		BandaCredito:   cBanda.String(),
+		CreditoDrivers: cDrivers,
+	}
+
+	return analytics.ToClientePulsoContract(c, comp), nil
 }
 
 // ObtenerPulsosClientes returns a map keyed by clienteID with the pulse for each
@@ -57,7 +69,20 @@ func (s *Service) ObtenerPulsosClientes(ctx context.Context, clienteIDs []int) (
 	for _, c := range candidates {
 		seg, score, recencia, ep := computeSegmentoScore(c, now)
 		tier := computeCobranzaTier(c, now)
-		result[c.ClienteID()] = analytics.ToClientePulsoContract(c, seg.String(), score.Int(), recencia, ep.String(), tier.String())
+		cScore, cBanda, cDrivers, _ := computeCreditoScore(c, now, s.scorecard)
+
+		comp := analytics.PulsoComputado{
+			Segmento:       seg.String(),
+			Score:          score.Int(),
+			RecenciaDias:   recencia,
+			EstadoPago:     ep.String(),
+			TierRiesgo:     tier.String(),
+			ScoreCredito:   cScore.Int(),
+			BandaCredito:   cBanda.String(),
+			CreditoDrivers: cDrivers,
+		}
+
+		result[c.ClienteID()] = analytics.ToClientePulsoContract(c, comp)
 	}
 	return result, nil
 }

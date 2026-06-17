@@ -145,6 +145,9 @@ func (w *RefreshWorker) tick(ctx context.Context) {
 		slog.Int("procesados", result.Procesados),
 		slog.Time("watermark", result.Watermark),
 	)
+	if full {
+		w.svc.LogDistribucionBandasCredito(ctx)
+	}
 }
 
 // fullRefreshDue reports whether now falls on the designated full-refresh hour.

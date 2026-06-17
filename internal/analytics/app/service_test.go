@@ -72,6 +72,9 @@ func (r *fakeWinbackRepo) ListCandidatos(_ context.Context, p outbound.ListWinba
 		}
 		out = append(out, c)
 	}
+	if p.Limit > 0 && len(out) > p.Limit {
+		out = out[:p.Limit]
+	}
 	return outbound.Page[*domain.WinbackCandidato]{Items: out, Total: len(out)}, nil
 }
 

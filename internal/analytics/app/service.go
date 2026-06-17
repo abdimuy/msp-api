@@ -32,11 +32,12 @@ type TxRunner interface {
 // events. The outbox pattern (doc 05/06) is not applicable for a projection
 // recompute (no aggregate state change, no consumer notification required).
 type Service struct {
-	repo   outbound.WinbackRepo
-	micro  outbound.MicrosipReader
-	clock  outbound.Clock
-	txMgr  TxRunner
-	logger *slog.Logger
+	repo      outbound.WinbackRepo
+	micro     outbound.MicrosipReader
+	clock     outbound.Clock
+	txMgr     TxRunner
+	logger    *slog.Logger
+	scorecard Scorecard
 
 	// refreshRunning is the single-flight guard for RefrescarEnSegundoPlano.
 	// atomic.Bool is safe for concurrent access without a mutex.
@@ -46,18 +47,32 @@ type Service struct {
 // NewService builds a Service wired against the required ports.
 // txMgr may be nil in tests that use in-memory fakes for the write side.
 // logger may be nil; slog.Default() is used in that case.
+//
+// The embedded credit scorecard is loaded at construction time. On load failure
+// the service starts with a zero Scorecard (Loaded()==false) and degrades
+// gracefully: credit scores return "no aplica" everywhere without panicking.
+// The embedded JSON is build-tested so this code path is defensive only.
 func NewService(
 	repo outbound.WinbackRepo,
 	micro outbound.MicrosipReader,
 	clock outbound.Clock,
 	txMgr TxRunner,
 ) *Service {
+	sc, err := LoadScorecard()
+	if err != nil {
+		slog.Default().Error("analytics.scorecard_load_failed",
+			slog.String("error", err.Error()),
+		)
+		// sc is already the zero Scorecard{}; Loaded() == false → credit scoring
+		// degrades to "no aplica" on every call. Never panics.
+	}
 	return &Service{
-		repo:   repo,
-		micro:  micro,
-		clock:  clock,
-		txMgr:  txMgr,
-		logger: slog.Default(),
+		repo:      repo,
+		micro:     micro,
+		clock:     clock,
+		txMgr:     txMgr,
+		logger:    slog.Default(),
+		scorecard: sc,
 	}
 }
 

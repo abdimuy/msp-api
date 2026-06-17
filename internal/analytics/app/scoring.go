@@ -271,6 +271,39 @@ func clamp01(v float64) float64 {
 	}
 }
 
+// ─── Credit risk scoring ──────────────────────────────────────────────────────
+
+// buildCreditoFeatures assembles the read-time feature vector for the credit
+// scorecard from the candidate's materialized B1 facts. The keys MUST match the
+// feature names in scorecard.json and are the canonical definitions the offline
+// trainer (R4) reproduces. Pure and deterministic.
+func buildCreditoFeatures(c *domain.WinbackCandidato) map[string]float64 {
+	saldoFrac := clamp01(c.PorLiquidarPct().InexactFloat64() / 100.0)
+	return map[string]float64{
+		"SALDO_FRAC":            saldoFrac,
+		"COBERTURA_PLAN":        clamp01(1.0 - saldoFrac),
+		"PCT_PAGOS_A_TIEMPO_6M": clamp01(c.PctPagosATiempo().InexactFloat64() / 100.0),
+		"DIAS_ATRASO_PROM":      float64(c.DiasAtrasoProm()),
+	}
+}
+
+// computeCreditoScore applies the embedded scorecard to a candidate's features.
+// Returns aplica=false (zero score, empty banda, nil drivers) when the client has
+// no credit relationship (EstadoPago == SIN_CREDITO) or the scorecard failed to
+// load — the caller renders "no aplica". now must be UTC.
+func computeCreditoScore(c *domain.WinbackCandidato, now time.Time, sc Scorecard) (domain.ScoreCredito, domain.BandaCredito, []string, bool) {
+	ep := estadoPagoFor(c.Saldo(), c.FechaUltimoPago(), now)
+	if ep == domain.EstadoPagoSinCredito {
+		return domain.ScoreCredito{}, domain.BandaCredito(""), nil, false
+	}
+	if !sc.Loaded() {
+		return domain.ScoreCredito{}, domain.BandaCredito(""), nil, false
+	}
+	features := buildCreditoFeatures(c)
+	score, banda, drivers := sc.Aplicar(features)
+	return score, banda, drivers, true
+}
+
 // ─── Cobranza tier constants ──────────────────────────────────────────────────
 
 const (

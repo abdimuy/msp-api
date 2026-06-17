@@ -113,6 +113,10 @@ func validateBands(b bandThresholdsJSON) error {
 // Version returns the scorecard version string (e.g. "v0-placeholder").
 func (sc Scorecard) Version() string { return sc.raw.Version }
 
+// Loaded reports whether the scorecard was successfully parsed and is ready for
+// scoring. A zero-value Scorecard{} (e.g. returned on load failure) returns false.
+func (sc Scorecard) Loaded() bool { return sc.raw.Version != "" && len(sc.raw.Features) > 0 }
+
 // ─── Aplicar ─────────────────────────────────────────────────────────────────
 
 // Aplicar applies the scorecard to a feature vector and returns the credit-risk

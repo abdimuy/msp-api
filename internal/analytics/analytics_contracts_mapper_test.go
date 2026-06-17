@@ -109,3 +109,77 @@ func TestToWinbackCandidatoContracts_EmptySlice(t *testing.T) {
 	got := analytics.ToWinbackCandidatoContracts(nil)
 	assert.Empty(t, got)
 }
+
+// ─── ToClientePulsoContract ───────────────────────────────────────────────────
+
+func TestToClientePulsoContract_CreditoAplica(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 13, 10, 0, 0, 0, time.UTC)
+	cohorteFecha := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	c := domain.HydrateWinbackCandidato(domain.HydrateWinbackCandidatoParams{
+		ClienteID:    55,
+		Nombre:       "García Reyes",
+		CohorteFecha: cohorteFecha,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	})
+
+	comp := analytics.PulsoComputado{
+		Segmento:       "DORMIDO_VALIOSO",
+		Score:          72,
+		RecenciaDias:   300,
+		EstadoPago:     "AL_CORRIENTE",
+		TierRiesgo:     "AL_DIA",
+		ScoreCredito:   42,
+		BandaCredito:   "ALTO",
+		CreditoDrivers: []string{"saldo alto pendiente"},
+	}
+
+	got := analytics.ToClientePulsoContract(c, comp)
+
+	assert.Equal(t, 55, got.ClienteID)
+	assert.Equal(t, 42, got.ScoreCredito)
+	assert.Equal(t, "ALTO", got.BandaCredito)
+	assert.Equal(t, []string{"saldo alto pendiente"}, got.CreditoDrivers)
+	// Verify other computed fields pass through correctly too.
+	assert.Equal(t, 72, got.Score)
+	assert.Equal(t, "DORMIDO_VALIOSO", got.Segmento)
+	assert.Equal(t, "AL_CORRIENTE", got.EstadoPago)
+	assert.Equal(t, 300, got.RecenciaDias)
+	assert.Equal(t, "AL_DIA", got.TierRiesgo)
+}
+
+func TestToClientePulsoContract_CreditoNoAplica(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 13, 10, 0, 0, 0, time.UTC)
+	cohorteFecha := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	c := domain.HydrateWinbackCandidato(domain.HydrateWinbackCandidatoParams{
+		ClienteID:    56,
+		Nombre:       "Contado Siempre",
+		CohorteFecha: cohorteFecha,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	})
+
+	comp := analytics.PulsoComputado{
+		Segmento:       "PERDIDO",
+		Score:          15,
+		RecenciaDias:   800,
+		EstadoPago:     "SIN_CREDITO",
+		TierRiesgo:     "AL_DIA",
+		ScoreCredito:   0,
+		BandaCredito:   "",
+		CreditoDrivers: nil,
+	}
+
+	got := analytics.ToClientePulsoContract(c, comp)
+
+	assert.Equal(t, 56, got.ClienteID)
+	assert.Equal(t, 0, got.ScoreCredito)
+	assert.Empty(t, got.BandaCredito)
+	assert.Nil(t, got.CreditoDrivers)
+}

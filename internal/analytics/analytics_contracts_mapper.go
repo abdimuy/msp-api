@@ -39,18 +39,34 @@ func ToWinbackCandidatoContracts(candidates []*domain.WinbackCandidato) []Winbac
 	return result
 }
 
+// PulsoComputado carries the read-time computed enrichment values that the
+// analytics app scoring layer produces for a single client's pulso. Callers
+// assemble this struct from the various compute* functions and pass it to
+// ToClientePulsoContract, keeping the mapper signature stable as new
+// computed fields are added.
+type PulsoComputado struct {
+	Segmento       string
+	Score          int
+	RecenciaDias   int
+	EstadoPago     string
+	TierRiesgo     string
+	ScoreCredito   int
+	BandaCredito   string
+	CreditoDrivers []string
+}
+
 // ToClientePulsoContract projects a WinbackCandidato plus the read-time computed
 // pulse values into the cross-module ClientePulsoContract. The computed values
-// (segmento, score, recenciaDias, estadoPago, tierRiesgo) are produced by the
-// analytics app scoring layer and passed in — this mapper only assembles the
-// flat struct.
-func ToClientePulsoContract(c *domain.WinbackCandidato, segmento string, score, recenciaDias int, estadoPago, tierRiesgo string) ClientePulsoContract {
+// (segmento, score, recenciaDias, estadoPago, tierRiesgo, scoreCredito, etc.) are
+// produced by the analytics app scoring layer and passed in via PulsoComputado —
+// this mapper only assembles the flat struct.
+func ToClientePulsoContract(c *domain.WinbackCandidato, comp PulsoComputado) ClientePulsoContract {
 	return ClientePulsoContract{
 		ClienteID:         c.ClienteID(),
-		Score:             score,
-		Segmento:          segmento,
-		EstadoPago:        estadoPago,
-		RecenciaDias:      recenciaDias,
+		Score:             comp.Score,
+		Segmento:          comp.Segmento,
+		EstadoPago:        comp.EstadoPago,
+		RecenciaDias:      comp.RecenciaDias,
 		Frecuencia:        c.Frecuencia(),
 		Monetary:          c.Monetary(),
 		Saldo:             c.Saldo(),
@@ -64,6 +80,9 @@ func ToClientePulsoContract(c *domain.WinbackCandidato, segmento string, score, 
 		PctPagosATiempo:   c.PctPagosATiempo(),
 		FechaProxPago:     c.FechaProxPago(),
 		MontoProxPago:     c.MontoProxPago(),
-		TierRiesgo:        tierRiesgo,
+		TierRiesgo:        comp.TierRiesgo,
+		ScoreCredito:      comp.ScoreCredito,
+		BandaCredito:      comp.BandaCredito,
+		CreditoDrivers:    comp.CreditoDrivers,
 	}
 }

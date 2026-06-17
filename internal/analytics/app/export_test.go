@@ -33,3 +33,15 @@ func ExportEstadoPagoFor(saldo decimal.Decimal, fechaUltimoPago, now time.Time) 
 func ExportComputeCobranzaTier(c *domain.WinbackCandidato, now time.Time) domain.TierRiesgo {
 	return computeCobranzaTier(c, now)
 }
+
+// ExportBuildCreditoFeatures exposes the internal buildCreditoFeatures function
+// for table-driven tests in the app_test package.
+func ExportBuildCreditoFeatures(c *domain.WinbackCandidato) map[string]float64 {
+	return buildCreditoFeatures(c)
+}
+
+// ExportComputeCreditoScore exposes the internal computeCreditoScore function
+// for table-driven tests in the app_test package.
+func ExportComputeCreditoScore(c *domain.WinbackCandidato, now time.Time, sc Scorecard) (domain.ScoreCredito, domain.BandaCredito, []string, bool) {
+	return computeCreditoScore(c, now, sc)
+}
