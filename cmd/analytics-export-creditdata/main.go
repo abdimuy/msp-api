@@ -1,13 +1,16 @@
-// Command analytics-export-creditdata dumps the RAW cargo and abono streams
-// needed by the point-in-time credit-scorecard harness (analysis/creditscorecard).
-// It intentionally exports raw rows with NO temporal logic — all point-in-time
-// reconstruction (as-of-date saldo, behaviour, delinquency label) lives in the
-// Python harness so the methodology is in one tested place.
+// Command analytics-export-creditdata dumps the RAW cargo, abono, and venta
+// streams needed by the offline analytics harnesses (analysis/creditscorecard,
+// analysis/recompra). It intentionally exports raw rows with NO temporal logic —
+// all point-in-time reconstruction (as-of-date saldo, behaviour, delinquency
+// label, BTYD calibration) lives in the Python harnesses so the methodology is
+// in one tested place.
 //
-// Two CSVs are written to --dir:
+// Three CSVs are written to --dir:
 //   - cargos.csv: one row per credit cargo (DOCTO_CC) — start date + total.
 //   - abonos.csv: one row per payment-ledger movement (DOCTO_CC payments),
 //     including concept (abono vs castigo vs condonación) and GPS.
+//   - ventas.csv: one row per Microsip sale header (DOCTOS_PV) — client, date,
+//     net amount; the transactional substrate for the recompra/CLV BTYD harness.
 //
 // Read-only. Dev/ops tooling (mirrors cmd/seed-cobrador). Uses the pure-Go
 // Firebird driver, so it needs no native fbclient (unlike the Python driver).
@@ -42,6 +45,11 @@ SELECT DOCTO_CC_ID, CLIENTE_ID, CONCEPTO_CC_ID, FECHA, IMPORTE,
        LAT, LON, CANCELADO, APLICADO
 FROM MSP_PAGOS_VENTAS`
 
+const ventasSQL = `
+SELECT CLIENTE_ID, FECHA, IMPORTE_NETO
+FROM DOCTOS_PV
+WHERE TIPO_DOCTO IN ('V', 'P') AND ESTATUS = 'N'`
+
 func main() {
 	dir := flag.String("dir", "analysis/creditscorecard/.data", "output directory for the CSVs")
 	flag.Parse()
@@ -63,6 +71,9 @@ func main() {
 
 	nAbonos := exportAbonos(ctx, pool, filepath.Join(*dir, "abonos.csv"))
 	_, _ = fmt.Printf("✔ abonos.csv: %d rows\n", nAbonos)
+
+	nVentas := exportVentas(ctx, pool, filepath.Join(*dir, "ventas.csv"))
+	_, _ = fmt.Printf("✔ ventas.csv: %d rows\n", nVentas)
 }
 
 func exportCargos(ctx context.Context, pool *firebird.Pool, path string) int {
@@ -125,6 +136,32 @@ func exportAbonos(ctx context.Context, pool *firebird.Pool, path string) int {
 			itoa(doctoCC), itoa(clienteID), itoa(concepto), fmtTime(fecha), importe,
 			nullStr(lat), nullStr(lon), cancelado, aplicado,
 		}))
+		n++
+	}
+	must(rows.Err())
+	w.Flush()
+	must(w.Error())
+	return n
+}
+
+func exportVentas(ctx context.Context, pool *firebird.Pool, path string) int {
+	rows, err := pool.QueryContext(ctx, ventasSQL)
+	must(err)
+	defer func() { _ = rows.Close() }()
+
+	w, closeW := newCSV(path)
+	defer closeW()
+	must(w.Write([]string{"CLIENTE_ID", "FECHA", "IMPORTE_NETO"}))
+
+	n := 0
+	for rows.Next() {
+		var (
+			clienteID   int
+			fecha       time.Time
+			importeNeto string
+		)
+		must(rows.Scan(&clienteID, &fecha, &importeNeto))
+		must(w.Write([]string{itoa(clienteID), fmtDate(fecha), importeNeto}))
 		n++
 	}
 	must(rows.Err())
