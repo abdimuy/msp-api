@@ -10,7 +10,8 @@
 //   - abonos.csv: one row per payment-ledger movement (DOCTO_CC payments),
 //     including concept (abono vs castigo vs condonación) and GPS.
 //   - ventas.csv: one row per Microsip sale header (DOCTOS_PV) — client, date,
-//     net amount; the transactional substrate for the recompra/CLV BTYD harness.
+//     net amount, doc type (V/P); the transactional substrate for the
+//     recompra/CLV BTYD harness (TIPO_DOCTO lets it segment sale occasions).
 //
 // Read-only. Dev/ops tooling (mirrors cmd/seed-cobrador). Uses the pure-Go
 // Firebird driver, so it needs no native fbclient (unlike the Python driver).
@@ -46,7 +47,7 @@ SELECT DOCTO_CC_ID, CLIENTE_ID, CONCEPTO_CC_ID, FECHA, IMPORTE,
 FROM MSP_PAGOS_VENTAS`
 
 const ventasSQL = `
-SELECT CLIENTE_ID, FECHA, IMPORTE_NETO
+SELECT CLIENTE_ID, FECHA, IMPORTE_NETO, TIPO_DOCTO
 FROM DOCTOS_PV
 WHERE TIPO_DOCTO IN ('V', 'P') AND ESTATUS = 'N'`
 
@@ -151,7 +152,7 @@ func exportVentas(ctx context.Context, pool *firebird.Pool, path string) int {
 
 	w, closeW := newCSV(path)
 	defer closeW()
-	must(w.Write([]string{"CLIENTE_ID", "FECHA", "IMPORTE_NETO"}))
+	must(w.Write([]string{"CLIENTE_ID", "FECHA", "IMPORTE_NETO", "TIPO_DOCTO"}))
 
 	n := 0
 	for rows.Next() {
@@ -159,9 +160,10 @@ func exportVentas(ctx context.Context, pool *firebird.Pool, path string) int {
 			clienteID   int
 			fecha       time.Time
 			importeNeto string
+			tipoDocto   string
 		)
-		must(rows.Scan(&clienteID, &fecha, &importeNeto))
-		must(w.Write([]string{itoa(clienteID), fmtDate(fecha), importeNeto}))
+		must(rows.Scan(&clienteID, &fecha, &importeNeto, &tipoDocto))
+		must(w.Write([]string{itoa(clienteID), fmtDate(fecha), importeNeto, tipoDocto}))
 		n++
 	}
 	must(rows.Err())
