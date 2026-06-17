@@ -41,3 +41,14 @@ node_modules/
 
 # rapid (property-testing) failure reproductions — regenerated on demand, not committed
 **/testdata/rapid/
+
+# Dev-only analysis harnesses — ignore generated artifacts (venvs, CSVs, etc.),
+# keep harness source, requirements, and READMEs.
+# The trained output (internal/analytics/app/scorecard.json) lives outside
+# analysis/ and is already tracked — do NOT add it here.
+analysis/**
+!analysis/
+!analysis/*/
+!analysis/**/*.py
+!analysis/**/requirements.txt
+!analysis/**/README.md
