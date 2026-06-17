@@ -167,15 +167,16 @@ type PulsoDTO struct {
 	NextBestProduct   string `json:"next_best_product"   doc:"Producto recomendado para siguiente contacto"`
 
 	// ─── Cobranza intelligence signals ───────────────────────────────────────────
-	NumPagos        int    `json:"num_pagos"          doc:"Total de pagos aplicados en historial; 0 si sin datos"`
-	CadenciaDias    int    `json:"cadencia_dias"       doc:"Días promedio entre pagos consecutivos; 0 si sin datos"`
-	DiasAtrasoProm  int    `json:"dias_atraso_prom"    doc:"Días de atraso promedio respecto a cadencia; 0 si sin datos"`
-	PctPagosATiempo string `json:"pct_pagos_a_tiempo"  doc:"Porcentaje de pagos dentro de cadencia + 7 días (2 decimales); 0.00 si sin datos"`
-	FechaProxPago   string `json:"fecha_prox_pago"     format:"date-time" doc:"RFC3339 UTC del próximo pago estimado; vacío si sin cadencia"`
-	MontoProxPago   string `json:"monto_prox_pago"     doc:"Monto estimado del próximo pago — promedio histórico (2 decimales)"`
-	TierRiesgo      string `json:"tier_riesgo"         doc:"Tier de riesgo de cobranza: AL_DIA, VIGILANCIA, EN_RIESGO, CRITICO"`
-	BandaCredito    string `json:"banda_credito"       doc:"Banda de riesgo crediticio: BAJO, MEDIO, ALTO, CRITICO; vacío si no aplica"`
-	ScoreCredito    int    `json:"score_credito"       doc:"Score de riesgo crediticio [0–100] (mayor = menor riesgo); 0 si no aplica"`
+	NumPagos        int      `json:"num_pagos"          doc:"Total de pagos aplicados en historial; 0 si sin datos"`
+	CadenciaDias    int      `json:"cadencia_dias"       doc:"Días promedio entre pagos consecutivos; 0 si sin datos"`
+	DiasAtrasoProm  int      `json:"dias_atraso_prom"    doc:"Días de atraso promedio respecto a cadencia; 0 si sin datos"`
+	PctPagosATiempo string   `json:"pct_pagos_a_tiempo"  doc:"Porcentaje de pagos dentro de cadencia + 7 días (2 decimales); 0.00 si sin datos"`
+	FechaProxPago   string   `json:"fecha_prox_pago"     format:"date-time" doc:"RFC3339 UTC del próximo pago estimado; vacío si sin cadencia"`
+	MontoProxPago   string   `json:"monto_prox_pago"     doc:"Monto estimado del próximo pago — promedio histórico (2 decimales)"`
+	TierRiesgo      string   `json:"tier_riesgo"         doc:"Tier de riesgo de cobranza: AL_DIA, VIGILANCIA, EN_RIESGO, CRITICO"`
+	BandaCredito    string   `json:"banda_credito"       doc:"Banda de riesgo crediticio: BAJO, MEDIO, ALTO, CRITICO; vacío si no aplica"`
+	ScoreCredito    int      `json:"score_credito"       doc:"Score de riesgo crediticio [0–100] (mayor = menor riesgo); 0 si no aplica"`
+	CreditoDrivers  []string `json:"credito_drivers"     doc:"Hasta 3 razones (en español) que más elevan el riesgo crediticio; vacío si no aplica"`
 }
 
 // ─── Endpoint 3: GET /clientes/{id}/ventas ───────────────────────────────────

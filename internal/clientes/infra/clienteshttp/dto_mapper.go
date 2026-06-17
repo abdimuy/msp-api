@@ -125,6 +125,7 @@ func toFichaDTO(ficha clientesapp.FichaCliente) FichaDTO {
 			TierRiesgo:        p.TierRiesgo,
 			BandaCredito:      p.BandaCredito,
 			ScoreCredito:      p.ScoreCredito,
+			CreditoDrivers:    p.CreditoDrivers,
 		}
 	}
 
