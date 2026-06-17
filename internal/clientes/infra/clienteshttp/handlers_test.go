@@ -929,3 +929,89 @@ func TestCurrentUserContext_KeyMatchesAuth(t *testing.T) {
 	assert.Equal(t, cu.ID, got.ID)
 	assert.Equal(t, cu.Email, got.Email)
 }
+
+// ─── R3: credit-risk fields in directory response ─────────────────────────────
+
+// TestListarClientes_BandaCredito_InListItem verifies that banda_credito and
+// score_credito are present in the list-item DTO when TienePulso is true.
+func TestListarClientes_BandaCredito_InListItem(t *testing.T) {
+	t.Parallel()
+
+	doc := outbound.DirectorioDoc{
+		ClienteID:    55,
+		Nombre:       "Rodríguez Pérez Laura",
+		TienePulso:   true,
+		Score:        70,
+		BandaCredito: "MEDIO",
+		ScoreCredito: 58,
+		Saldo:        decimal.Zero,
+	}
+	di := noopDirectoryIndex{
+		resultado: outbound.DirectorioResultado{
+			Items: []outbound.DirectorioDoc{doc},
+			Total: 1,
+		},
+	}
+	svc := buildServiceWithDirIndex(&fakeRepo{}, &fakeAnalytics{}, di)
+	cu := userWith(auth.PermClientesLeer)
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes", nil)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	var resp struct {
+		Items []struct {
+			BandaCredito string `json:"banda_credito"`
+			ScoreCredito int    `json:"score_credito"`
+			TienePulso   bool   `json:"tiene_pulso"`
+		} `json:"items"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(t, resp.Items, 1)
+
+	it := resp.Items[0]
+	assert.True(t, it.TienePulso)
+	assert.Equal(t, "MEDIO", it.BandaCredito)
+	assert.Equal(t, 58, it.ScoreCredito)
+}
+
+// TestListarClientes_BandaCredito_EmptyWhenNoPulso verifies that contado clients
+// (no credit relationship) return banda_credito="" and score_credito=0 in the DTO.
+func TestListarClientes_BandaCredito_EmptyWhenNoPulso(t *testing.T) {
+	t.Parallel()
+
+	doc := outbound.DirectorioDoc{
+		ClienteID:  56,
+		Nombre:     "Hernández García Pedro",
+		TienePulso: false,
+		Saldo:      decimal.Zero,
+		// BandaCredito/ScoreCredito zero (contado client, no credit history)
+	}
+	di := noopDirectoryIndex{
+		resultado: outbound.DirectorioResultado{
+			Items: []outbound.DirectorioDoc{doc},
+			Total: 1,
+		},
+	}
+	svc := buildServiceWithDirIndex(&fakeRepo{}, &fakeAnalytics{}, di)
+	cu := userWith(auth.PermClientesLeer)
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp struct {
+		Items []struct {
+			BandaCredito string `json:"banda_credito"`
+			ScoreCredito int    `json:"score_credito"`
+			TienePulso   bool   `json:"tiene_pulso"`
+		} `json:"items"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(t, resp.Items, 1)
+
+	it := resp.Items[0]
+	assert.False(t, it.TienePulso)
+	assert.Empty(t, it.BandaCredito, "contado client → empty banda_credito")
+	assert.Equal(t, 0, it.ScoreCredito, "contado client → 0 score_credito")
+}

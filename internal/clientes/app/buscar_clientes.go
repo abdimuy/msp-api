@@ -16,15 +16,16 @@ import (
 // Empty SortBy means "default order": nombre:asc on the browse path, or
 // Meilisearch relevance when a text query is present.
 const (
-	sortByNombre      = "nombre"
-	sortBySaldo       = "saldo"
-	sortByZona        = "zona"
-	sortByScore       = "score"
-	sortBySegmento    = "segmento"
-	sortByEstadoPago  = "estado_pago"
-	sortByRecencia    = "recencia"
-	sortByPuntualidad = "puntualidad" // maps to pct_pagos_a_tiempo
-	sortByProxPago    = "prox_pago"   // maps to fecha_prox_pago_ts
+	sortByNombre       = "nombre"
+	sortBySaldo        = "saldo"
+	sortByZona         = "zona"
+	sortByScore        = "score"
+	sortBySegmento     = "segmento"
+	sortByEstadoPago   = "estado_pago"
+	sortByRecencia     = "recencia"
+	sortByPuntualidad  = "puntualidad"   // maps to pct_pagos_a_tiempo
+	sortByProxPago     = "prox_pago"     // maps to fecha_prox_pago_ts
+	sortByScoreCredito = "score_credito" // maps to score_credito
 )
 
 // ErrSortByInvalido is returned when SortBy is not one of the allowed columns.
@@ -39,7 +40,7 @@ func validSortBy(sortBy string) bool {
 	switch sortBy {
 	case "", sortByNombre, sortBySaldo, sortByZona,
 		sortByScore, sortBySegmento, sortByEstadoPago, sortByRecencia,
-		sortByPuntualidad, sortByProxPago:
+		sortByPuntualidad, sortByProxPago, sortByScoreCredito:
 		return true
 	default:
 		return false
@@ -68,10 +69,13 @@ type BuscarClientesInput struct {
 	ScoreMin *int
 	// TierRiesgo restricts to a specific cobranza risk tier (exact match). Empty = no filter.
 	TierRiesgo string
+	// BandaCredito restricts to a specific credit-risk band (exact match). Empty = no filter.
+	// Contado clients index banda_credito="" and won't match a non-empty filter.
+	BandaCredito string
 
 	// SortBy selects the sort column. Empty = default (nombre:asc browse, relevance search).
 	// Allowed values: nombre, saldo, zona, score, segmento, estado_pago, recencia,
-	// puntualidad, prox_pago.
+	// puntualidad, prox_pago, score_credito.
 	SortBy string
 	// SortOrder is "asc" (default) or "desc".
 	SortOrder string
@@ -122,6 +126,7 @@ func (s *Service) BuscarClientes(ctx context.Context, in BuscarClientesInput) (B
 		EstadoPago:    in.EstadoPago,
 		ScoreMin:      in.ScoreMin,
 		TierRiesgo:    in.TierRiesgo,
+		BandaCredito:  in.BandaCredito,
 		SortBy:        in.SortBy,
 		SortOrder:     in.SortOrder,
 		Offset:        offset,

@@ -56,6 +56,11 @@ type DirectorioDoc struct {
 	TierRiesgo      string // AL_DIA | VIGILANCIA | EN_RIESGO | CRITICO
 	PctPagosATiempo decimal.Decimal
 	FechaProxPago   time.Time // zero when no cadence
+
+	// Credit-risk signals (R3). Zero/empty when TienePulso is false or client
+	// has no credit relationship (contado clients).
+	BandaCredito string // BAJO | MEDIO | ALTO | CRITICO; "" when no aplica
+	ScoreCredito int    // 0–100, higher = lower risk; 0 when no aplica
 }
 
 // DirectorioQuery carries all parameters for a single Meilisearch directory
@@ -78,6 +83,10 @@ type DirectorioQuery struct {
 	ScoreMin *int
 	// TierRiesgo restricts to a specific cobranza risk tier (exact match). Empty = no filter.
 	TierRiesgo string
+	// BandaCredito restricts to a specific credit-risk band (exact match). Empty = no filter.
+	// Accepted values: BAJO, MEDIO, ALTO, CRITICO. Clients with no credit relationship
+	// index banda_credito="" and will never match a non-empty BandaCredito filter.
+	BandaCredito string
 	// SortBy is the sort column (e.g. "nombre", "saldo", "score"). Empty means
 	// default order (nombre:asc when Q is empty, Meilisearch relevance when Q is set).
 	SortBy string

@@ -309,3 +309,61 @@ func TestClienteDocToDirectorioDoc_RoundTrip_CobranzaSignals(t *testing.T) {
 	// FechaProxPago reconstructed from epoch — compare Unix seconds
 	assert.Equal(t, fecha.Unix(), out.FechaProxPago.UTC().Unix())
 }
+
+// ── R3: credit-risk signal mapping ────────────────────────────────────────────
+
+func TestMapDoc_BandaCredito_Populated(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	idx := clientessearchmeili.NewMeilisearchDirectoryIndexForTest(rec, "clientes")
+
+	doc := outbound.DirectorioDoc{
+		ClienteID:    21,
+		BandaCredito: "ALTO",
+		ScoreCredito: 72,
+		TienePulso:   true,
+	}
+	err := idx.Reconciliar(context.Background(), []outbound.DirectorioDoc{doc})
+	require.NoError(t, err)
+	require.Len(t, rec.batches[0], 1)
+	got := rec.batches[0][0]
+	assert.Equal(t, "ALTO", got.BandaCredito)
+	assert.Equal(t, 72, got.ScoreCredito)
+}
+
+func TestMapDoc_BandaCredito_Empty_WhenNoPulso(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	idx := clientessearchmeili.NewMeilisearchDirectoryIndexForTest(rec, "clientes")
+
+	doc := outbound.DirectorioDoc{
+		ClienteID:  22,
+		TienePulso: false,
+		// BandaCredito/ScoreCredito left at zero values (contado client)
+	}
+	err := idx.Reconciliar(context.Background(), []outbound.DirectorioDoc{doc})
+	require.NoError(t, err)
+	got := rec.batches[0][0]
+	assert.Empty(t, got.BandaCredito, "no credit relationship → empty banda")
+	assert.Equal(t, 0, got.ScoreCredito, "no credit relationship → 0 score")
+}
+
+func TestClienteDocToDirectorioDoc_RoundTrip_CreditoSignals(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	idx := clientessearchmeili.NewMeilisearchDirectoryIndexForTest(rec, "clientes")
+
+	in := outbound.DirectorioDoc{
+		ClienteID:    23,
+		BandaCredito: "BAJO",
+		ScoreCredito: 88,
+		TienePulso:   true,
+	}
+	err := idx.Reconciliar(context.Background(), []outbound.DirectorioDoc{in})
+	require.NoError(t, err)
+	stored := rec.batches[0][0]
+
+	out := clientessearchmeili.ClienteDocToDirectorioDocForTest(stored)
+	assert.Equal(t, "BAJO", out.BandaCredito)
+	assert.Equal(t, 88, out.ScoreCredito)
+}

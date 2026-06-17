@@ -58,6 +58,53 @@ func TestBuildFilter_AllTierValues_Accepted(t *testing.T) {
 	}
 }
 
+// ── buildFilter: banda_credito ────────────────────────────────────────────────
+
+func TestBuildFilter_BandaCredito_IncludesClause(t *testing.T) {
+	t.Parallel()
+	q := outbound.DirectorioQuery{BandaCredito: "ALTO"}
+	filter := clientessearchmeili.BuildFilterForTest(q)
+	assert.Contains(t, filter, `banda_credito = "ALTO"`)
+}
+
+func TestBuildFilter_BandaCredito_Empty_OmitsClause(t *testing.T) {
+	t.Parallel()
+	q := outbound.DirectorioQuery{BandaCredito: ""}
+	filter := clientessearchmeili.BuildFilterForTest(q)
+	assert.NotContains(t, filter, "banda_credito")
+}
+
+func TestBuildFilter_BandaCredito_AllValues_Accepted(t *testing.T) {
+	t.Parallel()
+	for _, band := range []string{"BAJO", "MEDIO", "ALTO", "CRITICO"} {
+		band := band
+		t.Run(band, func(t *testing.T) {
+			t.Parallel()
+			q := outbound.DirectorioQuery{BandaCredito: band}
+			filter := clientessearchmeili.BuildFilterForTest(q)
+			assert.Contains(t, filter, band)
+		})
+	}
+}
+
+// ── buildSort: score_credito ──────────────────────────────────────────────────
+
+func TestBuildSort_ScoreCredito_MapsToAttribute(t *testing.T) {
+	t.Parallel()
+	sort := clientessearchmeili.BuildSortForTest("score_credito", "desc", "")
+	if assert.Len(t, sort, 1) {
+		assert.Equal(t, "score_credito:desc", sort[0])
+	}
+}
+
+func TestBuildSort_ScoreCredito_DefaultsToAsc(t *testing.T) {
+	t.Parallel()
+	sort := clientessearchmeili.BuildSortForTest("score_credito", "", "")
+	if assert.Len(t, sort, 1) {
+		assert.Equal(t, "score_credito:asc", sort[0])
+	}
+}
+
 // ── buildSort: puntualidad + prox_pago ───────────────────────────────────────
 
 func TestBuildSort_Puntualidad_MapsToAttribute(t *testing.T) {

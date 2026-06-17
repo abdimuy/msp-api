@@ -137,6 +137,14 @@ type ClienteDoc struct {
 	// EN_RIESGO, CRITICO). Filterable + facetable + display.
 	TierRiesgo string `json:"tier_riesgo"`
 
+	// BandaCredito is the credit-risk band (BAJO|MEDIO|ALTO|CRITICO; "" when the
+	// client has no credit relationship). Filterable + facetable + display.
+	BandaCredito string `json:"banda_credito"`
+
+	// ScoreCredito is the credit score [0–100] (higher = lower risk; 0 when no
+	// aplica). Sortable + display.
+	ScoreCredito int `json:"score_credito"`
+
 	// PctPagosATiempo is the fraction of payments made on time (0–100),
 	// stored as a float64 for Meilisearch numeric sorting. Use PctPagosATiempoStr
 	// for display to preserve the exact decimal value.
@@ -187,6 +195,7 @@ var filterableAttributes = []string{
 	"recencia_dias",
 	"estatus",
 	"tier_riesgo",
+	"banda_credito",
 }
 
 // sortableAttributes lists every attribute that can appear in sort clauses.
@@ -200,6 +209,7 @@ var sortableAttributes = []string{
 	"zona_id",
 	"pct_pagos_a_tiempo",
 	"fecha_prox_pago_ts",
+	"score_credito",
 }
 
 // facetAttributes are the attributes returned in FacetDistribution by default.
@@ -211,6 +221,7 @@ var facetAttributes = []string{
 	"segmento",
 	"estado_pago",
 	"tier_riesgo",
+	"banda_credito",
 }
 
 // FacetAttributes returns the canonical list of facet attributes for the

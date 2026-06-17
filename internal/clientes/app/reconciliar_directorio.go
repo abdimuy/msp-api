@@ -90,6 +90,9 @@ func (s *Service) ReconciliarDirectorio(ctx context.Context) (int, error) {
 			doc.TierRiesgo = pulso.TierRiesgo
 			doc.PctPagosATiempo = pulso.PctPagosATiempo
 			doc.FechaProxPago = pulso.FechaProxPago
+			// Credit-risk signals (R3).
+			doc.BandaCredito = pulso.BandaCredito
+			doc.ScoreCredito = pulso.ScoreCredito
 		}
 
 		docs = append(docs, doc)

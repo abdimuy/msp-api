@@ -23,15 +23,16 @@ import (
 // sortMapping maps the canonical SortBy vocabulary (from BuscarClientesInput)
 // to the corresponding Meilisearch sortable attribute name.
 var sortMapping = map[string]string{
-	"nombre":      "nombre",
-	"saldo":       "saldo",
-	"zona":        "zona_id",
-	"score":       "score",
-	"segmento":    "segmento_orden",
-	"estado_pago": "estado_pago_orden",
-	"recencia":    "recencia_dias",
-	"puntualidad": "pct_pagos_a_tiempo",
-	"prox_pago":   "fecha_prox_pago_ts",
+	"nombre":        "nombre",
+	"saldo":         "saldo",
+	"zona":          "zona_id",
+	"score":         "score",
+	"segmento":      "segmento_orden",
+	"estado_pago":   "estado_pago_orden",
+	"recencia":      "recencia_dias",
+	"puntualidad":   "pct_pagos_a_tiempo",
+	"prox_pago":     "fecha_prox_pago_ts",
+	"score_credito": "score_credito",
 }
 
 // Buscar executes a directory search against the Meilisearch index and returns
@@ -135,6 +136,9 @@ func buildFilter(q outbound.DirectorioQuery) string {
 	if q.TierRiesgo != "" {
 		clauses = append(clauses, fmt.Sprintf("tier_riesgo = %q", q.TierRiesgo))
 	}
+	if q.BandaCredito != "" {
+		clauses = append(clauses, fmt.Sprintf("banda_credito = %q", q.BandaCredito))
+	}
 
 	return strings.Join(clauses, " AND ")
 }
@@ -206,6 +210,8 @@ func clienteDocToDirectorioDoc(cd ClienteDoc) outbound.DirectorioDoc {
 		NextBestProduct:    cd.NextBestProduct,
 		TienePulso:         cd.TienePulso,
 		TierRiesgo:         cd.TierRiesgo,
+		BandaCredito:       cd.BandaCredito,
+		ScoreCredito:       cd.ScoreCredito,
 		PctPagosATiempo:    parseDecimal(cd.PctPagosATiempoStr),
 	}
 

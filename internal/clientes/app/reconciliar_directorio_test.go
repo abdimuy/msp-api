@@ -280,3 +280,61 @@ func TestReconciliarDirectorio_CobranzaSignalsZeroWhenNoPulso(t *testing.T) {
 	assert.True(t, doc.PctPagosATiempo.IsZero(), "no pulso → zero pct")
 	assert.True(t, doc.FechaProxPago.IsZero(), "no pulso → zero time")
 }
+
+// ── R3: credit-risk signals in reconcile ─────────────────────────────────────
+
+func TestReconciliarDirectorio_CreditoSignalsMappedFromPulso(t *testing.T) {
+	t.Parallel()
+
+	c := newCliente(60, "CLIENTE CON CREDITO")
+
+	repo := &fakeClientesRepo{
+		dirCompleto: []outbound.DirectorioItem{
+			{Cliente: c, SaldoTotal: decimal.NewFromFloat(3000)},
+		},
+	}
+
+	pulso := analytics.ClientePulsoContract{
+		ClienteID:    60,
+		Score:        70,
+		BandaCredito: "MEDIO",
+		ScoreCredito: 55,
+	}
+
+	anl := &fakeAnalyticsClient{
+		pulsosMap: map[int]analytics.ClientePulsoContract{60: pulso},
+	}
+	dirIdx := &fakeDirectoryIndex{}
+	svc := newReconcileService(repo, anl, dirIdx)
+
+	n, err := svc.ReconciliarDirectorio(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+	require.Len(t, dirIdx.lastDocs, 1)
+
+	doc := dirIdx.lastDocs[0]
+	assert.Equal(t, "MEDIO", doc.BandaCredito)
+	assert.Equal(t, 55, doc.ScoreCredito)
+}
+
+func TestReconciliarDirectorio_CreditoSignalsEmptyWhenNoPulso(t *testing.T) {
+	t.Parallel()
+
+	c := newCliente(61, "CLIENTE CONTADO SIN PULSO")
+	repo := &fakeClientesRepo{
+		dirCompleto: []outbound.DirectorioItem{
+			{Cliente: c, SaldoTotal: decimal.Zero},
+		},
+	}
+	anl := &fakeAnalyticsClient{} // no pulse → no credit signals
+	dirIdx := &fakeDirectoryIndex{}
+	svc := newReconcileService(repo, anl, dirIdx)
+
+	_, err := svc.ReconciliarDirectorio(context.Background())
+	require.NoError(t, err)
+	require.Len(t, dirIdx.lastDocs, 1)
+
+	doc := dirIdx.lastDocs[0]
+	assert.Empty(t, doc.BandaCredito, "no pulso → empty banda_credito")
+	assert.Equal(t, 0, doc.ScoreCredito, "no pulso → 0 score_credito")
+}

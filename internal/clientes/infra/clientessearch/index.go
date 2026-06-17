@@ -101,6 +101,10 @@ func mapDoc(d outbound.DirectorioDoc) ClienteDoc {
 		TierRiesgo:         d.TierRiesgo,
 		PctPagosATiempo:    d.PctPagosATiempo.InexactFloat64(), // sort key
 		PctPagosATiempoStr: d.PctPagosATiempo.StringFixed(moneyScale),
+
+		// Credit-risk signals (R3).
+		BandaCredito: d.BandaCredito,
+		ScoreCredito: d.ScoreCredito,
 	}
 
 	// Store FechaProxPago as epoch-seconds for sortable numeric, and as an

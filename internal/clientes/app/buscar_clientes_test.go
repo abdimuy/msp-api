@@ -475,3 +475,48 @@ func TestBuscarClientes_SortByProxPago_IsValid(t *testing.T) {
 		t.Errorf("SortBy: got %q, want %q", di.captured.SortBy, "prox_pago")
 	}
 }
+
+// ── R3: BandaCredito filter + score_credito sort ──────────────────────────────
+
+func TestBuscarClientes_BandaCredito_ThreadedToQuery(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	di := &fakeDirectoryIndexWithBuscar{
+		resultado: outbound.DirectorioResultado{Items: []outbound.DirectorioDoc{}, Total: 0},
+	}
+	svc := buildSvc(di)
+
+	_, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
+		BandaCredito: "ALTO",
+		Pagination:   outbound.ListParams{PageSize: 20},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if di.captured.BandaCredito != "ALTO" {
+		t.Errorf("BandaCredito: got %q, want %q", di.captured.BandaCredito, "ALTO")
+	}
+}
+
+func TestBuscarClientes_SortByScoreCredito_IsValid(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	di := &fakeDirectoryIndexWithBuscar{
+		resultado: outbound.DirectorioResultado{Items: []outbound.DirectorioDoc{}, Total: 0},
+	}
+	svc := buildSvc(di)
+
+	_, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
+		SortBy:     "score_credito",
+		SortOrder:  "desc",
+		Pagination: outbound.ListParams{PageSize: 20},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error for sort_by=score_credito: %v", err)
+	}
+	if di.captured.SortBy != "score_credito" {
+		t.Errorf("SortBy: got %q, want %q", di.captured.SortBy, "score_credito")
+	}
+}

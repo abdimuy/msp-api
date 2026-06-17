@@ -35,6 +35,8 @@ func dirDocToClienteListItemDTO(doc outbound.DirectorioDoc) ClienteListItemDTO {
 		dto.TierRiesgo = doc.TierRiesgo
 		dto.PctPagosATiempo = doc.PctPagosATiempo.StringFixed(pctScale)
 		dto.FechaProxPago = formatTime(doc.FechaProxPago)
+		dto.BandaCredito = doc.BandaCredito
+		dto.ScoreCredito = doc.ScoreCredito
 	}
 	return dto
 }
@@ -121,6 +123,8 @@ func toFichaDTO(ficha clientesapp.FichaCliente) FichaDTO {
 			FechaProxPago:     formatTime(p.FechaProxPago),
 			MontoProxPago:     p.MontoProxPago.StringFixed(moneyScale),
 			TierRiesgo:        p.TierRiesgo,
+			BandaCredito:      p.BandaCredito,
+			ScoreCredito:      p.ScoreCredito,
 		}
 	}
 
