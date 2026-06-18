@@ -110,4 +110,15 @@ func registerOperations(api huma.API, h *Handlers) {
 		Security:      security,
 		DefaultStatus: http.StatusOK,
 	}, h.RefrescarBusqueda)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "obtener-ritmo-pago",
+		Method:        http.MethodGet,
+		Path:          "/clientes/{id}/ritmo-pago",
+		Summary:       "Obtener ritmo de pago del cliente",
+		Description:   "Devuelve la serie semanal de abonos y ventas del cliente para visualizar su ritmo de pago, con eventos notables y resumen de constancia.",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+	}, h.ObtenerRitmoPago)
 }

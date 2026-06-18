@@ -282,7 +282,57 @@ type PagoDTO struct {
 	FormaCobro string `json:"forma_cobro"  doc:"Método de cobro (efectivo, transferencia, etc.)"`
 }
 
-// ─── Endpoint 5: POST /clientes/_search/refresh ──────────────────────────────
+// ─── Endpoint 5: GET /clientes/{id}/ritmo-pago ───────────────────────────────
+
+// ObtenerRitmoPagoInput collects path and query params for GET /clientes/{id}/ritmo-pago.
+type ObtenerRitmoPagoInput struct {
+	ID    int    `path:"id"    doc:"ID de Microsip del cliente"`
+	Desde string `query:"desde" doc:"Inicio del rango de fechas (YYYY-MM-DD); vacío = sin límite inferior"`
+	Hasta string `query:"hasta" doc:"Fin del rango de fechas (YYYY-MM-DD); vacío = sin límite superior"`
+}
+
+// ObtenerRitmoPagoOutput is the response for GET /clientes/{id}/ritmo-pago.
+type ObtenerRitmoPagoOutput struct {
+	Body RitmoPagoDTO
+}
+
+// RitmoPagoDTO is the wire representation of the weekly payment-rhythm series.
+type RitmoPagoDTO struct {
+	AnclaDiaRuta string           `json:"ancla_dia_ruta" doc:"Día de ruta modal del cliente (lunes–domingo)"`
+	Semanas      []SemanaRitmoDTO `json:"semanas"        doc:"Semanas ordenadas ascendentemente"`
+	Eventos      []EventoRitmoDTO `json:"eventos"        doc:"Eventos notables ordenados por fecha"`
+	Resumen      ResumenRitmoDTO  `json:"resumen"        doc:"Resumen agregado del período"`
+}
+
+// SemanaRitmoDTO is a single weekly bucket in the payment-rhythm series.
+type SemanaRitmoDTO struct {
+	SemanaInicio string `json:"semana_inicio" format:"date-time" doc:"RFC3339 UTC del inicio de la semana"`
+	MontoAbonado string `json:"monto_abonado"                   doc:"Total abonado en la semana (2 decimales)"`
+	Saldo        string `json:"saldo"                           doc:"Saldo reconstruido al cierre de la semana (2 decimales)"`
+	NumPagos     int    `json:"num_pagos"                       doc:"Número de pagos en la semana"`
+}
+
+// EventoRitmoDTO is a notable event in the payment-rhythm window.
+type EventoRitmoDTO struct {
+	Fecha      string `json:"fecha"        format:"date-time" doc:"RFC3339 UTC del evento"`
+	Tipo       string `json:"tipo"                            doc:"venta_credito, venta_contado o liquidacion"`
+	Monto      string `json:"monto"                           doc:"Importe del evento (2 decimales); 0.00 para liquidacion"`
+	DoctoPvID  int    `json:"docto_pv_id"                     doc:"ID del documento de venta; 0 para liquidacion"`
+	Folio      string `json:"folio"                           doc:"Folio del documento; vacío para liquidacion"`
+	PlazoMeses int    `json:"plazo_meses"                     doc:"Plazo del crédito en meses; 0 para contado y liquidacion"`
+}
+
+// ResumenRitmoDTO holds the aggregated summary of the payment-rhythm window.
+type ResumenRitmoDTO struct {
+	TotalAbonado   string `json:"total_abonado"    doc:"Suma de pagos en el período (2 decimales)"`
+	SemanasConPago int    `json:"semanas_con_pago" doc:"Semanas con al menos un pago"`
+	SemanasActivas int    `json:"semanas_activas"  doc:"Semanas desde la primera con pago hasta el final del período"`
+	RachaActualSem int    `json:"racha_actual_sem" doc:"Semanas consecutivas con pago al cierre del período"`
+	ConstanciaPct  string `json:"constancia_pct"   doc:"Porcentaje de semanas activas con pago (2 decimales)"`
+	SaldoActual    string `json:"saldo_actual"     doc:"Saldo vigente (2 decimales)"`
+}
+
+// ─── Endpoint 6: POST /clientes/_search/refresh ──────────────────────────────
 
 // RefrescarBusquedaInput is the request for POST /clientes/_search/refresh.
 // No body needed — the operation is idempotent and parameterless.

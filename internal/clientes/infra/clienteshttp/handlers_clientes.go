@@ -226,6 +226,31 @@ func (h *Handlers) RefrescarBusqueda(ctx context.Context, input *RefrescarBusque
 	return out, nil
 }
 
+// ObtenerRitmoPago handles GET /clientes/{id}/ritmo-pago.
+func (h *Handlers) ObtenerRitmoPago(ctx context.Context, input *ObtenerRitmoPagoInput) (*ObtenerRitmoPagoOutput, error) {
+	cu, err := currentUserOrError(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := requirePerm(cu, auth.PermClientesLeer); err != nil {
+		return nil, err
+	}
+
+	rango, err := parseFichaRango(input.Desde, input.Hasta)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+
+	ritmo, err := h.svc.ObtenerRitmoPago(ctx, input.ID, rango)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+
+	out := &ObtenerRitmoPagoOutput{}
+	out.Body = ritmoPagoToDTO(ritmo)
+	return out, nil
+}
+
 // ─── Compile-time signature assertions ───────────────────────────────────────
 // These blank assignments will fail at compile time if any handler signature
 // diverges from the huma.HandlerFunc[I, O] constraint.
@@ -236,4 +261,5 @@ var (
 	_ func(context.Context, *ListarVentasClienteInput) (*ListarVentasClienteOutput, error) = (*Handlers)(nil).ListarVentasCliente
 	_ func(context.Context, *ObtenerVentaDetalleInput) (*ObtenerVentaDetalleOutput, error) = (*Handlers)(nil).ObtenerVentaDetalle
 	_ func(context.Context, *RefrescarBusquedaInput) (*RefrescarBusquedaOutput, error)     = (*Handlers)(nil).RefrescarBusqueda
+	_ func(context.Context, *ObtenerRitmoPagoInput) (*ObtenerRitmoPagoOutput, error)       = (*Handlers)(nil).ObtenerRitmoPago
 )

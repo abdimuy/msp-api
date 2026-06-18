@@ -183,6 +183,68 @@ func toSeriesDTO(r outbound.ResumenFicha) SeriesDTO {
 	}
 }
 
+// ─── Endpoint 5: ritmo-pago ───────────────────────────────────────────────────
+
+// diasSemanaES maps time.Weekday to its Spanish lowercase name.
+func diasSemanaES(d time.Weekday) string {
+	switch d {
+	case time.Monday:
+		return "lunes"
+	case time.Tuesday:
+		return "martes"
+	case time.Wednesday:
+		return "miércoles"
+	case time.Thursday:
+		return "jueves"
+	case time.Friday:
+		return "viernes"
+	case time.Saturday:
+		return "sábado"
+	case time.Sunday:
+		return "domingo"
+	}
+	return "lunes"
+}
+
+// ritmoPagoToDTO maps a domain.RitmoPago to its wire DTO.
+func ritmoPagoToDTO(r domain.RitmoPago) RitmoPagoDTO {
+	semanas := make([]SemanaRitmoDTO, 0, len(r.Semanas))
+	for _, s := range r.Semanas {
+		semanas = append(semanas, SemanaRitmoDTO{
+			SemanaInicio: formatTime(s.SemanaInicio),
+			MontoAbonado: s.MontoAbonado.StringFixed(moneyScale),
+			Saldo:        s.Saldo.StringFixed(moneyScale),
+			NumPagos:     s.NumPagos,
+		})
+	}
+
+	eventos := make([]EventoRitmoDTO, 0, len(r.Eventos))
+	for _, e := range r.Eventos {
+		eventos = append(eventos, EventoRitmoDTO{
+			Fecha:      formatTime(e.Fecha),
+			Tipo:       string(e.Tipo),
+			Monto:      e.Monto.StringFixed(moneyScale),
+			DoctoPvID:  e.DoctoPvID,
+			Folio:      e.Folio,
+			PlazoMeses: e.PlazoMeses,
+		})
+	}
+
+	return RitmoPagoDTO{
+		AnclaDiaRuta: diasSemanaES(r.AnclaDiaRuta),
+		Semanas:      semanas,
+		Eventos:      eventos,
+		Resumen: ResumenRitmoDTO{
+			TotalAbonado:   r.Resumen.TotalAbonado.StringFixed(moneyScale),
+			SemanasConPago: r.Resumen.SemanasConPago,
+			SemanasActivas: r.Resumen.SemanasActivas,
+			RachaActualSem: r.Resumen.RachaActualSem,
+			ConstanciaPct:  r.Resumen.ConstanciaPct.StringFixed(pctScale),
+			SaldoActual:    r.Resumen.SaldoActual.StringFixed(moneyScale),
+		},
+	}
+}
+
 // ─── Endpoint 3: venta list item ─────────────────────────────────────────────
 
 // toVentaListItemDTO maps a VentaCliente to its list-row wire DTO.

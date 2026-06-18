@@ -249,6 +249,59 @@ GROUP BY ANIO, MES
 ORDER BY ANIO, MES`
 }
 
+// ─── RitmoPago ────────────────────────────────────────────────────────────────
+
+// queryRitmoPagosBase returns individual payment rows (one per IMPORTES_DOCTOS_CC
+// abono) for a client's credit accounts. Modeled on queryResumenFichaAbonado but
+// without GROUP BY — each row is a single payment event with its date and amount.
+// Amount = IMPORTE + IMPUESTO (gross, same formula as the MSP_SALDOS_VENTAS cache).
+// CAST is mandatory (firebirdsql v0.9.19 driver scale bug on NUMERIC expressions).
+// Optional date-range predicates on abono.FECHA are appended by ObtenerRitmoPagoData.
+const queryRitmoPagosBase = `
+SELECT
+  abono.FECHA,
+  CAST(i.IMPORTE + i.IMPUESTO AS NUMERIC(18,2)) AS IMPORTE
+FROM IMPORTES_DOCTOS_CC i
+JOIN DOCTOS_CC cargo ON cargo.DOCTO_CC_ID = i.DOCTO_CC_ACR_ID
+JOIN DOCTOS_CC abono ON abono.DOCTO_CC_ID = i.DOCTO_CC_ID
+WHERE cargo.CLIENTE_ID = ?
+  AND cargo.CONCEPTO_CC_ID = 5
+  AND cargo.CANCELADO = 'N'
+  AND i.TIPO_IMPTE = 'R'
+  AND i.CANCELADO = 'N'`
+
+// queryRitmoVentasBase returns sale header rows for the RitmoPago series.
+// EsCredito is derived via EXISTS on DOCTOS_PV_COBROS (FORMA_COBRO_ID=71 = crédito),
+// matching the same pattern as selectVentaClienteCols.
+// PlazoMeses comes from LIBRES_CARGOS_CC.TIEMPO_A_CORTO_PLAZOMESES bridged via
+// DOCTOS_ENTRE_SIS; 0 when contado or when the contract row is absent (pre-2018 data).
+// TOTAL = IMPORTE_NETO + TOTAL_IMPUESTOS (gross, matching the venta header total).
+// CAST is mandatory (firebirdsql v0.9.19 driver scale bug on NUMERIC expressions).
+// Optional date-range predicates on pv.FECHA are appended by ObtenerRitmoPagoData.
+const queryRitmoVentasBase = `
+SELECT
+  pv.FECHA,
+  CAST(pv.IMPORTE_NETO + pv.TOTAL_IMPUESTOS AS NUMERIC(18,2)) AS TOTAL,
+  pv.DOCTO_PV_ID,
+  pv.FOLIO,
+  CASE WHEN EXISTS (
+    SELECT 1 FROM DOCTOS_PV_COBROS cob
+    WHERE cob.DOCTO_PV_ID = pv.DOCTO_PV_ID AND cob.FORMA_COBRO_ID = 71
+  ) THEN 'CREDITO' ELSE 'CONTADO' END AS TIPO,
+  COALESCE((
+    SELECT lc.TIEMPO_A_CORTO_PLAZOMESES
+    FROM DOCTOS_ENTRE_SIS des
+    JOIN LIBRES_CARGOS_CC lc ON lc.DOCTO_CC_ID = des.DOCTO_DEST_ID
+    WHERE des.CLAVE_SIS_FTE  = 'PV'
+      AND des.CLAVE_SIS_DEST = 'CC'
+      AND des.DOCTO_FTE_ID   = pv.DOCTO_PV_ID
+    ROWS 1
+  ), 0) AS PLAZO_MESES
+FROM DOCTOS_PV pv
+WHERE pv.CLIENTE_ID = ?
+  AND pv.TIPO_DOCTO IN ('V', 'P')
+  AND pv.ESTATUS = 'N'`
+
 // ─── ListarVentas ─────────────────────────────────────────────────────────────
 
 // selectVentaClienteCols is the projection for a VentaCliente row.

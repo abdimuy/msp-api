@@ -515,6 +515,71 @@ func (r *compradoVsAbonadoRowRaw) assemble() (outbound.PuntoCompradoAbonado, err
 	}, nil
 }
 
+// ─── pagoCrudoRowRaw ──────────────────────────────────────────────────────────
+
+// pagoCrudoRowRaw holds raw scan targets for a single payment row returned by
+// queryRitmoPagosBase. Ordering matches the SELECT column list exactly.
+type pagoCrudoRowRaw struct {
+	fechaRaw   any
+	importeRaw any
+}
+
+func (r *pagoCrudoRowRaw) scanFrom(s scannable) error {
+	return s.Scan(&r.fechaRaw, &r.importeRaw)
+}
+
+func (r *pagoCrudoRowRaw) assemble() (domain.PagoCrudo, error) {
+	fecha, err := firebird.ScanUTCTime(r.fechaRaw)
+	if err != nil {
+		return domain.PagoCrudo{}, err
+	}
+	importe, err := firebird.ScanDecimal(r.importeRaw, 2)
+	if err != nil {
+		return domain.PagoCrudo{}, err
+	}
+	return domain.PagoCrudo{Fecha: fecha, Importe: importe}, nil
+}
+
+// ─── ventaCrudaRowRaw ─────────────────────────────────────────────────────────
+
+// ventaCrudaRowRaw holds raw scan targets for a single sale header row returned
+// by queryRitmoVentasBase. Ordering matches the SELECT column list exactly.
+type ventaCrudaRowRaw struct {
+	fechaRaw      any
+	totalRaw      any
+	doctoPVID     int
+	folio         string
+	tipoStr       string
+	plazoMesesRaw any
+}
+
+func (r *ventaCrudaRowRaw) scanFrom(s scannable) error {
+	return s.Scan(&r.fechaRaw, &r.totalRaw, &r.doctoPVID, &r.folio, &r.tipoStr, &r.plazoMesesRaw)
+}
+
+func (r *ventaCrudaRowRaw) assemble() (domain.VentaCruda, error) {
+	fecha, err := firebird.ScanUTCTime(r.fechaRaw)
+	if err != nil {
+		return domain.VentaCruda{}, err
+	}
+	total, err := firebird.ScanDecimal(r.totalRaw, 2)
+	if err != nil {
+		return domain.VentaCruda{}, err
+	}
+	plazo, perr := scanIntFromAny(r.plazoMesesRaw)
+	if perr != nil {
+		plazo = 0
+	}
+	return domain.VentaCruda{
+		Fecha:      fecha,
+		Total:      total,
+		DoctoPvID:  r.doctoPVID,
+		Folio:      r.folio,
+		EsCredito:  r.tipoStr == "CREDITO",
+		PlazoMeses: plazo,
+	}, nil
+}
+
 // ─── shared helpers ───────────────────────────────────────────────────────────
 
 // nullableIntVal converts sql.NullInt64 to int, returning 0 when not valid.

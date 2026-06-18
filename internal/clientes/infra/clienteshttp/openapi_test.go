@@ -100,6 +100,7 @@ func TestOpenAPI_PathsRegistered(t *testing.T) {
 		{"/clientes/{id}/ventas", "GET", "listar-ventas-cliente"},
 		{"/clientes/{id}/ventas/{doctoPvId}", "GET", "obtener-venta-detalle"},
 		{"/clientes/_search/refresh", "POST", "refrescar-busqueda-clientes"},
+		{"/clientes/{id}/ritmo-pago", "GET", "obtener-ritmo-pago"},
 	}
 
 	for _, tc := range cases {

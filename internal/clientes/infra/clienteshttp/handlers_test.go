@@ -822,6 +822,95 @@ func TestObtenerFicha_UbicacionPresente(t *testing.T) {
 	assert.False(t, resp.Ubicacion.Disponible)
 }
 
+// ─── Scenario 5: GET /clientes/{id}/ritmo-pago ───────────────────────────────
+
+// TestObtenerRitmoPago_HappyPath_200 verifies the endpoint returns 200 and a
+// valid RitmoPagoDTO for a client with no payment history (fake repo returns empty).
+func TestObtenerRitmoPago_HappyPath_200(t *testing.T) {
+	t.Parallel()
+
+	c := newCliente(42)
+	repo := &fakeRepo{cliente: c}
+	svc := buildService(repo, &fakeAnalytics{})
+	cu := userWith(auth.PermClientesLeer)
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/42/ritmo-pago", nil)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	var resp struct {
+		AnclaDiaRuta string        `json:"ancla_dia_ruta"`
+		Semanas      []interface{} `json:"semanas"`
+		Eventos      []interface{} `json:"eventos"`
+		Resumen      struct {
+			TotalAbonado   string `json:"total_abonado"`
+			SaldoActual    string `json:"saldo_actual"`
+			ConstanciaPct  string `json:"constancia_pct"`
+			SemanasConPago int    `json:"semanas_con_pago"`
+		} `json:"resumen"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+
+	// Fake repo returns empty data → empty series but valid structure.
+	assert.NotEmpty(t, resp.AnclaDiaRuta)
+	assert.Equal(t, "0.00", resp.Resumen.TotalAbonado)
+	assert.Equal(t, "0.00", resp.Resumen.SaldoActual)
+	assert.Equal(t, "0.00", resp.Resumen.ConstanciaPct)
+	assert.Equal(t, 0, resp.Resumen.SemanasConPago)
+}
+
+// TestObtenerRitmoPago_NotFound_404 verifies a missing client yields 404.
+func TestObtenerRitmoPago_NotFound_404(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeRepo{clienteErr: domain.ErrClienteNotFound}
+	svc := buildService(repo, &fakeAnalytics{})
+	cu := userWith(auth.PermClientesLeer)
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/9999/ritmo-pago", nil)
+	assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+}
+
+// TestObtenerRitmoPago_RangoInvertido_422 verifies desde > hasta yields 422.
+func TestObtenerRitmoPago_RangoInvertido_422(t *testing.T) {
+	t.Parallel()
+
+	c := newCliente(42)
+	repo := &fakeRepo{cliente: c}
+	svc := buildService(repo, &fakeAnalytics{})
+	cu := userWith(auth.PermClientesLeer)
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/42/ritmo-pago?desde=2025-12-31&hasta=2025-01-01", nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+}
+
+// TestObtenerRitmoPago_Unauthenticated_401 verifies unauthenticated access yields 401.
+func TestObtenerRitmoPago_Unauthenticated_401(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeRepo{cliente: newCliente(42)}
+	svc := buildService(repo, &fakeAnalytics{})
+	h := buildRouterNoAuth(svc)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/42/ritmo-pago", nil)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+// TestObtenerRitmoPago_NoPermission_403 verifies insufficient permissions yield 403.
+func TestObtenerRitmoPago_NoPermission_403(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeRepo{cliente: newCliente(42)}
+	svc := buildService(repo, &fakeAnalytics{})
+	cu := userWith() // no perms
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/42/ritmo-pago", nil)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
+
 // ─── Auth gate tests ──────────────────────────────────────────────────────────
 
 func TestListarClientes_Unauthenticated_401(t *testing.T) {

@@ -551,8 +551,117 @@ func (r *ClientesRepo) ObtenerVentaDetalle(ctx context.Context, doctoPVID int) (
 	return result, nil
 }
 
+// fetchRitmoPagos returns individual payment rows for ObtenerRitmoPagoData.
+// Each row is one IMPORTES_DOCTOS_CC abono; the optional date range filters by
+// the payment date (abono.FECHA).
+//
+//nolint:dupl // structurally mirrors fetchRitmoVentas; differs in query, raw type, and return type — abstraction not worth it
+func (r *ClientesRepo) fetchRitmoPagos(ctx context.Context, q firebird.Querier, clienteID int, rango outbound.RangoFechas) ([]domain.PagoCrudo, error) {
+	qry := queryRitmoPagosBase
+	args := []any{clienteID}
+	if rango.Desde != nil {
+		qry += "\n  AND abono.FECHA >= ?"
+		args = append(args, firebird.ToWallClock(*rango.Desde))
+	}
+	if rango.Hasta != nil {
+		qry += "\n  AND abono.FECHA <= ?"
+		args = append(args, firebird.ToWallClock(*rango.Hasta))
+	}
+	qry += "\nORDER BY abono.FECHA"
+	rows, err := q.QueryContext(ctx, qry, args...)
+	if err != nil {
+		return nil, firebird.MapError(err)
+	}
+	defer func() { _ = rows.Close() }()
+	var pagos []domain.PagoCrudo
+	for rows.Next() {
+		var raw pagoCrudoRowRaw
+		if serr := raw.scanFrom(rows); serr != nil {
+			return nil, firebird.MapError(serr)
+		}
+		p, aerr := raw.assemble()
+		if aerr != nil {
+			return nil, aerr
+		}
+		pagos = append(pagos, p)
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return nil, firebird.MapError(rerr)
+	}
+	return pagos, nil
+}
+
+// fetchRitmoVentas returns sale header rows for ObtenerRitmoPagoData.
+// The optional date range filters by the sale date (pv.FECHA).
+//
+//nolint:dupl // structurally mirrors fetchRitmoPagos; differs in query, raw type, and return type — abstraction not worth it
+func (r *ClientesRepo) fetchRitmoVentas(ctx context.Context, q firebird.Querier, clienteID int, rango outbound.RangoFechas) ([]domain.VentaCruda, error) {
+	qry := queryRitmoVentasBase
+	args := []any{clienteID}
+	if rango.Desde != nil {
+		qry += "\n  AND pv.FECHA >= ?"
+		args = append(args, firebird.ToWallClock(*rango.Desde))
+	}
+	if rango.Hasta != nil {
+		qry += "\n  AND pv.FECHA <= ?"
+		args = append(args, firebird.ToWallClock(*rango.Hasta))
+	}
+	qry += "\nORDER BY pv.FECHA"
+	rows, err := q.QueryContext(ctx, qry, args...)
+	if err != nil {
+		return nil, firebird.MapError(err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ventas []domain.VentaCruda
+	for rows.Next() {
+		var raw ventaCrudaRowRaw
+		if serr := raw.scanFrom(rows); serr != nil {
+			return nil, firebird.MapError(serr)
+		}
+		v, aerr := raw.assemble()
+		if aerr != nil {
+			return nil, aerr
+		}
+		ventas = append(ventas, v)
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return nil, firebird.MapError(rerr)
+	}
+	return ventas, nil
+}
+
 // ObtenerRitmoPagoData fetches the raw payment and sale data required to build
-// the weekly payment-rhythm series. Implemented in BE-2.
-func (r *ClientesRepo) ObtenerRitmoPagoData(_ context.Context, _ int, _ outbound.RangoFechas) (outbound.RitmoPagoData, error) {
-	panic("ObtenerRitmoPagoData: not implemented — wired in BE-2")
+// the weekly payment-rhythm series for a client. Three sequential reads inside a
+// read-only snapshot transaction: individual pagos, sale headers, and the live
+// saldo from the MSP_SALDOS_VENTAS cache.
+// Returns a zero-valued RitmoPagoData (not an error) when the client has no records.
+func (r *ClientesRepo) ObtenerRitmoPagoData(ctx context.Context, clienteID int, rango outbound.RangoFechas) (outbound.RitmoPagoData, error) {
+	var result outbound.RitmoPagoData
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+
+		pagos, err := r.fetchRitmoPagos(ctx, q, clienteID, rango)
+		if err != nil {
+			return err
+		}
+		result.Pagos = pagos
+
+		ventas, err := r.fetchRitmoVentas(ctx, q, clienteID, rango)
+		if err != nil {
+			return err
+		}
+		result.Ventas = ventas
+
+		// Saldo actual is not range-bounded — always the live outstanding balance.
+		saldo, err := r.fetchFichaSaldo(ctx, q, clienteID)
+		if err != nil {
+			return err
+		}
+		result.SaldoActual = saldo
+		return nil
+	})
+	if err != nil {
+		return outbound.RitmoPagoData{}, err
+	}
+	return result, nil
 }
