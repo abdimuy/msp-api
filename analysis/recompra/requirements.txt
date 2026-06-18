@@ -1,0 +1,16 @@
+# Offline repurchase-propensity + CLV harness (Fase 0.3/0.4) — dev-only.
+# Reuses the credit harness venv; run from repo root:
+#   analysis/creditscorecard/.venv/bin/pip install -r analysis/recompra/requirements.txt
+#
+# Trains on the same CSVs exported by `go run ./cmd/analytics-export-creditdata`
+# (pure-Go Firebird driver → no native fbclient needed). Never deployed; the
+# production Windows server runs only the Go binary (CLAUDE.md rule #5).
+
+scikit-learn>=1.4.0,<2.0
+pandas>=2.2.0,<3.0
+numpy>=1.26.0,<3.0
+python-dateutil>=2.8,<3.0
+# BG/BB (BetaGeoBetaBinomFitter) + Gamma-Gamma (GammaGammaFitter) — the canonical
+# BTYD closed-form implementations we fit offline and port to Go. lifetimes pulls
+# scipy + autograd.
+lifetimes>=0.11,<0.12

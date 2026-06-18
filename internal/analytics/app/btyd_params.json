@@ -1,0 +1,25 @@
+{
+  "version": "v1-bgbb-20260617",
+  "period_unit": "month",
+  "grid": {
+    "x": "count of post-acquisition months with >=1 V purchase",
+    "t_x": "month-index 1..n of last purchase month, 0 if none",
+    "n": "months from acquisition month to observation date",
+    "acquisition": "first V-purchase month (born here; not counted as a repeat)",
+    "substrate": "ventas TIPO_DOCTO=='V' only; multiple buys in one month collapse to 1"
+  },
+  "bgbb": {
+    "alpha": 0.19426007,
+    "beta": 2.39253609,
+    "gamma": 0.04586391,
+    "delta": 0.59789436
+  },
+  "fit": {
+    "penalizer_coef": 0.01,
+    "n_clientes_calibracion": 60464,
+    "obs_dates_train": [
+      "2022-12-31",
+      "2023-12-31"
+    ]
+  }
+}

@@ -1,0 +1,67 @@
+{
+  "version": "v1-recompra-20260617",
+  "objetivo": "recompra_12m",
+  "intercept": -0.33559,
+  "features": [
+    {
+      "name": "BGBB_EXP_12M",
+      "label": "compra recurrente esperada",
+      "weight": 0.156069,
+      "mean": 0.318686,
+      "std": 0.480642
+    },
+    {
+      "name": "BGBB_P_ALIVE",
+      "label": "cliente activo probable",
+      "weight": 0.124075,
+      "mean": 0.802767,
+      "std": 0.138887
+    },
+    {
+      "name": "RECENCIA_MESES",
+      "label": "compró recientemente",
+      "weight": -0.55904,
+      "mean": 25.83921,
+      "std": 19.194182
+    },
+    {
+      "name": "FRECUENCIA_V",
+      "label": "compras frecuentes",
+      "weight": 0.281941,
+      "mean": 0.839574,
+      "std": 1.784833
+    },
+    {
+      "name": "ANTIGUEDAD_MESES",
+      "label": "cliente con trayectoria",
+      "weight": -0.04112,
+      "mean": 35.150685,
+      "std": 19.197499
+    },
+    {
+      "name": "MONETARY_LOG",
+      "label": "tickets de mayor valor",
+      "weight": 0.051698,
+      "mean": 8.493353,
+      "std": 0.529886
+    },
+    {
+      "name": "PCT_PAGOS_A_TIEMPO",
+      "label": "buen historial de pago",
+      "weight": 0.305984,
+      "mean": 0.77759,
+      "std": 0.299255
+    },
+    {
+      "name": "DIAS_SIN_PAGAR",
+      "label": "pagos al corriente",
+      "weight": -0.092947,
+      "mean": 490.476813,
+      "std": 523.485145
+    }
+  ],
+  "bands": {
+    "alta_min": 53,
+    "media_min": 22
+  }
+}
