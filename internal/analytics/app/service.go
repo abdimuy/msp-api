@@ -32,12 +32,14 @@ type TxRunner interface {
 // events. The outbox pattern (doc 05/06) is not applicable for a projection
 // recompute (no aggregate state change, no consumer notification required).
 type Service struct {
-	repo      outbound.WinbackRepo
-	micro     outbound.MicrosipReader
-	clock     outbound.Clock
-	txMgr     TxRunner
-	logger    *slog.Logger
-	scorecard Scorecard
+	repo              outbound.WinbackRepo
+	micro             outbound.MicrosipReader
+	clock             outbound.Clock
+	txMgr             TxRunner
+	logger            *slog.Logger
+	scorecard         Scorecard
+	recompraScorecard RecompraScorecard
+	btyd              BTYD
 
 	// refreshRunning is the single-flight guard for RefrescarEnSegundoPlano.
 	// atomic.Bool is safe for concurrent access without a mutex.
@@ -66,13 +68,31 @@ func NewService(
 		// sc is already the zero Scorecard{}; Loaded() == false → credit scoring
 		// degrades to "no aplica" on every call. Never panics.
 	}
+	rsc, err := LoadRecompraScorecard()
+	if err != nil {
+		slog.Default().Error("analytics.recompra_scorecard_load_failed",
+			slog.String("error", err.Error()),
+		)
+		// rsc is already zero RecompraScorecard{}; Loaded() == false → recompra scoring
+		// degrades to "no aplica" on every call. Never panics.
+	}
+	btyd, err := LoadBTYD()
+	if err != nil {
+		slog.Default().Error("analytics.btyd_load_failed",
+			slog.String("error", err.Error()),
+		)
+		// btyd is already zero BTYD{}; Loaded() == false → recompra scoring
+		// degrades to "no aplica" on every call. Never panics.
+	}
 	return &Service{
-		repo:      repo,
-		micro:     micro,
-		clock:     clock,
-		txMgr:     txMgr,
-		logger:    slog.Default(),
-		scorecard: sc,
+		repo:              repo,
+		micro:             micro,
+		clock:             clock,
+		txMgr:             txMgr,
+		logger:            slog.Default(),
+		scorecard:         sc,
+		recompraScorecard: rsc,
+		btyd:              btyd,
 	}
 }
 

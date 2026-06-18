@@ -80,4 +80,9 @@ type ClientePulsoContract struct {
 	ScoreCredito   int      // 0–100, higher = better payer; 0 when no aplica
 	BandaCredito   string   // domain.BandaCredito → string; "" when no aplica (contado/sin historial)
 	CreditoDrivers []string // top-3 risk reasons (Spanish labels); nil when no aplica
+
+	// ─── Repurchase propensity score (Fase A) ────────────────────────────────────
+	ScoreRecompra   int      // 0–100, higher = more likely to repurchase; 0 when no aplica
+	BandaRecompra   string   // domain.BandaRecompra → string; "" when no aplica (sin historial de compras)
+	RecompraDrivers []string // top-3 propensity drivers (Spanish labels); nil when no aplica
 }

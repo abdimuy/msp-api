@@ -150,6 +150,78 @@ func TestObtenerPulsosClientes_AllAbsent(t *testing.T) {
 	assert.Empty(t, result, "no materialized clients → empty map")
 }
 
+// makeVHistoryCandidato builds a candidato with V purchase history suitable for
+// triggering recompra scoring (aplica=true). All required V fields are set.
+func makeVHistoryCandidato(clienteID int) *domain.WinbackCandidato {
+	now := testPulsoNow
+	return mustCandidato(domain.CrearWinbackCandidatoParams{
+		ClienteID:            clienteID,
+		Nombre:               "Cliente Con Historial V",
+		Zona:                 "Z1",
+		Telefono:             "555-0099",
+		FechaUltimaCompra:    now.AddDate(0, -3, 0),
+		Frecuencia:           5,
+		Monetary:             decimal.NewFromInt(25_000),
+		Saldo:                decimal.Zero,
+		PorLiquidarPct:       decimal.Zero,
+		CohorteFecha:         now.AddDate(-3, 0, 0),
+		Now:                  now,
+		PctPagosATiempo:      decimal.NewFromFloat(80),
+		FechaPrimerCargo:     now.AddDate(-3, 0, 0),
+		FechaUltimoPago:      now.AddDate(0, -1, 0),
+		FechaPrimerVenta:     now.AddDate(-3, 0, 0),
+		FechaUltimaVenta:     now.AddDate(0, -3, 0),
+		VentasMesesDistintos: 5,
+		MonetaryVProm:        decimal.NewFromInt(10_000),
+	})
+}
+
+// TestObtenerPulsoCliente_Recompra_WithVHistory verifies that a candidato with
+// V purchase history receives a non-zero ScoreRecompra and non-empty BandaRecompra
+// in the contract. Uses the service with its embedded scorecards (loaded at
+// NewService time) so the end-to-end path is exercised.
+func TestObtenerPulsoCliente_Recompra_WithVHistory(t *testing.T) {
+	t.Parallel()
+
+	c := makeVHistoryCandidato(200)
+
+	repo := newFakeWinbackRepo()
+	repo.candidates = []*domain.WinbackCandidato{c}
+	svc := app.NewService(repo, nil, fixedClock{testPulsoNow}, nil)
+
+	pulse, err := svc.ObtenerPulsoCliente(context.Background(), 200)
+	require.NoError(t, err)
+
+	assert.GreaterOrEqual(t, pulse.ScoreRecompra, 0, "ScoreRecompra must be >= 0")
+	assert.LessOrEqual(t, pulse.ScoreRecompra, 100, "ScoreRecompra must be <= 100")
+	assert.NotEmpty(t, pulse.BandaRecompra, "BandaRecompra must be non-empty for V history")
+	assert.Positive(t, pulse.ScoreRecompra, "ScoreRecompra must be > 0 for a client with V history")
+
+	t.Logf("recompra: score=%d banda=%s drivers=%v",
+		pulse.ScoreRecompra, pulse.BandaRecompra, pulse.RecompraDrivers)
+}
+
+// TestObtenerPulsoCliente_Recompra_NoVHistory verifies that a candidato with no
+// V purchase history receives ScoreRecompra==0 and empty BandaRecompra ("no aplica").
+func TestObtenerPulsoCliente_Recompra_NoVHistory(t *testing.T) {
+	t.Parallel()
+
+	// makePulsoCandidato has no V-history fields set (FechaPrimerVenta zero,
+	// VentasMesesDistintos zero) → aplica=false → zero score and empty banda.
+	c := makePulsoCandidato(201, "20000.00", 400)
+
+	repo := newFakeWinbackRepo()
+	repo.candidates = []*domain.WinbackCandidato{c}
+	svc := app.NewService(repo, nil, fixedClock{testPulsoNow}, nil)
+
+	pulse, err := svc.ObtenerPulsoCliente(context.Background(), 201)
+	require.NoError(t, err)
+
+	assert.Equal(t, 0, pulse.ScoreRecompra, "ScoreRecompra must be 0 when no aplica")
+	assert.Empty(t, pulse.BandaRecompra, "BandaRecompra must be empty when no aplica")
+	assert.Nil(t, pulse.RecompraDrivers, "RecompraDrivers must be nil when no aplica")
+}
+
 // TestObtenerPulsoCliente_ScoreMatchesComputeSegmentoScore asserts that the pulse
 // score/segmento/estado_pago are exactly what computeSegmentoScore yields for a
 // known candidato, preventing drift between the mapper and the scoring function.

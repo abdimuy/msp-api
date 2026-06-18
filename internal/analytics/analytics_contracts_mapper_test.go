@@ -127,14 +127,17 @@ func TestToClientePulsoContract_CreditoAplica(t *testing.T) {
 	})
 
 	comp := analytics.PulsoComputado{
-		Segmento:       "DORMIDO_VALIOSO",
-		Score:          72,
-		RecenciaDias:   300,
-		EstadoPago:     "AL_CORRIENTE",
-		TierRiesgo:     "AL_DIA",
-		ScoreCredito:   42,
-		BandaCredito:   "ALTO",
-		CreditoDrivers: []string{"saldo alto pendiente"},
+		Segmento:        "DORMIDO_VALIOSO",
+		Score:           72,
+		RecenciaDias:    300,
+		EstadoPago:      "AL_CORRIENTE",
+		TierRiesgo:      "AL_DIA",
+		ScoreCredito:    42,
+		BandaCredito:    "ALTO",
+		CreditoDrivers:  []string{"saldo alto pendiente"},
+		ScoreRecompra:   65,
+		BandaRecompra:   "ALTA",
+		RecompraDrivers: []string{"frecuencia alta"},
 	}
 
 	got := analytics.ToClientePulsoContract(c, comp)
@@ -143,6 +146,10 @@ func TestToClientePulsoContract_CreditoAplica(t *testing.T) {
 	assert.Equal(t, 42, got.ScoreCredito)
 	assert.Equal(t, "ALTO", got.BandaCredito)
 	assert.Equal(t, []string{"saldo alto pendiente"}, got.CreditoDrivers)
+	// Verify recompra fields pass through correctly.
+	assert.Equal(t, 65, got.ScoreRecompra)
+	assert.Equal(t, "ALTA", got.BandaRecompra)
+	assert.Equal(t, []string{"frecuencia alta"}, got.RecompraDrivers)
 	// Verify other computed fields pass through correctly too.
 	assert.Equal(t, 72, got.Score)
 	assert.Equal(t, "DORMIDO_VALIOSO", got.Segmento)
@@ -166,14 +173,17 @@ func TestToClientePulsoContract_CreditoNoAplica(t *testing.T) {
 	})
 
 	comp := analytics.PulsoComputado{
-		Segmento:       "PERDIDO",
-		Score:          15,
-		RecenciaDias:   800,
-		EstadoPago:     "SIN_CREDITO",
-		TierRiesgo:     "AL_DIA",
-		ScoreCredito:   0,
-		BandaCredito:   "",
-		CreditoDrivers: nil,
+		Segmento:        "PERDIDO",
+		Score:           15,
+		RecenciaDias:    800,
+		EstadoPago:      "SIN_CREDITO",
+		TierRiesgo:      "AL_DIA",
+		ScoreCredito:    0,
+		BandaCredito:    "",
+		CreditoDrivers:  nil,
+		ScoreRecompra:   0,
+		BandaRecompra:   "",
+		RecompraDrivers: nil,
 	}
 
 	got := analytics.ToClientePulsoContract(c, comp)
@@ -182,4 +192,7 @@ func TestToClientePulsoContract_CreditoNoAplica(t *testing.T) {
 	assert.Equal(t, 0, got.ScoreCredito)
 	assert.Empty(t, got.BandaCredito)
 	assert.Nil(t, got.CreditoDrivers)
+	assert.Equal(t, 0, got.ScoreRecompra)
+	assert.Empty(t, got.BandaRecompra)
+	assert.Nil(t, got.RecompraDrivers)
 }

@@ -45,14 +45,17 @@ func ToWinbackCandidatoContracts(candidates []*domain.WinbackCandidato) []Winbac
 // ToClientePulsoContract, keeping the mapper signature stable as new
 // computed fields are added.
 type PulsoComputado struct {
-	Segmento       string
-	Score          int
-	RecenciaDias   int
-	EstadoPago     string
-	TierRiesgo     string
-	ScoreCredito   int
-	BandaCredito   string
-	CreditoDrivers []string
+	Segmento        string
+	Score           int
+	RecenciaDias    int
+	EstadoPago      string
+	TierRiesgo      string
+	ScoreCredito    int
+	BandaCredito    string
+	CreditoDrivers  []string
+	ScoreRecompra   int
+	BandaRecompra   string
+	RecompraDrivers []string
 }
 
 // ToClientePulsoContract projects a WinbackCandidato plus the read-time computed
@@ -84,5 +87,8 @@ func ToClientePulsoContract(c *domain.WinbackCandidato, comp PulsoComputado) Cli
 		ScoreCredito:      comp.ScoreCredito,
 		BandaCredito:      comp.BandaCredito,
 		CreditoDrivers:    comp.CreditoDrivers,
+		ScoreRecompra:     comp.ScoreRecompra,
+		BandaRecompra:     comp.BandaRecompra,
+		RecompraDrivers:   comp.RecompraDrivers,
 	}
 }

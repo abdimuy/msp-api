@@ -30,16 +30,20 @@ func (s *Service) ObtenerPulsoCliente(ctx context.Context, clienteID int) (analy
 	seg, score, recencia, ep := computeSegmentoScore(c, now)
 	tier := computeCobranzaTier(c, now)
 	cScore, cBanda, cDrivers, _ := computeCreditoScore(c, now, s.scorecard)
+	rScore, rBanda, rDrivers, _ := computeRecompraScore(c, now, s.recompraScorecard, s.btyd)
 
 	comp := analytics.PulsoComputado{
-		Segmento:       seg.String(),
-		Score:          score.Int(),
-		RecenciaDias:   recencia,
-		EstadoPago:     ep.String(),
-		TierRiesgo:     tier.String(),
-		ScoreCredito:   cScore.Int(),
-		BandaCredito:   cBanda.String(),
-		CreditoDrivers: cDrivers,
+		Segmento:        seg.String(),
+		Score:           score.Int(),
+		RecenciaDias:    recencia,
+		EstadoPago:      ep.String(),
+		TierRiesgo:      tier.String(),
+		ScoreCredito:    cScore.Int(),
+		BandaCredito:    cBanda.String(),
+		CreditoDrivers:  cDrivers,
+		ScoreRecompra:   rScore.Int(),
+		BandaRecompra:   rBanda.String(),
+		RecompraDrivers: rDrivers,
 	}
 
 	return analytics.ToClientePulsoContract(c, comp), nil
@@ -70,16 +74,20 @@ func (s *Service) ObtenerPulsosClientes(ctx context.Context, clienteIDs []int) (
 		seg, score, recencia, ep := computeSegmentoScore(c, now)
 		tier := computeCobranzaTier(c, now)
 		cScore, cBanda, cDrivers, _ := computeCreditoScore(c, now, s.scorecard)
+		rScore, rBanda, rDrivers, _ := computeRecompraScore(c, now, s.recompraScorecard, s.btyd)
 
 		comp := analytics.PulsoComputado{
-			Segmento:       seg.String(),
-			Score:          score.Int(),
-			RecenciaDias:   recencia,
-			EstadoPago:     ep.String(),
-			TierRiesgo:     tier.String(),
-			ScoreCredito:   cScore.Int(),
-			BandaCredito:   cBanda.String(),
-			CreditoDrivers: cDrivers,
+			Segmento:        seg.String(),
+			Score:           score.Int(),
+			RecenciaDias:    recencia,
+			EstadoPago:      ep.String(),
+			TierRiesgo:      tier.String(),
+			ScoreCredito:    cScore.Int(),
+			BandaCredito:    cBanda.String(),
+			CreditoDrivers:  cDrivers,
+			ScoreRecompra:   rScore.Int(),
+			BandaRecompra:   rBanda.String(),
+			RecompraDrivers: rDrivers,
 		}
 
 		result[c.ClienteID()] = analytics.ToClientePulsoContract(c, comp)
