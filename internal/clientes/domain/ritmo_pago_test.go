@@ -292,16 +292,18 @@ func TestBuildRitmoPago_Eventos_LiquidacionSinCreditoPrevio(t *testing.T) {
 
 	// Pagos con saldo previo positivo pero sin venta_credito registrada en la ventana.
 	// La liquidación debe emitirse con DoctoPvID=0 y Folio="".
+	//
+	// Scenario: two pagos spread across two weeks; no credit ventas in the window.
+	// saldoActual=0, totalAbonos=100 → saldoInicial = clampZero(0+100-0) = 100.
+	// Week 0 (Jun 8): abono 50 → saldo=50 (>0).
+	// Week 1 (Jun 15): abono 50 → saldo=0. Transition >0→0 emits liquidacion.
+	// Week 2 (Jun 22): empty → saldo=0 (last week pinned to saldoActual=0).
+	// liquidacionEventos fires at i=1 because semanas[0].Saldo=50>0, semanas[1].Saldo=0.
 	pagos := []domain.PagoCrudo{
-		{Fecha: monday(2026, 6, 15), Importe: mustDecimal("100")},
+		{Fecha: monday(2026, 6, 8), Importe: mustDecimal("50")},
+		{Fecha: monday(2026, 6, 15), Importe: mustDecimal("50")},
 	}
-	// saldoActual = 0 después de pagar; había saldo previo (no tenemos venta en ventana).
-	// Para forzar la transición necesitamos que el saldo inicial sea positivo.
-	// Como no hay ventas en la ventana, el saldo inicial = saldoActual + abonos - 0.
-	// Eso significa que el saldo inicial es > 0 solo si saldoActual > abonos.
-	// Con saldoActual=0 y abono=100 → saldoInicial = 0+100-0=100 > 0.
-	// Semana 15-jun: abono 100 → saldo final = 100 - 100 = 0. Transición >0 → 0.
-	ahora := time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC)
+	ahora := time.Date(2026, 6, 25, 0, 0, 0, 0, time.UTC)
 	r := domain.BuildRitmoPago(pagos, nil, decimal.Zero, ahora, noRango())
 
 	var liqEvt *domain.EventoRitmo
@@ -312,12 +314,10 @@ func TestBuildRitmoPago_Eventos_LiquidacionSinCreditoPrevio(t *testing.T) {
 			break
 		}
 	}
-	// May or may not emit depending on whether saldo actually transitions.
-	// If it does, DoctoPvID must be 0 and Folio must be "".
-	if liqEvt != nil {
-		assert.Equal(t, 0, liqEvt.DoctoPvID, "sin crédito previo: DoctoPvID=0")
-		assert.Empty(t, liqEvt.Folio, "sin crédito previo: Folio vacío")
-	}
+	// The scenario deterministically transitions saldo >0→0 so a liquidacion must be emitted.
+	require.NotNil(t, liqEvt, "debe emitirse un evento de liquidacion")
+	assert.Equal(t, 0, liqEvt.DoctoPvID, "sin crédito previo: DoctoPvID=0")
+	assert.Empty(t, liqEvt.Folio, "sin crédito previo: Folio vacío")
 }
 
 // ─── Resumen ──────────────────────────────────────────────────────────────────

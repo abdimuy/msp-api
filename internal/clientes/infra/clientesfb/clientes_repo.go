@@ -653,6 +653,8 @@ func (r *ClientesRepo) ObtenerRitmoPagoData(ctx context.Context, clienteID int, 
 		result.Ventas = ventas
 
 		// Saldo actual is not range-bounded — always the live outstanding balance.
+		// This makes the saldo series exact for the default unbounded window and only
+		// approximate when a Desde/Hasta range is provided (see reconstruirSaldo).
 		saldo, err := r.fetchFichaSaldo(ctx, q, clienteID)
 		if err != nil {
 			return err

@@ -311,6 +311,12 @@ func indexVentasPorSemana(semanas []SemanaRitmo, ventas []VentaCruda) []ventasPo
 //  1. Compute saldoInicial = saldoActual + Σ abonos(ventana) − Σ totalVentasCrédito(ventana), clamp ≥ 0.
 //  2. Walk forward: saldoFin = saldoPrevio + creditoEnSemana − abonosEnSemana, clamp ≥ 0.
 //  3. The last week's Saldo ends up == saldoActual (clamp).
+//
+// Limitation: saldoActual is always today's live balance (not range-bounded). For the
+// default unbounded window (no Desde/Hasta) this produces an exact saldo series because
+// all history is included. When a bounded RangoFechasRitmo is supplied, saldoActual
+// still reflects the full-history balance, so the reconstructed saldo curve is only
+// approximate — activity outside the requested window is not visible here.
 func reconstruirSaldo(semanas []SemanaRitmo, venPorSem []ventasPorSemana, saldoActual decimal.Decimal) {
 	if len(semanas) == 0 {
 		return
