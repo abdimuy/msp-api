@@ -129,6 +129,17 @@ type VentaDetalle struct {
 	Pagos []*domain.Pago
 }
 
+// RitmoPagoData is the raw data bundle fetched from Firebird by the repository
+// and passed to domain.BuildRitmoPago to construct the weekly payment-rhythm series.
+type RitmoPagoData struct {
+	// Pagos is the chronological list of raw payments for the client.
+	Pagos []domain.PagoCrudo
+	// Ventas is the chronological list of raw sale headers for the client.
+	Ventas []domain.VentaCruda
+	// SaldoActual is the live outstanding balance sourced from the balance cache.
+	SaldoActual decimal.Decimal
+}
+
 // ClientesRepo is the primary read port for the clientes hub. Each method maps
 // to a distinct read concern in the Customer 360 experience.
 //
@@ -168,4 +179,11 @@ type ClientesRepo interface {
 	// including line items, credit contract, and payment history.
 	// Returns domain.ErrVentaNotFound when no row exists for doctoPVID.
 	ObtenerVentaDetalle(ctx context.Context, doctoPVID int) (VentaDetalle, error)
+
+	// ObtenerRitmoPagoData fetches the raw payment and sale data required to
+	// build the weekly payment-rhythm series for a client. The caller passes the
+	// result to domain.BuildRitmoPago together with rango and the current time.
+	// Returns a zero-valued RitmoPagoData (not an error) when the client has no
+	// records — callers that need existence validation must call ObtenerCliente first.
+	ObtenerRitmoPagoData(ctx context.Context, clienteID int, rango RangoFechas) (RitmoPagoData, error)
 }

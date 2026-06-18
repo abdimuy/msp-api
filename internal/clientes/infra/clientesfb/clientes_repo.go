@@ -550,3 +550,9 @@ func (r *ClientesRepo) ObtenerVentaDetalle(ctx context.Context, doctoPVID int) (
 	}
 	return result, nil
 }
+
+// ObtenerRitmoPagoData fetches the raw payment and sale data required to build
+// the weekly payment-rhythm series. Implemented in BE-2.
+func (r *ClientesRepo) ObtenerRitmoPagoData(_ context.Context, _ int, _ outbound.RangoFechas) (outbound.RitmoPagoData, error) {
+	panic("ObtenerRitmoPagoData: not implemented — wired in BE-2")
+}

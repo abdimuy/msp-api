@@ -45,6 +45,10 @@ func (stubRepo) ListarDirectorioCompleto(_ context.Context, _ outbound.FiltroDir
 	return nil, nil
 }
 
+func (stubRepo) ObtenerRitmoPagoData(_ context.Context, _ int, _ outbound.RangoFechas) (outbound.RitmoPagoData, error) {
+	return outbound.RitmoPagoData{}, nil
+}
+
 type stubAnalytics struct{}
 
 func (stubAnalytics) ObtenerPulso(_ context.Context, _ int) (analytics.ClientePulsoContract, bool, error) {

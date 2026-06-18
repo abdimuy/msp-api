@@ -124,6 +124,10 @@ func (f *fakeClientesRepo) ListarDirectorioCompleto(_ context.Context, fil outbo
 	return f.dirCompleto, nil
 }
 
+func (f *fakeClientesRepo) ObtenerRitmoPagoData(_ context.Context, _ int, _ outbound.RangoFechas) (outbound.RitmoPagoData, error) {
+	return outbound.RitmoPagoData{}, nil
+}
+
 // ─── fakeAnalyticsClient ─────────────────────────────────────────────────────
 
 type fakeAnalyticsClient struct {

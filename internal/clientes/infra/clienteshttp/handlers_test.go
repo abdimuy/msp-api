@@ -98,6 +98,10 @@ func (f *fakeRepo) ListarDirectorioCompleto(_ context.Context, _ outbound.Filtro
 	return f.dirCompleto, nil
 }
 
+func (f *fakeRepo) ObtenerRitmoPagoData(_ context.Context, _ int, _ outbound.RangoFechas) (outbound.RitmoPagoData, error) {
+	return outbound.RitmoPagoData{}, nil
+}
+
 // ─── Fake analytics client ────────────────────────────────────────────────────
 
 type fakeAnalytics struct {
