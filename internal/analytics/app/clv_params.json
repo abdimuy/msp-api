@@ -27,6 +27,7 @@
   "riesgo": {
     "formula": "CLV_final = margin*E[M]*DET*P_paga - perdida_esperada",
     "p_paga_source": "credit Score 1 (scorecard.json); P_paga=1.0 when the client has no open credit exposure",
-    "perdida_esperada": "perdida_esperada = (1 - P_paga) * SALDO_ACTUAL * LGD, with LGD=1.0 (v1). SALDO_ACTUAL = current open balance (MSP_SALDOS_VENTAS); when SALDO_ACTUAL=0 (no exposure) perdida_esperada=0 and P_paga=1.0. LGD=1.0 because castigos zero the balance with ~0 recovery (project_credito_scorecard_pit: castigo leakage). Go computes this per client at serve time; tune LGD down if recovery data appears."
+    "perdida_esperada": "perdida_esperada = (1 - P_paga) * SALDO_ACTUAL * LGD, with LGD=1.0 (v1). SALDO_ACTUAL = current open balance (MSP_SALDOS_VENTAS); when SALDO_ACTUAL=0 (no exposure) perdida_esperada=0 and P_paga=1.0. LGD=1.0 because castigos zero the balance with ~0 recovery (project_credito_scorecard_pit: castigo leakage). Go computes this per client at serve time; tune LGD down if recovery data appears.",
+    "lgd": 1.0
   }
 }

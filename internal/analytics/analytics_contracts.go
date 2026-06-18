@@ -85,4 +85,8 @@ type ClientePulsoContract struct {
 	ScoreRecompra   int      // 0–100, higher = more likely to repurchase; 0 when no aplica
 	BandaRecompra   string   // domain.BandaRecompra → string; "" when no aplica (sin historial de compras)
 	RecompraDrivers []string // top-3 propensity drivers (Spanish labels); nil when no aplica
+
+	// ─── CLV (Fase B) ────────────────────────────────────────────────────────────
+	MontoCLV decimal.Decimal // risk-adjusted CLV in pesos; 0 when no aplica
+	BandaCLV string          // ALTO|MEDIO|BAJO; "" when no aplica
 }

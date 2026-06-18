@@ -1,6 +1,10 @@
 package analytics
 
-import "github.com/abdimuy/msp-api/internal/analytics/domain"
+import (
+	"github.com/shopspring/decimal"
+
+	"github.com/abdimuy/msp-api/internal/analytics/domain"
+)
 
 // ToWinbackCandidatoContract projects the domain entity into the cross-module
 // view. Called only from infra/clients of consumer modules — never from this
@@ -56,6 +60,8 @@ type PulsoComputado struct {
 	ScoreRecompra   int
 	BandaRecompra   string
 	RecompraDrivers []string
+	MontoCLV        decimal.Decimal
+	BandaCLV        string
 }
 
 // ToClientePulsoContract projects a WinbackCandidato plus the read-time computed
@@ -90,5 +96,7 @@ func ToClientePulsoContract(c *domain.WinbackCandidato, comp PulsoComputado) Cli
 		ScoreRecompra:     comp.ScoreRecompra,
 		BandaRecompra:     comp.BandaRecompra,
 		RecompraDrivers:   comp.RecompraDrivers,
+		MontoCLV:          comp.MontoCLV,
+		BandaCLV:          comp.BandaCLV,
 	}
 }

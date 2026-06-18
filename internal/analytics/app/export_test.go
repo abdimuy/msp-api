@@ -62,3 +62,9 @@ func ExportComputeRecompraScore(c *domain.WinbackCandidato, now time.Time, sc Re
 func ExportMonthIndex(t time.Time) int {
 	return monthIndex(t)
 }
+
+// ExportComputeCLV exposes the internal computeCLV function for table-driven
+// tests in the app_test package.
+func ExportComputeCLV(c *domain.WinbackCandidato, now time.Time, btyd BTYD, creditSc Scorecard, params CLVParams) (domain.MontoCLV, domain.BandaCLV, bool) {
+	return computeCLV(c, now, btyd, creditSc, params)
+}

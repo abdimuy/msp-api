@@ -118,4 +118,22 @@ var (
 		"recompra_scorecard_invalido",
 		"el scorecard de recompra embebido no es válido",
 	)
+
+	// ErrMontoCLVNegativo is returned when a CLV monetary amount is negative.
+	ErrMontoCLVNegativo = apperror.NewValidation(
+		"monto_clv_negativo",
+		"el monto de clv no puede ser negativo",
+	)
+
+	// ErrBandaCLVInvalida is returned when an unrecognized BandaCLV value is parsed.
+	ErrBandaCLVInvalida = apperror.NewValidation(
+		"banda_clv_invalida",
+		"la banda de clv no es válida",
+	)
+
+	// ErrCLVParamsInvalido is returned when the embedded CLV params cannot be parsed or are structurally invalid.
+	ErrCLVParamsInvalido = apperror.NewInternal(
+		"clv_params_invalido",
+		"los parámetros de clv embebidos no son válidos",
+	)
 )

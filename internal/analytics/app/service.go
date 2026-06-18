@@ -40,6 +40,7 @@ type Service struct {
 	scorecard         Scorecard
 	recompraScorecard RecompraScorecard
 	btyd              BTYD
+	clvParams         CLVParams
 
 	// refreshRunning is the single-flight guard for RefrescarEnSegundoPlano.
 	// atomic.Bool is safe for concurrent access without a mutex.
@@ -84,6 +85,14 @@ func NewService(
 		// btyd is already zero BTYD{}; Loaded() == false → recompra scoring
 		// degrades to "no aplica" on every call. Never panics.
 	}
+	clvParams, err := LoadCLVParams()
+	if err != nil {
+		slog.Default().Error("analytics.clv_params_load_failed",
+			slog.String("error", err.Error()),
+		)
+		// clvParams is already zero CLVParams{}; Loaded() == false → CLV scoring
+		// degrades to "no aplica" on every call. Never panics.
+	}
 	return &Service{
 		repo:              repo,
 		micro:             micro,
@@ -93,6 +102,7 @@ func NewService(
 		scorecard:         sc,
 		recompraScorecard: rsc,
 		btyd:              btyd,
+		clvParams:         clvParams,
 	}
 }
 
