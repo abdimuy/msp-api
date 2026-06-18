@@ -92,6 +92,27 @@ type AnclaCliente struct {
 	// Pagos90D is the count of real abono payments (concepts 87327/155/11) made
 	// in the trailing 90 days. Zero when none exist.
 	Pagos90D int
+
+	// ─── V-only purchase grid (recompra / CLV engine) ────────────────────────────
+	// Computed from DOCTOS_PV WHERE TIPO_DOCTO='V' AND ESTATUS='N' over full
+	// history (no watermark). Distinct from FRECUENCIA/MONETARY which include 'P'
+	// (POS payment rows) and cannot be reused for the repurchase model.
+
+	// FechaPrimerVenta is the UTC timestamp of the client's earliest V-type sale
+	// in DOCTOS_PV. Zero if the client has no V sales.
+	FechaPrimerVenta time.Time
+
+	// FechaUltimaVenta is the UTC timestamp of the client's most recent V-type
+	// sale in DOCTOS_PV. Zero if the client has no V sales.
+	FechaUltimaVenta time.Time
+
+	// VentasMesesDistintos is the count of distinct calendar months in which the
+	// client has at least one V-type sale. Zero when no V sales exist.
+	VentasMesesDistintos int
+
+	// MonetaryVProm is the average IMPORTE_NETO across all V-type sales (mean
+	// ticket). Zero when no V sales exist.
+	MonetaryVProm decimal.Decimal
 }
 
 // CobranzaSignals holds the per-client cadence and punctuality facts computed

@@ -55,7 +55,7 @@ var (
 // ─── WinbackRepo — MSP_AN_WINBACK_CANDIDATOS ─────────────────────────────────
 
 // upsertChunkSize is the number of candidatos sent per EXECUTE BLOCK call.
-// 20 rows × 24 params = 480 positional params per block. Each row references
+// 20 rows × 28 params = 560 positional params per block. Each row references
 // MSP_AN_WINBACK_CANDIDATOS twice (UPDATE + conditional INSERT), so 20 rows =
 // 40 Relation contexts — safely below Firebird's 256-context-per-statement limit.
 // Empirically the optimal chunk size for this workload against Firebird 5 is
@@ -116,12 +116,12 @@ func (r *Repo) upsertChunk(ctx context.Context, q firebird.Querier, chunk []*dom
 //
 // Each row i uses params named p{i}_id, p{i}_cid, etc. to avoid collisions
 // across rows in the same block body. Args are bound in exact param-declaration
-// order (24 per row). The UPDATE omits EN_CONTROL and COHORTE_FECHA so those
+// order (28 per row). The UPDATE omits EN_CONTROL and COHORTE_FECHA so those
 // columns are only set on first INSERT and survive subsequent refreshes.
 // FECHA_ULTIMO_PAGO IS mutable and IS updated on each refresh.
 func buildUpsertBlock(chunk []*domain.WinbackCandidato) (string, []any) {
 	n := len(chunk)
-	args := make([]any, 0, n*24)
+	args := make([]any, 0, n*28)
 
 	var header strings.Builder
 	var body strings.Builder
@@ -145,7 +145,7 @@ func buildUpsertBlock(chunk []*domain.WinbackCandidato) (string, []any) {
 	return header.String() + "\n" + body.String(), args
 }
 
-// appendUpsertParamDecls writes the 24 typed EXECUTE BLOCK input-parameter
+// appendUpsertParamDecls writes the 28 typed EXECUTE BLOCK input-parameter
 // declarations for a single row prefix p into w.
 func appendUpsertParamDecls(w *strings.Builder, p string) {
 	_, _ = fmt.Fprintf(
@@ -173,11 +173,16 @@ func appendUpsertParamDecls(w *strings.Builder, p string) {
 			"  %s_fpp TIMESTAMP      = ?,\n"+
 			"  %s_mpp NUMERIC(18,2)  = ?,\n"+
 			"  %s_p90 INTEGER        = ?,\n"+
-			"  %s_fpc TIMESTAMP      = ?",
+			"  %s_fpc TIMESTAMP      = ?,\n"+
+			"  %s_fpv TIMESTAMP      = ?,\n"+
+			"  %s_fuv TIMESTAMP      = ?,\n"+
+			"  %s_vmd INTEGER        = ?,\n"+
+			"  %s_mvp NUMERIC(18,2)  = ?",
 		p, p, p, p, p,
 		p, p, p, p, p,
 		p, p, p, p, p,
 		p, p, p, p, p,
+		p, p, p, p,
 		p, p, p, p,
 	)
 }
@@ -198,6 +203,8 @@ func appendUpsertBodyStmt(w *strings.Builder, p string) {
 			"    DIAS_ATRASO_PROM=:%s_atr, PCT_PAGOS_A_TIEMPO=:%s_pct,\n"+
 			"    FECHA_PROX_PAGO=:%s_fpp, MONTO_PROX_PAGO=:%s_mpp,\n"+
 			"    PAGOS_90D=:%s_p90, FECHA_PRIMER_CARGO=:%s_fpc,\n"+
+			"    FECHA_PRIMER_VENTA=:%s_fpv, FECHA_ULTIMA_VENTA=:%s_fuv,\n"+
+			"    VENTAS_MESES_DISTINTOS=:%s_vmd, MONETARY_V_PROM=:%s_mvp,\n"+
 			"    UPDATED_AT=:%s_upd\n"+
 			"  WHERE CLIENTE_ID=:%s_cid;\n"+
 			"  IF (ROW_COUNT=0) THEN\n"+
@@ -206,16 +213,20 @@ func appendUpsertBodyStmt(w *strings.Builder, p string) {
 			"       FRECUENCIA,MONETARY,SALDO,POR_LIQUIDAR_PCT,NEXT_BEST_PRODUCT,\n"+
 			"       EN_CONTROL,COHORTE_FECHA,CREATED_AT,UPDATED_AT,FECHA_ULTIMO_PAGO,\n"+
 			"       NUM_PAGOS,CADENCIA_DIAS,DIAS_ATRASO_PROM,PCT_PAGOS_A_TIEMPO,\n"+
-			"       FECHA_PROX_PAGO,MONTO_PROX_PAGO,PAGOS_90D,FECHA_PRIMER_CARGO)\n"+
+			"       FECHA_PROX_PAGO,MONTO_PROX_PAGO,PAGOS_90D,FECHA_PRIMER_CARGO,\n"+
+			"       FECHA_PRIMER_VENTA,FECHA_ULTIMA_VENTA,VENTAS_MESES_DISTINTOS,MONETARY_V_PROM)\n"+
 			"    VALUES(:%s_id,:%s_cid,:%s_nom,:%s_zon,:%s_tel,:%s_fuc,\n"+
 			"           :%s_frq,:%s_mon,:%s_sal,:%s_plp,:%s_nbp,\n"+
 			"           :%s_enc,:%s_coh,:%s_cat,:%s_upd,:%s_fup,\n"+
-			"           :%s_npg,:%s_cad,:%s_atr,:%s_pct,:%s_fpp,:%s_mpp,:%s_p90,:%s_fpc);\n",
+			"           :%s_npg,:%s_cad,:%s_atr,:%s_pct,:%s_fpp,:%s_mpp,:%s_p90,:%s_fpc,\n"+
+			"           :%s_fpv,:%s_fuv,:%s_vmd,:%s_mvp);\n",
 		p, p, p,
 		p, p,
 		p, p,
 		p, p,
 		p,
+		p, p,
+		p, p,
 		p, p,
 		p, p,
 		p, p,
@@ -226,10 +237,11 @@ func appendUpsertBodyStmt(w *strings.Builder, p string) {
 		p, p, p, p, p,
 		p, p, p, p, p,
 		p, p, p, p, p, p, p, p,
+		p, p, p, p,
 	)
 }
 
-// appendUpsertArgs appends the 24 bound arguments for candidato c (in
+// appendUpsertArgs appends the 28 bound arguments for candidato c (in
 // param-declaration order) to args and returns the extended slice.
 func appendUpsertArgs(args []any, c *domain.WinbackCandidato) []any {
 	enControl := 0
@@ -262,6 +274,10 @@ func appendUpsertArgs(args []any, c *domain.WinbackCandidato) []any {
 		c.MontoProxPago(), // _mpp
 		c.Pagos90D(),      // _p90
 		nullableWallClockArg(wallClockPtrFromTime(c.FechaPrimerCargo())), // _fpc
+		nullableWallClockArg(wallClockPtrFromTime(c.FechaPrimerVenta())), // _fpv
+		nullableWallClockArg(wallClockPtrFromTime(c.FechaUltimaVenta())), // _fuv
+		c.VentasMesesDistintos(), // _vmd
+		c.MonetaryVProm(),        // _mvp
 	)
 }
 

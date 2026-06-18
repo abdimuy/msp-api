@@ -36,7 +36,11 @@ const candidatoCols = `
 	FECHA_PROX_PAGO,
 	MONTO_PROX_PAGO,
 	PAGOS_90D,
-	FECHA_PRIMER_CARGO`
+	FECHA_PRIMER_CARGO,
+	FECHA_PRIMER_VENTA,
+	FECHA_ULTIMA_VENTA,
+	VENTAS_MESES_DISTINTOS,
+	MONETARY_V_PROM`
 
 // Note on upsert strategy: the nakagami/firebirdsql driver returns SQL error
 // -804 ("Data type unknown") when parameters appear inside the USING SELECT
@@ -155,6 +159,10 @@ VALUES (?, ?, ?)`
 //	10 next_best_product (Win1252, may be '')
 //	11 fecha_ultimo_pago (TIMESTAMP, may be NULL)
 //	12 fecha_primer_cargo (TIMESTAMP, may be NULL)
+//	13 fecha_primer_venta (TIMESTAMP, may be NULL)
+//	14 fecha_ultima_venta (TIMESTAMP, may be NULL)
+//	15 ventas_meses_distintos (INTEGER, may be NULL)
+//	16 monetary_v_prom (NUMERIC(18,2), may be NULL)
 
 // leerAnclasRFMBase is the opening of the WITH block through the end of the
 // rfm CTE. The caller appends an optional FECHA predicate then leerAnclasRFMClose.
@@ -170,8 +178,9 @@ WITH rfm AS (
     AND pv.TIPO_DOCTO IN ('V', 'P')
     AND pv.ESTATUS = 'N'`
 
-// leerAnclasRFMClose closes the rfm CTE, opens saldo_cte, then opens nbp_freq.
-// saldo_cte has no FECHA filter (current-state read model).
+// leerAnclasRFMClose closes the rfm CTE, opens saldo_cte, ventas_v, then opens nbp_freq.
+// saldo_cte and ventas_v have no FECHA filter — both are full-history aggregates
+// (current-state read models), consistent with the no-watermark design for saldo.
 const leerAnclasRFMClose = `
   GROUP BY pv.CLIENTE_ID
 ),
@@ -188,6 +197,19 @@ saldo_cte AS (
   FROM MSP_SALDOS_VENTAS sv
   WHERE sv.CARGO_CANCELADO = 'N'
   GROUP BY sv.CLIENTE_ID
+),
+ventas_v AS (
+  SELECT
+    pv.CLIENTE_ID,
+    MIN(pv.FECHA)                                                                    AS FECHA_PRIMER_VENTA,
+    MAX(pv.FECHA)                                                                    AS FECHA_ULTIMA_VENTA,
+    COUNT(DISTINCT (EXTRACT(YEAR FROM pv.FECHA) * 12 + EXTRACT(MONTH FROM pv.FECHA))) AS VENTAS_MESES_DISTINTOS,
+    CAST(AVG(CAST(pv.IMPORTE_NETO AS NUMERIC(18,4))) AS NUMERIC(18,2))              AS MONETARY_V_PROM
+  FROM DOCTOS_PV pv
+  WHERE pv.CLIENTE_ID IS NOT NULL
+    AND pv.TIPO_DOCTO = 'V'
+    AND pv.ESTATUS = 'N'
+  GROUP BY pv.CLIENTE_ID
 ),`
 
 // leerAnclasNBPBase is the opening of the nbp_freq CTE. The caller appends an
@@ -248,12 +270,17 @@ SELECT
   END                                                                AS POR_LIQUIDAR_PCT,
   SUBSTRING(COALESCE(nbp.ARTICULO_NOMBRE, '') FROM 1 FOR 120)        AS NEXT_BEST_PRODUCT,
   sc.FECHA_ULTIMO_PAGO                                               AS FECHA_ULTIMO_PAGO,
-  sc.FECHA_PRIMER_CARGO                                              AS FECHA_PRIMER_CARGO
+  sc.FECHA_PRIMER_CARGO                                              AS FECHA_PRIMER_CARGO,
+  vv.FECHA_PRIMER_VENTA                                             AS FECHA_PRIMER_VENTA,
+  vv.FECHA_ULTIMA_VENTA                                             AS FECHA_ULTIMA_VENTA,
+  vv.VENTAS_MESES_DISTINTOS                                         AS VENTAS_MESES_DISTINTOS,
+  vv.MONETARY_V_PROM                                                AS MONETARY_V_PROM
 FROM rfm
 JOIN CLIENTES c ON c.CLIENTE_ID = rfm.CLIENTE_ID
 LEFT JOIN ZONAS_CLIENTES z   ON z.ZONA_CLIENTE_ID = c.ZONA_CLIENTE_ID
 LEFT JOIN DIRS_CLIENTES d    ON d.CLIENTE_ID = c.CLIENTE_ID AND d.ES_DIR_PPAL = 'S'
 LEFT JOIN saldo_cte sc       ON sc.CLIENTE_ID = rfm.CLIENTE_ID
+LEFT JOIN ventas_v vv        ON vv.CLIENTE_ID = rfm.CLIENTE_ID
 LEFT JOIN nbp                ON nbp.CLIENTE_ID = rfm.CLIENTE_ID`
 
 // leerAnclasBase is the complete query for the since=nil (full-DB) case.

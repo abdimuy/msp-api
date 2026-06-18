@@ -28,30 +28,34 @@ type rowScanner interface {
 // MSP_AN_WINBACK_CANDIDATOS columns are CHARACTER SET UTF8 — plain string /
 // sql.NullString is the correct scan target (no Win1252 decoding needed).
 type candidatoRowRaw struct {
-	idRaw               string
-	clienteID           int
-	nombre              sql.NullString
-	zona                sql.NullString
-	telefono            sql.NullString
-	fechaUltimaCompra   any // TIMESTAMP nullable
-	frecuencia          int
-	monetaryRaw         any // NUMERIC(18,2)
-	saldoRaw            any // NUMERIC(18,2)
-	porLiquidarPctRaw   any // NUMERIC(5,2) nullable
-	nextBestProduct     sql.NullString
-	enControl           int16 // SMALLINT; 0=false 1=true
-	cohorteFechaRaw     any   // TIMESTAMP NOT NULL
-	createdAtRaw        any   // TIMESTAMP NOT NULL
-	updatedAtRaw        any   // TIMESTAMP NOT NULL
-	fechaUltimoPagoRaw  any   // TIMESTAMP nullable
-	numPagosRaw         any   // INTEGER nullable
-	cadenciaDiasRaw     any   // INTEGER nullable
-	diasAtrasoProm      any   // INTEGER nullable
-	pctPagosATiempoRaw  any   // NUMERIC(5,2) nullable
-	fechaProxPagoRaw    any   // TIMESTAMP nullable
-	montoProxPagoRaw    any   // NUMERIC(18,2) nullable
-	pagos90dRaw         any   // INTEGER nullable
-	fechaPrimerCargoRaw any   // TIMESTAMP nullable
+	idRaw                   string
+	clienteID               int
+	nombre                  sql.NullString
+	zona                    sql.NullString
+	telefono                sql.NullString
+	fechaUltimaCompra       any // TIMESTAMP nullable
+	frecuencia              int
+	monetaryRaw             any // NUMERIC(18,2)
+	saldoRaw                any // NUMERIC(18,2)
+	porLiquidarPctRaw       any // NUMERIC(5,2) nullable
+	nextBestProduct         sql.NullString
+	enControl               int16 // SMALLINT; 0=false 1=true
+	cohorteFechaRaw         any   // TIMESTAMP NOT NULL
+	createdAtRaw            any   // TIMESTAMP NOT NULL
+	updatedAtRaw            any   // TIMESTAMP NOT NULL
+	fechaUltimoPagoRaw      any   // TIMESTAMP nullable
+	numPagosRaw             any   // INTEGER nullable
+	cadenciaDiasRaw         any   // INTEGER nullable
+	diasAtrasoProm          any   // INTEGER nullable
+	pctPagosATiempoRaw      any   // NUMERIC(5,2) nullable
+	fechaProxPagoRaw        any   // TIMESTAMP nullable
+	montoProxPagoRaw        any   // NUMERIC(18,2) nullable
+	pagos90dRaw             any   // INTEGER nullable
+	fechaPrimerCargoRaw     any   // TIMESTAMP nullable
+	fechaPrimerVentaRaw     any   // TIMESTAMP nullable
+	fechaUltimaVentaRaw     any   // TIMESTAMP nullable
+	ventasMesesDistintosRaw any   // INTEGER nullable
+	monetaryVPromRaw        any   // NUMERIC(18,2) nullable
 }
 
 func (r *candidatoRowRaw) scanFrom(s rowScanner) error {
@@ -80,6 +84,10 @@ func (r *candidatoRowRaw) scanFrom(s rowScanner) error {
 		&r.montoProxPagoRaw,
 		&r.pagos90dRaw,
 		&r.fechaPrimerCargoRaw,
+		&r.fechaPrimerVentaRaw,
+		&r.fechaUltimaVentaRaw,
+		&r.ventasMesesDistintosRaw,
+		&r.monetaryVPromRaw,
 	)
 }
 
@@ -140,6 +148,38 @@ func scanCandidatoCobranza(r *candidatoRowRaw) (candidatoCobranzaScanned, error)
 	return out, nil
 }
 
+// candidatoVGridScanned holds decoded V-only purchase grid fields for assembleCandidato.
+type candidatoVGridScanned struct {
+	fechaPrimerVenta     time.Time
+	fechaUltimaVenta     time.Time
+	ventasMesesDistintos int
+	monetaryVProm        decimal.Decimal
+}
+
+// scanCandidatoVGrid decodes the 4 nullable V-only purchase grid columns from r.
+// Extracted to keep assembleCandidato's line count within the funlen limit.
+func scanCandidatoVGrid(r *candidatoRowRaw) (candidatoVGridScanned, error) {
+	var out candidatoVGridScanned
+	var err error
+	out.fechaPrimerVenta, err = scanNullableTime(r.fechaPrimerVentaRaw)
+	if err != nil {
+		return out, err
+	}
+	out.fechaUltimaVenta, err = scanNullableTime(r.fechaUltimaVentaRaw)
+	if err != nil {
+		return out, err
+	}
+	out.ventasMesesDistintos, err = scanNullableIntDecimal(r.ventasMesesDistintosRaw)
+	if err != nil {
+		return out, err
+	}
+	out.monetaryVProm, err = scanNullableDecimal(r.monetaryVPromRaw)
+	if err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
 func assembleCandidato(r *candidatoRowRaw) (*domain.WinbackCandidato, error) {
 	id, err := parseUUIDColumn("ID", r.idRaw)
 	if err != nil {
@@ -177,31 +217,39 @@ func assembleCandidato(r *candidatoRowRaw) (*domain.WinbackCandidato, error) {
 	if err != nil {
 		return nil, err
 	}
+	vgrid, err := scanCandidatoVGrid(r)
+	if err != nil {
+		return nil, err
+	}
 	return domain.HydrateWinbackCandidato(domain.HydrateWinbackCandidatoParams{
-		ID:                id,
-		ClienteID:         r.clienteID,
-		Nombre:            nullStringVal(r.nombre),
-		Zona:              nullStringVal(r.zona),
-		Telefono:          nullStringVal(r.telefono),
-		FechaUltimaCompra: fechaUltimaCompra,
-		Frecuencia:        r.frecuencia,
-		Monetary:          monetary,
-		Saldo:             saldo,
-		PorLiquidarPct:    porLiquidarPct,
-		NextBestProduct:   nullStringVal(r.nextBestProduct),
-		EnControl:         r.enControl != 0,
-		CohorteFecha:      cohorteFecha,
-		CreatedAt:         createdAt,
-		UpdatedAt:         updatedAt,
-		FechaUltimoPago:   cob.fechaUltimoPago,
-		NumPagos:          cob.numPagos,
-		CadenciaDias:      cob.cadenciaDias,
-		DiasAtrasoProm:    cob.diasAtrasoProm,
-		PctPagosATiempo:   cob.pctPagosATiempo,
-		FechaProxPago:     cob.fechaProxPago,
-		MontoProxPago:     cob.montoProxPago,
-		Pagos90D:          cob.pagos90d,
-		FechaPrimerCargo:  cob.fechaPrimerCargo,
+		ID:                   id,
+		ClienteID:            r.clienteID,
+		Nombre:               nullStringVal(r.nombre),
+		Zona:                 nullStringVal(r.zona),
+		Telefono:             nullStringVal(r.telefono),
+		FechaUltimaCompra:    fechaUltimaCompra,
+		Frecuencia:           r.frecuencia,
+		Monetary:             monetary,
+		Saldo:                saldo,
+		PorLiquidarPct:       porLiquidarPct,
+		NextBestProduct:      nullStringVal(r.nextBestProduct),
+		EnControl:            r.enControl != 0,
+		CohorteFecha:         cohorteFecha,
+		CreatedAt:            createdAt,
+		UpdatedAt:            updatedAt,
+		FechaUltimoPago:      cob.fechaUltimoPago,
+		NumPagos:             cob.numPagos,
+		CadenciaDias:         cob.cadenciaDias,
+		DiasAtrasoProm:       cob.diasAtrasoProm,
+		PctPagosATiempo:      cob.pctPagosATiempo,
+		FechaProxPago:        cob.fechaProxPago,
+		MontoProxPago:        cob.montoProxPago,
+		Pagos90D:             cob.pagos90d,
+		FechaPrimerCargo:     cob.fechaPrimerCargo,
+		FechaPrimerVenta:     vgrid.fechaPrimerVenta,
+		FechaUltimaVenta:     vgrid.fechaUltimaVenta,
+		VentasMesesDistintos: vgrid.ventasMesesDistintos,
+		MonetaryVProm:        vgrid.monetaryVProm,
 	}), nil
 }
 
@@ -234,18 +282,22 @@ func scanCandidatoRows(rows *sql.Rows) ([]*domain.WinbackCandidato, error) {
 //
 // Column order must match leerAnclasBase SELECT list exactly.
 type anclaRowRaw struct {
-	clienteID           int
-	nombre              firebird.Win1252  // Win1252: CLIENTES.NOMBRE
-	zona                firebird.Win1252  // Win1252: ZONAS_CLIENTES.NOMBRE (COALESCE to '')
-	telefono            *firebird.Win1252 // Win1252 nullable: DIRS_CLIENTES.TELEFONO1
-	fechaUltimaCompra   any               // DATE from DOCTOS_PV.FECHA MAX
-	frecuencia          int               // COUNT(DISTINCT …)
-	monetaryRaw         any               // CAST(SUM(IMPORTE_NETO) AS NUMERIC(18,2))
-	saldoRaw            any               // CAST(… AS NUMERIC(18,2))
-	porLiquidarRaw      any               // CAST(… AS NUMERIC(5,2))
-	nextBestProduct     firebird.Win1252  // Win1252: ARTICULOS.NOMBRE (COALESCE to '')
-	fechaUltimoPagoRaw  any               // TIMESTAMP nullable: MAX(sv.FECHA_ULT_PAGO)
-	fechaPrimerCargoRaw any               // TIMESTAMP nullable: MIN(sv.FECHA_CARGO)
+	clienteID               int
+	nombre                  firebird.Win1252  // Win1252: CLIENTES.NOMBRE
+	zona                    firebird.Win1252  // Win1252: ZONAS_CLIENTES.NOMBRE (COALESCE to '')
+	telefono                *firebird.Win1252 // Win1252 nullable: DIRS_CLIENTES.TELEFONO1
+	fechaUltimaCompra       any               // DATE from DOCTOS_PV.FECHA MAX
+	frecuencia              int               // COUNT(DISTINCT …)
+	monetaryRaw             any               // CAST(SUM(IMPORTE_NETO) AS NUMERIC(18,2))
+	saldoRaw                any               // CAST(… AS NUMERIC(18,2))
+	porLiquidarRaw          any               // CAST(… AS NUMERIC(5,2))
+	nextBestProduct         firebird.Win1252  // Win1252: ARTICULOS.NOMBRE (COALESCE to '')
+	fechaUltimoPagoRaw      any               // TIMESTAMP nullable: MAX(sv.FECHA_ULT_PAGO)
+	fechaPrimerCargoRaw     any               // TIMESTAMP nullable: MIN(sv.FECHA_CARGO)
+	fechaPrimerVentaRaw     any               // TIMESTAMP nullable: MIN(pv.FECHA) WHERE TIPO_DOCTO='V'
+	fechaUltimaVentaRaw     any               // TIMESTAMP nullable: MAX(pv.FECHA) WHERE TIPO_DOCTO='V'
+	ventasMesesDistintosRaw any               // INTEGER nullable: COUNT(DISTINCT month) over V
+	monetaryVPromRaw        any               // NUMERIC(18,2) nullable: AVG(IMPORTE_NETO) over V
 }
 
 func (r *anclaRowRaw) scanFrom(s rowScanner) error {
@@ -262,6 +314,10 @@ func (r *anclaRowRaw) scanFrom(s rowScanner) error {
 		&r.nextBestProduct,
 		&r.fechaUltimoPagoRaw,
 		&r.fechaPrimerCargoRaw,
+		&r.fechaPrimerVentaRaw,
+		&r.fechaUltimaVentaRaw,
+		&r.ventasMesesDistintosRaw,
+		&r.monetaryVPromRaw,
 	)
 }
 
@@ -290,24 +346,44 @@ func assembleAncla(r *anclaRowRaw) (outbound.AnclaCliente, error) {
 	if err != nil {
 		return outbound.AnclaCliente{}, err
 	}
+	fechaPrimerVenta, err := scanNullableTime(r.fechaPrimerVentaRaw)
+	if err != nil {
+		return outbound.AnclaCliente{}, err
+	}
+	fechaUltimaVenta, err := scanNullableTime(r.fechaUltimaVentaRaw)
+	if err != nil {
+		return outbound.AnclaCliente{}, err
+	}
+	ventasMesesDistintos, err := scanNullableIntDecimal(r.ventasMesesDistintosRaw)
+	if err != nil {
+		return outbound.AnclaCliente{}, err
+	}
+	monetaryVProm, err := scanNullableDecimal(r.monetaryVPromRaw)
+	if err != nil {
+		return outbound.AnclaCliente{}, err
+	}
 	// Decode Win1252 nullable telefono.
 	var telefono string
 	if r.telefono != nil {
 		telefono = string(*r.telefono)
 	}
 	return outbound.AnclaCliente{
-		ClienteID:         r.clienteID,
-		Nombre:            string(r.nombre),
-		Zona:              string(r.zona),
-		Telefono:          telefono,
-		FechaUltimaCompra: fechaUltimaCompra,
-		Frecuencia:        r.frecuencia,
-		Monetary:          monetary,
-		Saldo:             saldo,
-		PorLiquidarPct:    porLiquidarPct,
-		NextBestProduct:   string(r.nextBestProduct),
-		FechaUltimoPago:   fechaUltimoPago,
-		FechaPrimerCargo:  fechaPrimerCargo,
+		ClienteID:            r.clienteID,
+		Nombre:               string(r.nombre),
+		Zona:                 string(r.zona),
+		Telefono:             telefono,
+		FechaUltimaCompra:    fechaUltimaCompra,
+		Frecuencia:           r.frecuencia,
+		Monetary:             monetary,
+		Saldo:                saldo,
+		PorLiquidarPct:       porLiquidarPct,
+		NextBestProduct:      string(r.nextBestProduct),
+		FechaUltimoPago:      fechaUltimoPago,
+		FechaPrimerCargo:     fechaPrimerCargo,
+		FechaPrimerVenta:     fechaPrimerVenta,
+		FechaUltimaVenta:     fechaUltimaVenta,
+		VentasMesesDistintos: ventasMesesDistintos,
+		MonetaryVProm:        monetaryVProm,
 	}, nil
 }
 

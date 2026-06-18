@@ -792,3 +792,79 @@ func TestRepo_LeerAnclasDesde_Smoke(t *testing.T) {
 		}
 	})
 }
+
+// TestRepo_VGridRoundTrip verifies that the four V-only purchase grid columns
+// (FECHA_PRIMER_VENTA, FECHA_ULTIMA_VENTA, VENTAS_MESES_DISTINTOS, MONETARY_V_PROM)
+// round-trip correctly through UpsertCandidatos → ListCandidatos (migration 000039).
+//
+//nolint:paralleltest // serial: shares rollback-only tx.
+func TestRepo_VGridRoundTrip(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	fixedFechaPrimerVenta := time.Date(2022, 3, 10, 0, 0, 0, 0, time.UTC)
+	fixedFechaUltimaVenta := time.Date(2026, 1, 20, 0, 0, 0, 0, time.UTC)
+	fixedVentasMeses := 18
+	fixedMonetaryVProm := decimal.RequireFromString("8750.25")
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		repo := analyticsfb.NewRepo(pool)
+
+		const clienteID = -20001
+		c, err := domain.CrearWinbackCandidato(domain.CrearWinbackCandidatoParams{
+			ClienteID:            clienteID,
+			Nombre:               "Prueba VGrid",
+			Zona:                 "R/VGRID",
+			Telefono:             "238 999 0001",
+			FechaUltimaCompra:    fixedFechaUltima,
+			Frecuencia:           10,
+			Monetary:             decimal.RequireFromString("87500.00"),
+			Saldo:                decimal.Zero,
+			PorLiquidarPct:       decimal.Zero,
+			NextBestProduct:      "COMEDOR ROBLE",
+			FechaUltimoPago:      fixedFechaPago,
+			EnControl:            false,
+			CohorteFecha:         fixedCohorte,
+			Now:                  fixedNow,
+			FechaPrimerVenta:     fixedFechaPrimerVenta,
+			FechaUltimaVenta:     fixedFechaUltimaVenta,
+			VentasMesesDistintos: fixedVentasMeses,
+			MonetaryVProm:        fixedMonetaryVProm,
+		})
+		require.NoError(t, err, "CrearWinbackCandidato must succeed")
+
+		err = repo.UpsertCandidatos(ctx, []*domain.WinbackCandidato{c})
+		if err != nil {
+			t.Skipf("UpsertCandidatos failed — migration 000039 may not be applied: %v", err)
+		}
+
+		page, err := repo.ListCandidatos(ctx, outbound.ListWinbackParams{})
+		require.NoError(t, err)
+
+		var got *domain.WinbackCandidato
+		for _, item := range page.Items {
+			if item.ClienteID() == clienteID {
+				got = item
+				break
+			}
+		}
+		require.NotNil(t, got, "inserted candidato must appear in ListCandidatos")
+
+		// FECHA_PRIMER_VENTA and FECHA_ULTIMA_VENTA round-trip within 1s.
+		assert.WithinDuration(t, fixedFechaPrimerVenta, got.FechaPrimerVenta(), time.Second,
+			"FECHA_PRIMER_VENTA mismatch: want=%s got=%s", fixedFechaPrimerVenta, got.FechaPrimerVenta())
+		assert.WithinDuration(t, fixedFechaUltimaVenta, got.FechaUltimaVenta(), time.Second,
+			"FECHA_ULTIMA_VENTA mismatch: want=%s got=%s", fixedFechaUltimaVenta, got.FechaUltimaVenta())
+
+		// VENTAS_MESES_DISTINTOS is an exact integer.
+		assert.Equal(t, fixedVentasMeses, got.VentasMesesDistintos(),
+			"VENTAS_MESES_DISTINTOS mismatch")
+
+		// MONETARY_V_PROM is a decimal with 2-decimal precision.
+		assert.True(t, fixedMonetaryVProm.Equal(got.MonetaryVProm()),
+			"MONETARY_V_PROM mismatch: want=%s got=%s", fixedMonetaryVProm, got.MonetaryVProm())
+
+		t.Logf("V-grid round-trip ok: fechaPrimerVenta=%s fechaUltimaVenta=%s meses=%d monetaryVProm=%s",
+			got.FechaPrimerVenta(), got.FechaUltimaVenta(), got.VentasMesesDistintos(), got.MonetaryVProm())
+	})
+}

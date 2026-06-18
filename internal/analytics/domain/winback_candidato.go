@@ -51,6 +51,11 @@ type WinbackCandidato struct {
 	montoProxPago    decimal.Decimal // avg installment amount as proxy; zero if unknown
 	pagos90d         int             // count of real payments in trailing 90 days; 0 when unknown
 	fechaPrimerCargo time.Time       // UTC date of first cargo; zero when none
+	// ─── V-only purchase grid ────────────────────────────────────────────────────
+	fechaPrimerVenta     time.Time       // UTC date of first V sale; zero when none
+	fechaUltimaVenta     time.Time       // UTC date of last V sale; zero when none
+	ventasMesesDistintos int             // count of distinct calendar months with V sales; 0 when none
+	monetaryVProm        decimal.Decimal // mean V ticket (AVG IMPORTE_NETO); zero when none
 }
 
 // ─── Crear constructor ────────────────────────────────────────────────────────
@@ -87,6 +92,11 @@ type CrearWinbackCandidatoParams struct {
 	MontoProxPago    decimal.Decimal
 	Pagos90D         int
 	FechaPrimerCargo time.Time
+	// ─── V-only purchase grid ─────────────────────────────────────────────────
+	FechaPrimerVenta     time.Time
+	FechaUltimaVenta     time.Time
+	VentasMesesDistintos int
+	MonetaryVProm        decimal.Decimal
 }
 
 // CrearWinbackCandidato validates all invariants, generates a new UUID, and
@@ -132,30 +142,44 @@ func CrearWinbackCandidato(p CrearWinbackCandidatoParams) (*WinbackCandidato, er
 		fechaPrimerCargo = p.FechaPrimerCargo.UTC()
 	}
 
+	var fechaPrimerVenta time.Time
+	if !p.FechaPrimerVenta.IsZero() {
+		fechaPrimerVenta = p.FechaPrimerVenta.UTC()
+	}
+
+	var fechaUltimaVenta time.Time
+	if !p.FechaUltimaVenta.IsZero() {
+		fechaUltimaVenta = p.FechaUltimaVenta.UTC()
+	}
+
 	return &WinbackCandidato{
-		id:                uuid.New(),
-		clienteID:         p.ClienteID,
-		nombre:            p.Nombre,
-		zona:              p.Zona,
-		telefono:          p.Telefono,
-		fechaUltimaCompra: fechaUltimaCompra,
-		fechaUltimoPago:   fechaUltimoPago,
-		frecuencia:        p.Frecuencia,
-		monetary:          p.Monetary,
-		saldo:             p.Saldo,
-		porLiquidarPct:    p.PorLiquidarPct,
-		nextBestProduct:   p.NextBestProduct,
-		enControl:         p.EnControl,
-		cohorteFecha:      p.CohorteFecha.UTC(),
-		timestamps:        audit.NewTimestamped(p.Now),
-		numPagos:          p.NumPagos,
-		cadenciaDias:      p.CadenciaDias,
-		diasAtrasoProm:    p.DiasAtrasoProm,
-		pctPagosATiempo:   p.PctPagosATiempo,
-		fechaProxPago:     fechaProxPago,
-		montoProxPago:     p.MontoProxPago,
-		pagos90d:          p.Pagos90D,
-		fechaPrimerCargo:  fechaPrimerCargo,
+		id:                   uuid.New(),
+		clienteID:            p.ClienteID,
+		nombre:               p.Nombre,
+		zona:                 p.Zona,
+		telefono:             p.Telefono,
+		fechaUltimaCompra:    fechaUltimaCompra,
+		fechaUltimoPago:      fechaUltimoPago,
+		frecuencia:           p.Frecuencia,
+		monetary:             p.Monetary,
+		saldo:                p.Saldo,
+		porLiquidarPct:       p.PorLiquidarPct,
+		nextBestProduct:      p.NextBestProduct,
+		enControl:            p.EnControl,
+		cohorteFecha:         p.CohorteFecha.UTC(),
+		timestamps:           audit.NewTimestamped(p.Now),
+		numPagos:             p.NumPagos,
+		cadenciaDias:         p.CadenciaDias,
+		diasAtrasoProm:       p.DiasAtrasoProm,
+		pctPagosATiempo:      p.PctPagosATiempo,
+		fechaProxPago:        fechaProxPago,
+		montoProxPago:        p.MontoProxPago,
+		pagos90d:             p.Pagos90D,
+		fechaPrimerCargo:     fechaPrimerCargo,
+		fechaPrimerVenta:     fechaPrimerVenta,
+		fechaUltimaVenta:     fechaUltimaVenta,
+		ventasMesesDistintos: p.VentasMesesDistintos,
+		monetaryVProm:        p.MonetaryVProm,
 	}, nil
 }
 
@@ -190,35 +214,44 @@ type HydrateWinbackCandidatoParams struct {
 	MontoProxPago    decimal.Decimal
 	Pagos90D         int
 	FechaPrimerCargo time.Time
+	// ─── V-only purchase grid ─────────────────────────────────────────────────
+	FechaPrimerVenta     time.Time
+	FechaUltimaVenta     time.Time
+	VentasMesesDistintos int
+	MonetaryVProm        decimal.Decimal
 }
 
 // HydrateWinbackCandidato reconstructs a WinbackCandidato from persistence
 // with zero validation. Called only from the repository layer.
 func HydrateWinbackCandidato(p HydrateWinbackCandidatoParams) *WinbackCandidato {
 	return &WinbackCandidato{
-		id:                p.ID,
-		clienteID:         p.ClienteID,
-		nombre:            p.Nombre,
-		zona:              p.Zona,
-		telefono:          p.Telefono,
-		fechaUltimaCompra: p.FechaUltimaCompra,
-		fechaUltimoPago:   p.FechaUltimoPago,
-		frecuencia:        p.Frecuencia,
-		monetary:          p.Monetary,
-		saldo:             p.Saldo,
-		porLiquidarPct:    p.PorLiquidarPct,
-		nextBestProduct:   p.NextBestProduct,
-		enControl:         p.EnControl,
-		cohorteFecha:      p.CohorteFecha,
-		timestamps:        audit.HydrateTimestamped(p.CreatedAt, p.UpdatedAt),
-		numPagos:          p.NumPagos,
-		cadenciaDias:      p.CadenciaDias,
-		diasAtrasoProm:    p.DiasAtrasoProm,
-		pctPagosATiempo:   p.PctPagosATiempo,
-		fechaProxPago:     p.FechaProxPago,
-		montoProxPago:     p.MontoProxPago,
-		pagos90d:          p.Pagos90D,
-		fechaPrimerCargo:  p.FechaPrimerCargo,
+		id:                   p.ID,
+		clienteID:            p.ClienteID,
+		nombre:               p.Nombre,
+		zona:                 p.Zona,
+		telefono:             p.Telefono,
+		fechaUltimaCompra:    p.FechaUltimaCompra,
+		fechaUltimoPago:      p.FechaUltimoPago,
+		frecuencia:           p.Frecuencia,
+		monetary:             p.Monetary,
+		saldo:                p.Saldo,
+		porLiquidarPct:       p.PorLiquidarPct,
+		nextBestProduct:      p.NextBestProduct,
+		enControl:            p.EnControl,
+		cohorteFecha:         p.CohorteFecha,
+		timestamps:           audit.HydrateTimestamped(p.CreatedAt, p.UpdatedAt),
+		numPagos:             p.NumPagos,
+		cadenciaDias:         p.CadenciaDias,
+		diasAtrasoProm:       p.DiasAtrasoProm,
+		pctPagosATiempo:      p.PctPagosATiempo,
+		fechaProxPago:        p.FechaProxPago,
+		montoProxPago:        p.MontoProxPago,
+		pagos90d:             p.Pagos90D,
+		fechaPrimerCargo:     p.FechaPrimerCargo,
+		fechaPrimerVenta:     p.FechaPrimerVenta,
+		fechaUltimaVenta:     p.FechaUltimaVenta,
+		ventasMesesDistintos: p.VentasMesesDistintos,
+		monetaryVProm:        p.MonetaryVProm,
 	}
 }
 
@@ -308,3 +341,19 @@ func (w *WinbackCandidato) Pagos90D() int { return w.pagos90d }
 // FechaPrimerCargo returns the UTC timestamp of the client's earliest cargo
 // in MSP_SALDOS_VENTAS. Zero when no cargo history is available.
 func (w *WinbackCandidato) FechaPrimerCargo() time.Time { return w.fechaPrimerCargo }
+
+// FechaPrimerVenta returns the UTC timestamp of the client's earliest V-type
+// sale in DOCTOS_PV. Zero when no V sales exist.
+func (w *WinbackCandidato) FechaPrimerVenta() time.Time { return w.fechaPrimerVenta }
+
+// FechaUltimaVenta returns the UTC timestamp of the client's most recent V-type
+// sale in DOCTOS_PV. Zero when no V sales exist.
+func (w *WinbackCandidato) FechaUltimaVenta() time.Time { return w.fechaUltimaVenta }
+
+// VentasMesesDistintos returns the count of distinct calendar months in which
+// the client has at least one V-type sale. Zero when no V sales exist.
+func (w *WinbackCandidato) VentasMesesDistintos() int { return w.ventasMesesDistintos }
+
+// MonetaryVProm returns the mean V ticket (average IMPORTE_NETO over V-type
+// sales). Zero when no V sales exist.
+func (w *WinbackCandidato) MonetaryVProm() decimal.Decimal { return w.monetaryVProm }
