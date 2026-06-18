@@ -257,6 +257,12 @@ ORDER BY ANIO, MES`
 // Amount = IMPORTE + IMPUESTO (gross, same formula as the MSP_SALDOS_VENTAS cache).
 // CAST is mandatory (firebirdsql v0.9.19 driver scale bug on NUMERIC expressions).
 // Optional date-range predicates on abono.FECHA are appended by ObtenerRitmoPagoData.
+//
+// The NOT EXISTS clause excludes abonos tied to CC contracts whose FORMA_DE_PAGO
+// resolves to "Contado" — these are same-day cash-style settlements recorded via
+// FORMA_COBRO_ID=71 but with a placeholder contado contract (parcialidad=1, plazo=1,
+// enganche=0). Including them would inflate ABONADO totals and break saldo
+// reconstruction in the rhythm chart.
 const queryRitmoPagosBase = `
 SELECT
   abono.FECHA,
@@ -268,11 +274,18 @@ WHERE cargo.CLIENTE_ID = ?
   AND cargo.CONCEPTO_CC_ID = 5
   AND cargo.CANCELADO = 'N'
   AND i.TIPO_IMPTE = 'R'
-  AND i.CANCELADO = 'N'`
+  AND i.CANCELADO = 'N'
+  AND NOT EXISTS (
+    SELECT 1 FROM LIBRES_CARGOS_CC lc
+    LEFT JOIN LISTAS_ATRIBUTOS la ON la.LISTA_ATRIB_ID = lc.FORMA_DE_PAGO
+    WHERE lc.DOCTO_CC_ID = cargo.DOCTO_CC_ID
+      AND UPPER(la.VALOR_DESPLEGADO) = 'CONTADO'
+  )`
 
 // queryRitmoVentasBase returns sale header rows for the RitmoPago series.
-// EsCredito is derived via EXISTS on DOCTOS_PV_COBROS (FORMA_COBRO_ID=71 = crédito),
-// matching the same pattern as selectVentaClienteCols.
+// EsCredito is derived via EXISTS on DOCTOS_PV_COBROS (FORMA_COBRO_ID=71 = crédito)
+// AND NOT EXISTS a CC contract with FORMA_DE_PAGO resolving to "Contado" — matching
+// the same rule as selectVentaClienteCols (see that constant for full rationale).
 // PlazoMeses comes from LIBRES_CARGOS_CC.TIEMPO_A_CORTO_PLAZOMESES bridged via
 // DOCTOS_ENTRE_SIS; 0 when contado or when the contract row is absent (pre-2018 data).
 // TOTAL = IMPORTE_NETO + TOTAL_IMPUESTOS (gross, matching the venta header total).
@@ -287,6 +300,14 @@ SELECT
   CASE WHEN EXISTS (
     SELECT 1 FROM DOCTOS_PV_COBROS cob
     WHERE cob.DOCTO_PV_ID = pv.DOCTO_PV_ID AND cob.FORMA_COBRO_ID = 71
+  ) AND NOT EXISTS (
+    SELECT 1 FROM DOCTOS_ENTRE_SIS des
+    JOIN LIBRES_CARGOS_CC lc ON lc.DOCTO_CC_ID = des.DOCTO_DEST_ID
+    LEFT JOIN LISTAS_ATRIBUTOS la ON la.LISTA_ATRIB_ID = lc.FORMA_DE_PAGO
+    WHERE des.CLAVE_SIS_FTE  = 'PV'
+      AND des.CLAVE_SIS_DEST = 'CC'
+      AND des.DOCTO_FTE_ID   = pv.DOCTO_PV_ID
+      AND UPPER(la.VALOR_DESPLEGADO) = 'CONTADO'
   ) THEN 'CREDITO' ELSE 'CONTADO' END AS TIPO,
   COALESCE((
     SELECT lc.TIEMPO_A_CORTO_PLAZOMESES
@@ -305,9 +326,12 @@ WHERE pv.CLIENTE_ID = ?
 // ─── ListarVentas ─────────────────────────────────────────────────────────────
 
 // selectVentaClienteCols is the projection for a VentaCliente row.
-// tipo is derived from DOCTOS_PV_COBROS: FORMA_COBRO_ID=71 means CREDITO,
-// otherwise CONTADO (validated in B4 research). EXISTS subquery is used
-// to avoid inflating the result set.
+// TIPO is derived from DOCTOS_PV_COBROS: FORMA_COBRO_ID=71 means CREDITO UNLESS
+// the linked CC contract has FORMA_DE_PAGO resolving to "Contado" — which happens
+// for ~10% of sales where Microsip records a placeholder contado contract
+// (parcialidad=1, plazo=1, enganche=0, paid same day). Rule [A]: CRÉDITO only if
+// FORMA_COBRO_ID=71 AND NOT EXISTS a contado contract for this PV.
+// EXISTS subquery is used to avoid inflating the result set.
 //
 // Saldo per sale is still computed natively from IMPORTES_DOCTOS_CC, bridged
 // via DOCTOS_ENTRE_SIS (PV → CC) to find the cargo DOCTO_CC_ID for this PV.
@@ -334,6 +358,14 @@ const selectVentaClienteCols = `
 	CASE WHEN EXISTS (
 		SELECT 1 FROM DOCTOS_PV_COBROS cob
 		WHERE cob.DOCTO_PV_ID = pv.DOCTO_PV_ID AND cob.FORMA_COBRO_ID = 71
+	) AND NOT EXISTS (
+		SELECT 1 FROM DOCTOS_ENTRE_SIS des
+		JOIN LIBRES_CARGOS_CC lc ON lc.DOCTO_CC_ID = des.DOCTO_DEST_ID
+		LEFT JOIN LISTAS_ATRIBUTOS la ON la.LISTA_ATRIB_ID = lc.FORMA_DE_PAGO
+		WHERE des.CLAVE_SIS_FTE  = 'PV'
+		  AND des.CLAVE_SIS_DEST = 'CC'
+		  AND des.DOCTO_FTE_ID   = pv.DOCTO_PV_ID
+		  AND UPPER(la.VALOR_DESPLEGADO) = 'CONTADO'
 	) THEN 'CREDITO' ELSE 'CONTADO' END AS TIPO,
 	COALESCE((
 		SELECT CAST(
