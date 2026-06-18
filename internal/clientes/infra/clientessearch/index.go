@@ -105,6 +105,10 @@ func mapDoc(d outbound.DirectorioDoc) ClienteDoc {
 		// Credit-risk signals (R3).
 		BandaCredito: d.BandaCredito,
 		ScoreCredito: d.ScoreCredito,
+
+		// Repurchase propensity signals (Fase A).
+		BandaRecompra: d.BandaRecompra,
+		ScoreRecompra: d.ScoreRecompra,
 	}
 
 	// Store FechaProxPago as epoch-seconds for sortable numeric, and as an

@@ -16,16 +16,17 @@ import (
 // Empty SortBy means "default order": nombre:asc on the browse path, or
 // Meilisearch relevance when a text query is present.
 const (
-	sortByNombre       = "nombre"
-	sortBySaldo        = "saldo"
-	sortByZona         = "zona"
-	sortByScore        = "score"
-	sortBySegmento     = "segmento"
-	sortByEstadoPago   = "estado_pago"
-	sortByRecencia     = "recencia"
-	sortByPuntualidad  = "puntualidad"   // maps to pct_pagos_a_tiempo
-	sortByProxPago     = "prox_pago"     // maps to fecha_prox_pago_ts
-	sortByScoreCredito = "score_credito" // maps to score_credito
+	sortByNombre        = "nombre"
+	sortBySaldo         = "saldo"
+	sortByZona          = "zona"
+	sortByScore         = "score"
+	sortBySegmento      = "segmento"
+	sortByEstadoPago    = "estado_pago"
+	sortByRecencia      = "recencia"
+	sortByPuntualidad   = "puntualidad"    // maps to pct_pagos_a_tiempo
+	sortByProxPago      = "prox_pago"      // maps to fecha_prox_pago_ts
+	sortByScoreCredito  = "score_credito"  // maps to score_credito
+	sortByScoreRecompra = "score_recompra" // maps to score_recompra
 )
 
 // ErrSortByInvalido is returned when SortBy is not one of the allowed columns.
@@ -40,7 +41,7 @@ func validSortBy(sortBy string) bool {
 	switch sortBy {
 	case "", sortByNombre, sortBySaldo, sortByZona,
 		sortByScore, sortBySegmento, sortByEstadoPago, sortByRecencia,
-		sortByPuntualidad, sortByProxPago, sortByScoreCredito:
+		sortByPuntualidad, sortByProxPago, sortByScoreCredito, sortByScoreRecompra:
 		return true
 	default:
 		return false
@@ -72,10 +73,13 @@ type BuscarClientesInput struct {
 	// BandaCredito restricts to a specific credit-risk band (exact match). Empty = no filter.
 	// Contado clients index banda_credito="" and won't match a non-empty filter.
 	BandaCredito string
+	// BandaRecompra restricts to a specific repurchase-propensity band (exact match). Empty = no filter.
+	// Clients with no purchase history index banda_recompra="" and won't match a non-empty filter.
+	BandaRecompra string
 
 	// SortBy selects the sort column. Empty = default (nombre:asc browse, relevance search).
 	// Allowed values: nombre, saldo, zona, score, segmento, estado_pago, recencia,
-	// puntualidad, prox_pago, score_credito.
+	// puntualidad, prox_pago, score_credito, score_recompra.
 	SortBy string
 	// SortOrder is "asc" (default) or "desc".
 	SortOrder string
@@ -127,6 +131,7 @@ func (s *Service) BuscarClientes(ctx context.Context, in BuscarClientesInput) (B
 		ScoreMin:      in.ScoreMin,
 		TierRiesgo:    in.TierRiesgo,
 		BandaCredito:  in.BandaCredito,
+		BandaRecompra: in.BandaRecompra,
 		SortBy:        in.SortBy,
 		SortOrder:     in.SortOrder,
 		Offset:        offset,

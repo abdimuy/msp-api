@@ -145,6 +145,14 @@ type ClienteDoc struct {
 	// aplica). Sortable + display.
 	ScoreCredito int `json:"score_credito"`
 
+	// BandaRecompra is the repurchase-propensity band (ALTA|MEDIA|BAJA; "" when the
+	// client has no purchase history). Filterable + facetable + display.
+	BandaRecompra string `json:"banda_recompra"`
+
+	// ScoreRecompra is the repurchase propensity score [0–100] (higher = more likely
+	// to repurchase; 0 when no aplica). Sortable + display.
+	ScoreRecompra int `json:"score_recompra"`
+
 	// PctPagosATiempo is the fraction of payments made on time (0–100),
 	// stored as a float64 for Meilisearch numeric sorting. Use PctPagosATiempoStr
 	// for display to preserve the exact decimal value.
@@ -196,6 +204,7 @@ var filterableAttributes = []string{
 	"estatus",
 	"tier_riesgo",
 	"banda_credito",
+	"banda_recompra",
 }
 
 // sortableAttributes lists every attribute that can appear in sort clauses.
@@ -210,6 +219,7 @@ var sortableAttributes = []string{
 	"pct_pagos_a_tiempo",
 	"fecha_prox_pago_ts",
 	"score_credito",
+	"score_recompra",
 }
 
 // facetAttributes are the attributes returned in FacetDistribution by default.
@@ -222,6 +232,7 @@ var facetAttributes = []string{
 	"estado_pago",
 	"tier_riesgo",
 	"banda_credito",
+	"banda_recompra",
 }
 
 // FacetAttributes returns the canonical list of facet attributes for the

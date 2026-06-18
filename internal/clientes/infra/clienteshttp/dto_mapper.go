@@ -37,6 +37,8 @@ func dirDocToClienteListItemDTO(doc outbound.DirectorioDoc) ClienteListItemDTO {
 		dto.FechaProxPago = formatTime(doc.FechaProxPago)
 		dto.BandaCredito = doc.BandaCredito
 		dto.ScoreCredito = doc.ScoreCredito
+		dto.BandaRecompra = doc.BandaRecompra
+		dto.ScoreRecompra = doc.ScoreRecompra
 	}
 	return dto
 }
@@ -126,6 +128,9 @@ func toFichaDTO(ficha clientesapp.FichaCliente) FichaDTO {
 			BandaCredito:      p.BandaCredito,
 			ScoreCredito:      p.ScoreCredito,
 			CreditoDrivers:    p.CreditoDrivers,
+			BandaRecompra:     p.BandaRecompra,
+			ScoreRecompra:     p.ScoreRecompra,
+			RecompraDrivers:   p.RecompraDrivers,
 		}
 	}
 

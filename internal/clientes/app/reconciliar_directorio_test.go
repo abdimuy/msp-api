@@ -338,3 +338,61 @@ func TestReconciliarDirectorio_CreditoSignalsEmptyWhenNoPulso(t *testing.T) {
 	assert.Empty(t, doc.BandaCredito, "no pulso → empty banda_credito")
 	assert.Equal(t, 0, doc.ScoreCredito, "no pulso → 0 score_credito")
 }
+
+// ── Fase A: repurchase propensity signals in reconcile ────────────────────────
+
+func TestReconciliarDirectorio_RecompraSignalsMappedFromPulso(t *testing.T) {
+	t.Parallel()
+
+	c := newCliente(70, "CLIENTE CON RECOMPRA")
+
+	repo := &fakeClientesRepo{
+		dirCompleto: []outbound.DirectorioItem{
+			{Cliente: c, SaldoTotal: decimal.NewFromFloat(2000)},
+		},
+	}
+
+	pulso := analytics.ClientePulsoContract{
+		ClienteID:     70,
+		Score:         65,
+		BandaRecompra: "ALTA",
+		ScoreRecompra: 82,
+	}
+
+	anl := &fakeAnalyticsClient{
+		pulsosMap: map[int]analytics.ClientePulsoContract{70: pulso},
+	}
+	dirIdx := &fakeDirectoryIndex{}
+	svc := newReconcileService(repo, anl, dirIdx)
+
+	n, err := svc.ReconciliarDirectorio(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+	require.Len(t, dirIdx.lastDocs, 1)
+
+	doc := dirIdx.lastDocs[0]
+	assert.Equal(t, "ALTA", doc.BandaRecompra)
+	assert.Equal(t, 82, doc.ScoreRecompra)
+}
+
+func TestReconciliarDirectorio_RecompraSignalsEmptyWhenNoPulso(t *testing.T) {
+	t.Parallel()
+
+	c := newCliente(71, "CLIENTE SIN PULSO RECOMPRA")
+	repo := &fakeClientesRepo{
+		dirCompleto: []outbound.DirectorioItem{
+			{Cliente: c, SaldoTotal: decimal.Zero},
+		},
+	}
+	anl := &fakeAnalyticsClient{} // no pulse → no recompra signals
+	dirIdx := &fakeDirectoryIndex{}
+	svc := newReconcileService(repo, anl, dirIdx)
+
+	_, err := svc.ReconciliarDirectorio(context.Background())
+	require.NoError(t, err)
+	require.Len(t, dirIdx.lastDocs, 1)
+
+	doc := dirIdx.lastDocs[0]
+	assert.Empty(t, doc.BandaRecompra, "no pulso → empty banda_recompra")
+	assert.Equal(t, 0, doc.ScoreRecompra, "no pulso → 0 score_recompra")
+}

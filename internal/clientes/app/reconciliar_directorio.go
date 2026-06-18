@@ -5,6 +5,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/abdimuy/msp-api/internal/analytics"
 	"github.com/abdimuy/msp-api/internal/clientes/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/apperror"
 )
@@ -79,20 +80,7 @@ func (s *Service) ReconciliarDirectorio(ctx context.Context) (int, error) {
 		}
 
 		if tienePulso {
-			doc.Score = pulso.Score
-			doc.Segmento = pulso.Segmento
-			doc.EstadoPago = pulso.EstadoPago
-			doc.RecenciaDias = pulso.RecenciaDias
-			doc.Frecuencia = pulso.Frecuencia
-			doc.Monetary = pulso.Monetary
-			doc.NextBestProduct = pulso.NextBestProduct
-			// Cobranza intelligence signals (B2).
-			doc.TierRiesgo = pulso.TierRiesgo
-			doc.PctPagosATiempo = pulso.PctPagosATiempo
-			doc.FechaProxPago = pulso.FechaProxPago
-			// Credit-risk signals (R3).
-			doc.BandaCredito = pulso.BandaCredito
-			doc.ScoreCredito = pulso.ScoreCredito
+			applyPulso(&doc, pulso)
 		}
 
 		docs = append(docs, doc)
@@ -107,6 +95,28 @@ func (s *Service) ReconciliarDirectorio(ctx context.Context) (int, error) {
 	}
 
 	return len(docs), nil
+}
+
+// applyPulso copies all analytics pulse fields onto the document.
+// Extracted to keep ReconciliarDirectorio under the funlen limit.
+func applyPulso(doc *outbound.DirectorioDoc, p analytics.ClientePulsoContract) {
+	doc.Score = p.Score
+	doc.Segmento = p.Segmento
+	doc.EstadoPago = p.EstadoPago
+	doc.RecenciaDias = p.RecenciaDias
+	doc.Frecuencia = p.Frecuencia
+	doc.Monetary = p.Monetary
+	doc.NextBestProduct = p.NextBestProduct
+	// Cobranza intelligence signals (B2).
+	doc.TierRiesgo = p.TierRiesgo
+	doc.PctPagosATiempo = p.PctPagosATiempo
+	doc.FechaProxPago = p.FechaProxPago
+	// Credit-risk signals (R3).
+	doc.BandaCredito = p.BandaCredito
+	doc.ScoreCredito = p.ScoreCredito
+	// Repurchase propensity signals (Fase A).
+	doc.BandaRecompra = p.BandaRecompra
+	doc.ScoreRecompra = p.ScoreRecompra
 }
 
 // buildDireccionCompleta joins non-empty, trimmed address parts into a single

@@ -61,6 +61,11 @@ type DirectorioDoc struct {
 	// has no credit relationship (contado clients).
 	BandaCredito string // BAJO | MEDIO | ALTO | CRITICO; "" when no aplica
 	ScoreCredito int    // 0–100, higher = lower risk; 0 when no aplica
+
+	// Repurchase propensity signals (Fase A). Zero/empty when TienePulso is false or client
+	// has no purchase history.
+	BandaRecompra string // ALTA | MEDIA | BAJA; "" when no aplica
+	ScoreRecompra int    // 0–100, higher = more likely to repurchase; 0 when no aplica
 }
 
 // DirectorioQuery carries all parameters for a single Meilisearch directory
@@ -87,6 +92,10 @@ type DirectorioQuery struct {
 	// Accepted values: BAJO, MEDIO, ALTO, CRITICO. Clients with no credit relationship
 	// index banda_credito="" and will never match a non-empty BandaCredito filter.
 	BandaCredito string
+	// BandaRecompra restricts to a specific repurchase-propensity band (exact match). Empty = no filter.
+	// Accepted values: ALTA, MEDIA, BAJA. Clients with no purchase history
+	// index banda_recompra="" and will never match a non-empty BandaRecompra filter.
+	BandaRecompra string
 	// SortBy is the sort column (e.g. "nombre", "saldo", "score"). Empty means
 	// default order (nombre:asc when Q is empty, Meilisearch relevance when Q is set).
 	SortBy string

@@ -21,19 +21,20 @@ type ListResponse[T any] struct {
 // scores are in [0, 100]). The handler converts these sentinel values to *int
 // before calling the service.
 type ListarClientesInput struct {
-	Q            string `query:"q"           doc:"Texto de búsqueda de texto completo; vacío activa el modo navegación"`
-	Zona         int    `query:"zona"        doc:"Filtra por ID de zona de ventas; 0 = sin filtro"`
-	Cobrador     int    `query:"cobrador"    doc:"Filtra por ID de cobrador asignado; 0 = sin filtro"`
-	ConSaldo     bool   `query:"con_saldo"   doc:"Cuando true restringe a clientes con saldo pendiente > 0"`
-	Segmento     string `query:"segmento"    doc:"Filtra por segmento RFM exacto (e.g. LEAL_POR_LIQUIDAR, DORMIDO_VALIOSO)"`
-	EstadoPago   string `query:"estado_pago" doc:"Filtra por señal de solvencia (SIN_CREDITO, LIQUIDADO, AL_CORRIENTE, ATRASADO, MOROSO)"`
-	ScoreMin     int    `query:"score_min"   default:"-1" doc:"Mínimo score de pulso [0, 100]; -1 = sin filtro"`
-	Tier         string `query:"tier"          doc:"Filtra por tier de riesgo de cobranza (AL_DIA, VIGILANCIA, EN_RIESGO, CRITICO); vacío = sin filtro"`
-	BandaCredito string `query:"banda_credito" doc:"Filtra por banda de riesgo crediticio (BAJO, MEDIO, ALTO, CRITICO); vacío = sin filtro"`
-	SortBy       string `query:"sort_by"       enum:"nombre,saldo,zona,score,segmento,estado_pago,recencia,puntualidad,prox_pago,score_credito" doc:"Columna de ordenamiento GLOBAL; vacío = orden por defecto (relevancia en búsqueda, nombre al navegar)"`
-	SortOrder    string `query:"sort_order"  enum:"asc,desc" default:"asc" doc:"Sentido del ordenamiento"`
-	Cursor       string `query:"cursor"      doc:"Cursor de paginación opaco devuelto por la respuesta anterior"`
-	Limit        int    `query:"limit"       default:"50" minimum:"1" maximum:"200" doc:"Máximo de registros devueltos"`
+	Q             string `query:"q"           doc:"Texto de búsqueda de texto completo; vacío activa el modo navegación"`
+	Zona          int    `query:"zona"        doc:"Filtra por ID de zona de ventas; 0 = sin filtro"`
+	Cobrador      int    `query:"cobrador"    doc:"Filtra por ID de cobrador asignado; 0 = sin filtro"`
+	ConSaldo      bool   `query:"con_saldo"   doc:"Cuando true restringe a clientes con saldo pendiente > 0"`
+	Segmento      string `query:"segmento"    doc:"Filtra por segmento RFM exacto (e.g. LEAL_POR_LIQUIDAR, DORMIDO_VALIOSO)"`
+	EstadoPago    string `query:"estado_pago" doc:"Filtra por señal de solvencia (SIN_CREDITO, LIQUIDADO, AL_CORRIENTE, ATRASADO, MOROSO)"`
+	ScoreMin      int    `query:"score_min"   default:"-1" doc:"Mínimo score de pulso [0, 100]; -1 = sin filtro"`
+	Tier          string `query:"tier"          doc:"Filtra por tier de riesgo de cobranza (AL_DIA, VIGILANCIA, EN_RIESGO, CRITICO); vacío = sin filtro"`
+	BandaCredito  string `query:"banda_credito"  doc:"Filtra por banda de riesgo crediticio (BAJO, MEDIO, ALTO, CRITICO); vacío = sin filtro"`
+	BandaRecompra string `query:"banda_recompra" doc:"Filtra por banda de propensión de recompra (ALTA, MEDIA, BAJA); vacío = sin filtro"`
+	SortBy        string `query:"sort_by"        enum:"nombre,saldo,zona,score,segmento,estado_pago,recencia,puntualidad,prox_pago,score_credito,score_recompra" doc:"Columna de ordenamiento GLOBAL; vacío = orden por defecto (relevancia en búsqueda, nombre al navegar)"`
+	SortOrder     string `query:"sort_order"  enum:"asc,desc" default:"asc" doc:"Sentido del ordenamiento"`
+	Cursor        string `query:"cursor"      doc:"Cursor de paginación opaco devuelto por la respuesta anterior"`
+	Limit         int    `query:"limit"       default:"50" minimum:"1" maximum:"200" doc:"Máximo de registros devueltos"`
 }
 
 // DirectorioResponseBody is the response body for GET /clientes.
@@ -71,6 +72,9 @@ type ClienteListItemDTO struct {
 	// Credit-risk signals (R3). Empty/zero when TienePulso is false or client has no credit.
 	BandaCredito string `json:"banda_credito"        doc:"Banda de riesgo crediticio: BAJO, MEDIO, ALTO, CRITICO; vacío si no aplica"`
 	ScoreCredito int    `json:"score_credito"        doc:"Score de riesgo crediticio [0–100] (mayor = menor riesgo); 0 si no aplica"`
+	// Repurchase propensity signals (Fase A). Empty/zero when TienePulso is false or client has no purchase history.
+	BandaRecompra string `json:"banda_recompra"       doc:"Banda de propensión de recompra: ALTA, MEDIA, BAJA; vacío si no aplica"`
+	ScoreRecompra int    `json:"score_recompra"       doc:"Score de propensión de recompra [0–100] (mayor = más probable); 0 si no aplica"`
 }
 
 // ─── Endpoint 2: GET /clientes/{id} ─────────────────────────────────────────
@@ -177,6 +181,11 @@ type PulsoDTO struct {
 	BandaCredito    string   `json:"banda_credito"       doc:"Banda de riesgo crediticio: BAJO, MEDIO, ALTO, CRITICO; vacío si no aplica"`
 	ScoreCredito    int      `json:"score_credito"       doc:"Score de riesgo crediticio [0–100] (mayor = menor riesgo); 0 si no aplica"`
 	CreditoDrivers  []string `json:"credito_drivers"     doc:"Hasta 3 razones (en español) que más elevan el riesgo crediticio; vacío si no aplica"`
+
+	// ─── Repurchase propensity signals (Fase A) ───────────────────────────────────────
+	BandaRecompra   string   `json:"banda_recompra"      doc:"Banda de propensión de recompra: ALTA, MEDIA, BAJA; vacío si no aplica"`
+	ScoreRecompra   int      `json:"score_recompra"      doc:"Score de propensión de recompra [0–100] (mayor = más probable); 0 si no aplica"`
+	RecompraDrivers []string `json:"recompra_drivers"    doc:"Hasta 3 razones (en español) de mayor propensión de recompra; vacío si no aplica"`
 }
 
 // ─── Endpoint 3: GET /clientes/{id}/ventas ───────────────────────────────────

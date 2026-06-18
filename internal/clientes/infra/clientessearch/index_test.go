@@ -367,3 +367,61 @@ func TestClienteDocToDirectorioDoc_RoundTrip_CreditoSignals(t *testing.T) {
 	assert.Equal(t, "BAJO", out.BandaCredito)
 	assert.Equal(t, 88, out.ScoreCredito)
 }
+
+// ── Fase A: repurchase propensity signal mapping ───────────────────────────────
+
+func TestMapDoc_BandaRecompra_Populated(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	idx := clientessearchmeili.NewMeilisearchDirectoryIndexForTest(rec, "clientes")
+
+	doc := outbound.DirectorioDoc{
+		ClienteID:     30,
+		BandaRecompra: "ALTA",
+		ScoreRecompra: 85,
+		TienePulso:    true,
+	}
+	err := idx.Reconciliar(context.Background(), []outbound.DirectorioDoc{doc})
+	require.NoError(t, err)
+	require.Len(t, rec.batches[0], 1)
+	got := rec.batches[0][0]
+	assert.Equal(t, "ALTA", got.BandaRecompra)
+	assert.Equal(t, 85, got.ScoreRecompra)
+}
+
+func TestMapDoc_BandaRecompra_Empty_WhenNoPulso(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	idx := clientessearchmeili.NewMeilisearchDirectoryIndexForTest(rec, "clientes")
+
+	doc := outbound.DirectorioDoc{
+		ClienteID:  31,
+		TienePulso: false,
+		// BandaRecompra/ScoreRecompra left at zero values
+	}
+	err := idx.Reconciliar(context.Background(), []outbound.DirectorioDoc{doc})
+	require.NoError(t, err)
+	got := rec.batches[0][0]
+	assert.Empty(t, got.BandaRecompra, "no purchase history → empty banda")
+	assert.Equal(t, 0, got.ScoreRecompra, "no purchase history → 0 score")
+}
+
+func TestClienteDocToDirectorioDoc_RoundTrip_RecompraSignals(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	idx := clientessearchmeili.NewMeilisearchDirectoryIndexForTest(rec, "clientes")
+
+	in := outbound.DirectorioDoc{
+		ClienteID:     32,
+		BandaRecompra: "MEDIA",
+		ScoreRecompra: 61,
+		TienePulso:    true,
+	}
+	err := idx.Reconciliar(context.Background(), []outbound.DirectorioDoc{in})
+	require.NoError(t, err)
+	stored := rec.batches[0][0]
+
+	out := clientessearchmeili.ClienteDocToDirectorioDocForTest(stored)
+	assert.Equal(t, "MEDIA", out.BandaRecompra)
+	assert.Equal(t, 61, out.ScoreRecompra)
+}

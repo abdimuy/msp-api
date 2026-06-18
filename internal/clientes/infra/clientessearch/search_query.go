@@ -23,16 +23,17 @@ import (
 // sortMapping maps the canonical SortBy vocabulary (from BuscarClientesInput)
 // to the corresponding Meilisearch sortable attribute name.
 var sortMapping = map[string]string{
-	"nombre":        "nombre",
-	"saldo":         "saldo",
-	"zona":          "zona_id",
-	"score":         "score",
-	"segmento":      "segmento_orden",
-	"estado_pago":   "estado_pago_orden",
-	"recencia":      "recencia_dias",
-	"puntualidad":   "pct_pagos_a_tiempo",
-	"prox_pago":     "fecha_prox_pago_ts",
-	"score_credito": "score_credito",
+	"nombre":         "nombre",
+	"saldo":          "saldo",
+	"zona":           "zona_id",
+	"score":          "score",
+	"segmento":       "segmento_orden",
+	"estado_pago":    "estado_pago_orden",
+	"recencia":       "recencia_dias",
+	"puntualidad":    "pct_pagos_a_tiempo",
+	"prox_pago":      "fecha_prox_pago_ts",
+	"score_credito":  "score_credito",
+	"score_recompra": "score_recompra",
 }
 
 // Buscar executes a directory search against the Meilisearch index and returns
@@ -139,6 +140,9 @@ func buildFilter(q outbound.DirectorioQuery) string {
 	if q.BandaCredito != "" {
 		clauses = append(clauses, fmt.Sprintf("banda_credito = %q", q.BandaCredito))
 	}
+	if q.BandaRecompra != "" {
+		clauses = append(clauses, fmt.Sprintf("banda_recompra = %q", q.BandaRecompra))
+	}
 
 	return strings.Join(clauses, " AND ")
 }
@@ -212,6 +216,8 @@ func clienteDocToDirectorioDoc(cd ClienteDoc) outbound.DirectorioDoc {
 		TierRiesgo:         cd.TierRiesgo,
 		BandaCredito:       cd.BandaCredito,
 		ScoreCredito:       cd.ScoreCredito,
+		BandaRecompra:      cd.BandaRecompra,
+		ScoreRecompra:      cd.ScoreRecompra,
 		PctPagosATiempo:    parseDecimal(cd.PctPagosATiempoStr),
 	}
 

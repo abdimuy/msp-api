@@ -87,6 +87,35 @@ func TestBuildFilter_BandaCredito_AllValues_Accepted(t *testing.T) {
 	}
 }
 
+// ── buildFilter: banda_recompra ───────────────────────────────────────────────
+
+func TestBuildFilter_BandaRecompra_IncludesClause(t *testing.T) {
+	t.Parallel()
+	q := outbound.DirectorioQuery{BandaRecompra: "ALTA"}
+	filter := clientessearchmeili.BuildFilterForTest(q)
+	assert.Contains(t, filter, `banda_recompra = "ALTA"`)
+}
+
+func TestBuildFilter_BandaRecompra_Empty_OmitsClause(t *testing.T) {
+	t.Parallel()
+	q := outbound.DirectorioQuery{BandaRecompra: ""}
+	filter := clientessearchmeili.BuildFilterForTest(q)
+	assert.NotContains(t, filter, "banda_recompra")
+}
+
+func TestBuildFilter_BandaRecompra_AllValues_Accepted(t *testing.T) {
+	t.Parallel()
+	for _, band := range []string{"ALTA", "MEDIA", "BAJA"} {
+		band := band
+		t.Run(band, func(t *testing.T) {
+			t.Parallel()
+			q := outbound.DirectorioQuery{BandaRecompra: band}
+			filter := clientessearchmeili.BuildFilterForTest(q)
+			assert.Contains(t, filter, band)
+		})
+	}
+}
+
 // ── buildSort: score_credito ──────────────────────────────────────────────────
 
 func TestBuildSort_ScoreCredito_MapsToAttribute(t *testing.T) {
@@ -136,5 +165,23 @@ func TestBuildSort_ProxPago_Desc(t *testing.T) {
 	sort := clientessearchmeili.BuildSortForTest("prox_pago", "desc", "")
 	if assert.Len(t, sort, 1) {
 		assert.Equal(t, "fecha_prox_pago_ts:desc", sort[0])
+	}
+}
+
+// ── buildSort: score_recompra ─────────────────────────────────────────────────
+
+func TestBuildSort_ScoreRecompra_MapsToAttribute(t *testing.T) {
+	t.Parallel()
+	sort := clientessearchmeili.BuildSortForTest("score_recompra", "desc", "")
+	if assert.Len(t, sort, 1) {
+		assert.Equal(t, "score_recompra:desc", sort[0])
+	}
+}
+
+func TestBuildSort_ScoreRecompra_DefaultsToAsc(t *testing.T) {
+	t.Parallel()
+	sort := clientessearchmeili.BuildSortForTest("score_recompra", "", "")
+	if assert.Len(t, sort, 1) {
+		assert.Equal(t, "score_recompra:asc", sort[0])
 	}
 }
