@@ -34,6 +34,7 @@ var sortMapping = map[string]string{
 	"prox_pago":      "fecha_prox_pago_ts",
 	"score_credito":  "score_credito",
 	"score_recompra": "score_recompra",
+	"clv":            "clv",
 }
 
 // Buscar executes a directory search against the Meilisearch index and returns
@@ -143,6 +144,9 @@ func buildFilter(q outbound.DirectorioQuery) string {
 	if q.BandaRecompra != "" {
 		clauses = append(clauses, fmt.Sprintf("banda_recompra = %q", q.BandaRecompra))
 	}
+	if q.BandaCLV != "" {
+		clauses = append(clauses, fmt.Sprintf("banda_clv = %q", q.BandaCLV))
+	}
 
 	return strings.Join(clauses, " AND ")
 }
@@ -218,6 +222,9 @@ func clienteDocToDirectorioDoc(cd ClienteDoc) outbound.DirectorioDoc {
 		ScoreCredito:       cd.ScoreCredito,
 		BandaRecompra:      cd.BandaRecompra,
 		ScoreRecompra:      cd.ScoreRecompra,
+		BandaCLV:           cd.BandaCLV,
+		CLV:                cd.CLV,
+		CLVStr:             cd.CLVStr,
 		PctPagosATiempo:    parseDecimal(cd.PctPagosATiempoStr),
 	}
 

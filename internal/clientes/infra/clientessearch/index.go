@@ -109,6 +109,11 @@ func mapDoc(d outbound.DirectorioDoc) ClienteDoc {
 		// Repurchase propensity signals (Fase A).
 		BandaRecompra: d.BandaRecompra,
 		ScoreRecompra: d.ScoreRecompra,
+
+		// CLV signals (Fase B).
+		BandaCLV: d.BandaCLV,
+		CLV:      d.CLV,
+		CLVStr:   d.CLVStr,
 	}
 
 	// Store FechaProxPago as epoch-seconds for sortable numeric, and as an

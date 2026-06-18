@@ -1015,3 +1015,88 @@ func TestListarClientes_BandaCredito_EmptyWhenNoPulso(t *testing.T) {
 	assert.Empty(t, it.BandaCredito, "contado client → empty banda_credito")
 	assert.Equal(t, 0, it.ScoreCredito, "contado client → 0 score_credito")
 }
+
+// TestListarClientes_CLV_InListItem verifies that clv and banda_clv are present
+// in the list-item DTO when TienePulso is true and BandaCLV is set.
+func TestListarClientes_CLV_InListItem(t *testing.T) {
+	t.Parallel()
+
+	doc := outbound.DirectorioDoc{
+		ClienteID:  57,
+		Nombre:     "Martínez Sánchez Ana",
+		TienePulso: true,
+		Score:      75,
+		BandaCLV:   "ALTO",
+		CLVStr:     "87500.00",
+		CLV:        87500.00,
+		Saldo:      decimal.Zero,
+	}
+	di := noopDirectoryIndex{
+		resultado: outbound.DirectorioResultado{
+			Items: []outbound.DirectorioDoc{doc},
+			Total: 1,
+		},
+	}
+	svc := buildServiceWithDirIndex(&fakeRepo{}, &fakeAnalytics{}, di)
+	cu := userWith(auth.PermClientesLeer)
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes", nil)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	var resp struct {
+		Items []struct {
+			BandaCLV   string `json:"banda_clv"`
+			CLV        string `json:"clv"`
+			TienePulso bool   `json:"tiene_pulso"`
+		} `json:"items"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(t, resp.Items, 1)
+
+	it := resp.Items[0]
+	assert.True(t, it.TienePulso)
+	assert.Equal(t, "ALTO", it.BandaCLV)
+	assert.Equal(t, "87500.00", it.CLV)
+}
+
+// TestListarClientes_CLV_EmptyWhenNoPulso verifies that clients with no aplica
+// return clv="" (not "0.00") and banda_clv="" in the list-item DTO.
+func TestListarClientes_CLV_EmptyWhenNoPulso(t *testing.T) {
+	t.Parallel()
+
+	doc := outbound.DirectorioDoc{
+		ClienteID:  58,
+		Nombre:     "López Torres Carlos",
+		TienePulso: false,
+		Saldo:      decimal.Zero,
+		// BandaCLV/CLVStr/CLV left at zero values (no aplica)
+	}
+	di := noopDirectoryIndex{
+		resultado: outbound.DirectorioResultado{
+			Items: []outbound.DirectorioDoc{doc},
+			Total: 1,
+		},
+	}
+	svc := buildServiceWithDirIndex(&fakeRepo{}, &fakeAnalytics{}, di)
+	cu := userWith(auth.PermClientesLeer)
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp struct {
+		Items []struct {
+			BandaCLV   string `json:"banda_clv"`
+			CLV        string `json:"clv"`
+			TienePulso bool   `json:"tiene_pulso"`
+		} `json:"items"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(t, resp.Items, 1)
+
+	it := resp.Items[0]
+	assert.False(t, it.TienePulso)
+	assert.Empty(t, it.BandaCLV, "no aplica → empty banda_clv")
+	assert.Empty(t, it.CLV, "no aplica → empty clv (not \"0.00\")")
+}

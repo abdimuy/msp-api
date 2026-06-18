@@ -396,3 +396,63 @@ func TestReconciliarDirectorio_RecompraSignalsEmptyWhenNoPulso(t *testing.T) {
 	assert.Empty(t, doc.BandaRecompra, "no pulso → empty banda_recompra")
 	assert.Equal(t, 0, doc.ScoreRecompra, "no pulso → 0 score_recompra")
 }
+
+// ── Fase B: CLV signals in reconcile ─────────────────────────────────────────
+
+func TestReconciliarDirectorio_CLVSignalsMappedFromPulso(t *testing.T) {
+	t.Parallel()
+
+	c := newCliente(80, "CLIENTE CON CLV")
+
+	repo := &fakeClientesRepo{
+		dirCompleto: []outbound.DirectorioItem{
+			{Cliente: c, SaldoTotal: decimal.NewFromFloat(5000)},
+		},
+	}
+
+	pulso := analytics.ClientePulsoContract{
+		ClienteID: 80,
+		Score:     70,
+		BandaCLV:  "ALTO",
+		MontoCLV:  decimal.NewFromFloat(125000.50),
+	}
+
+	anl := &fakeAnalyticsClient{
+		pulsosMap: map[int]analytics.ClientePulsoContract{80: pulso},
+	}
+	dirIdx := &fakeDirectoryIndex{}
+	svc := newReconcileService(repo, anl, dirIdx)
+
+	n, err := svc.ReconciliarDirectorio(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+	require.Len(t, dirIdx.lastDocs, 1)
+
+	doc := dirIdx.lastDocs[0]
+	assert.Equal(t, "ALTO", doc.BandaCLV)
+	assert.Equal(t, "125000.50", doc.CLVStr)
+	assert.InDelta(t, 125000.50, doc.CLV, 0.01)
+}
+
+func TestReconciliarDirectorio_CLVStr_EmptyWhenBandaCLVEmpty(t *testing.T) {
+	t.Parallel()
+
+	c := newCliente(81, "CLIENTE SIN CLV")
+	repo := &fakeClientesRepo{
+		dirCompleto: []outbound.DirectorioItem{
+			{Cliente: c, SaldoTotal: decimal.Zero},
+		},
+	}
+	anl := &fakeAnalyticsClient{} // no pulse → no CLV signals
+	dirIdx := &fakeDirectoryIndex{}
+	svc := newReconcileService(repo, anl, dirIdx)
+
+	_, err := svc.ReconciliarDirectorio(context.Background())
+	require.NoError(t, err)
+	require.Len(t, dirIdx.lastDocs, 1)
+
+	doc := dirIdx.lastDocs[0]
+	assert.Empty(t, doc.BandaCLV, "no pulso → empty banda_clv")
+	assert.Empty(t, doc.CLVStr, "no pulso → empty clv_str (not \"0.00\")")
+	assert.InDelta(t, float64(0), doc.CLV, 0.001, "no pulso → 0.0 clv")
+}

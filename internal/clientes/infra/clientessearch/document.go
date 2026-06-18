@@ -153,6 +153,19 @@ type ClienteDoc struct {
 	// to repurchase; 0 when no aplica). Sortable + display.
 	ScoreRecompra int `json:"score_recompra"`
 
+	// BandaCLV is the risk-adjusted CLV band (ALTO|MEDIO|BAJO; "" when no aplica).
+	// Filterable + facetable + display.
+	BandaCLV string `json:"banda_clv"`
+
+	// CLV is the risk-adjusted customer lifetime value in pesos as float64.
+	// ONLY for Meilisearch numeric sorting — render CLVStr instead to avoid
+	// float64→decimal precision loss.
+	CLV float64 `json:"clv"`
+
+	// CLVStr is the exact CLV amount (StringFixed 2). Empty ("") when BandaCLV is "".
+	// Display only.
+	CLVStr string `json:"clv_str"`
+
 	// PctPagosATiempo is the fraction of payments made on time (0–100),
 	// stored as a float64 for Meilisearch numeric sorting. Use PctPagosATiempoStr
 	// for display to preserve the exact decimal value.
@@ -205,6 +218,7 @@ var filterableAttributes = []string{
 	"tier_riesgo",
 	"banda_credito",
 	"banda_recompra",
+	"banda_clv",
 }
 
 // sortableAttributes lists every attribute that can appear in sort clauses.
@@ -220,6 +234,7 @@ var sortableAttributes = []string{
 	"fecha_prox_pago_ts",
 	"score_credito",
 	"score_recompra",
+	"clv",
 }
 
 // facetAttributes are the attributes returned in FacetDistribution by default.
@@ -233,6 +248,7 @@ var facetAttributes = []string{
 	"tier_riesgo",
 	"banda_credito",
 	"banda_recompra",
+	"banda_clv",
 }
 
 // FacetAttributes returns the canonical list of facet attributes for the

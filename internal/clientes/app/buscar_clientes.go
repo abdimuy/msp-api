@@ -27,6 +27,7 @@ const (
 	sortByProxPago      = "prox_pago"      // maps to fecha_prox_pago_ts
 	sortByScoreCredito  = "score_credito"  // maps to score_credito
 	sortByScoreRecompra = "score_recompra" // maps to score_recompra
+	sortByCLV           = "clv"            // maps to clv
 )
 
 // ErrSortByInvalido is returned when SortBy is not one of the allowed columns.
@@ -41,7 +42,7 @@ func validSortBy(sortBy string) bool {
 	switch sortBy {
 	case "", sortByNombre, sortBySaldo, sortByZona,
 		sortByScore, sortBySegmento, sortByEstadoPago, sortByRecencia,
-		sortByPuntualidad, sortByProxPago, sortByScoreCredito, sortByScoreRecompra:
+		sortByPuntualidad, sortByProxPago, sortByScoreCredito, sortByScoreRecompra, sortByCLV:
 		return true
 	default:
 		return false
@@ -76,10 +77,13 @@ type BuscarClientesInput struct {
 	// BandaRecompra restricts to a specific repurchase-propensity band (exact match). Empty = no filter.
 	// Clients with no purchase history index banda_recompra="" and won't match a non-empty filter.
 	BandaRecompra string
+	// BandaCLV restricts to a specific CLV band (exact match). Empty = no filter.
+	// Clients with no aplica index banda_clv="" and won't match a non-empty filter.
+	BandaCLV string
 
 	// SortBy selects the sort column. Empty = default (nombre:asc browse, relevance search).
 	// Allowed values: nombre, saldo, zona, score, segmento, estado_pago, recencia,
-	// puntualidad, prox_pago, score_credito, score_recompra.
+	// puntualidad, prox_pago, score_credito, score_recompra, clv.
 	SortBy string
 	// SortOrder is "asc" (default) or "desc".
 	SortOrder string
@@ -132,6 +136,7 @@ func (s *Service) BuscarClientes(ctx context.Context, in BuscarClientesInput) (B
 		TierRiesgo:    in.TierRiesgo,
 		BandaCredito:  in.BandaCredito,
 		BandaRecompra: in.BandaRecompra,
+		BandaCLV:      in.BandaCLV,
 		SortBy:        in.SortBy,
 		SortOrder:     in.SortOrder,
 		Offset:        offset,

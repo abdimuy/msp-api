@@ -66,6 +66,11 @@ type DirectorioDoc struct {
 	// has no purchase history.
 	BandaRecompra string // ALTA | MEDIA | BAJA; "" when no aplica
 	ScoreRecompra int    // 0–100, higher = more likely to repurchase; 0 when no aplica
+
+	// CLV signals (Fase B). Zero/empty when TienePulso is false or client has no aplica.
+	CLV      float64 // risk-adjusted CLV in pesos as float64 (sort key only; use CLVStr for display)
+	CLVStr   string  // exact CLV in pesos (StringFixed 2); "" when BandaCLV is ""
+	BandaCLV string  // ALTO | MEDIO | BAJO; "" when no aplica
 }
 
 // DirectorioQuery carries all parameters for a single Meilisearch directory
@@ -96,6 +101,10 @@ type DirectorioQuery struct {
 	// Accepted values: ALTA, MEDIA, BAJA. Clients with no purchase history
 	// index banda_recompra="" and will never match a non-empty BandaRecompra filter.
 	BandaRecompra string
+	// BandaCLV restricts to a specific CLV band (exact match). Empty = no filter.
+	// Accepted values: ALTO, MEDIO, BAJO. Clients with no aplica
+	// index banda_clv="" and will never match a non-empty BandaCLV filter.
+	BandaCLV string
 	// SortBy is the sort column (e.g. "nombre", "saldo", "score"). Empty means
 	// default order (nombre:asc when Q is empty, Meilisearch relevance when Q is set).
 	SortBy string

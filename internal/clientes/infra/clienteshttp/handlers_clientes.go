@@ -60,6 +60,7 @@ func (h *Handlers) ListarClientes(ctx context.Context, input *ListarClientesInpu
 		TierRiesgo:    input.Tier,
 		BandaCredito:  input.BandaCredito,
 		BandaRecompra: input.BandaRecompra,
+		BandaCLV:      input.BandaCLV,
 		SortBy:        input.SortBy,
 		SortOrder:     input.SortOrder,
 		Pagination: outbound.ListParams{

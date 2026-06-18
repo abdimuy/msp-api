@@ -565,3 +565,48 @@ func TestBuscarClientes_SortByScoreRecompra_IsValid(t *testing.T) {
 		t.Errorf("SortBy: got %q, want %q", di.captured.SortBy, "score_recompra")
 	}
 }
+
+// ── Fase B: BandaCLV filter + clv sort ───────────────────────────────────────
+
+func TestBuscarClientes_BandaCLV_ThreadedToQuery(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	di := &fakeDirectoryIndexWithBuscar{
+		resultado: outbound.DirectorioResultado{Items: []outbound.DirectorioDoc{}, Total: 0},
+	}
+	svc := buildSvc(di)
+
+	_, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
+		BandaCLV:   "ALTO",
+		Pagination: outbound.ListParams{PageSize: 20},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if di.captured.BandaCLV != "ALTO" {
+		t.Errorf("BandaCLV: got %q, want %q", di.captured.BandaCLV, "ALTO")
+	}
+}
+
+func TestBuscarClientes_SortByCLV_IsValid(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	di := &fakeDirectoryIndexWithBuscar{
+		resultado: outbound.DirectorioResultado{Items: []outbound.DirectorioDoc{}, Total: 0},
+	}
+	svc := buildSvc(di)
+
+	_, err := svc.BuscarClientes(ctx, app.BuscarClientesInput{
+		SortBy:     "clv",
+		SortOrder:  "desc",
+		Pagination: outbound.ListParams{PageSize: 20},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error for sort_by=clv: %v", err)
+	}
+	if di.captured.SortBy != "clv" {
+		t.Errorf("SortBy: got %q, want %q", di.captured.SortBy, "clv")
+	}
+}

@@ -117,6 +117,12 @@ func applyPulso(doc *outbound.DirectorioDoc, p analytics.ClientePulsoContract) {
 	// Repurchase propensity signals (Fase A).
 	doc.BandaRecompra = p.BandaRecompra
 	doc.ScoreRecompra = p.ScoreRecompra
+	// CLV signals (Fase B).
+	doc.BandaCLV = p.BandaCLV
+	doc.CLV = p.MontoCLV.InexactFloat64()
+	if p.BandaCLV != "" {
+		doc.CLVStr = p.MontoCLV.StringFixed(2)
+	}
 }
 
 // buildDireccionCompleta joins non-empty, trimmed address parts into a single

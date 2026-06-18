@@ -185,3 +185,50 @@ func TestBuildSort_ScoreRecompra_DefaultsToAsc(t *testing.T) {
 		assert.Equal(t, "score_recompra:asc", sort[0])
 	}
 }
+
+// ── buildFilter: banda_clv ───────────────────────────────────────────────────
+
+func TestBuildFilter_BandaCLV_IncludesClause(t *testing.T) {
+	t.Parallel()
+	q := outbound.DirectorioQuery{BandaCLV: "ALTO"}
+	filter := clientessearchmeili.BuildFilterForTest(q)
+	assert.Contains(t, filter, `banda_clv = "ALTO"`)
+}
+
+func TestBuildFilter_BandaCLV_Empty_OmitsClause(t *testing.T) {
+	t.Parallel()
+	q := outbound.DirectorioQuery{BandaCLV: ""}
+	filter := clientessearchmeili.BuildFilterForTest(q)
+	assert.NotContains(t, filter, "banda_clv")
+}
+
+func TestBuildFilter_BandaCLV_AllValues_Accepted(t *testing.T) {
+	t.Parallel()
+	for _, band := range []string{"ALTO", "MEDIO", "BAJO"} {
+		band := band
+		t.Run(band, func(t *testing.T) {
+			t.Parallel()
+			q := outbound.DirectorioQuery{BandaCLV: band}
+			filter := clientessearchmeili.BuildFilterForTest(q)
+			assert.Contains(t, filter, band)
+		})
+	}
+}
+
+// ── buildSort: clv ───────────────────────────────────────────────────────────
+
+func TestBuildSort_CLV_MapsToAttribute(t *testing.T) {
+	t.Parallel()
+	sort := clientessearchmeili.BuildSortForTest("clv", "desc", "")
+	if assert.Len(t, sort, 1) {
+		assert.Equal(t, "clv:desc", sort[0])
+	}
+}
+
+func TestBuildSort_CLV_DefaultsToAsc(t *testing.T) {
+	t.Parallel()
+	sort := clientessearchmeili.BuildSortForTest("clv", "", "")
+	if assert.Len(t, sort, 1) {
+		assert.Equal(t, "clv:asc", sort[0])
+	}
+}

@@ -6,6 +6,7 @@ package clienteshttp
 import (
 	"time"
 
+	"github.com/abdimuy/msp-api/internal/analytics"
 	clientesapp "github.com/abdimuy/msp-api/internal/clientes/app"
 	"github.com/abdimuy/msp-api/internal/clientes/domain"
 	"github.com/abdimuy/msp-api/internal/clientes/ports/outbound"
@@ -39,6 +40,10 @@ func dirDocToClienteListItemDTO(doc outbound.DirectorioDoc) ClienteListItemDTO {
 		dto.ScoreCredito = doc.ScoreCredito
 		dto.BandaRecompra = doc.BandaRecompra
 		dto.ScoreRecompra = doc.ScoreRecompra
+		dto.BandaCLV = doc.BandaCLV
+		if doc.BandaCLV != "" {
+			dto.CLV = doc.CLVStr
+		}
 	}
 	return dto
 }
@@ -63,6 +68,18 @@ func formatTime(t time.Time) string {
 		return ""
 	}
 	return t.UTC().Format(time.RFC3339Nano)
+}
+
+// ─── CLV helpers ──────────────────────────────────────────────────────────────
+
+// clvString returns the CLV as a 2-decimal peso string when BandaCLV is set,
+// or "" when no aplica (BandaCLV == ""). Avoids emitting "0.00" for clients
+// with no CLV signal so the frontend can cleanly hide the field.
+func clvString(p analytics.ClientePulsoContract) string {
+	if p.BandaCLV == "" {
+		return ""
+	}
+	return p.MontoCLV.StringFixed(moneyScale)
 }
 
 // ─── Endpoint 2: ficha ───────────────────────────────────────────────────────
@@ -131,6 +148,8 @@ func toFichaDTO(ficha clientesapp.FichaCliente) FichaDTO {
 			BandaRecompra:     p.BandaRecompra,
 			ScoreRecompra:     p.ScoreRecompra,
 			RecompraDrivers:   p.RecompraDrivers,
+			BandaCLV:          p.BandaCLV,
+			CLV:               clvString(p),
 		}
 	}
 

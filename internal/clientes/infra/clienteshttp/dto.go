@@ -31,7 +31,8 @@ type ListarClientesInput struct {
 	Tier          string `query:"tier"          doc:"Filtra por tier de riesgo de cobranza (AL_DIA, VIGILANCIA, EN_RIESGO, CRITICO); vacío = sin filtro"`
 	BandaCredito  string `query:"banda_credito"  doc:"Filtra por banda de riesgo crediticio (BAJO, MEDIO, ALTO, CRITICO); vacío = sin filtro"`
 	BandaRecompra string `query:"banda_recompra" doc:"Filtra por banda de propensión de recompra (ALTA, MEDIA, BAJA); vacío = sin filtro"`
-	SortBy        string `query:"sort_by"        enum:"nombre,saldo,zona,score,segmento,estado_pago,recencia,puntualidad,prox_pago,score_credito,score_recompra" doc:"Columna de ordenamiento GLOBAL; vacío = orden por defecto (relevancia en búsqueda, nombre al navegar)"`
+	BandaCLV      string `query:"banda_clv"      doc:"Filtra por banda de CLV (ALTO, MEDIO, BAJO); vacío = sin filtro"`
+	SortBy        string `query:"sort_by"        enum:"nombre,saldo,zona,score,segmento,estado_pago,recencia,puntualidad,prox_pago,score_credito,score_recompra,clv" doc:"Columna de ordenamiento GLOBAL; vacío = orden por defecto (relevancia en búsqueda, nombre al navegar)"`
 	SortOrder     string `query:"sort_order"  enum:"asc,desc" default:"asc" doc:"Sentido del ordenamiento"`
 	Cursor        string `query:"cursor"      doc:"Cursor de paginación opaco devuelto por la respuesta anterior"`
 	Limit         int    `query:"limit"       default:"50" minimum:"1" maximum:"200" doc:"Máximo de registros devueltos"`
@@ -75,6 +76,9 @@ type ClienteListItemDTO struct {
 	// Repurchase propensity signals (Fase A). Empty/zero when TienePulso is false or client has no purchase history.
 	BandaRecompra string `json:"banda_recompra"       doc:"Banda de propensión de recompra: ALTA, MEDIA, BAJA; vacío si no aplica"`
 	ScoreRecompra int    `json:"score_recompra"       doc:"Score de propensión de recompra [0–100] (mayor = más probable); 0 si no aplica"`
+	// CLV signals (Fase B). Empty when TienePulso is false or no aplica.
+	CLV      string `json:"clv"      doc:"Valor de vida del cliente ajustado por riesgo, en pesos; vacío si no aplica"`
+	BandaCLV string `json:"banda_clv" doc:"Banda de CLV: ALTO, MEDIO, BAJO; vacío si no aplica"`
 }
 
 // ─── Endpoint 2: GET /clientes/{id} ─────────────────────────────────────────
@@ -186,6 +190,10 @@ type PulsoDTO struct {
 	BandaRecompra   string   `json:"banda_recompra"      doc:"Banda de propensión de recompra: ALTA, MEDIA, BAJA; vacío si no aplica"`
 	ScoreRecompra   int      `json:"score_recompra"      doc:"Score de propensión de recompra [0–100] (mayor = más probable); 0 si no aplica"`
 	RecompraDrivers []string `json:"recompra_drivers"    doc:"Hasta 3 razones (en español) de mayor propensión de recompra; vacío si no aplica"`
+
+	// ─── CLV signals (Fase B) ───────────────────────────────────────────────────────
+	CLV      string `json:"clv"      doc:"Valor de vida del cliente ajustado por riesgo, en pesos; vacío si no aplica"`
+	BandaCLV string `json:"banda_clv" doc:"Banda de CLV: ALTO, MEDIO, BAJO; vacío si no aplica"`
 }
 
 // ─── Endpoint 3: GET /clientes/{id}/ventas ───────────────────────────────────

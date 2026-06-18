@@ -36,7 +36,7 @@ func TestDefaultIndexConfig_FilterableAttributes(t *testing.T) {
 	for _, expected := range []string{
 		"zona_id", "cobrador_id", "con_saldo", "segmento",
 		"estado_pago", "score", "recencia_dias", "estatus", "tier_riesgo",
-		"banda_credito", "banda_recompra",
+		"banda_credito", "banda_recompra", "banda_clv",
 	} {
 		assert.True(t, slices.Contains(cfg.FilterableAttributes, expected),
 			"filterable must include %q", expected)
@@ -52,7 +52,7 @@ func TestDefaultIndexConfig_SortableAttributes(t *testing.T) {
 		"nombre", "saldo", "score", "segmento_orden",
 		"estado_pago_orden", "recencia_dias", "zona_id",
 		"pct_pagos_a_tiempo", "fecha_prox_pago_ts",
-		"score_credito", "score_recompra",
+		"score_credito", "score_recompra", "clv",
 	} {
 		assert.Contains(t, cfg.SortableAttributes, expected,
 			"sortable must include %q", expected)
@@ -83,7 +83,7 @@ func TestFacetAttributes_NonEmpty(t *testing.T) {
 	t.Parallel()
 	facets := clientessearchmeili.FacetAttributes()
 	assert.NotEmpty(t, facets)
-	for _, expected := range []string{"zona_id", "cobrador_id", "segmento", "estado_pago", "tier_riesgo", "banda_credito", "banda_recompra"} {
+	for _, expected := range []string{"zona_id", "cobrador_id", "segmento", "estado_pago", "tier_riesgo", "banda_credito", "banda_recompra", "banda_clv"} {
 		assert.Contains(t, facets, expected,
 			"facet attributes must include %q", expected)
 	}

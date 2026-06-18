@@ -425,3 +425,66 @@ func TestClienteDocToDirectorioDoc_RoundTrip_RecompraSignals(t *testing.T) {
 	assert.Equal(t, "MEDIA", out.BandaRecompra)
 	assert.Equal(t, 61, out.ScoreRecompra)
 }
+
+// ── Fase B: CLV signal mapping ────────────────────────────────────────────────
+
+func TestMapDoc_BandaCLV_Populated(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	idx := clientessearchmeili.NewMeilisearchDirectoryIndexForTest(rec, "clientes")
+
+	doc := outbound.DirectorioDoc{
+		ClienteID:  40,
+		BandaCLV:   "ALTO",
+		CLV:        98500.75,
+		CLVStr:     "98500.75",
+		TienePulso: true,
+	}
+	err := idx.Reconciliar(context.Background(), []outbound.DirectorioDoc{doc})
+	require.NoError(t, err)
+	require.Len(t, rec.batches[0], 1)
+	got := rec.batches[0][0]
+	assert.Equal(t, "ALTO", got.BandaCLV)
+	assert.InDelta(t, 98500.75, got.CLV, 0.01)
+	assert.Equal(t, "98500.75", got.CLVStr)
+}
+
+func TestMapDoc_BandaCLV_Empty_WhenNoPulso(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	idx := clientessearchmeili.NewMeilisearchDirectoryIndexForTest(rec, "clientes")
+
+	doc := outbound.DirectorioDoc{
+		ClienteID:  41,
+		TienePulso: false,
+		// BandaCLV/CLV/CLVStr left at zero values
+	}
+	err := idx.Reconciliar(context.Background(), []outbound.DirectorioDoc{doc})
+	require.NoError(t, err)
+	got := rec.batches[0][0]
+	assert.Empty(t, got.BandaCLV, "no aplica → empty banda_clv")
+	assert.InDelta(t, float64(0), got.CLV, 0.001, "no aplica → 0 clv")
+	assert.Empty(t, got.CLVStr, "no aplica → empty clv_str (not \"0.00\")")
+}
+
+func TestClienteDocToDirectorioDoc_RoundTrip_CLVSignals(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	idx := clientessearchmeili.NewMeilisearchDirectoryIndexForTest(rec, "clientes")
+
+	in := outbound.DirectorioDoc{
+		ClienteID:  42,
+		BandaCLV:   "MEDIO",
+		CLV:        45000.00,
+		CLVStr:     "45000.00",
+		TienePulso: true,
+	}
+	err := idx.Reconciliar(context.Background(), []outbound.DirectorioDoc{in})
+	require.NoError(t, err)
+	stored := rec.batches[0][0]
+
+	out := clientessearchmeili.ClienteDocToDirectorioDocForTest(stored)
+	assert.Equal(t, "MEDIO", out.BandaCLV)
+	assert.Equal(t, "45000.00", out.CLVStr)
+	assert.InDelta(t, 45000.00, out.CLV, 0.01)
+}
