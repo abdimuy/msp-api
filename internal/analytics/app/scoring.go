@@ -16,6 +16,15 @@ import (
 	"github.com/abdimuy/msp-api/internal/analytics/domain"
 )
 
+// monthIndex converts a time.Time to a monotonic month index (year*12 + month - 1).
+// Returns 0 for zero time (caller is responsible for gating on zero dates).
+func monthIndex(t time.Time) int {
+	if t.IsZero() {
+		return 0
+	}
+	return t.Year()*12 + int(t.Month()) - 1
+}
+
 // ─── Segmentation thresholds ─────────────────────────────────────────────────
 
 const (
@@ -347,6 +356,95 @@ func computeCreditoScore(c *domain.WinbackCandidato, now time.Time, sc Scorecard
 		return domain.ScoreCredito{}, domain.BandaCredito(""), nil, false
 	}
 	features := buildCreditoFeatures(c, now)
+	score, banda, drivers := sc.Aplicar(features)
+	return score, banda, drivers, true
+}
+
+// ─── Repurchase propensity scoring ───────────────────────────────────────────
+
+// buildRecompraFeatures assembles the read-time feature vector for the recompra
+// propensity scorecard from the candidate's materialized V-sale and payment facts.
+//
+// BG/BB monthly grid (month index = year*12 + month - 1; constant offset cancels):
+//
+//	acqMonth  = monthIndex(FechaPrimerVenta)
+//	lastMonth = monthIndex(FechaUltimaVenta)
+//	nowMonth  = monthIndex(now)
+//	n         = max(0, nowMonth - acqMonth)         — observation periods
+//	tx        = clamp(lastMonth - acqMonth, 0, n)   — recency in months
+//	x         = max(0, VentasMesesDistintos - 1)    — repeat months (excl. acquisition)
+//
+// Feature definitions:
+//
+//	BGBB_EXP_12M      — expected purchases in the next 12 months (BG/BB).
+//	BGBB_P_ALIVE      — probability the client is still "alive" (BG/BB).
+//	RECENCIA_MESES    — months since last V sale (n − tx).
+//	FRECUENCIA_V      — distinct V months beyond acquisition (x).
+//	ANTIGUEDAD_MESES  — total observation months (n).
+//	MONETARY_LOG      — log1p of average V ticket (mean IMPORTE_NETO).
+//	PCT_PAGOS_A_TIEMPO — fraction of payments within cadence + 7d tolerance (0–1).
+//	DIAS_SIN_PAGAR    — days since last real payment; falls back to days since
+//	                    first cargo when FechaUltimoPago is zero.
+//
+// The keys MUST match the feature names in recompra_scorecard.json. Pure and deterministic.
+// now must be UTC.
+func buildRecompraFeatures(c *domain.WinbackCandidato, now time.Time, btyd BTYD) map[string]float64 {
+	acqMonth := monthIndex(c.FechaPrimerVenta())
+	lastMonth := monthIndex(c.FechaUltimaVenta())
+	nowMonth := monthIndex(now)
+
+	n := nowMonth - acqMonth
+	if n < 0 {
+		n = 0
+	}
+	tx := lastMonth - acqMonth
+	if tx < 0 {
+		tx = 0
+	}
+	if tx > n {
+		tx = n
+	}
+	x := c.VentasMesesDistintos() - 1
+	if x < 0 {
+		x = 0
+	}
+
+	diasSinPagar := daysSince(c.FechaUltimoPago(), now)
+	if c.FechaUltimoPago().IsZero() {
+		diasSinPagar = daysSince(c.FechaPrimerCargo(), now)
+	}
+
+	return map[string]float64{
+		"BGBB_EXP_12M":       btyd.ExpectedPurchases(12, x, tx, n),
+		"BGBB_P_ALIVE":       btyd.PAlive(x, tx, n),
+		"RECENCIA_MESES":     float64(nowMonth - lastMonth),
+		"FRECUENCIA_V":       float64(x),
+		"ANTIGUEDAD_MESES":   float64(n),
+		"MONETARY_LOG":       math.Log1p(c.MonetaryVProm().InexactFloat64()),
+		"PCT_PAGOS_A_TIEMPO": c.PctPagosATiempo().InexactFloat64() / 100.0,
+		"DIAS_SIN_PAGAR":     diasSinPagar,
+	}
+}
+
+// computeRecompraScore applies the embedded recompra scorecard to a candidate's
+// features. Returns aplica=false (zero score, empty banda, nil drivers) when the
+// recompra score does not apply — i.e. any of:
+//   - the scorecard failed to load;
+//   - the btyd engine failed to load;
+//   - the client has no V purchase history (FechaPrimerVenta is zero);
+//   - VentasMesesDistintos < 1 (insufficient V purchase data).
+//
+// The caller renders "no aplica". now must be UTC. Unlike computeCreditoScore,
+// this gate does NOT require saldo > 0 — recompra applies to any client with
+// ≥1 V sale, including fully-paid and contado clients.
+func computeRecompraScore(c *domain.WinbackCandidato, now time.Time, sc RecompraScorecard, btyd BTYD) (domain.ScoreRecompra, domain.BandaRecompra, []string, bool) {
+	if !sc.Loaded() || !btyd.Loaded() {
+		return domain.ScoreRecompra{}, domain.BandaRecompra(""), nil, false
+	}
+	if c.FechaPrimerVenta().IsZero() || c.VentasMesesDistintos() < 1 {
+		return domain.ScoreRecompra{}, domain.BandaRecompra(""), nil, false
+	}
+	features := buildRecompraFeatures(c, now, btyd)
 	score, banda, drivers := sc.Aplicar(features)
 	return score, banda, drivers, true
 }

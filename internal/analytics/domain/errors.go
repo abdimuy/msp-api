@@ -100,4 +100,22 @@ var (
 		"btyd_params_invalido",
 		"los parámetros btyd embebidos no son válidos",
 	)
+
+	// ErrScoreRecompraFueraDeRango is returned when a repurchase score is not in [0, 100].
+	ErrScoreRecompraFueraDeRango = apperror.NewValidation(
+		"score_recompra_fuera_de_rango",
+		"el score de recompra debe estar entre 0 y 100",
+	)
+
+	// ErrBandaRecompraInvalida is returned when an unrecognized BandaRecompra value is parsed.
+	ErrBandaRecompraInvalida = apperror.NewValidation(
+		"banda_recompra_invalida",
+		"la banda de propensión a recompra no es válida",
+	)
+
+	// ErrRecompraScorecardInvalido is returned when the embedded recompra scorecard cannot be parsed or is structurally invalid.
+	ErrRecompraScorecardInvalido = apperror.NewInternal(
+		"recompra_scorecard_invalido",
+		"el scorecard de recompra embebido no es válido",
+	)
 )

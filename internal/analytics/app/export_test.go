@@ -45,3 +45,20 @@ func ExportBuildCreditoFeatures(c *domain.WinbackCandidato, now time.Time) map[s
 func ExportComputeCreditoScore(c *domain.WinbackCandidato, now time.Time, sc Scorecard) (domain.ScoreCredito, domain.BandaCredito, []string, bool) {
 	return computeCreditoScore(c, now, sc)
 }
+
+// ExportBuildRecompraFeatures exposes the internal buildRecompraFeatures function
+// for table-driven tests in the app_test package.
+func ExportBuildRecompraFeatures(c *domain.WinbackCandidato, now time.Time, btyd BTYD) map[string]float64 {
+	return buildRecompraFeatures(c, now, btyd)
+}
+
+// ExportComputeRecompraScore exposes the internal computeRecompraScore function
+// for table-driven tests in the app_test package.
+func ExportComputeRecompraScore(c *domain.WinbackCandidato, now time.Time, sc RecompraScorecard, btyd BTYD) (domain.ScoreRecompra, domain.BandaRecompra, []string, bool) {
+	return computeRecompraScore(c, now, sc, btyd)
+}
+
+// ExportMonthIndex exposes the internal monthIndex helper for grid math tests.
+func ExportMonthIndex(t time.Time) int {
+	return monthIndex(t)
+}
