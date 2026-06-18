@@ -1,0 +1,32 @@
+{
+  "version": "v1-clv-20260617",
+  "margin": 0.528,
+  "margin_source": "project_verified_unit_economics (real 2025 margin 52.8%)",
+  "horizon_months": 24,
+  "monthly_discount": 0.00948879,
+  "monthly_discount_note": "annual ~12% cost of capital → d = (1.12)^(1/12) - 1",
+  "det_definition": "DET = sum_{m=1..H} (E[X(m)] - E[X(m-1)]) / (1+d)^m, E[X(m)] = conditional_expected_number_of_purchases_up_to_time(m, x, t_x, n) from shared BG/BB (btyd_params.json); E[X(0)]=0; period=month",
+  "bgbb_source": "btyd_params.json (shared with recompra; NOT refit here)",
+  "gamma_gamma": {
+    "p": 7.35488294,
+    "q": 14.74578338,
+    "v": 11712.37000809
+  },
+  "gamma_gamma_fit": {
+    "penalizer_coef": 0.0,
+    "n_clientes": 19408,
+    "obs_date": "2026-06-30",
+    "corr_frequency_monetary": 0.066975,
+    "population_mean_ticket": 6216.97
+  },
+  "monetary_fallback_when_freq0": "observed mean V ticket (Gamma-Gamma not applicable without repeat signal)",
+  "bands_pesos": {
+    "alto_min": 1225.94,
+    "medio_min": 200.66
+  },
+  "riesgo": {
+    "formula": "CLV_final = margin*E[M]*DET*P_paga - perdida_esperada",
+    "p_paga_source": "credit Score 1 (scorecard.json); P_paga=1.0 when the client has no open credit exposure",
+    "perdida_esperada": "perdida_esperada = (1 - P_paga) * SALDO_ACTUAL * LGD, with LGD=1.0 (v1). SALDO_ACTUAL = current open balance (MSP_SALDOS_VENTAS); when SALDO_ACTUAL=0 (no exposure) perdida_esperada=0 and P_paga=1.0. LGD=1.0 because castigos zero the balance with ~0 recovery (project_credito_scorecard_pit: castigo leakage). Go computes this per client at serve time; tune LGD down if recovery data appears."
+  }
+}
