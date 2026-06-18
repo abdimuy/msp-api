@@ -92,4 +92,12 @@ var (
 		"scorecard_invalido",
 		"el scorecard de crédito embebido no es válido",
 	)
+
+	// ErrBTYDParamsInvalido is returned when the embedded BG/BB or Gamma-Gamma
+	// parameters cannot be parsed or are structurally invalid (non-finite or
+	// non-positive shape parameters).
+	ErrBTYDParamsInvalido = apperror.NewInternal(
+		"btyd_params_invalido",
+		"los parámetros btyd embebidos no son válidos",
+	)
 )
