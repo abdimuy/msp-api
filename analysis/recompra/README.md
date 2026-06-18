@@ -229,3 +229,29 @@ Approximately quarterly, or sooner if population stability (PSI) drifts.
 5. Re-run the Go BG/BB unit tests against the refreshed `btyd_fixtures.json`.
 6. Commit the three date-stamped JSONs.
 ```
+
+---
+
+## Known limitation — hyper-frequent accounts (validated live 2026-06)
+
+BG/BB was fit on a furniture-credit base whose typical customer makes **1–5**
+purchases (median repeat-months ≈ 0–1). A handful of accounts are *hyper-frequent*
+— "público general" / mostrador / wholesale accounts that buy in dozens of distinct
+months (e.g. client 12387: ~1,800 raw V tickets → `x≈97` repeat-months). These sit
+far outside the calibration frequency distribution, and BG/BB assigns them a
+near-zero `p_alive`/`E[X]` (any recency gap after dozens of buys reads as "death").
+
+Consequence at serve time: such accounts get degenerate `BGBB_EXP_12M`/`BGBB_P_ALIVE`
+features (≈0) and, via DET, a near-zero **CLV** — even though they are obviously active.
+Their **recompra band is still ALTA** (the logistic is dominated by RECENCIA_MESES /
+FRECUENCIA_V, whose BGBB weights are small), so the visible artifact is a rare
+"ALTA propensión + CLV BAJO" pairing for a generic account.
+
+**This is a BG/BB model property, not a Go bug** — verified to match `lifetimes`
+and a log-space recompute to ~1e-14 on the exact `(x,t_x,n)` triples. **Normal
+clients score correctly at every age** — e.g. a 20-year-old client with 3 purchases
+gives `p_alive≈0.9996, E[X(12)]≈0.11`.
+
+Mitigations for a future rev (not v1): cap `x` at a sane ceiling, exclude
+público-general accounts from the score, or refit BG/BB with those accounts removed.
+The target furniture-credit customer (1–5 purchases) is unaffected.

@@ -282,3 +282,14 @@ Approximately quarterly, in lockstep with the recompra/credit harnesses (they sh
    tests against `btyd_fixtures.json`.
 5. Commit the two date-stamped JSONs.
 ```
+
+---
+
+## Known limitation — hyper-frequent accounts
+
+CLV reuses the shared BG/BB DET, so it inherits the hyper-frequent-account
+degeneracy documented in `analysis/recompra/README.md` ("Known limitation"):
+público-general / mostrador / wholesale accounts (dozens of purchase-months) get a
+near-zero DET → CLV ≈ 0 despite being active. This matches `lifetimes` exactly
+(not a code bug); typical furniture-credit customers (1–5 purchases) are unaffected.
+Mitigation deferred to a future recalibration (cap `x` / exclude generic accounts).
