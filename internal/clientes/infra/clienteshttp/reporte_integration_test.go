@@ -55,7 +55,9 @@ func TestReporteIntegration_MinervaLopez(t *testing.T) {
 
 		t.Logf("cliente: %s, ventas: %d", rep.Cliente.Nombre, len(rep.Ventas))
 		if clienteID == 24037 {
-			assert.Greater(t, len(rep.Ventas), 10, "cliente 24037 debe tener más de 10 ventas")
+			// Solo ventas reales (TIPO_DOCTO='V'): 24037 tiene 4 (antes salían 45
+			// porque se contaban los documentos de cobranza 'P').
+			assert.Len(t, rep.Ventas, 4, "cliente 24037 debe tener 4 ventas reales")
 		}
 
 		pdf, err := clientespdf.Render(rep, genFijo)

@@ -378,7 +378,7 @@ SELECT
   ), 0) AS PLAZO_MESES
 FROM DOCTOS_PV pv
 WHERE pv.CLIENTE_ID = ?
-  AND pv.TIPO_DOCTO IN ('V', 'P')
+  AND pv.TIPO_DOCTO = 'V' -- solo ventas reales; 'P' = documentos de cobranza/abono (sin artículos)
   AND pv.ESTATUS = 'N'`
 
 // ─── ListarVentas ─────────────────────────────────────────────────────────────
@@ -484,7 +484,7 @@ SELECT FIRST ? ` + selectVentaClienteCols + `
 FROM DOCTOS_PV pv
 LEFT JOIN ALMACENES alm ON alm.ALMACEN_ID = pv.ALMACEN_ID
 WHERE pv.CLIENTE_ID = ?
-  AND pv.TIPO_DOCTO IN ('V', 'P')
+  AND pv.TIPO_DOCTO = 'V' -- solo ventas reales; 'P' = documentos de cobranza/abono (sin artículos)
   AND pv.ESTATUS = 'N'`
 
 // ─── ObtenerVentaDetalle ──────────────────────────────────────────────────────
@@ -499,7 +499,7 @@ SELECT ` + selectVentaClienteCols + `
 FROM DOCTOS_PV pv
 LEFT JOIN ALMACENES alm ON alm.ALMACEN_ID = pv.ALMACEN_ID
 WHERE pv.DOCTO_PV_ID = ?
-  AND pv.TIPO_DOCTO IN ('V', 'P')
+  AND pv.TIPO_DOCTO = 'V' -- solo ventas reales; 'P' = documentos de cobranza/abono (sin artículos)
   AND pv.ESTATUS = 'N'`
 
 // queryProductos fetches the sale line items for a given DOCTO_PV_ID.
