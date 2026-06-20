@@ -240,7 +240,36 @@ func drawClienteBlock(pdf *fpdf.Fpdf, c outbound.ReporteClienteDatos) {
 	pdf.SetFont("Poppins", "", 9)
 	pdf.CellFormat(bodyW-labelW, rowH, c.Direccion, "", 1, "L", false, 0, "")
 
+	if nota := strings.TrimSpace(c.Notas); nota != "" {
+		drawNota(pdf, nota)
+	}
+
 	pdf.Ln(3)
+}
+
+// drawNota renders the client's free-form note as a wrapped block with a NOTA
+// label and a slate accent rule on its left. The note can be long, so it wraps
+// with MultiCell; auto page break is re-enabled around it in case it overflows.
+func drawNota(pdf *fpdf.Fpdf, nota string) {
+	pdf.Ln(2.5)
+	pdf.SetTextColor(grayR, grayG, grayB)
+	pdf.SetFont("PlexMono", "", 7)
+	pdf.CellFormat(bodyW, 4.5, "NOTA", "", 1, "L", false, 0, "")
+
+	// Left accent rule alongside the wrapped text.
+	startY := pdf.GetY()
+	pdf.SetTextColor(inkR, inkG, inkB)
+	pdf.SetFont("Poppins", "", 8.5)
+	pdf.SetX(margin + 3)
+	pdf.SetAutoPageBreak(true, margin)
+	pdf.MultiCell(bodyW-3, 4.6, nota, "", "L", false)
+	pdf.SetAutoPageBreak(false, margin)
+
+	pdf.SetDrawColor(slateR, slateG, slateB)
+	pdf.SetLineWidth(0.5)
+	pdf.Line(margin, startY+0.5, margin, pdf.GetY()-1)
+	pdf.SetLineWidth(0.2)
+	pdf.SetDrawColor(hairR, hairG, hairB)
 }
 
 // drawResumenBand renders the 6-metric financial summary strip. abonadoIngreso

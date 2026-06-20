@@ -52,6 +52,7 @@ func buildSample() outbound.ReporteCliente {
 			Telefono:  "331-204-5876",
 			Zona:      "Zona Norte",
 			Cobrador:  "RUTA 36 - OSCAR ROQUE",
+			Notas:     "CASA DE DOS PISOS CON PORTÓN NEGRO. 26-06-2024 SE DEJARON MÁS CUENTAS AQUÍ A NOMBRE DE MÓNICA Y JULIA. CLIENTA SE COMPROMETE A PONERSE AL CORRIENTE LA PRÓXIMA SEMANA. ESTUVO GASTADA EN GASTOS MÉDICOS.",
 		},
 		Resumen: outbound.ResumenFicha{
 			TotalComprado: d("48500.00"),

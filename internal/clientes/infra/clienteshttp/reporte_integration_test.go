@@ -10,6 +10,7 @@ package clienteshttp_test
 import (
 	"context"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -40,12 +41,22 @@ func TestReporteIntegration_MinervaLopez(t *testing.T) {
 
 	genFijo := time.Date(2026, 6, 20, 14, 30, 0, 0, time.UTC)
 
+	// Client can be overridden for manual visual review of other clients.
+	clienteID := 24037
+	if v := os.Getenv("REPORTE_CLIENTE_ID"); v != "" {
+		if n, perr := strconv.Atoi(v); perr == nil {
+			clienteID = n
+		}
+	}
+
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
-		rep, err := svc.GenerarReporteCliente(ctx, 24037, nil)
-		require.NoError(t, err, "error al generar el reporte del cliente 24037")
+		rep, err := svc.GenerarReporteCliente(ctx, clienteID, nil)
+		require.NoError(t, err, "error al generar el reporte del cliente")
 
 		t.Logf("cliente: %s, ventas: %d", rep.Cliente.Nombre, len(rep.Ventas))
-		assert.Greater(t, len(rep.Ventas), 10, "cliente 24037 debe tener más de 10 ventas")
+		if clienteID == 24037 {
+			assert.Greater(t, len(rep.Ventas), 10, "cliente 24037 debe tener más de 10 ventas")
+		}
 
 		pdf, err := clientespdf.Render(rep, genFijo)
 		require.NoError(t, err, "error al renderizar el PDF")

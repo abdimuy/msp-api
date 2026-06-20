@@ -24,6 +24,9 @@ type ReporteClienteDatos struct {
 	Telefono  string
 	Zona      string
 	Cobrador  string
+	// Notas is the client's free-form note (Microsip NOTAS); may be long. Empty
+	// when there is no note.
+	Notas string
 }
 
 // ReporteVenta is a single sale record in the report, with its payment history.
