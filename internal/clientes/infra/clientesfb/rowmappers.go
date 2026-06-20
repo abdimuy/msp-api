@@ -728,7 +728,10 @@ func (r *pagoDetalleRowRaw) applyMSPEnrichment(
 		origen:       "microsip",
 	}
 
-	hasMSP := r.mspCobradorID.Valid || r.mspCobrador.Valid || r.mspFormaCobroID.Valid
+	// Any non-null MSP column means a row joined — use all nullable fields so
+	// a pago with only GPS or timestamps populated still yields origen="app".
+	hasMSP := r.mspCobradorID.Valid || r.mspCobrador.Valid || r.mspFormaCobroID.Valid ||
+		r.mspLat.Valid || r.mspLon.Valid || r.mspRecibidoAt != nil || r.mspAplicadoAt != nil
 	if !hasMSP {
 		return e
 	}
@@ -781,6 +784,8 @@ func (r *pagoDetalleRowRaw) assemble() (outbound.PagoDetalle, error) {
 	}
 
 	// Saldo cargo is nullable (cargo may not be in MSP_SALDOS_VENTAS cache).
+	// Silent nil-on-parse-error is intentional: saldo_cargo is optional enrichment,
+	// consistent with the codebase convention for best-effort cached fields.
 	var saldoCargo *decimal.Decimal
 	if r.saldoCargoRaw != nil {
 		if s, serr := firebird.ScanDecimal(r.saldoCargoRaw, 2); serr == nil {

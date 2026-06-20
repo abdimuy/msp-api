@@ -328,7 +328,8 @@ func TestClientesRepo_ObtenerPagoDetalle_Found(t *testing.T) {
 		assert.Equal(t, 77486, detalle.CobradorID, "CobradorID")
 		assert.Equal(t, 24533, detalle.ConceptoCCID, "ConceptoCCID")
 		assert.Equal(t, "enganche", detalle.Categoria, "Categoria")
-		assert.True(t, detalle.Importe.GreaterThan(decimal.Zero), "Importe > 0")
+		assert.True(t, domain.Categoria(detalle.Categoria).EsIngreso(), "EsIngreso")
+		assert.True(t, detalle.Importe.Equal(decimal.NewFromFloat(200.00)), "Importe == 200.00 (got %v)", detalle.Importe)
 		assert.Equal(t, 4070585, detalle.AplicaACargoID, "AplicaACargoID")
 		assert.Equal(t, 4070523, detalle.DoctoPVID, "DoctoPVID")
 		assert.Equal(t, "microsip", detalle.Origen, "Origen")
@@ -341,8 +342,35 @@ func TestClientesRepo_ObtenerPagoDetalle_Found(t *testing.T) {
 		// IVA for an enganche is 0
 		assert.True(t, detalle.IVA.IsZero(), "IVA should be 0 for enganche")
 
+		// SaldoCargo for cargo 4070585 should be 0.00 (fully paid).
+		require.NotNil(t, detalle.SaldoCargo, "SaldoCargo should be present in cache for cargo 4070585")
+		assert.True(t, detalle.SaldoCargo.Equal(decimal.NewFromFloat(0.00)), "SaldoCargo == 0.00 (got %v)", detalle.SaldoCargo)
+
 		t.Logf("ObtenerPagoDetalle 4070588: folio=%q importe=%v iva=%v cargo=%d pvID=%d origen=%q",
 			detalle.Folio, detalle.Importe, detalle.IVA, detalle.AplicaACargoID, detalle.DoctoPVID, detalle.Origen)
+	})
+}
+
+// TestClientesRepo_ObtenerPagoDetalle_Cobranza verifies pago 4172481 (cobranza abono),
+// a second fixture on the same cargo/sale as the enganche test above.
+func TestClientesRepo_ObtenerPagoDetalle_Cobranza(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := clientesfb.NewClientesRepo(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		detalle, err := repo.ObtenerPagoDetalle(ctx, 4172481)
+		require.NoError(t, err)
+
+		assert.Equal(t, 87327, detalle.ConceptoCCID, "ConceptoCCID")
+		assert.Equal(t, "pago", detalle.Categoria, "Categoria")
+		assert.True(t, domain.Categoria(detalle.Categoria).EsIngreso(), "EsIngreso")
+		assert.Equal(t, 4070585, detalle.AplicaACargoID, "AplicaACargoID")
+		assert.Equal(t, 4070523, detalle.DoctoPVID, "DoctoPVID")
+		assert.Equal(t, "microsip", detalle.Origen, "Origen")
+
+		t.Logf("ObtenerPagoDetalle 4172481: folio=%q importe=%v concepto=%d categoria=%q origen=%q",
+			detalle.Folio, detalle.Importe, detalle.ConceptoCCID, detalle.Categoria, detalle.Origen)
 	})
 }
 
