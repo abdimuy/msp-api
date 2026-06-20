@@ -44,4 +44,9 @@ type ReportePago struct {
 	Concepto string
 	Cobrador string
 	Importe  decimal.Decimal
+	// EsIngreso is false for condonación and pérdida movements (forgiven debt /
+	// write-offs), shown apart from real collected money in the report.
+	EsIngreso bool
+	// Categoria is the economic role: "pago"|"enganche"|"condonacion"|"perdida"|"otro".
+	Categoria string
 }

@@ -26,8 +26,67 @@ const (
 	slateR, slateG, slateB       = 51, 65, 85
 	greenR, greenG, greenB       = 22, 163, 74
 	amberR, amberG, amberB       = 217, 119, 6
+	violetR, violetG, violetB    = 124, 77, 196 // condonación (matches the app's violet)
+	redR, redG, redB             = 200, 50, 50  // pérdida / fuga / mal cliente
 	altFillR, altFillG, altFillB = 248, 249, 250
 )
+
+// Payment categories that are NOT real collected money (shown apart, in color).
+const (
+	catCondonacion = "condonacion"
+	catPerdida     = "perdida"
+)
+
+// pagoColor returns the ink color for a payment row by category: violet for
+// condonación, red for pérdida, normal ink for collected money.
+func pagoColor(p outbound.ReportePago) (int, int, int) {
+	if p.EsIngreso {
+		return inkR, inkG, inkB
+	}
+	if p.Categoria == catPerdida {
+		return redR, redG, redB
+	}
+	return violetR, violetG, violetB
+}
+
+// subtotalLine is one line of a venta's payment subtotal (label + tinted amount).
+type subtotalLine struct {
+	label   string
+	amount  decimal.Decimal
+	r, g, b int
+}
+
+// buildSubtotales returns the subtotal lines for a venta: ABONADO always, plus
+// CONDONADO / PÉRDIDA only when those movements are present.
+func buildSubtotales(ingreso, condon, perdida decimal.Decimal) []subtotalLine {
+	lines := []subtotalLine{{"ABONADO", ingreso, inkR, inkG, inkB}}
+	if condon.IsPositive() {
+		lines = append(lines, subtotalLine{"CONDONADO", condon, violetR, violetG, violetB})
+	}
+	if perdida.IsPositive() {
+		lines = append(lines, subtotalLine{"PÉRDIDA", perdida, redR, redG, redB})
+	}
+	return lines
+}
+
+// sumarCategorias totals payments across all ventas, split into collected income,
+// condonación, and pérdida.
+func sumarCategorias(ventas []outbound.ReporteVenta) (decimal.Decimal, decimal.Decimal, decimal.Decimal) {
+	var ingreso, condon, perdida decimal.Decimal
+	for _, v := range ventas {
+		for _, p := range v.Pagos {
+			switch {
+			case p.EsIngreso:
+				ingreso = ingreso.Add(p.Importe)
+			case p.Categoria == catPerdida:
+				perdida = perdida.Add(p.Importe)
+			default:
+				condon = condon.Add(p.Importe)
+			}
+		}
+	}
+	return ingreso, condon, perdida
+}
 
 // Letter size in mm.
 const (
@@ -63,9 +122,11 @@ func Render(rep outbound.ReporteCliente, gen time.Time) ([]byte, error) {
 
 	pdf.AddPage()
 
+	ingreso, condon, perdida := sumarCategorias(rep.Ventas)
+
 	drawMasthead(pdf, gen)
 	drawClienteBlock(pdf, rep.Cliente)
-	drawResumenBand(pdf, rep.Resumen)
+	drawResumenBand(pdf, rep.Resumen, ingreso, condon.Add(perdida))
 	drawVentas(pdf, rep.Ventas)
 
 	var buf bytes.Buffer
@@ -182,8 +243,11 @@ func drawClienteBlock(pdf *fpdf.Fpdf, c outbound.ReporteClienteDatos) {
 	pdf.Ln(3)
 }
 
-// drawResumenBand renders the 6-metric financial summary strip.
-func drawResumenBand(pdf *fpdf.Fpdf, r outbound.ResumenFicha) {
+// drawResumenBand renders the 6-metric financial summary strip. abonadoIngreso
+// is collected money only (excludes condonación/pérdida); noCobrado is the sum
+// of forgiven debt + write-offs — so ABONADO here means real cash, coherent with
+// the per-venta subtotals and the rest of the app.
+func drawResumenBand(pdf *fpdf.Fpdf, r outbound.ResumenFicha, abonadoIngreso, noCobrado decimal.Decimal) {
 	bandH := 16.0
 	colW := bodyW / 6
 	y := pdf.GetY()
@@ -200,11 +264,11 @@ func drawResumenBand(pdf *fpdf.Fpdf, r outbound.ResumenFicha) {
 	}
 	metrics := []metric{
 		{"COMPRADO", formatMXN(r.TotalComprado)},
-		{"ABONADO", formatMXN(r.TotalAbonado)},
+		{"ABONADO", formatMXN(abonadoIngreso)},
+		{"NO COBRADO", formatMXN(noCobrado)},
 		{"SALDO", formatMXN(r.SaldoTotal)},
 		{"% LIQUIDADO", r.PctLiquidado.StringFixed(1) + "%"},
 		{"# VENTAS", strconv.Itoa(r.NumVentas)},
-		{"# PAGOS", strconv.Itoa(r.NumPagos)},
 	}
 
 	for i, m := range metrics {
@@ -379,72 +443,94 @@ func drawPagosTable(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
 	drawColumnHeader()
 
 	// Payment rows — break manually, repeating folio + column header.
-	var sumPagos decimal.Decimal
+	// Condonación/pérdida rows are colored and totaled apart from real money.
+	var ingreso, condon, perdida decimal.Decimal
+	cols := pagoCols{colFecha, colConcepto, colCobrador, colImporte, rowH}
 	for i, p := range pagos {
 		if pdf.GetY()+rowH > bottomLimit {
 			pdf.AddPage()
 			drawContinuation(pdf, v.Folio)
 			drawColumnHeader()
 		}
-
-		fill := i%2 == 1
-		if fill {
-			pdf.SetFillColor(altFillR, altFillG, altFillB)
-		} else {
-			pdf.SetFillColor(255, 255, 255)
+		drawPagoRow(pdf, p, i%2 == 1, cols)
+		switch {
+		case p.EsIngreso:
+			ingreso = ingreso.Add(p.Importe)
+		case p.Categoria == catPerdida:
+			perdida = perdida.Add(p.Importe)
+		default:
+			condon = condon.Add(p.Importe)
 		}
-
-		// Fecha
-		pdf.SetFont("PlexMono", "", 8)
-		pdf.SetTextColor(inkR, inkG, inkB)
-		pdf.CellFormat(colFecha, rowH, formatFecha(p.Fecha), "", 0, "L", fill, 0, "")
-
-		// Concepto (truncated to its column)
-		pdf.SetFont("Poppins", "", 8.5)
-		pdf.SetTextColor(inkR, inkG, inkB)
-		pdf.CellFormat(colConcepto, rowH, fitText(pdf, p.Concepto, colConcepto), "", 0, "L", fill, 0, "")
-
-		// Cobrador (truncated to its column)
-		pdf.SetFont("Poppins", "", 8.5)
-		pdf.SetTextColor(grayR, grayG, grayB)
-		pdf.CellFormat(colCobrador, rowH, fitText(pdf, p.Cobrador, colCobrador), "", 0, "L", fill, 0, "")
-
-		// Importe
-		pdf.SetFont("PlexMonoMed", "", 8.5)
-		pdf.SetTextColor(inkR, inkG, inkB)
-		pdf.CellFormat(colImporte, rowH, formatMXN(p.Importe), "", 0, "R", fill, 0, "")
-
-		pdf.Ln(rowH)
-		sumPagos = sumPagos.Add(p.Importe)
 	}
 
-	// Keep the subtotal with the table.
-	if pdf.GetY()+rowH > bottomLimit {
+	lines := buildSubtotales(ingreso, condon, perdida)
+	// Keep the whole subtotal block with the table.
+	if pdf.GetY()+float64(len(lines))*rowH > bottomLimit {
 		pdf.AddPage()
 		drawContinuation(pdf, v.Folio)
 		drawColumnHeader()
 	}
-	drawSubtotalRow(pdf, colFecha+colConcepto+colCobrador, colImporte, rowH, sumPagos)
+	labelArea := colFecha + colConcepto + colCobrador
+	for i, ln := range lines {
+		drawSubtotalRow(pdf, labelArea, colImporte, rowH, ln.label, ln.amount, ln.r, ln.g, ln.b, i == 0)
+	}
 }
 
-// drawSubtotalRow renders the "TOTAL PAGADO" subtotal line beneath a payment table.
-func drawSubtotalRow(pdf *fpdf.Fpdf, labelArea, colImporte, rowH float64, total decimal.Decimal) {
-	pdf.SetDrawColor(slateR, slateG, slateB)
-	pdf.SetLineWidth(0.4)
-	y := pdf.GetY()
-	pdf.Line(margin, y, pageW-margin, y)
-	pdf.SetLineWidth(0.2)
-	pdf.SetDrawColor(hairR, hairG, hairB)
+// pagoCols carries the payment-table column widths and row height.
+type pagoCols struct {
+	fecha, concepto, cobrador, importe, rowH float64
+}
+
+// drawPagoRow renders one payment row, tinting concepto + importe by category.
+func drawPagoRow(pdf *fpdf.Fpdf, p outbound.ReportePago, fill bool, c pagoCols) {
+	if fill {
+		pdf.SetFillColor(altFillR, altFillG, altFillB)
+	} else {
+		pdf.SetFillColor(255, 255, 255)
+	}
+	cr, cg, cb := pagoColor(p)
+
+	pdf.SetFont("PlexMono", "", 8)
+	pdf.SetTextColor(inkR, inkG, inkB)
+	pdf.CellFormat(c.fecha, c.rowH, formatFecha(p.Fecha), "", 0, "L", fill, 0, "")
+
+	pdf.SetFont("Poppins", "", 8.5)
+	pdf.SetTextColor(cr, cg, cb)
+	pdf.CellFormat(c.concepto, c.rowH, fitText(pdf, p.Concepto, c.concepto), "", 0, "L", fill, 0, "")
+
+	pdf.SetFont("Poppins", "", 8.5)
+	pdf.SetTextColor(grayR, grayG, grayB)
+	pdf.CellFormat(c.cobrador, c.rowH, fitText(pdf, p.Cobrador, c.cobrador), "", 0, "L", fill, 0, "")
+
+	pdf.SetFont("PlexMonoMed", "", 8.5)
+	pdf.SetTextColor(cr, cg, cb)
+	pdf.CellFormat(c.importe, c.rowH, formatMXN(p.Importe), "", 0, "R", fill, 0, "")
+
+	pdf.Ln(c.rowH)
+}
+
+// drawSubtotalRow renders one subtotal line (label + amount) beneath a payment
+// table. topRule draws the slate separator (used only on the first line). The
+// label and amount are tinted r/g/b so condonación/pérdida totals read in color.
+func drawSubtotalRow(pdf *fpdf.Fpdf, labelArea, colImporte, rowH float64, label string, total decimal.Decimal, r, g, b int, topRule bool) {
+	if topRule {
+		pdf.SetDrawColor(slateR, slateG, slateB)
+		pdf.SetLineWidth(0.4)
+		y := pdf.GetY()
+		pdf.Line(margin, y, pageW-margin, y)
+		pdf.SetLineWidth(0.2)
+		pdf.SetDrawColor(hairR, hairG, hairB)
+	}
 
 	pdf.SetFillColor(255, 255, 255)
 	pdf.SetFont("PlexMono", "", 7)
-	pdf.SetTextColor(grayR, grayG, grayB)
+	pdf.SetTextColor(r, g, b)
 	// Reserve a gap between the right-aligned label and the amount so they never collide.
 	const subtotalGap = 4.0
-	pdf.CellFormat(labelArea-subtotalGap, rowH, "TOTAL PAGADO", "", 0, "R", false, 0, "")
+	pdf.CellFormat(labelArea-subtotalGap, rowH, label, "", 0, "R", false, 0, "")
 	pdf.CellFormat(subtotalGap, rowH, "", "", 0, "R", false, 0, "")
 	pdf.SetFont("PlexMonoMed", "", 9)
-	pdf.SetTextColor(inkR, inkG, inkB)
+	pdf.SetTextColor(r, g, b)
 	pdf.CellFormat(colImporte, rowH, formatMXN(total), "", 1, "R", false, 0, "")
 }
 

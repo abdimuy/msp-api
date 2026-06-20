@@ -36,6 +36,13 @@ func TestRenderSample(t *testing.T) {
 func buildSample() outbound.ReporteCliente {
 	d := func(s string) decimal.Decimal { v, _ := decimal.NewFromString(s); return v }
 	tp := func(s string) time.Time { v, _ := time.Parse("2006-01-02", s); return v }
+	// pago helpers — collected money vs forgiven/write-off, with category set.
+	ing := func(fecha, concepto, cobrador, importe, cat string) outbound.ReportePago {
+		return outbound.ReportePago{Fecha: tp(fecha), Concepto: concepto, Cobrador: cobrador, Importe: d(importe), EsIngreso: true, Categoria: cat}
+	}
+	noing := func(fecha, concepto, cobrador, importe, cat string) outbound.ReportePago {
+		return outbound.ReportePago{Fecha: tp(fecha), Concepto: concepto, Cobrador: cobrador, Importe: d(importe), EsIngreso: false, Categoria: cat}
+	}
 
 	return outbound.ReporteCliente{
 		Cliente: outbound.ReporteClienteDatos{
@@ -64,12 +71,12 @@ func buildSample() outbound.ReporteCliente {
 				Saldo:     d("0.00"),
 				Liquidada: true,
 				Pagos: []outbound.ReportePago{
-					{Fecha: tp("2024-03-15"), Concepto: "Enganche", Cobrador: "RUTA 36 - OSCAR ROQUE", Importe: d("3700.00")},
-					{Fecha: tp("2024-04-10"), Concepto: "Cobranza en ruta", Cobrador: "RUTA 36 - OSCAR ROQUE", Importe: d("2000.00")},
-					{Fecha: tp("2024-05-08"), Concepto: "Cobranza en ruta", Cobrador: "RUTA 36 - OSCAR ROQUE", Importe: d("2000.00")},
-					{Fecha: tp("2024-06-12"), Concepto: "Cobranza en ruta", Cobrador: "RUTA 36 - OSCAR ROQUE", Importe: d("2000.00")},
-					{Fecha: tp("2024-07-09"), Concepto: "Cobranza en ruta", Cobrador: "RUTA 36 - OSCAR ROQUE", Importe: d("2000.00")},
-					{Fecha: tp("2024-08-14"), Concepto: "Abono especial", Cobrador: "CAJA - LAURA JIMÉNEZ", Importe: d("6800.00")},
+					ing("2024-03-15", "Enganche", "RUTA 36 - OSCAR ROQUE", "3700.00", "enganche"),
+					ing("2024-04-10", "Cobranza en ruta", "RUTA 36 - OSCAR ROQUE", "2000.00", "pago"),
+					ing("2024-05-08", "Cobranza en ruta", "RUTA 36 - OSCAR ROQUE", "2000.00", "pago"),
+					ing("2024-06-12", "Cobranza en ruta", "RUTA 36 - OSCAR ROQUE", "2000.00", "pago"),
+					ing("2024-07-09", "Cobranza en ruta", "RUTA 36 - OSCAR ROQUE", "2000.00", "pago"),
+					ing("2024-08-14", "Abono especial", "CAJA - LAURA JIMÉNEZ", "6800.00", "pago"),
 				},
 			},
 			{
@@ -81,12 +88,12 @@ func buildSample() outbound.ReporteCliente {
 				Saldo:     d("17300.00"),
 				Liquidada: false,
 				Pagos: []outbound.ReportePago{
-					{Fecha: tp("2025-01-20"), Concepto: "Enganche", Cobrador: "RUTA 36 - OSCAR ROQUE", Importe: d("6000.00")},
-					{Fecha: tp("2025-02-18"), Concepto: "Cobranza en ruta", Cobrador: "RUTA 36 - OSCAR ROQUE", Importe: d("1500.00")},
-					{Fecha: tp("2025-03-19"), Concepto: "Cobranza en ruta", Cobrador: "RUTA 36 - OSCAR ROQUE", Importe: d("1500.00")},
-					{Fecha: tp("2025-04-16"), Concepto: "Cobranza en ruta", Cobrador: "RUTA 36 - OSCAR ROQUE", Importe: d("1500.00")},
-					{Fecha: tp("2025-05-14"), Concepto: "Cobranza en ruta", Cobrador: "RUTA 36 - OSCAR ROQUE", Importe: d("1500.00")},
-					{Fecha: tp("2025-06-11"), Concepto: "Abono en caja", Cobrador: "CAJA - LAURA JIMÉNEZ", Importe: d("700.00")},
+					ing("2025-01-20", "Enganche", "RUTA 36 - OSCAR ROQUE", "6000.00", "enganche"),
+					ing("2025-02-18", "Cobranza en ruta", "RUTA 36 - OSCAR ROQUE", "1500.00", "pago"),
+					ing("2025-03-19", "Cobranza en ruta", "RUTA 36 - OSCAR ROQUE", "1500.00", "pago"),
+					ing("2025-04-16", "Cobranza en ruta", "RUTA 36 - OSCAR ROQUE", "1500.00", "pago"),
+					noing("2025-05-14", "Condonaciones", "CONDONACION POR ANTIGÜEDAD", "1500.00", "condonacion"),
+					noing("2025-06-11", "Mal cliente", "RUTA 36 - OSCAR ROQUE", "700.00", "perdida"),
 				},
 			},
 		},

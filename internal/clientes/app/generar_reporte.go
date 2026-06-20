@@ -132,10 +132,12 @@ func (s *Service) buildReporteVenta(ctx context.Context, v *domain.VentaCliente,
 	pagos := make([]outbound.ReportePago, 0, len(detalle.Pagos))
 	for _, p := range detalle.Pagos {
 		pagos = append(pagos, outbound.ReportePago{
-			Fecha:    p.Fecha(),
-			Concepto: p.Concepto(),
-			Cobrador: p.Cobrador(),
-			Importe:  p.Importe(),
+			Fecha:     p.Fecha(),
+			Concepto:  p.Concepto(),
+			Cobrador:  p.Cobrador(),
+			Importe:   p.Importe(),
+			EsIngreso: p.Categoria().EsIngreso(),
+			Categoria: string(p.Categoria()),
 		})
 	}
 
