@@ -547,14 +547,16 @@ func (r *compradoVsAbonadoRowRaw) assemble() (outbound.PuntoCompradoAbonado, err
 // ─── pagoCrudoRowRaw ──────────────────────────────────────────────────────────
 
 // pagoCrudoRowRaw holds raw scan targets for a single payment row returned by
-// queryRitmoPagosBase. Ordering matches the SELECT column list exactly.
+// queryRitmoPagosBase. Ordering matches the SELECT column list exactly:
+// FECHA, IMPORTE, DOCTO_CC_ID.
 type pagoCrudoRowRaw struct {
 	fechaRaw   any
 	importeRaw any
+	doctoCCID  int
 }
 
 func (r *pagoCrudoRowRaw) scanFrom(s scannable) error {
-	return s.Scan(&r.fechaRaw, &r.importeRaw)
+	return s.Scan(&r.fechaRaw, &r.importeRaw, &r.doctoCCID)
 }
 
 func (r *pagoCrudoRowRaw) assemble() (domain.PagoCrudo, error) {
@@ -566,7 +568,7 @@ func (r *pagoCrudoRowRaw) assemble() (domain.PagoCrudo, error) {
 	if err != nil {
 		return domain.PagoCrudo{}, err
 	}
-	return domain.PagoCrudo{Fecha: fecha, Importe: importe}, nil
+	return domain.PagoCrudo{Fecha: fecha, Importe: importe, DoctoCCID: r.doctoCCID}, nil
 }
 
 // ─── ventaCrudaRowRaw ─────────────────────────────────────────────────────────

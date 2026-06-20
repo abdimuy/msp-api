@@ -489,6 +489,58 @@ func TestBuildRitmoPago_Rango_DesdeYHastaExplicitos(t *testing.T) {
 	assert.True(t, mustDecimal("200").Equal(r.Semanas[0].MontoAbonado))
 }
 
+// ─── PagoIDs por semana [BE-4] ────────────────────────────────────────────────
+
+func TestBuildRitmoPago_PagoIDs_MultiPagoEnMismaSemana(t *testing.T) {
+	t.Parallel()
+
+	// Dos pagos en la semana 01-jun (lunes), uno en 08-jun, semana 15-jun vacía.
+	// Semana 0: pagos con DoctoCCID 101 y 102.
+	// Semana 1: pago con DoctoCCID 201.
+	// Semana 2: sin pagos → PagoIDs vacío (no nil).
+	pagos := []domain.PagoCrudo{
+		{Fecha: monday(2026, 6, 1), Importe: mustDecimal("100"), DoctoCCID: 101},
+		{Fecha: monday(2026, 6, 1), Importe: mustDecimal("50"), DoctoCCID: 102},
+		{Fecha: monday(2026, 6, 8), Importe: mustDecimal("200"), DoctoCCID: 201},
+	}
+	ahora := time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC)
+	r := domain.BuildRitmoPago(pagos, nil, decimal.Zero, ahora, noRango())
+
+	require.Len(t, r.Semanas, 3)
+
+	// Semana 0 (01-jun): dos pagos → ambos ids presentes, en orden de entrada.
+	assert.Equal(t, []int{101, 102}, r.Semanas[0].PagoIDs, "semana 0: dos pagos → [101, 102]")
+
+	// Semana 1 (08-jun): un pago.
+	assert.Equal(t, []int{201}, r.Semanas[1].PagoIDs, "semana 1: un pago → [201]")
+
+	// Semana 2 (15-jun): sin pagos → slice vacío, NO nil.
+	assert.NotNil(t, r.Semanas[2].PagoIDs, "semana vacía: PagoIDs debe ser no-nil")
+	assert.Empty(t, r.Semanas[2].PagoIDs, "semana vacía: PagoIDs debe estar vacío")
+}
+
+func TestBuildRitmoPago_PagoIDs_SemanaVaciaNoEsNil(t *testing.T) {
+	t.Parallel()
+
+	// Un único pago en la primera semana; la segunda semana queda vacía.
+	pagos := []domain.PagoCrudo{
+		{Fecha: monday(2026, 6, 1), Importe: mustDecimal("300"), DoctoCCID: 999},
+	}
+	ahora := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
+	r := domain.BuildRitmoPago(pagos, nil, decimal.Zero, ahora, noRango())
+
+	require.GreaterOrEqual(t, len(r.Semanas), 2, "esperamos al menos 2 semanas")
+
+	// Primera semana: DoctoCCID 999.
+	assert.Equal(t, []int{999}, r.Semanas[0].PagoIDs)
+
+	// Semanas vacías: PagoIDs no-nil y vacío.
+	for i := 1; i < len(r.Semanas); i++ {
+		assert.NotNil(t, r.Semanas[i].PagoIDs, "semana %d: PagoIDs no debe ser nil", i)
+		assert.Empty(t, r.Semanas[i].PagoIDs, "semana %d: PagoIDs debe estar vacío", i)
+	}
+}
+
 // ─── Constantes EventoTipo ─────────────────────────────────────────────────────
 
 func TestEventoTipo_Constantes(t *testing.T) {

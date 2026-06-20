@@ -210,11 +210,16 @@ func diasSemanaES(d time.Weekday) string {
 func ritmoPagoToDTO(r domain.RitmoPago) RitmoPagoDTO {
 	semanas := make([]SemanaRitmoDTO, 0, len(r.Semanas))
 	for _, s := range r.Semanas {
+		pagoIDs := s.PagoIDs
+		if pagoIDs == nil {
+			pagoIDs = []int{}
+		}
 		semanas = append(semanas, SemanaRitmoDTO{
 			SemanaInicio: formatTime(s.SemanaInicio),
 			MontoAbonado: s.MontoAbonado.StringFixed(moneyScale),
 			Saldo:        s.Saldo.StringFixed(moneyScale),
 			NumPagos:     s.NumPagos,
+			PagoIDs:      pagoIDs,
 		})
 	}
 

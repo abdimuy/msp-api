@@ -32,8 +32,9 @@ const (
 // PagoCrudo is the raw payment data read from Firebird by the repository before
 // being passed to BuildRitmoPago. Fields use UTC time.
 type PagoCrudo struct {
-	Fecha   time.Time       // UTC
-	Importe decimal.Decimal // positive amount
+	Fecha     time.Time       // UTC
+	Importe   decimal.Decimal // positive amount
+	DoctoCCID int             // DOCTOS_CC primary key of the abono document
 }
 
 // VentaCruda is the raw sale header read from Firebird by the repository before
@@ -58,6 +59,11 @@ type SemanaRitmo struct {
 	Saldo decimal.Decimal
 	// NumPagos is the count of individual payments in this week.
 	NumPagos int
+	// PagoIDs holds the DOCTO_CC_ID of each payment applied in this week,
+	// in the same order they appear in the input pagos slice. An empty week
+	// carries an empty (non-nil) slice so that the JSON serialization is []
+	// rather than null.
+	PagoIDs []int
 }
 
 // EventoRitmo is a notable event that occurred within the payment rhythm window.
@@ -247,6 +253,8 @@ func computeWindow(
 }
 
 // buildSemanas generates all weekly buckets from windowStart to windowEnd inclusive.
+// PagoIDs is initialized to a non-nil empty slice so that empty weeks serialize
+// as [] rather than null in JSON.
 func buildSemanas(windowStart, windowEnd time.Time) []SemanaRitmo {
 	if windowEnd.Before(windowStart) {
 		return []SemanaRitmo{}
@@ -259,6 +267,7 @@ func buildSemanas(windowStart, windowEnd time.Time) []SemanaRitmo {
 			MontoAbonado: decimal.Zero,
 			Saldo:        decimal.Zero,
 			NumPagos:     0,
+			PagoIDs:      []int{},
 		})
 		cur = cur.AddDate(0, 0, 7)
 	}
@@ -266,6 +275,7 @@ func buildSemanas(windowStart, windowEnd time.Time) []SemanaRitmo {
 }
 
 // indexarPagos distributes pagos into their corresponding weekly buckets.
+// Each pago's DoctoCCID is appended to the bucket's PagoIDs in input order.
 func indexarPagos(semanas []SemanaRitmo, pagos []PagoCrudo) {
 	for _, p := range pagos {
 		f := p.Fecha.UTC()
@@ -274,6 +284,7 @@ func indexarPagos(semanas []SemanaRitmo, pagos []PagoCrudo) {
 			if !f.Before(semanas[i].SemanaInicio) && f.Before(bucketEnd) {
 				semanas[i].MontoAbonado = semanas[i].MontoAbonado.Add(p.Importe)
 				semanas[i].NumPagos++
+				semanas[i].PagoIDs = append(semanas[i].PagoIDs, p.DoctoCCID)
 				break
 			}
 		}

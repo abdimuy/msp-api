@@ -319,6 +319,7 @@ type SemanaRitmoDTO struct {
 	MontoAbonado string `json:"monto_abonado"                   doc:"Total abonado en la semana (2 decimales)"`
 	Saldo        string `json:"saldo"                           doc:"Saldo reconstruido al cierre de la semana (2 decimales)"`
 	NumPagos     int    `json:"num_pagos"                       doc:"Número de pagos en la semana"`
+	PagoIDs      []int  `json:"pago_ids"                        doc:"IDs de los documentos de abono (DOCTO_CC_ID) aplicados en la semana; arreglo vacío cuando no hay pagos"`
 }
 
 // EventoRitmoDTO is a notable event in the payment-rhythm window.
