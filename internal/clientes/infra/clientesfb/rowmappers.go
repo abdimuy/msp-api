@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/shopspring/decimal"
 
@@ -631,4 +632,200 @@ func scanIntFromAny(raw any) (int, error) {
 		}
 		return int(d.IntPart()), nil
 	}
+}
+
+// ─── pagoDetalleRowRaw ────────────────────────────────────────────────────────
+
+// pagoDetalleRowRaw holds raw scan targets for queryPagoDetalle.
+// Column order matches the SELECT list exactly.
+type pagoDetalleRowRaw struct {
+	doctoCCID      int
+	fechaRaw       any
+	folio          string
+	canceladoStr   string
+	aplicadoStr    string
+	conceptoCCID   int
+	importeRaw     any
+	ivaRaw         any
+	cobradorID     int
+	conceptoRaw    firebird.Win1252 // CONCEPTOS_CC.NOMBRE — CHARACTER SET NONE
+	cobradorNomRaw firebird.Win1252 // COBRADORES.NOMBRE — CHARACTER SET NONE
+	descripcionRaw firebird.Win1252 // DOCTOS_CC.DESCRIPCION — CHARACTER SET NONE
+	formaCobroID   int
+	formaCobroRaw  firebird.Win1252 // FORMAS_COBRO.NOMBRE — CHARACTER SET NONE
+	referenciaRaw  firebird.Win1252 // FORMAS_COBRO_DOCTOS.REFERENCIA — CHARACTER SET NONE
+	aplicaACargoID int
+	saldoCargoRaw  any // nullable NUMERIC from MSP_SALDOS_VENTAS
+	doctoPVID      int
+	// MSP_PAGOS_RECIBIDOS enrichment (all nullable)
+	mspCobradorID   sql.NullInt64
+	mspCobrador     sql.NullString // UTF8 — NOT Win1252
+	mspFormaCobroID sql.NullInt64
+	mspLat          sql.NullString
+	mspLon          sql.NullString
+	mspRecibidoAt   any
+	mspAplicadoAt   any
+}
+
+func (r *pagoDetalleRowRaw) scanFrom(s scannable) error {
+	return s.Scan(
+		&r.doctoCCID,
+		&r.fechaRaw,
+		&r.folio,
+		&r.canceladoStr,
+		&r.aplicadoStr,
+		&r.conceptoCCID,
+		&r.importeRaw,
+		&r.ivaRaw,
+		&r.cobradorID,
+		&r.conceptoRaw,
+		&r.cobradorNomRaw,
+		&r.descripcionRaw,
+		&r.formaCobroID,
+		&r.formaCobroRaw,
+		&r.referenciaRaw,
+		&r.aplicaACargoID,
+		&r.saldoCargoRaw,
+		&r.doctoPVID,
+		&r.mspCobradorID,
+		&r.mspCobrador,
+		&r.mspFormaCobroID,
+		&r.mspLat,
+		&r.mspLon,
+		&r.mspRecibidoAt,
+		&r.mspAplicadoAt,
+	)
+}
+
+// mspEnrichment holds the merged MSP_PAGOS_RECIBIDOS values for a pago row.
+// It is populated by applyMSPEnrichment and kept separate to reduce the cognitive
+// complexity of pagoDetalleRowRaw.assemble.
+type mspEnrichment struct {
+	cobradorID   int
+	cobrador     string
+	formaCobroID int
+	lat          *decimal.Decimal
+	lon          *decimal.Decimal
+	recibidoAt   time.Time
+	aplicadoAt   time.Time
+	origen       string
+}
+
+// applyMSPEnrichment merges native Microsip values with MSP_PAGOS_RECIBIDOS overrides.
+// When a MSP row exists it sets origen="app" and replaces each native field
+// where the MSP value is non-empty / valid.
+//
+//nolint:cyclop // each branch checks one optional MSP field — no natural further split.
+func (r *pagoDetalleRowRaw) applyMSPEnrichment(
+	nativeCobradorID int,
+	nativeCobrador string,
+	nativeFormaCobroID int,
+) mspEnrichment {
+	e := mspEnrichment{
+		cobradorID:   nativeCobradorID,
+		cobrador:     nativeCobrador,
+		formaCobroID: nativeFormaCobroID,
+		origen:       "microsip",
+	}
+
+	hasMSP := r.mspCobradorID.Valid || r.mspCobrador.Valid || r.mspFormaCobroID.Valid
+	if !hasMSP {
+		return e
+	}
+
+	e.origen = "app"
+	if r.mspCobradorID.Valid {
+		e.cobradorID = int(r.mspCobradorID.Int64)
+	}
+	if r.mspCobrador.Valid && r.mspCobrador.String != "" {
+		e.cobrador = r.mspCobrador.String
+	}
+	if r.mspFormaCobroID.Valid {
+		e.formaCobroID = int(r.mspFormaCobroID.Int64)
+	}
+	if r.mspLat.Valid && r.mspLat.String != "" {
+		if d, err := decimal.NewFromString(strings.TrimSpace(r.mspLat.String)); err == nil {
+			e.lat = &d
+		}
+	}
+	if r.mspLon.Valid && r.mspLon.String != "" {
+		if d, err := decimal.NewFromString(strings.TrimSpace(r.mspLon.String)); err == nil {
+			e.lon = &d
+		}
+	}
+	if r.mspRecibidoAt != nil {
+		if t, err := firebird.ScanUTCTime(r.mspRecibidoAt); err == nil {
+			e.recibidoAt = t
+		}
+	}
+	if r.mspAplicadoAt != nil {
+		if t, err := firebird.ScanUTCTime(r.mspAplicadoAt); err == nil {
+			e.aplicadoAt = t
+		}
+	}
+	return e
+}
+
+func (r *pagoDetalleRowRaw) assemble() (outbound.PagoDetalle, error) {
+	fecha, err := firebird.ScanUTCTime(r.fechaRaw)
+	if err != nil {
+		return outbound.PagoDetalle{}, err
+	}
+	importe, err := firebird.ScanDecimal(r.importeRaw, 2)
+	if err != nil {
+		return outbound.PagoDetalle{}, err
+	}
+	iva, err := firebird.ScanDecimal(r.ivaRaw, 2)
+	if err != nil {
+		return outbound.PagoDetalle{}, err
+	}
+
+	// Saldo cargo is nullable (cargo may not be in MSP_SALDOS_VENTAS cache).
+	var saldoCargo *decimal.Decimal
+	if r.saldoCargoRaw != nil {
+		if s, serr := firebird.ScanDecimal(r.saldoCargoRaw, 2); serr == nil {
+			saldoCargo = &s
+		}
+	}
+
+	enr := r.applyMSPEnrichment(
+		r.cobradorID,
+		coalesce1252(r.cobradorNomRaw, r.descripcionRaw),
+		r.formaCobroID,
+	)
+
+	return outbound.PagoDetalle{
+		DoctoCCID:      r.doctoCCID,
+		Fecha:          fecha,
+		Folio:          r.folio,
+		Cancelado:      r.canceladoStr == "S",
+		Aplicado:       r.aplicadoStr == "S",
+		Importe:        importe,
+		IVA:            iva,
+		ConceptoCCID:   r.conceptoCCID,
+		Concepto:       string(r.conceptoRaw),
+		Categoria:      string(domain.ClasificarConcepto(r.conceptoCCID)),
+		CobradorID:     enr.cobradorID,
+		Cobrador:       enr.cobrador,
+		FormaCobroID:   enr.formaCobroID,
+		FormaCobro:     string(r.formaCobroRaw),
+		Referencia:     string(r.referenciaRaw),
+		AplicaACargoID: r.aplicaACargoID,
+		SaldoCargo:     saldoCargo,
+		DoctoPVID:      r.doctoPVID,
+		Lat:            enr.lat,
+		Lon:            enr.lon,
+		RecibidoAt:     enr.recibidoAt,
+		AplicadoAt:     enr.aplicadoAt,
+		Origen:         enr.origen,
+	}, nil
+}
+
+// coalesce1252 returns the string of a when non-empty, else b.
+// Both are Win1252-decoded strings from CHARACTER SET NONE columns.
+func coalesce1252(a, b firebird.Win1252) string {
+	if s := string(a); s != "" {
+		return s
+	}
+	return string(b)
 }

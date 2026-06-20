@@ -16,6 +16,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -306,5 +307,52 @@ func TestClientesRepo_ObtenerVentaDetalle_PagosEnriquecidos(t *testing.T) {
 			"must contain at least one condonacion")
 		assert.True(t, found[domain.CategoriaPerdida],
 			"must contain at least one perdida")
+	})
+}
+
+// ─── ObtenerPagoDetalle ───────────────────────────────────────────────────────
+
+func TestClientesRepo_ObtenerPagoDetalle_Found(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := clientesfb.NewClientesRepo(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		detalle, err := repo.ObtenerPagoDetalle(ctx, 4070588)
+		require.NoError(t, err)
+
+		assert.Equal(t, 4070588, detalle.DoctoCCID, "DoctoCCID")
+		assert.Equal(t, "000013412", detalle.Folio, "Folio")
+		assert.False(t, detalle.Cancelado, "Cancelado")
+		assert.True(t, detalle.Aplicado, "Aplicado")
+		assert.Equal(t, 77486, detalle.CobradorID, "CobradorID")
+		assert.Equal(t, 24533, detalle.ConceptoCCID, "ConceptoCCID")
+		assert.Equal(t, "enganche", detalle.Categoria, "Categoria")
+		assert.True(t, detalle.Importe.GreaterThan(decimal.Zero), "Importe > 0")
+		assert.Equal(t, 4070585, detalle.AplicaACargoID, "AplicaACargoID")
+		assert.Equal(t, 4070523, detalle.DoctoPVID, "DoctoPVID")
+		assert.Equal(t, "microsip", detalle.Origen, "Origen")
+
+		// Fecha should be 2020-07-02
+		assert.Equal(t, 2020, detalle.Fecha.Year(), "Fecha year")
+		assert.Equal(t, 7, int(detalle.Fecha.Month()), "Fecha month")
+		assert.Equal(t, 2, detalle.Fecha.Day(), "Fecha day")
+
+		// IVA for an enganche is 0
+		assert.True(t, detalle.IVA.IsZero(), "IVA should be 0 for enganche")
+
+		t.Logf("ObtenerPagoDetalle 4070588: folio=%q importe=%v iva=%v cargo=%d pvID=%d origen=%q",
+			detalle.Folio, detalle.Importe, detalle.IVA, detalle.AplicaACargoID, detalle.DoctoPVID, detalle.Origen)
+	})
+}
+
+func TestClientesRepo_ObtenerPagoDetalle_NotFound(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := clientesfb.NewClientesRepo(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		_, err := repo.ObtenerPagoDetalle(ctx, 1)
+		assert.ErrorIs(t, err, domain.ErrPagoNotFound)
 	})
 }

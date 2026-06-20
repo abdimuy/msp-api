@@ -74,6 +74,10 @@ type fakeClientesRepo struct {
 	dirCompletoErr    error
 	lastFiltroComplet outbound.FiltroDirectorio
 	listarComplCalled bool // true after ListarDirectorioCompleto is invoked
+
+	// ObtenerPagoDetalle
+	pagoDetalleByID map[int]outbound.PagoDetalle
+	pagoDetalleErr  error
 }
 
 func (f *fakeClientesRepo) ObtenerCliente(_ context.Context, clienteID int) (*domain.Cliente, error) {
@@ -126,6 +130,17 @@ func (f *fakeClientesRepo) ListarDirectorioCompleto(_ context.Context, fil outbo
 
 func (f *fakeClientesRepo) ObtenerRitmoPagoData(_ context.Context, _ int, _ outbound.RangoFechas) (outbound.RitmoPagoData, error) {
 	return outbound.RitmoPagoData{}, nil
+}
+
+func (f *fakeClientesRepo) ObtenerPagoDetalle(_ context.Context, doctoCCID int) (outbound.PagoDetalle, error) {
+	if f.pagoDetalleErr != nil {
+		return outbound.PagoDetalle{}, f.pagoDetalleErr
+	}
+	d, ok := f.pagoDetalleByID[doctoCCID]
+	if !ok {
+		return outbound.PagoDetalle{}, domain.ErrPagoNotFound
+	}
+	return d, nil
 }
 
 // ─── fakeAnalyticsClient ─────────────────────────────────────────────────────

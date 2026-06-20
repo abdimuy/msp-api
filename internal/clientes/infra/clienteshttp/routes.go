@@ -121,4 +121,15 @@ func registerOperations(api huma.API, h *Handlers) {
 		Security:      security,
 		DefaultStatus: http.StatusOK,
 	}, h.ObtenerRitmoPago)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "obtener-pago-detalle",
+		Method:        http.MethodGet,
+		Path:          "/clientes/{id}/pagos/{doctoCcId}",
+		Summary:       "Obtener detalle de pago",
+		Description:   "Devuelve el detalle enriquecido de un documento de abono: importes, cobrador, forma de cobro, cargo aplicado, saldo del cargo, GPS y origen (app o Microsip).",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+	}, h.ObtenerPagoDetalle)
 }

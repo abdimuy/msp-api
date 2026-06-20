@@ -49,6 +49,10 @@ func (stubRepo) ObtenerRitmoPagoData(_ context.Context, _ int, _ outbound.RangoF
 	return outbound.RitmoPagoData{}, nil
 }
 
+func (stubRepo) ObtenerPagoDetalle(_ context.Context, _ int) (outbound.PagoDetalle, error) {
+	return outbound.PagoDetalle{}, domain.ErrPagoNotFound
+}
+
 type stubAnalytics struct{}
 
 func (stubAnalytics) ObtenerPulso(_ context.Context, _ int) (analytics.ClientePulsoContract, bool, error) {

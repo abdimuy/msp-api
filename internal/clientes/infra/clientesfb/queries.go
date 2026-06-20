@@ -558,3 +558,107 @@ WHERE des.CLAVE_SIS_FTE  = 'PV'
   AND i.TIPO_IMPTE       = 'R'
   AND i.CANCELADO        = 'N'
 ORDER BY pago.FECHA`
+
+// ─── ObtenerPagoDetalle ───────────────────────────────────────────────────────
+
+// queryPagoDetalle fetches the rich detail for a single payment document (DOCTOS_CC
+// abono). Amounts are aggregated over IMPORTES_DOCTOS_CC rows with TIPO_IMPTE='R'
+// and CANCELADO='N'. The primary cargo is resolved via a correlated ROWS 1 scalar
+// subquery (not a derived-table JOIN with a ? param — the driver v0.9.19 cannot
+// bind ? inside a FROM-clause derived table). The linked PV sale and MSP cache
+// entries are then JOINed by literal column references.
+//
+// SUM casts are mandatory (firebirdsql v0.9.19 scale bug on NUMERIC aggregates).
+// CANCELADO and APLICADO are CHAR(1) ('S'/'N') — scanned as string and converted
+// to bool in pagoDetalleRowRaw.assemble().
+// Text columns from Microsip (CONCEPTOS_CC.NOMBRE, COBRADORES.NOMBRE,
+// DOCTOS_CC.DESCRIPCION, FORMAS_COBRO.NOMBRE, FORMAS_COBRO_DOCTOS.REFERENCIA)
+// are CHARACTER SET NONE (Win1252). MSP_PAGOS_RECIBIDOS columns are UTF8.
+//
+// GPS: native DOCTOS_CC has no LAT/LON columns; GPS comes only from
+// MSP_PAGOS_RECIBIDOS.LAT/LON (VARCHAR(20), ASCII decimal text).
+//
+// NOTE: doctoCCID is bound once — in the outer WHERE clause.
+// APLICA_A_CARGO_ID and DOCTO_PV_ID are resolved via correlated scalar subqueries
+// using ROWS 1, matching the pattern from queryPagos (FormaCobro correlated scalar).
+const queryPagoDetalle = `
+SELECT
+  p.DOCTO_CC_ID,
+  p.FECHA,
+  p.FOLIO,
+  p.CANCELADO,
+  p.APLICADO,
+  p.CONCEPTO_CC_ID,
+  CAST(COALESCE(SUM(i.IMPORTE + i.IMPUESTO), 0) AS NUMERIC(18,2)) AS IMPORTE,
+  CAST(COALESCE(SUM(i.IMPUESTO), 0)             AS NUMERIC(18,2)) AS IVA,
+  COALESCE(p.COBRADOR_ID, 0)                    AS COBRADOR_ID,
+  conc.NOMBRE                                   AS CONCEPTO_NOMBRE,
+  cob.NOMBRE                                    AS COBRADOR_NOMBRE,
+  p.DESCRIPCION                                 AS DESCRIPCION,
+  COALESCE(fcd.FORMA_COBRO_ID, 0)               AS FORMA_COBRO_ID,
+  fc.NOMBRE                                     AS FORMA_COBRO_NOMBRE,
+  fcd.REFERENCIA                                AS REFERENCIA,
+  COALESCE((
+    SELECT i2.DOCTO_CC_ACR_ID
+    FROM IMPORTES_DOCTOS_CC i2
+    WHERE i2.DOCTO_CC_ID = p.DOCTO_CC_ID
+      AND i2.TIPO_IMPTE = 'R'
+      AND i2.CANCELADO  = 'N'
+    ORDER BY i2.IMPORTE + i2.IMPUESTO DESC
+    ROWS 1
+  ), 0)                                         AS APLICA_A_CARGO_ID,
+  (
+    SELECT sv.SALDO
+    FROM MSP_SALDOS_VENTAS sv
+    WHERE sv.DOCTO_CC_ID = (
+      SELECT i2.DOCTO_CC_ACR_ID
+      FROM IMPORTES_DOCTOS_CC i2
+      WHERE i2.DOCTO_CC_ID = p.DOCTO_CC_ID
+        AND i2.TIPO_IMPTE = 'R'
+        AND i2.CANCELADO  = 'N'
+      ORDER BY i2.IMPORTE + i2.IMPUESTO DESC
+      ROWS 1
+    )
+    ROWS 1
+  )                                             AS SALDO_CARGO,
+  COALESCE((
+    SELECT des.DOCTO_FTE_ID
+    FROM DOCTOS_ENTRE_SIS des
+    WHERE des.CLAVE_SIS_FTE  = 'PV'
+      AND des.CLAVE_SIS_DEST = 'CC'
+      AND des.DOCTO_DEST_ID  = (
+        SELECT i2.DOCTO_CC_ACR_ID
+        FROM IMPORTES_DOCTOS_CC i2
+        WHERE i2.DOCTO_CC_ID = p.DOCTO_CC_ID
+          AND i2.TIPO_IMPTE = 'R'
+          AND i2.CANCELADO  = 'N'
+        ORDER BY i2.IMPORTE + i2.IMPUESTO DESC
+        ROWS 1
+      )
+    ROWS 1
+  ), 0)                                         AS DOCTO_PV_ID,
+  r.COBRADOR_ID                                 AS MSP_COBRADOR_ID,
+  r.COBRADOR                                    AS MSP_COBRADOR,
+  r.FORMA_COBRO_ID                              AS MSP_FORMA_COBRO_ID,
+  r.LAT                                         AS MSP_LAT,
+  r.LON                                         AS MSP_LON,
+  r.RECEIVED_AT                                 AS MSP_RECEIVED_AT,
+  r.APLICADO_AT                                 AS MSP_APLICADO_AT
+FROM DOCTOS_CC p
+JOIN IMPORTES_DOCTOS_CC i ON i.DOCTO_CC_ID = p.DOCTO_CC_ID
+  AND i.TIPO_IMPTE = 'R'
+  AND i.CANCELADO  = 'N'
+LEFT JOIN CONCEPTOS_CC conc ON conc.CONCEPTO_CC_ID = p.CONCEPTO_CC_ID
+LEFT JOIN COBRADORES cob    ON cob.COBRADOR_ID     = p.COBRADOR_ID
+LEFT JOIN FORMAS_COBRO_DOCTOS fcd ON fcd.NOM_TABLA_DOCTOS = 'DOCTOS_CC'
+  AND fcd.DOCTO_ID = p.DOCTO_CC_ID
+LEFT JOIN FORMAS_COBRO fc   ON fc.FORMA_COBRO_ID  = fcd.FORMA_COBRO_ID
+LEFT JOIN MSP_PAGOS_RECIBIDOS r ON r.DOCTO_CC_ID  = p.DOCTO_CC_ID
+WHERE p.DOCTO_CC_ID = ?
+GROUP BY
+  p.DOCTO_CC_ID, p.FECHA, p.FOLIO, p.CANCELADO, p.APLICADO, p.CONCEPTO_CC_ID,
+  p.COBRADOR_ID, p.DESCRIPCION,
+  conc.NOMBRE, cob.NOMBRE,
+  fcd.FORMA_COBRO_ID, fc.NOMBRE, fcd.REFERENCIA,
+  r.COBRADOR_ID, r.COBRADOR, r.FORMA_COBRO_ID, r.LAT, r.LON,
+  r.RECEIVED_AT, r.APLICADO_AT`

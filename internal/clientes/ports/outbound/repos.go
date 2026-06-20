@@ -140,6 +140,33 @@ type RitmoPagoData struct {
 	SaldoActual decimal.Decimal
 }
 
+// PagoDetalle is the rich detail bundle for a single payment document.
+type PagoDetalle struct {
+	DoctoCCID      int
+	Fecha          time.Time
+	Folio          string
+	Cancelado      bool
+	Aplicado       bool
+	Importe        decimal.Decimal
+	IVA            decimal.Decimal
+	ConceptoCCID   int
+	Concepto       string
+	Categoria      string
+	CobradorID     int
+	Cobrador       string
+	FormaCobroID   int
+	FormaCobro     string
+	Referencia     string
+	AplicaACargoID int
+	SaldoCargo     *decimal.Decimal
+	DoctoPVID      int
+	Lat            *decimal.Decimal
+	Lon            *decimal.Decimal
+	RecibidoAt     time.Time
+	AplicadoAt     time.Time
+	Origen         string // "app" | "microsip"
+}
+
 // ClientesRepo is the primary read port for the clientes hub. Each method maps
 // to a distinct read concern in the Customer 360 experience.
 //
@@ -186,4 +213,8 @@ type ClientesRepo interface {
 	// Returns a zero-valued RitmoPagoData (not an error) when the client has no
 	// records — callers that need existence validation must call ObtenerCliente first.
 	ObtenerRitmoPagoData(ctx context.Context, clienteID int, rango RangoFechas) (RitmoPagoData, error)
+
+	// ObtenerPagoDetalle returns the rich detail for a single payment document.
+	// Returns domain.ErrPagoNotFound when no row exists for doctoCCID.
+	ObtenerPagoDetalle(ctx context.Context, doctoCCID int) (PagoDetalle, error)
 }

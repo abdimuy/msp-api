@@ -102,6 +102,10 @@ func (f *fakeRepo) ObtenerRitmoPagoData(_ context.Context, _ int, _ outbound.Ran
 	return outbound.RitmoPagoData{}, nil
 }
 
+func (f *fakeRepo) ObtenerPagoDetalle(_ context.Context, _ int) (outbound.PagoDetalle, error) {
+	return outbound.PagoDetalle{}, nil
+}
+
 // ─── Fake analytics client ────────────────────────────────────────────────────
 
 type fakeAnalytics struct {

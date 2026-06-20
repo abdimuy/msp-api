@@ -630,6 +630,36 @@ func (r *ClientesRepo) fetchRitmoVentas(ctx context.Context, q firebird.Querier,
 	return ventas, nil
 }
 
+// ─── ObtenerPagoDetalle ───────────────────────────────────────────────────────
+
+// ObtenerPagoDetalle returns the rich detail for a single payment document.
+// Returns domain.ErrPagoNotFound when no IMPORTES_DOCTOS_CC row with TIPO_IMPTE='R'
+// exists for the given doctoCCID (the JOIN makes it a no-row result when the pago
+// has no applied importes — the common not-found path).
+func (r *ClientesRepo) ObtenerPagoDetalle(ctx context.Context, doctoCCID int) (outbound.PagoDetalle, error) {
+	var result outbound.PagoDetalle
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		var raw pagoDetalleRowRaw
+		if serr := raw.scanFrom(q.QueryRowContext(ctx, queryPagoDetalle, doctoCCID)); serr != nil {
+			if errors.Is(serr, sql.ErrNoRows) {
+				return domain.ErrPagoNotFound
+			}
+			return firebird.MapError(serr)
+		}
+		assembled, aerr := raw.assemble()
+		if aerr != nil {
+			return aerr
+		}
+		result = assembled
+		return nil
+	})
+	if err != nil {
+		return outbound.PagoDetalle{}, err
+	}
+	return result, nil
+}
+
 // ObtenerRitmoPagoData fetches the raw payment and sale data required to build
 // the weekly payment-rhythm series for a client. Three sequential reads inside a
 // read-only snapshot transaction: individual pagos, sale headers, and the live

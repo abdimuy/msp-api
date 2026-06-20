@@ -251,6 +251,29 @@ func (h *Handlers) ObtenerRitmoPago(ctx context.Context, input *ObtenerRitmoPago
 	return out, nil
 }
 
+// ObtenerPagoDetalle handles GET /clientes/{id}/pagos/{doctoCcId}.
+func (h *Handlers) ObtenerPagoDetalle(ctx context.Context, input *ObtenerPagoDetalleInput) (*ObtenerPagoDetalleOutput, error) {
+	cu, err := currentUserOrError(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := requirePerm(cu, auth.PermClientesLeer); err != nil {
+		return nil, err
+	}
+
+	// input.ID (clienteID) only shapes the nested route; the pago is fetched by
+	// doctoCcID alone. The office app is admin-scoped (the owner/cobrador sees the
+	// whole padrón), so the pago is not cross-validated against the path clienteID.
+	detalle, err := h.svc.ObtenerPagoDetalle(ctx, input.DoctoCcID)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+
+	out := &ObtenerPagoDetalleOutput{}
+	out.Body = toPagoDetalleDTO(detalle)
+	return out, nil
+}
+
 // ─── Compile-time signature assertions ───────────────────────────────────────
 // These blank assignments will fail at compile time if any handler signature
 // diverges from the huma.HandlerFunc[I, O] constraint.
@@ -262,4 +285,5 @@ var (
 	_ func(context.Context, *ObtenerVentaDetalleInput) (*ObtenerVentaDetalleOutput, error) = (*Handlers)(nil).ObtenerVentaDetalle
 	_ func(context.Context, *RefrescarBusquedaInput) (*RefrescarBusquedaOutput, error)     = (*Handlers)(nil).RefrescarBusqueda
 	_ func(context.Context, *ObtenerRitmoPagoInput) (*ObtenerRitmoPagoOutput, error)       = (*Handlers)(nil).ObtenerRitmoPago
+	_ func(context.Context, *ObtenerPagoDetalleInput) (*ObtenerPagoDetalleOutput, error)   = (*Handlers)(nil).ObtenerPagoDetalle
 )

@@ -20,6 +20,11 @@ var (
 		"venta_not_found",
 		"venta no encontrada",
 	)
+	// ErrPagoNotFound is returned when a pago lookup misses.
+	ErrPagoNotFound = apperror.NewNotFound(
+		"pago_not_found",
+		"pago no encontrado",
+	)
 	// ErrTipoVentaInvalido is returned by ParseTipoVenta when the supplied
 	// string does not match a recognized TipoVenta constant.
 	ErrTipoVentaInvalido = apperror.NewValidation(

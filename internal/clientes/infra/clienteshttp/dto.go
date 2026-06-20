@@ -343,6 +343,46 @@ type ResumenRitmoDTO struct {
 // No body needed — the operation is idempotent and parameterless.
 type RefrescarBusquedaInput struct{}
 
+// ─── Endpoint N: GET /clientes/{id}/pagos/{doctoCcId} ────────────────────────
+
+// ObtenerPagoDetalleInput collects the path parameters.
+type ObtenerPagoDetalleInput struct {
+	ID        int `path:"id"        doc:"ID de Microsip del cliente"`
+	DoctoCcID int `path:"doctoCcId" doc:"ID de Microsip del documento de abono (DOCTOS_CC)"`
+}
+
+// ObtenerPagoDetalleOutput is the response for GET /clientes/{id}/pagos/{doctoCcId}.
+type ObtenerPagoDetalleOutput struct {
+	Body PagoDetalleDTO
+}
+
+// PagoDetalleDTO is the wire representation of a single payment detail.
+type PagoDetalleDTO struct {
+	Importe        string  `json:"importe"               doc:"Importe bruto del pago (suma de IMPORTE+IMPUESTO de los importes aplicados)"`
+	IVA            string  `json:"iva"                   doc:"IVA del pago"`
+	Fecha          string  `json:"fecha"                 format:"date-time" doc:"Fecha del documento de abono (UTC RFC3339)"`
+	FormaCobroID   int     `json:"forma_cobro_id"        doc:"ID de la forma de cobro; 0 cuando ausente"`
+	FormaCobro     string  `json:"forma_cobro"           doc:"Nombre de la forma de cobro; vacío cuando ausente"`
+	Referencia     string  `json:"referencia"            doc:"Referencia de la forma de cobro; vacío cuando ausente"`
+	CobradorID     int     `json:"cobrador_id"           doc:"ID del cobrador"`
+	Cobrador       string  `json:"cobrador"              doc:"Nombre del cobrador"`
+	ConceptoCCID   int     `json:"concepto_cc_id"        doc:"ID del concepto de cuenta corriente"`
+	Concepto       string  `json:"concepto"              doc:"Nombre del concepto"`
+	Categoria      string  `json:"categoria"             doc:"Categoría derivada: pago, enganche, condonacion, perdida, otro"`
+	EsIngreso      bool    `json:"es_ingreso"            doc:"true cuando el pago representa un ingreso real (pago o enganche)"`
+	Folio          string  `json:"folio"                 doc:"Folio del documento de abono"`
+	Lat            *string `json:"lat,omitempty"         doc:"Latitud GPS del cobro; ausente cuando no disponible"`
+	Lon            *string `json:"lon,omitempty"         doc:"Longitud GPS del cobro; ausente cuando no disponible"`
+	AplicaACargoID int     `json:"aplica_a_cargo_id"     doc:"DOCTO_CC_ID del cargo al que aplica este abono"`
+	SaldoCargo     *string `json:"saldo_cargo,omitempty" doc:"Saldo del cargo (caché MSP_SALDOS_VENTAS); ausente cuando no disponible"`
+	DoctoPVID      int     `json:"docto_pv_id"           doc:"DOCTO_PV_ID de la venta original; 0 cuando no resoluble"`
+	Cancelado      bool    `json:"cancelado"             doc:"true cuando el documento fue cancelado"`
+	Aplicado       bool    `json:"aplicado"              doc:"true cuando el pago fue aplicado"`
+	RecibidoAt     string  `json:"recibido_at,omitempty"  format:"date-time" doc:"Timestamp de recepción vía app (RFC3339 UTC); ausente en pagos nativos"`
+	AplicadoAt     string  `json:"aplicado_at,omitempty"  format:"date-time" doc:"Timestamp de aplicación vía app (RFC3339 UTC); ausente en pagos nativos"`
+	Origen         string  `json:"origen"                doc:"Origen del dato: 'app' cuando MSP_PAGOS_RECIBIDOS tiene registro; 'microsip' en caso contrario"`
+}
+
 // RefrescarBusquedaOutput is the response for POST /clientes/_search/refresh.
 type RefrescarBusquedaOutput struct {
 	Body struct {

@@ -245,6 +245,51 @@ func ritmoPagoToDTO(r domain.RitmoPago) RitmoPagoDTO {
 	}
 }
 
+// ─── Endpoint N: pago detalle ────────────────────────────────────────────────
+
+// toPagoDetalleDTO maps an outbound.PagoDetalle to its wire DTO.
+func toPagoDetalleDTO(d outbound.PagoDetalle) PagoDetalleDTO {
+	dto := PagoDetalleDTO{
+		Importe:        d.Importe.StringFixed(moneyScale),
+		IVA:            d.IVA.StringFixed(moneyScale),
+		Fecha:          formatTime(d.Fecha),
+		FormaCobroID:   d.FormaCobroID,
+		FormaCobro:     d.FormaCobro,
+		Referencia:     d.Referencia,
+		CobradorID:     d.CobradorID,
+		Cobrador:       d.Cobrador,
+		ConceptoCCID:   d.ConceptoCCID,
+		Concepto:       d.Concepto,
+		Categoria:      d.Categoria,
+		EsIngreso:      domain.Categoria(d.Categoria).EsIngreso(),
+		Folio:          d.Folio,
+		AplicaACargoID: d.AplicaACargoID,
+		DoctoPVID:      d.DoctoPVID,
+		Cancelado:      d.Cancelado,
+		Aplicado:       d.Aplicado,
+		Origen:         d.Origen,
+	}
+	if d.Lat != nil {
+		s := d.Lat.String()
+		dto.Lat = &s
+	}
+	if d.Lon != nil {
+		s := d.Lon.String()
+		dto.Lon = &s
+	}
+	if d.SaldoCargo != nil {
+		s := d.SaldoCargo.StringFixed(moneyScale)
+		dto.SaldoCargo = &s
+	}
+	if !d.RecibidoAt.IsZero() {
+		dto.RecibidoAt = formatTime(d.RecibidoAt)
+	}
+	if !d.AplicadoAt.IsZero() {
+		dto.AplicadoAt = formatTime(d.AplicadoAt)
+	}
+	return dto
+}
+
 // ─── Endpoint 3: venta list item ─────────────────────────────────────────────
 
 // toVentaListItemDTO maps a VentaCliente to its list-row wire DTO.
