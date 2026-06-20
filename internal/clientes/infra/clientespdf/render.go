@@ -98,11 +98,11 @@ func sumarCategorias(ventas []outbound.ReporteVenta) (decimal.Decimal, decimal.D
 const (
 	pageW  = 215.9
 	pageH  = 279.4
-	margin = 18.0
+	margin = 15.0
 	bodyW  = pageW - 2*margin
 	// bottomLimit is the lowest Y content may reach before a manual page break,
-	// leaving room for the footer (drawn at SetY(-14)).
-	bottomLimit = pageH - 20
+	// leaving room for the footer (drawn at SetY(-12)).
+	bottomLimit = pageH - 16
 )
 
 var meses = [...]string{"ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"}
@@ -171,34 +171,34 @@ func loadFonts(pdf *fpdf.Fpdf) error {
 func drawMasthead(pdf *fpdf.Fpdf, gen time.Time) {
 	// Row 1: company name (left) + generation date (right)
 	pdf.SetTextColor(slateR, slateG, slateB)
-	pdf.SetFont("PoppinsSB", "", 7.5)
-	pdf.CellFormat(bodyW/2, 5, "MUEBLERÍA MSP", "", 0, "L", false, 0, "")
+	pdf.SetFont("PoppinsSB", "", 7)
+	pdf.CellFormat(bodyW/2, 4.5, "MUEBLERÍA MSP", "", 0, "L", false, 0, "")
 	pdf.SetTextColor(grayR, grayG, grayB)
-	pdf.SetFont("PlexMono", "", 7.5)
-	pdf.CellFormat(bodyW/2, 5, formatFechaHora(gen), "", 1, "R", false, 0, "")
+	pdf.SetFont("PlexMono", "", 7)
+	pdf.CellFormat(bodyW/2, 4.5, formatFechaHora(gen), "", 1, "R", false, 0, "")
 
 	// Row 2: report title
 	pdf.SetTextColor(inkR, inkG, inkB)
-	pdf.SetFont("PoppinsB", "", 22)
-	pdf.CellFormat(bodyW, 11, "Reporte de cliente", "", 1, "L", false, 0, "")
+	pdf.SetFont("PoppinsB", "", 17)
+	pdf.CellFormat(bodyW, 9, "Reporte de cliente", "", 1, "L", false, 0, "")
 
 	// Slate horizontal rule
 	pdf.SetDrawColor(slateR, slateG, slateB)
 	pdf.SetLineWidth(0.6)
-	y := pdf.GetY() + 1
+	y := pdf.GetY() + 0.5
 	pdf.Line(margin, y, pageW-margin, y)
 	pdf.SetLineWidth(0.2)
 	pdf.SetDrawColor(hairR, hairG, hairB)
-	pdf.Ln(5)
+	pdf.Ln(3.5)
 }
 
 // drawClienteBlock renders the client identity section.
 func drawClienteBlock(pdf *fpdf.Fpdf, c outbound.ReporteClienteDatos) {
 	// Name
 	pdf.SetTextColor(inkR, inkG, inkB)
-	pdf.SetFont("PoppinsSB", "", 14)
-	pdf.CellFormat(bodyW, 8, c.Nombre, "", 1, "L", false, 0, "")
-	pdf.Ln(1)
+	pdf.SetFont("PoppinsSB", "", 12)
+	pdf.CellFormat(bodyW, 6.5, c.Nombre, "", 1, "L", false, 0, "")
+	pdf.Ln(0.5)
 
 	// 2-column key/value pairs
 	colW := bodyW / 2
@@ -210,26 +210,26 @@ func drawClienteBlock(pdf *fpdf.Fpdf, c outbound.ReporteClienteDatos) {
 		{"Cobrador", c.Cobrador},
 	}
 
-	rowH := 5.5
+	rowH := 4.6
 	for i := 0; i < len(pairs); i += 2 {
 		left := pairs[i]
 		// label
 		pdf.SetTextColor(grayR, grayG, grayB)
-		pdf.SetFont("PlexMono", "", 7)
+		pdf.SetFont("PlexMono", "", 6.5)
 		pdf.CellFormat(colW/3, rowH, strings.ToUpper(left.k), "", 0, "L", false, 0, "")
 		// value
 		pdf.SetTextColor(inkR, inkG, inkB)
-		pdf.SetFont("Poppins", "", 9)
+		pdf.SetFont("Poppins", "", 8.5)
 		if i+1 < len(pairs) {
 			right := pairs[i+1]
 			pdf.CellFormat(colW-colW/3, rowH, left.v, "", 0, "L", false, 0, "")
 			// label right
 			pdf.SetTextColor(grayR, grayG, grayB)
-			pdf.SetFont("PlexMono", "", 7)
+			pdf.SetFont("PlexMono", "", 6.5)
 			pdf.CellFormat(colW/3, rowH, strings.ToUpper(right.k), "", 0, "L", false, 0, "")
 			// value right
 			pdf.SetTextColor(inkR, inkG, inkB)
-			pdf.SetFont("Poppins", "", 9)
+			pdf.SetFont("Poppins", "", 8.5)
 			pdf.CellFormat(colW-colW/3, rowH, right.v, "", 1, "L", false, 0, "")
 		} else {
 			pdf.CellFormat(bodyW-colW/3, rowH, left.v, "", 1, "L", false, 0, "")
@@ -240,27 +240,27 @@ func drawClienteBlock(pdf *fpdf.Fpdf, c outbound.ReporteClienteDatos) {
 	// (colW/3 == bodyW/6) so the value left-aligns with ID/Zona, not centered.
 	labelW := colW / 3
 	pdf.SetTextColor(grayR, grayG, grayB)
-	pdf.SetFont("PlexMono", "", 7)
+	pdf.SetFont("PlexMono", "", 6.5)
 	pdf.CellFormat(labelW, rowH, "DIRECCIÓN", "", 0, "L", false, 0, "")
 	pdf.SetTextColor(inkR, inkG, inkB)
-	pdf.SetFont("Poppins", "", 9)
+	pdf.SetFont("Poppins", "", 8.5)
 	pdf.CellFormat(bodyW-labelW, rowH, c.Direccion, "", 1, "L", false, 0, "")
 
 	if nota := strings.TrimSpace(c.Notas); nota != "" {
 		drawNota(pdf, nota)
 	}
 
-	pdf.Ln(3)
+	pdf.Ln(2)
 }
 
 // drawNota renders the client's free-form note as a wrapped block with a NOTA
 // label and a slate accent rule on its left. The note can be long, so it wraps
 // with MultiCell; auto page break is re-enabled around it in case it overflows.
 func drawNota(pdf *fpdf.Fpdf, nota string) {
-	pdf.Ln(2.5)
+	pdf.Ln(1.5)
 	pdf.SetTextColor(grayR, grayG, grayB)
-	pdf.SetFont("PlexMono", "", 7)
-	pdf.CellFormat(bodyW, 4.5, "NOTA", "", 1, "L", false, 0, "")
+	pdf.SetFont("PlexMono", "", 6.5)
+	pdf.CellFormat(bodyW, 4, "NOTA", "", 1, "L", false, 0, "")
 
 	// Left accent rule alongside the wrapped text.
 	startY := pdf.GetY()
@@ -286,9 +286,9 @@ func drawNota(pdf *fpdf.Fpdf, nota string) {
 // ****markers**** in semibold, single-* account markers as bullets, the rest as
 // body text. Uses Write so the text word-wraps while switching fonts per token.
 func writeNotaRich(pdf *fpdf.Fpdf, nota string) {
-	const lineH = 4.6
-	normal := func() { pdf.SetFont("Poppins", "", 8.5); pdf.SetTextColor(inkR, inkG, inkB) }
-	strong := func() { pdf.SetFont("PoppinsSB", "", 8.5); pdf.SetTextColor(inkR, inkG, inkB) }
+	const lineH = 4.0
+	normal := func() { pdf.SetFont("Poppins", "", 7.5); pdf.SetTextColor(inkR, inkG, inkB) }
+	strong := func() { pdf.SetFont("PoppinsSB", "", 7.5); pdf.SetTextColor(inkR, inkG, inkB) }
 
 	last := 0
 	for _, loc := range notaTokenRe.FindAllStringSubmatchIndex(nota, -1) {
@@ -304,7 +304,7 @@ func writeNotaRich(pdf *fpdf.Fpdf, nota string) {
 			strong()
 			pdf.Write(lineH, nota[loc[4]:loc[5]])
 		default: // single "*" account marker → bullet
-			pdf.SetFont("Poppins", "", 8.5)
+			pdf.SetFont("Poppins", "", 7.5)
 			pdf.SetTextColor(grayR, grayG, grayB)
 			pdf.Write(lineH, "• ")
 		}
@@ -322,7 +322,7 @@ func writeNotaRich(pdf *fpdf.Fpdf, nota string) {
 // of forgiven debt + write-offs — so ABONADO here means real cash, coherent with
 // the per-venta subtotals and the rest of the app.
 func drawResumenBand(pdf *fpdf.Fpdf, r outbound.ResumenFicha, abonadoIngreso, noCobrado decimal.Decimal) {
-	bandH := 16.0
+	bandH := 13.0
 	colW := bodyW / 6
 	y := pdf.GetY()
 
@@ -352,18 +352,18 @@ func drawResumenBand(pdf *fpdf.Fpdf, r outbound.ResumenFicha, abonadoIngreso, no
 			pdf.Line(x, y+2, x, y+bandH-2)
 		}
 		// Label
-		pdf.SetFont("PlexMono", "", 6.5)
+		pdf.SetFont("PlexMono", "", 6)
 		pdf.SetTextColor(grayR, grayG, grayB)
-		pdf.SetXY(x, y+2.5)
-		pdf.CellFormat(colW, 5, m.label, "", 0, "C", false, 0, "")
+		pdf.SetXY(x, y+2)
+		pdf.CellFormat(colW, 4.5, m.label, "", 0, "C", false, 0, "")
 		// Value
-		pdf.SetFont("PlexMonoMed", "", 10.5)
+		pdf.SetFont("PlexMonoMed", "", 9.5)
 		pdf.SetTextColor(inkR, inkG, inkB)
-		pdf.SetXY(x, y+7.5)
-		pdf.CellFormat(colW, 6, m.value, "", 0, "C", false, 0, "")
+		pdf.SetXY(x, y+6.5)
+		pdf.CellFormat(colW, 5.5, m.value, "", 0, "C", false, 0, "")
 	}
 
-	pdf.SetXY(margin, y+bandH+4)
+	pdf.SetXY(margin, y+bandH+3)
 }
 
 // drawVentas renders per-venta sections with payment tables.
@@ -378,20 +378,20 @@ func drawVentas(pdf *fpdf.Fpdf, ventas []outbound.ReporteVenta) {
 func drawVenta(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
 	// Keep the venta header + meta with the start of its table: if too little
 	// room remains, start on a fresh page so the section is never orphaned.
-	metaH := 22.0 + float64(len(v.Productos))*4.4
+	metaH := 18.0 + float64(len(v.Productos))*3.9
 	if len(v.Productos) > 0 {
-		metaH += 4
+		metaH += 3
 	}
 	if v.Credito != nil {
-		metaH += 6
+		metaH += 5
 	}
-	if metaH > 80 {
-		metaH = 80
+	if metaH > 70 {
+		metaH = 70
 	}
-	if pdf.GetY()+metaH+18 > bottomLimit {
+	if pdf.GetY()+metaH+14 > bottomLimit {
 		pdf.AddPage()
 	}
-	pdf.Ln(2)
+	pdf.Ln(1.5)
 
 	drawVentaHeader(pdf, v)
 	drawArticulos(pdf, v.Productos)
@@ -400,7 +400,7 @@ func drawVenta(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
 	}
 	drawPagosTable(pdf, v)
 
-	pdf.Ln(4)
+	pdf.Ln(2.5)
 }
 
 // drawArticulos renders the sale's line items: "cantidad × nombre", unit price
@@ -412,27 +412,27 @@ func drawArticulos(pdf *fpdf.Fpdf, productos []outbound.ReporteProducto) {
 	const labelW, unitW, impW = 22.0, 30.0, 30.0
 	nameW := bodyW - labelW - unitW - impW
 	for i, p := range productos {
-		pdf.SetFont("PlexMono", "", 7)
+		pdf.SetFont("PlexMono", "", 6.5)
 		pdf.SetTextColor(grayR, grayG, grayB)
 		label := ""
 		if i == 0 {
 			label = "ARTÍCULOS"
 		}
-		pdf.CellFormat(labelW, 4.4, label, "", 0, "L", false, 0, "")
+		pdf.CellFormat(labelW, 3.9, label, "", 0, "L", false, 0, "")
 
-		pdf.SetFont("Poppins", "", 8)
+		pdf.SetFont("Poppins", "", 7.5)
 		pdf.SetTextColor(inkR, inkG, inkB)
 		nombre := trimDecimal(p.Cantidad) + " × " + p.Nombre
-		pdf.CellFormat(nameW, 4.4, fitText(pdf, nombre, nameW), "", 0, "L", false, 0, "")
+		pdf.CellFormat(nameW, 3.9, fitText(pdf, nombre, nameW), "", 0, "L", false, 0, "")
 
-		pdf.SetFont("PlexMono", "", 7)
+		pdf.SetFont("PlexMono", "", 6.5)
 		pdf.SetTextColor(grayR, grayG, grayB)
-		pdf.CellFormat(unitW, 4.4, "c/u "+formatMXN(p.PrecioUnitario), "", 0, "R", false, 0, "")
-		pdf.SetFont("PlexMonoMed", "", 7.5)
+		pdf.CellFormat(unitW, 3.9, "c/u "+formatMXN(p.PrecioUnitario), "", 0, "R", false, 0, "")
+		pdf.SetFont("PlexMonoMed", "", 7)
 		pdf.SetTextColor(inkR, inkG, inkB)
-		pdf.CellFormat(impW, 4.4, formatMXN(p.Importe), "", 1, "R", false, 0, "")
+		pdf.CellFormat(impW, 3.9, formatMXN(p.Importe), "", 1, "R", false, 0, "")
 	}
-	pdf.Ln(1)
+	pdf.Ln(0.5)
 }
 
 // drawCredito renders the credit-contract terms as a tidy label/value grid
@@ -462,7 +462,7 @@ func drawCredito(pdf *fpdf.Fpdf, c *outbound.ReporteCredito) {
 		return
 	}
 
-	const gutterW, subLabelW, rowH = 22.0, 26.0, 4.6
+	const gutterW, subLabelW, rowH = 22.0, 26.0, 4.0
 	colW := (bodyW - gutterW) / 2
 	valueW := colW - subLabelW
 
@@ -480,12 +480,12 @@ func drawCredito(pdf *fpdf.Fpdf, c *outbound.ReporteCredito) {
 		drawCampo(pdf, "Vendedor", strings.Join(c.Vendedores, ", "), subLabelW, bodyW-gutterW-subLabelW)
 		pdf.Ln(rowH)
 	}
-	pdf.Ln(1)
+	pdf.Ln(0.5)
 }
 
 // drawGutter draws the left-column section label (only on the first row).
 func drawGutter(pdf *fpdf.Fpdf, w, rowH float64, first bool) {
-	pdf.SetFont("PlexMono", "", 7)
+	pdf.SetFont("PlexMono", "", 6.5)
 	pdf.SetTextColor(grayR, grayG, grayB)
 	label := ""
 	if first {
@@ -496,12 +496,12 @@ func drawGutter(pdf *fpdf.Fpdf, w, rowH float64, first bool) {
 
 // drawCampo draws one uppercase label + value pair (no line break).
 func drawCampo(pdf *fpdf.Fpdf, label, value string, labelW, valueW float64) {
-	pdf.SetFont("PlexMono", "", 6.5)
+	pdf.SetFont("PlexMono", "", 6)
 	pdf.SetTextColor(grayR, grayG, grayB)
-	pdf.CellFormat(labelW, 4.6, strings.ToUpper(label), "", 0, "L", false, 0, "")
-	pdf.SetFont("Poppins", "", 8)
+	pdf.CellFormat(labelW, 4.0, strings.ToUpper(label), "", 0, "L", false, 0, "")
+	pdf.SetFont("Poppins", "", 7.5)
 	pdf.SetTextColor(inkR, inkG, inkB)
-	pdf.CellFormat(valueW, 4.6, fitText(pdf, value, valueW), "", 0, "L", false, 0, "")
+	pdf.CellFormat(valueW, 4.0, fitText(pdf, value, valueW), "", 0, "L", false, 0, "")
 }
 
 // trimDecimal formats a quantity without trailing zeros (2 not 2.00; 1.5 kept).
@@ -515,10 +515,10 @@ func trimDecimal(d decimal.Decimal) string {
 // drawContinuation re-establishes which venta a table belongs to at the top of
 // a continuation page.
 func drawContinuation(pdf *fpdf.Fpdf, folio string) {
-	pdf.SetFont("PoppinsSB", "", 9)
+	pdf.SetFont("PoppinsSB", "", 8.5)
 	pdf.SetTextColor(slateR, slateG, slateB)
-	pdf.CellFormat(bodyW, 6, folio+"  (continúa)", "", 1, "L", false, 0, "")
-	pdf.Ln(1)
+	pdf.CellFormat(bodyW, 5, folio+"  (continúa)", "", 1, "L", false, 0, "")
+	pdf.Ln(0.5)
 }
 
 // fitText truncates s with an ellipsis so it never overflows maxW under the
@@ -546,13 +546,13 @@ func drawVentaHeader(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
 	pdf.SetLineWidth(0.3)
 	y := pdf.GetY()
 	pdf.Line(margin, y, pageW-margin, y)
-	pdf.Ln(3)
+	pdf.Ln(2)
 
 	// Left side: folio + date + almacen
 	startY := pdf.GetY()
-	pdf.SetFont("PoppinsSB", "", 10.5)
+	pdf.SetFont("PoppinsSB", "", 9.5)
 	pdf.SetTextColor(inkR, inkG, inkB)
-	pdf.CellFormat(80, 6, v.Folio, "", 0, "L", false, 0, "")
+	pdf.CellFormat(80, 5.5, v.Folio, "", 0, "L", false, 0, "")
 
 	// Right side: total + status chip
 	// Determine chip text and colors
@@ -567,31 +567,31 @@ func drawVentaHeader(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
 	}
 
 	// Total
-	pdf.SetFont("PlexMonoMed", "", 10.5)
+	pdf.SetFont("PlexMonoMed", "", 9.5)
 	pdf.SetTextColor(inkR, inkG, inkB)
 	totalStr := formatMXN(v.Total)
-	pdf.CellFormat(bodyW-80-40, 6, totalStr, "", 0, "R", false, 0, "")
+	pdf.CellFormat(bodyW-80-40, 5.5, totalStr, "", 0, "R", false, 0, "")
 
 	// Chip: draw bordered rect + text
-	chipW := 38.0
+	chipW := 36.0
 	chipX := pageW - margin - chipW
 	chipY := startY
 	pdf.SetDrawColor(chipR, chipG, chipB)
 	pdf.SetLineWidth(0.4)
-	pdf.Rect(chipX, chipY, chipW, 6, "D")
-	pdf.SetFont("PlexMono", "", 7.5)
+	pdf.Rect(chipX, chipY, chipW, 5.5, "D")
+	pdf.SetFont("PlexMono", "", 7)
 	pdf.SetTextColor(chipR, chipG, chipB)
 	pdf.SetXY(chipX, chipY)
-	pdf.CellFormat(chipW, 6, chipText, "", 1, "C", false, 0, "")
+	pdf.CellFormat(chipW, 5.5, chipText, "", 1, "C", false, 0, "")
 
 	// Second line: date + almacen
-	pdf.SetXY(margin, startY+7)
-	pdf.SetFont("Poppins", "", 8.5)
+	pdf.SetXY(margin, startY+6)
+	pdf.SetFont("Poppins", "", 8)
 	pdf.SetTextColor(grayR, grayG, grayB)
 	dateAlm := formatFecha(v.Fecha) + "   " + v.Almacen
-	pdf.CellFormat(bodyW, 5, dateAlm, "", 1, "L", false, 0, "")
+	pdf.CellFormat(bodyW, 4.5, dateAlm, "", 1, "L", false, 0, "")
 
-	pdf.Ln(2)
+	pdf.Ln(1.5)
 }
 
 // drawPagosTable renders the payment table for a venta, paginating manually so
@@ -599,22 +599,22 @@ func drawVentaHeader(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
 func drawPagosTable(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
 	pagos := v.Pagos
 	if len(pagos) == 0 {
-		pdf.SetFont("Poppins", "", 8.5)
+		pdf.SetFont("Poppins", "", 7.5)
 		pdf.SetTextColor(grayR, grayG, grayB)
-		pdf.CellFormat(bodyW, 5, "Sin pagos registrados", "", 1, "L", false, 0, "")
+		pdf.CellFormat(bodyW, 4.5, "Sin pagos registrados", "", 1, "L", false, 0, "")
 		return
 	}
 
 	// Column widths
-	colFecha := 28.0
-	colConcepto := 75.0
+	colFecha := 26.0
+	colConcepto := 78.0
 	colCobrador := 60.0
 	colImporte := bodyW - colFecha - colConcepto - colCobrador
 
-	rowH := 5.5
+	rowH := 4.5
 
 	drawColumnHeader := func() {
-		pdf.SetFont("PlexMono", "", 6.5)
+		pdf.SetFont("PlexMono", "", 6)
 		pdf.SetTextColor(grayR, grayG, grayB)
 		pdf.SetFillColor(hairR, hairG, hairB)
 		headers := []struct {
@@ -683,19 +683,19 @@ func drawPagoRow(pdf *fpdf.Fpdf, p outbound.ReportePago, fill bool, c pagoCols) 
 	}
 	cr, cg, cb := pagoColor(p)
 
-	pdf.SetFont("PlexMono", "", 8)
+	pdf.SetFont("PlexMono", "", 7)
 	pdf.SetTextColor(inkR, inkG, inkB)
 	pdf.CellFormat(c.fecha, c.rowH, formatFecha(p.Fecha), "", 0, "L", fill, 0, "")
 
-	pdf.SetFont("Poppins", "", 8.5)
+	pdf.SetFont("Poppins", "", 7.5)
 	pdf.SetTextColor(cr, cg, cb)
 	pdf.CellFormat(c.concepto, c.rowH, fitText(pdf, p.Concepto, c.concepto), "", 0, "L", fill, 0, "")
 
-	pdf.SetFont("Poppins", "", 8.5)
+	pdf.SetFont("Poppins", "", 7.5)
 	pdf.SetTextColor(grayR, grayG, grayB)
 	pdf.CellFormat(c.cobrador, c.rowH, fitText(pdf, p.Cobrador, c.cobrador), "", 0, "L", fill, 0, "")
 
-	pdf.SetFont("PlexMonoMed", "", 8.5)
+	pdf.SetFont("PlexMonoMed", "", 7.5)
 	pdf.SetTextColor(cr, cg, cb)
 	pdf.CellFormat(c.importe, c.rowH, formatMXN(p.Importe), "", 0, "R", fill, 0, "")
 
@@ -716,28 +716,28 @@ func drawSubtotalRow(pdf *fpdf.Fpdf, labelArea, colImporte, rowH float64, label 
 	}
 
 	pdf.SetFillColor(255, 255, 255)
-	pdf.SetFont("PlexMono", "", 7)
+	pdf.SetFont("PlexMono", "", 6.5)
 	pdf.SetTextColor(r, g, b)
 	// Reserve a gap between the right-aligned label and the amount so they never collide.
 	const subtotalGap = 4.0
 	pdf.CellFormat(labelArea-subtotalGap, rowH, label, "", 0, "R", false, 0, "")
 	pdf.CellFormat(subtotalGap, rowH, "", "", 0, "R", false, 0, "")
-	pdf.SetFont("PlexMonoMed", "", 9)
+	pdf.SetFont("PlexMonoMed", "", 8)
 	pdf.SetTextColor(r, g, b)
 	pdf.CellFormat(colImporte, rowH, formatMXN(total), "", 1, "R", false, 0, "")
 }
 
 // drawFooter renders the page footer (called by fpdf on every page).
 func drawFooter(pdf *fpdf.Fpdf, _ time.Time) {
-	pdf.SetY(-14)
+	pdf.SetY(-12)
 	pdf.SetDrawColor(hairR, hairG, hairB)
 	pdf.SetLineWidth(0.2)
 	pdf.Line(margin, pdf.GetY(), pageW-margin, pdf.GetY())
-	pdf.Ln(2)
-	pdf.SetFont("Poppins", "", 7)
+	pdf.Ln(1.5)
+	pdf.SetFont("Poppins", "", 6.5)
 	pdf.SetTextColor(grayR, grayG, grayB)
 	pdf.CellFormat(bodyW/2, 4, "Mueblería MSP", "", 0, "L", false, 0, "")
-	pdf.SetFont("PlexMono", "", 7)
+	pdf.SetFont("PlexMono", "", 6.5)
 	pdf.CellFormat(bodyW/2, 4, "Página "+strconv.Itoa(pdf.PageNo())+" de {nb}", "", 0, "R", false, 0, "")
 }
 
