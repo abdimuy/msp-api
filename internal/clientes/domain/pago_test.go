@@ -133,3 +133,90 @@ func TestHydratePago_MultipleVariants(t *testing.T) {
 		})
 	}
 }
+
+// ─── Extended Pago fields (concepto, categoria, cobrador) ─────────────────────
+
+func TestHydratePago_ExtendedFields_AllGettersRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	p := domain.HydratePago(domain.HydratePagoParams{
+		DoctoCCID:      100,
+		Fecha:          fixedPagoFecha,
+		Importe:        decimal.NewFromFloat(8400),
+		FormaCobro:     "Efectivo",
+		AplicaACargoID: 4070585,
+		ConceptoCCID:   87327,
+		Concepto:       "Cobranza en ruta",
+		Categoria:      domain.CategoriaIngresoPago,
+		Cobrador:       "RUTA 36 - OSCAR ROQUE",
+	})
+
+	assert.Equal(t, 87327, p.ConceptoCCID())
+	assert.Equal(t, "Cobranza en ruta", p.Concepto())
+	assert.Equal(t, domain.CategoriaIngresoPago, p.Categoria())
+	assert.Equal(t, "RUTA 36 - OSCAR ROQUE", p.Cobrador())
+	assert.True(t, p.Categoria().EsIngreso(), "pago is income")
+}
+
+func TestHydratePago_ExtendedFields_Enganche(t *testing.T) {
+	t.Parallel()
+
+	p := domain.HydratePago(domain.HydratePagoParams{
+		DoctoCCID:    200,
+		Fecha:        fixedPagoFecha,
+		Importe:      decimal.NewFromFloat(200),
+		ConceptoCCID: 24533,
+		Concepto:     "Enganche",
+		Categoria:    domain.CategoriaIngresoEnganche,
+		Cobrador:     "RUTA 36 - OSCAR ROQUE",
+	})
+
+	assert.Equal(t, domain.CategoriaIngresoEnganche, p.Categoria())
+	assert.True(t, p.Categoria().EsIngreso(), "enganche is income")
+}
+
+func TestHydratePago_ExtendedFields_Condonacion(t *testing.T) {
+	t.Parallel()
+
+	p := domain.HydratePago(domain.HydratePagoParams{
+		DoctoCCID:    300,
+		Fecha:        fixedPagoFecha,
+		Importe:      decimal.NewFromFloat(900),
+		ConceptoCCID: 27969,
+		Concepto:     "Condonación",
+		Categoria:    domain.CategoriaCondonacion,
+		Cobrador:     "", // no cobrador for condonacion
+	})
+
+	assert.Equal(t, domain.CategoriaCondonacion, p.Categoria())
+	assert.False(t, p.Categoria().EsIngreso(), "condonacion is not income")
+	assert.Empty(t, p.Cobrador())
+}
+
+func TestHydratePago_ExtendedFields_Perdida(t *testing.T) {
+	t.Parallel()
+
+	p := domain.HydratePago(domain.HydratePagoParams{
+		DoctoCCID:    400,
+		Fecha:        fixedPagoFecha,
+		Importe:      decimal.NewFromFloat(4150),
+		ConceptoCCID: 27968,
+		Concepto:     "Mal cliente",
+		Categoria:    domain.CategoriaPerdida,
+		Cobrador:     "",
+	})
+
+	assert.Equal(t, domain.CategoriaPerdida, p.Categoria())
+	assert.False(t, p.Categoria().EsIngreso(), "perdida is not income")
+}
+
+func TestHydratePago_ExtendedFields_ZeroValues(t *testing.T) {
+	t.Parallel()
+	// Ensure new fields default to zero/empty without panicking.
+	p := domain.HydratePago(domain.HydratePagoParams{})
+
+	assert.Zero(t, p.ConceptoCCID())
+	assert.Empty(t, p.Concepto())
+	assert.Equal(t, domain.Categoria(""), p.Categoria())
+	assert.Empty(t, p.Cobrador())
+}

@@ -281,10 +281,15 @@ func toVentaDetalleDTO(d outbound.VentaDetalle) VentaDetalleDTO {
 	pagos := make([]PagoDTO, 0, len(d.Pagos))
 	for _, pago := range d.Pagos {
 		pagos = append(pagos, PagoDTO{
-			DoctoCCID:  pago.DoctoCCID(),
-			Fecha:      formatTime(pago.Fecha()),
-			Importe:    pago.Importe().StringFixed(moneyScale),
-			FormaCobro: pago.FormaCobro(),
+			DoctoCCID:    pago.DoctoCCID(),
+			Fecha:        formatTime(pago.Fecha()),
+			Importe:      pago.Importe().StringFixed(moneyScale),
+			FormaCobro:   pago.FormaCobro(),
+			ConceptoCCID: pago.ConceptoCCID(),
+			Concepto:     pago.Concepto(),
+			Categoria:    string(pago.Categoria()),
+			Cobrador:     pago.Cobrador(),
+			EsIngreso:    pago.Categoria().EsIngreso(),
 		})
 	}
 

@@ -244,3 +244,67 @@ func TestClientesRepo_ObtenerVentaDetalle_NotFound(t *testing.T) {
 		assert.ErrorIs(t, err, domain.ErrVentaNotFound)
 	})
 }
+
+// ─── ObtenerVentaDetalle — concepto/categoria enrichment ─────────────────────
+
+// TestClientesRepo_ObtenerVentaDetalle_PagosEnriquecidos verifies that each pago
+// returned for the canonical fixture (DOCTO_PV_ID=4070523, cargo=4070585) is
+// enriched with concepto, categoria, and cobrador, and that the 10 expected
+// movements include at least one of each meaningful category.
+//
+// Fixture confirmed live (task-be1a-brief fact #5):
+//   - 7× cobranza (CONCEPTO_CC_ID=87327) → categoria=pago
+//   - 1× enganche (CONCEPTO_CC_ID=24533, $200, cobrador 77486) → categoria=enganche
+//   - 1× condonación (CONCEPTO_CC_ID=27969, $900, no cobrador) → categoria=condonacion
+//   - 1× mal cliente (CONCEPTO_CC_ID=27968, $4150, no cobrador) → categoria=perdida
+//
+// READ-ONLY: no INSERT/UPDATE. fbtestutil.WithTestTransaction always rolls back.
+func TestClientesRepo_ObtenerVentaDetalle_PagosEnriquecidos(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := clientesfb.NewClientesRepo(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		const doctoPVID = 4070523
+
+		detail, err := repo.ObtenerVentaDetalle(ctx, doctoPVID)
+		require.NoError(t, err)
+		require.NotNil(t, detail.Venta)
+
+		pagos := detail.Pagos
+		require.GreaterOrEqual(t, len(pagos), 10,
+			"expected at least 10 payment movements for fixture DOCTO_PV_ID=%d", doctoPVID)
+
+		// Track which categories are present.
+		found := map[domain.Categoria]bool{}
+		for _, p := range pagos {
+			assert.NotEmpty(t, p.Concepto(),
+				"Concepto must be non-empty for DoctoCCID=%d", p.DoctoCCID())
+
+			cat := p.Categoria()
+			found[cat] = true
+
+			// EsIngreso must match the category.
+			switch cat {
+			case domain.CategoriaIngresoPago, domain.CategoriaIngresoEnganche:
+				assert.True(t, cat.EsIngreso(),
+					"categoria=%q debe ser ingreso (DoctoCCID=%d)", cat, p.DoctoCCID())
+			case domain.CategoriaCondonacion, domain.CategoriaPerdida, domain.CategoriaOtro:
+				assert.False(t, cat.EsIngreso(),
+					"categoria=%q no debe ser ingreso (DoctoCCID=%d)", cat, p.DoctoCCID())
+			}
+
+			t.Logf("pago DoctoCCID=%d concepto_cc_id=%d concepto=%q categoria=%q cobrador=%q importe=%s",
+				p.DoctoCCID(), p.ConceptoCCID(), p.Concepto(), p.Categoria(), p.Cobrador(), p.Importe())
+		}
+
+		assert.True(t, found[domain.CategoriaIngresoPago],
+			"must contain at least one pago (cobranza)")
+		assert.True(t, found[domain.CategoriaIngresoEnganche],
+			"must contain at least one enganche")
+		assert.True(t, found[domain.CategoriaCondonacion],
+			"must contain at least one condonacion")
+		assert.True(t, found[domain.CategoriaPerdida],
+			"must contain at least one perdida")
+	})
+}

@@ -377,6 +377,9 @@ type pagoRowRaw struct {
 	importeRaw    any
 	formaCobroRaw firebird.Win1252 // FORMAS_COBRO.NOMBRE — CHARACTER SET NONE
 	cargoIDRaw    int
+	conceptoCCID  int
+	conceptoRaw   firebird.Win1252 // CONCEPTOS_CC.NOMBRE — CHARACTER SET NONE
+	cobradorRaw   firebird.Win1252 // COBRADORES.NOMBRE or DOCTOS_CC.DESCRIPCION — CHARACTER SET NONE
 }
 
 func (r *pagoRowRaw) scanFrom(s scannable) error {
@@ -386,6 +389,9 @@ func (r *pagoRowRaw) scanFrom(s scannable) error {
 		&r.importeRaw,
 		&r.formaCobroRaw,
 		&r.cargoIDRaw,
+		&r.conceptoCCID,
+		&r.conceptoRaw,
+		&r.cobradorRaw,
 	)
 }
 
@@ -404,6 +410,10 @@ func (r *pagoRowRaw) assemble() (*domain.Pago, error) {
 		Importe:        importe,
 		FormaCobro:     string(r.formaCobroRaw),
 		AplicaACargoID: r.cargoIDRaw,
+		ConceptoCCID:   r.conceptoCCID,
+		Concepto:       string(r.conceptoRaw),
+		Categoria:      domain.ClasificarConcepto(r.conceptoCCID),
+		Cobrador:       string(r.cobradorRaw),
 	}), nil
 }
 

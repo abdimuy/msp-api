@@ -276,10 +276,15 @@ type ContratoDTO struct {
 
 // PagoDTO is a single payment entry in the sale's payment history.
 type PagoDTO struct {
-	DoctoCCID  int    `json:"docto_cc_id"  doc:"ID del documento de pago en Microsip"`
-	Fecha      string `json:"fecha"        format:"date-time" doc:"RFC3339 UTC de la fecha del pago"`
-	Importe    string `json:"importe"      doc:"Monto del pago (2 decimales)"`
-	FormaCobro string `json:"forma_cobro"  doc:"Método de cobro (efectivo, transferencia, etc.)"`
+	DoctoCCID    int    `json:"docto_cc_id"    doc:"ID del documento de pago en Microsip"`
+	Fecha        string `json:"fecha"          format:"date-time" doc:"RFC3339 UTC de la fecha del pago"`
+	Importe      string `json:"importe"        doc:"Monto del pago (2 decimales)"`
+	FormaCobro   string `json:"forma_cobro"    doc:"Método de cobro (efectivo, transferencia, etc.)"`
+	ConceptoCCID int    `json:"concepto_cc_id" doc:"ID del concepto en Microsip (CONCEPTO_CC_ID)"`
+	Concepto     string `json:"concepto"       doc:"Nombre del concepto del movimiento"`
+	Categoria    string `json:"categoria"      doc:"Categoría derivada del concepto: pago, enganche, condonacion, perdida u otro"`
+	Cobrador     string `json:"cobrador"       doc:"Nombre del cobrador o descripción del documento; vacío si no aplica"`
+	EsIngreso    bool   `json:"es_ingreso"     doc:"Verdadero si el movimiento representa ingreso real (pago o enganche)"`
 }
 
 // ─── Endpoint 5: GET /clientes/{id}/ritmo-pago ───────────────────────────────
