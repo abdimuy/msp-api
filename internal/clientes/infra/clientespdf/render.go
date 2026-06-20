@@ -35,6 +35,9 @@ const (
 	pageH  = 279.4
 	margin = 18.0
 	bodyW  = pageW - 2*margin
+	// bottomLimit is the lowest Y content may reach before a manual page break,
+	// leaving room for the footer (drawn at SetY(-14)).
+	bottomLimit = pageH - 20
 )
 
 var meses = [...]string{"ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"}
@@ -44,7 +47,10 @@ var meses = [...]string{"ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", 
 func Render(rep outbound.ReporteCliente, gen time.Time) ([]byte, error) {
 	pdf := fpdf.New("P", "mm", "Letter", "")
 	pdf.SetMargins(margin, margin, margin)
-	pdf.SetAutoPageBreak(true, margin)
+	// Pagination is managed manually (see drawVenta / drawPagosTable) so venta
+	// headers are never orphaned and long tables repeat their context on
+	// continuation pages. fpdf's automatic break would split sections blindly.
+	pdf.SetAutoPageBreak(false, margin)
 	pdf.AliasNbPages("{nb}")
 
 	if err := loadFonts(pdf); err != nil {
@@ -163,13 +169,15 @@ func drawClienteBlock(pdf *fpdf.Fpdf, c outbound.ReporteClienteDatos) {
 		}
 	}
 
-	// Dirección — full width
+	// Dirección — full width. Label width matches the key/value rows above
+	// (colW/3 == bodyW/6) so the value left-aligns with ID/Zona, not centered.
+	labelW := colW / 3
 	pdf.SetTextColor(grayR, grayG, grayB)
 	pdf.SetFont("PlexMono", "", 7)
-	pdf.CellFormat(bodyW/4, rowH, "DIRECCIÓN", "", 0, "L", false, 0, "")
+	pdf.CellFormat(labelW, rowH, "DIRECCIÓN", "", 0, "L", false, 0, "")
 	pdf.SetTextColor(inkR, inkG, inkB)
 	pdf.SetFont("Poppins", "", 9)
-	pdf.CellFormat(bodyW-bodyW/4, rowH, c.Direccion, "", 1, "L", false, 0, "")
+	pdf.CellFormat(bodyW-labelW, rowH, c.Direccion, "", 1, "L", false, 0, "")
 
 	pdf.Ln(3)
 }
@@ -229,15 +237,50 @@ func drawVentas(pdf *fpdf.Fpdf, ventas []outbound.ReporteVenta) {
 
 // drawVenta renders one venta section with its payment table.
 func drawVenta(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
+	// Keep the venta header with the start of its table: if too little room
+	// remains, start on a fresh page so the folio is never orphaned at the
+	// bottom of a page, separated from its rows.
+	const ventaHeaderBlock = 42.0
+	if pdf.GetY()+ventaHeaderBlock > bottomLimit {
+		pdf.AddPage()
+	}
 	pdf.Ln(2)
 
 	// Venta header row
 	drawVentaHeader(pdf, v)
 
 	// Payment table
-	drawPagosTable(pdf, v.Pagos)
+	drawPagosTable(pdf, v)
 
 	pdf.Ln(4)
+}
+
+// drawContinuation re-establishes which venta a table belongs to at the top of
+// a continuation page.
+func drawContinuation(pdf *fpdf.Fpdf, folio string) {
+	pdf.SetFont("PoppinsSB", "", 9)
+	pdf.SetTextColor(slateR, slateG, slateB)
+	pdf.CellFormat(bodyW, 6, folio+"  (continúa)", "", 1, "L", false, 0, "")
+	pdf.Ln(1)
+}
+
+// fitText truncates s with an ellipsis so it never overflows maxW under the
+// current font. UTF-8 safe (trims by rune).
+func fitText(pdf *fpdf.Fpdf, s string, maxW float64) string {
+	const pad = 1.5 // mm safety so the text never touches the next column
+	avail := maxW - pad
+	if pdf.GetStringWidth(s) <= avail {
+		return s
+	}
+	r := []rune(s)
+	for len(r) > 0 {
+		cand := strings.TrimRight(string(r), " ") + "…"
+		if pdf.GetStringWidth(cand) <= avail {
+			return cand
+		}
+		r = r[:len(r)-1]
+	}
+	return "…"
 }
 
 func drawVentaHeader(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
@@ -294,8 +337,10 @@ func drawVentaHeader(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
 	pdf.Ln(2)
 }
 
-// drawPagosTable renders the payment table for a venta.
-func drawPagosTable(pdf *fpdf.Fpdf, pagos []outbound.ReportePago) {
+// drawPagosTable renders the payment table for a venta, paginating manually so
+// long tables repeat their column header (and the venta folio) on each page.
+func drawPagosTable(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
+	pagos := v.Pagos
 	if len(pagos) == 0 {
 		pdf.SetFont("Poppins", "", 8.5)
 		pdf.SetTextColor(grayR, grayG, grayB)
@@ -311,28 +356,37 @@ func drawPagosTable(pdf *fpdf.Fpdf, pagos []outbound.ReportePago) {
 
 	rowH := 5.5
 
-	// Table header
-	pdf.SetFont("PlexMono", "", 6.5)
-	pdf.SetTextColor(grayR, grayG, grayB)
-	pdf.SetFillColor(hairR, hairG, hairB)
-	headers := []struct {
-		text  string
-		width float64
-		align string
-	}{
-		{"FECHA", colFecha, "L"},
-		{"CONCEPTO", colConcepto, "L"},
-		{"COBRADOR", colCobrador, "L"},
-		{"IMPORTE", colImporte, "R"},
+	drawColumnHeader := func() {
+		pdf.SetFont("PlexMono", "", 6.5)
+		pdf.SetTextColor(grayR, grayG, grayB)
+		pdf.SetFillColor(hairR, hairG, hairB)
+		headers := []struct {
+			text  string
+			width float64
+			align string
+		}{
+			{"FECHA", colFecha, "L"},
+			{"CONCEPTO", colConcepto, "L"},
+			{"COBRADOR", colCobrador, "L"},
+			{"IMPORTE", colImporte, "R"},
+		}
+		for _, h := range headers {
+			pdf.CellFormat(h.width, rowH, h.text, "", 0, h.align, true, 0, "")
+		}
+		pdf.Ln(rowH)
 	}
-	for _, h := range headers {
-		pdf.CellFormat(h.width, rowH, h.text, "", 0, h.align, true, 0, "")
-	}
-	pdf.Ln(rowH)
 
-	// Payment rows
+	drawColumnHeader()
+
+	// Payment rows — break manually, repeating folio + column header.
 	var sumPagos decimal.Decimal
 	for i, p := range pagos {
+		if pdf.GetY()+rowH > bottomLimit {
+			pdf.AddPage()
+			drawContinuation(pdf, v.Folio)
+			drawColumnHeader()
+		}
+
 		fill := i%2 == 1
 		if fill {
 			pdf.SetFillColor(altFillR, altFillG, altFillB)
@@ -345,15 +399,15 @@ func drawPagosTable(pdf *fpdf.Fpdf, pagos []outbound.ReportePago) {
 		pdf.SetTextColor(inkR, inkG, inkB)
 		pdf.CellFormat(colFecha, rowH, formatFecha(p.Fecha), "", 0, "L", fill, 0, "")
 
-		// Concepto
+		// Concepto (truncated to its column)
 		pdf.SetFont("Poppins", "", 8.5)
 		pdf.SetTextColor(inkR, inkG, inkB)
-		pdf.CellFormat(colConcepto, rowH, p.Concepto, "", 0, "L", fill, 0, "")
+		pdf.CellFormat(colConcepto, rowH, fitText(pdf, p.Concepto, colConcepto), "", 0, "L", fill, 0, "")
 
-		// Cobrador
+		// Cobrador (truncated to its column)
 		pdf.SetFont("Poppins", "", 8.5)
 		pdf.SetTextColor(grayR, grayG, grayB)
-		pdf.CellFormat(colCobrador, rowH, p.Cobrador, "", 0, "L", fill, 0, "")
+		pdf.CellFormat(colCobrador, rowH, fitText(pdf, p.Cobrador, colCobrador), "", 0, "L", fill, 0, "")
 
 		// Importe
 		pdf.SetFont("PlexMonoMed", "", 8.5)
@@ -364,6 +418,12 @@ func drawPagosTable(pdf *fpdf.Fpdf, pagos []outbound.ReportePago) {
 		sumPagos = sumPagos.Add(p.Importe)
 	}
 
+	// Keep the subtotal with the table.
+	if pdf.GetY()+rowH > bottomLimit {
+		pdf.AddPage()
+		drawContinuation(pdf, v.Folio)
+		drawColumnHeader()
+	}
 	drawSubtotalRow(pdf, colFecha+colConcepto+colCobrador, colImporte, rowH, sumPagos)
 }
 
