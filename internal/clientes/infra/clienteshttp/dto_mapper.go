@@ -259,6 +259,7 @@ func ritmoPagoToDTO(r domain.RitmoPago) RitmoPagoDTO {
 		Eventos:      eventos,
 		Resumen: ResumenRitmoDTO{
 			TotalAbonado:   r.Resumen.TotalAbonado.StringFixed(moneyScale),
+			TotalPerdonado: r.Resumen.TotalPerdonado.StringFixed(moneyScale),
 			SemanasConPago: r.Resumen.SemanasConPago,
 			SemanasActivas: r.Resumen.SemanasActivas,
 			RachaActualSem: r.Resumen.RachaActualSem,

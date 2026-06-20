@@ -570,6 +570,50 @@ func TestBuildRitmoPago_Pagos_SemanaVaciaNoEsNil(t *testing.T) {
 	}
 }
 
+// ─── Resumen: ingreso vs perdón [BE-S] ────────────────────────────────────────
+
+func TestBuildRitmoPago_Resumen_IngresoVsPerdon(t *testing.T) {
+	t.Parallel()
+
+	// Semana 01-jun: pago $300 (ingreso) + condonación $200 (no ingreso) = MontoAbonado $500.
+	// Semana 08-jun: pérdida $100 (no ingreso) = MontoAbonado $100.
+	// Resumen.TotalAbonado   = $300 (solo ingreso).
+	// Resumen.TotalPerdonado = $300 (condonacion $200 + perdida $100).
+	// MontoAbonado por semana = todo (no cambia).
+	pagos := []domain.PagoCrudo{
+		{
+			Fecha: monday(2026, 6, 1), Importe: mustDecimal("300"), DoctoCCID: 1,
+			ConceptoCCID: 87327, Concepto: "Cobranza en ruta",
+		},
+		{
+			Fecha: monday(2026, 6, 1), Importe: mustDecimal("200"), DoctoCCID: 2,
+			ConceptoCCID: 25116, Concepto: "Condonación",
+		},
+		{
+			Fecha: monday(2026, 6, 8), Importe: mustDecimal("100"), DoctoCCID: 3,
+			ConceptoCCID: 27966, Concepto: "Pérdida",
+		},
+	}
+	ahora := time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC)
+	r := domain.BuildRitmoPago(pagos, nil, decimal.Zero, ahora, noRango())
+
+	// Resumen: TotalAbonado = ingreso únicamente.
+	assert.True(t, mustDecimal("300").Equal(r.Resumen.TotalAbonado),
+		"TotalAbonado debe ser solo ingreso (pago $300), obtenido %s", r.Resumen.TotalAbonado)
+
+	// Resumen: TotalPerdonado = condonacion + perdida.
+	assert.True(t, mustDecimal("300").Equal(r.Resumen.TotalPerdonado),
+		"TotalPerdonado debe ser condonacion $200 + perdida $100 = $300, obtenido %s", r.Resumen.TotalPerdonado)
+
+	// MontoAbonado por semana sigue sumando TODO (incluyendo condonacion/perdida),
+	// para que la reconstrucción del saldo no cambie.
+	require.Len(t, r.Semanas, 3)
+	assert.True(t, mustDecimal("500").Equal(r.Semanas[0].MontoAbonado),
+		"semana 0 MontoAbonado debe incluir pago+condonacion = $500, obtenido %s", r.Semanas[0].MontoAbonado)
+	assert.True(t, mustDecimal("100").Equal(r.Semanas[1].MontoAbonado),
+		"semana 1 MontoAbonado debe incluir perdida = $100, obtenido %s", r.Semanas[1].MontoAbonado)
+}
+
 // ─── Constantes EventoTipo ─────────────────────────────────────────────────────
 
 func TestEventoTipo_Constantes(t *testing.T) {

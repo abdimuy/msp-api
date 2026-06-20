@@ -59,7 +59,7 @@ func TestCategoria_EsIngreso(t *testing.T) {
 		{domain.CategoriaIngresoEnganche, true},
 		{domain.CategoriaCondonacion, false},
 		{domain.CategoriaPerdida, false},
-		{domain.CategoriaOtro, false},
+		{domain.CategoriaOtro, true},
 	}
 
 	for _, tc := range tests {

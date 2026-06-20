@@ -105,9 +105,14 @@ type EventoRitmo struct {
 
 // ResumenRitmo is the aggregated summary of the payment rhythm over the window.
 type ResumenRitmo struct {
-	// TotalAbonado is the sum of all payments in the window.
+	// TotalAbonado is the sum of income movements in the window (pago, enganche, otro —
+	// i.e. any movement where EsIngreso() is true). Condonacion and perdida are excluded.
 	TotalAbonado decimal.Decimal
-	// SemanasConPago is the count of weeks with at least one payment.
+	// TotalPerdonado is the sum of forgiveness/write-off movements (condonacion and
+	// perdida). These reduce the balance but are not actual cash inflow.
+	TotalPerdonado decimal.Decimal
+	// SemanasConPago is the count of weeks with at least one movement (any category,
+	// including condonacion/perdida — "semana con movimiento").
 	SemanasConPago int
 	// SemanasActivas is the span from the first week with a payment to the last
 	// week of the window (inclusive). Zero when no payments exist.
@@ -468,6 +473,10 @@ func liquidacionEventos(semanas []SemanaRitmo, ventas []VentaCruda) []EventoRitm
 }
 
 // buildResumen computes the aggregated ResumenRitmo from the weekly buckets.
+// TotalAbonado counts only income movements (EsIngreso()==true: pago, enganche, otro).
+// TotalPerdonado counts forgiveness/write-off movements (condonacion, perdida).
+// MontoAbonado on each SemanaRitmo still sums ALL movements so saldo reconstruction
+// remains unaffected — only the Resumen separates income from forgiveness.
 func buildResumen(semanas []SemanaRitmo, saldoActual decimal.Decimal) ResumenRitmo {
 	if len(semanas) == 0 {
 		return ResumenRitmo{
@@ -476,10 +485,18 @@ func buildResumen(semanas []SemanaRitmo, saldoActual decimal.Decimal) ResumenRit
 	}
 
 	totalAbonado := decimal.Zero
+	totalPerdonado := decimal.Zero
 	semanasConPago := 0
 	firstConPagoIdx := -1
 	for i, s := range semanas {
-		totalAbonado = totalAbonado.Add(s.MontoAbonado)
+		// Separate income from forgiveness by inspecting individual pagos.
+		for _, p := range s.Pagos {
+			if p.Categoria.EsIngreso() {
+				totalAbonado = totalAbonado.Add(p.Importe)
+			} else {
+				totalPerdonado = totalPerdonado.Add(p.Importe)
+			}
+		}
 		if s.MontoAbonado.IsPositive() {
 			semanasConPago++
 			if firstConPagoIdx == -1 {
@@ -512,6 +529,7 @@ func buildResumen(semanas []SemanaRitmo, saldoActual decimal.Decimal) ResumenRit
 
 	return ResumenRitmo{
 		TotalAbonado:   totalAbonado,
+		TotalPerdonado: totalPerdonado,
 		SemanasConPago: semanasConPago,
 		SemanasActivas: semanasActivas,
 		RachaActualSem: racha,

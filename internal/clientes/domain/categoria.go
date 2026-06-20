@@ -73,7 +73,8 @@ func ClasificarConcepto(conceptoCCID int) Categoria {
 }
 
 // EsIngreso reports whether this categoria represents actual cash inflow.
-// Only pago and enganche are considered income.
+// Income is defined by exclusion: any movement that is NOT condonacion or perdida
+// counts as income (pago, enganche, and otro all qualify).
 func (c Categoria) EsIngreso() bool {
-	return c == CategoriaIngresoPago || c == CategoriaIngresoEnganche
+	return c != CategoriaCondonacion && c != CategoriaPerdida
 }

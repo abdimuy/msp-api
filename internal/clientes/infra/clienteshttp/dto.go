@@ -350,12 +350,13 @@ type EventoRitmoDTO struct {
 
 // ResumenRitmoDTO holds the aggregated summary of the payment-rhythm window.
 type ResumenRitmoDTO struct {
-	TotalAbonado   string `json:"total_abonado"    doc:"Suma de pagos en el período (2 decimales)"`
-	SemanasConPago int    `json:"semanas_con_pago" doc:"Semanas con al menos un pago"`
-	SemanasActivas int    `json:"semanas_activas"  doc:"Semanas desde la primera con pago hasta el final del período"`
-	RachaActualSem int    `json:"racha_actual_sem" doc:"Semanas consecutivas con pago al cierre del período"`
-	ConstanciaPct  string `json:"constancia_pct"   doc:"Porcentaje de semanas activas con pago (2 decimales)"`
-	SaldoActual    string `json:"saldo_actual"     doc:"Saldo vigente (2 decimales)"`
+	TotalAbonado   string `json:"total_abonado"    doc:"suma de movimientos de ingreso en el período: pago, enganche y otro (2 decimales)"`
+	TotalPerdonado string `json:"total_perdonado"  doc:"suma de condonaciones y pérdidas en el período — reducen saldo pero no son ingreso (2 decimales)"`
+	SemanasConPago int    `json:"semanas_con_pago" doc:"semanas con al menos un movimiento"`
+	SemanasActivas int    `json:"semanas_activas"  doc:"semanas desde la primera con movimiento hasta el final del período"`
+	RachaActualSem int    `json:"racha_actual_sem" doc:"semanas consecutivas con movimiento al cierre del período"`
+	ConstanciaPct  string `json:"constancia_pct"   doc:"porcentaje de semanas activas con movimiento (2 decimales)"`
+	SaldoActual    string `json:"saldo_actual"     doc:"saldo vigente (2 decimales)"`
 }
 
 // ─── Endpoint 6: POST /clientes/_search/refresh ──────────────────────────────
