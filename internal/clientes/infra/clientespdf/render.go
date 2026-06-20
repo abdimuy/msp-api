@@ -390,38 +390,73 @@ func drawArticulos(pdf *fpdf.Fpdf, productos []outbound.ReporteProducto) {
 	pdf.Ln(1)
 }
 
-// drawCredito renders the credit-contract terms on a single wrapped line.
+// drawCredito renders the credit-contract terms as a tidy label/value grid
+// (two pairs per row) under a "CRÉDITO" gutter label — the same visual language
+// as the client block, instead of a cramped run-on line.
 func drawCredito(pdf *fpdf.Fpdf, c *outbound.ReporteCredito) {
-	var parts []string
+	type kv struct{ k, v string }
+	var pairs []kv
 	if c.Parcialidad.IsPositive() {
-		s := "Parcialidad " + formatMXN(c.Parcialidad)
+		v := formatMXN(c.Parcialidad)
 		if c.FormaPago != "" {
-			s += " " + strings.ToLower(c.FormaPago)
+			v += " " + strings.ToLower(c.FormaPago)
 		}
-		parts = append(parts, s)
+		pairs = append(pairs, kv{"Parcialidad", v})
 	}
 	if c.PlazoMeses > 0 {
-		parts = append(parts, fmt.Sprintf("Plazo %d meses", c.PlazoMeses))
+		pairs = append(pairs, kv{"Plazo", fmt.Sprintf("%d meses", c.PlazoMeses)})
 	}
 	if c.Enganche.IsPositive() {
-		parts = append(parts, "Enganche "+formatMXN(c.Enganche))
+		pairs = append(pairs, kv{"Enganche", formatMXN(c.Enganche)})
 	}
 	if c.PrecioContado.IsPositive() {
-		parts = append(parts, "Contado "+formatMXN(c.PrecioContado))
+		pairs = append(pairs, kv{"Precio contado", formatMXN(c.PrecioContado)})
 	}
-	if len(c.Vendedores) > 0 {
-		parts = append(parts, "Vendedor: "+strings.Join(c.Vendedores, ", "))
-	}
-	if len(parts) == 0 {
+	hasVend := len(c.Vendedores) > 0
+	if len(pairs) == 0 && !hasVend {
 		return
 	}
+
+	const gutterW, subLabelW, rowH = 22.0, 26.0, 4.6
+	colW := (bodyW - gutterW) / 2
+	valueW := colW - subLabelW
+
+	for i := 0; i < len(pairs); i += 2 {
+		drawGutter(pdf, gutterW, rowH, i == 0)
+		drawCampo(pdf, pairs[i].k, pairs[i].v, subLabelW, valueW)
+		if i+1 < len(pairs) {
+			drawCampo(pdf, pairs[i+1].k, pairs[i+1].v, subLabelW, valueW)
+		}
+		pdf.Ln(rowH)
+	}
+
+	if hasVend {
+		drawGutter(pdf, gutterW, rowH, len(pairs) == 0)
+		drawCampo(pdf, "Vendedor", strings.Join(c.Vendedores, ", "), subLabelW, bodyW-gutterW-subLabelW)
+		pdf.Ln(rowH)
+	}
+	pdf.Ln(1)
+}
+
+// drawGutter draws the left-column section label (only on the first row).
+func drawGutter(pdf *fpdf.Fpdf, w, rowH float64, first bool) {
 	pdf.SetFont("PlexMono", "", 7)
 	pdf.SetTextColor(grayR, grayG, grayB)
-	pdf.CellFormat(22, 4.6, "CRÉDITO", "", 0, "L", false, 0, "")
+	label := ""
+	if first {
+		label = "CRÉDITO"
+	}
+	pdf.CellFormat(w, rowH, label, "", 0, "L", false, 0, "")
+}
+
+// drawCampo draws one uppercase label + value pair (no line break).
+func drawCampo(pdf *fpdf.Fpdf, label, value string, labelW, valueW float64) {
+	pdf.SetFont("PlexMono", "", 6.5)
+	pdf.SetTextColor(grayR, grayG, grayB)
+	pdf.CellFormat(labelW, 4.6, strings.ToUpper(label), "", 0, "L", false, 0, "")
 	pdf.SetFont("Poppins", "", 8)
 	pdf.SetTextColor(inkR, inkG, inkB)
-	pdf.MultiCell(bodyW-22, 4.6, strings.Join(parts, " · "), "", "L", false)
-	pdf.Ln(1)
+	pdf.CellFormat(valueW, 4.6, fitText(pdf, value, valueW), "", 0, "L", false, 0, "")
 }
 
 // trimDecimal formats a quantity without trailing zeros (2 not 2.00; 1.5 kept).
