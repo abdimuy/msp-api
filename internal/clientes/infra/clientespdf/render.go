@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +15,11 @@ import (
 
 	"github.com/abdimuy/msp-api/internal/clientes/ports/outbound"
 )
+
+// notaTokenRe matches the structural cues in a Microsip note: ****EMPHASIS****
+// markers, DD-MM-YYYY follow-up dates, and single-* account markers. Used to
+// highlight them (bold dates/markers, bullets for *) instead of dumping raw text.
+var notaTokenRe = regexp.MustCompile(`(\*{2,}\s*[^*]+?\s*\*{2,})|(\b\d{1,2}-\d{1,2}-\d{4}\b)|(\*)`)
 
 //go:embed fonts/*.ttf
 var fontsFS embed.FS
@@ -258,18 +264,57 @@ func drawNota(pdf *fpdf.Fpdf, nota string) {
 
 	// Left accent rule alongside the wrapped text.
 	startY := pdf.GetY()
-	pdf.SetTextColor(inkR, inkG, inkB)
-	pdf.SetFont("Poppins", "", 8.5)
+	startPage := pdf.PageNo()
+	pdf.SetLeftMargin(margin + 3)
 	pdf.SetX(margin + 3)
 	pdf.SetAutoPageBreak(true, margin)
-	pdf.MultiCell(bodyW-3, 4.6, nota, "", "L", false)
+	writeNotaRich(pdf, nota)
 	pdf.SetAutoPageBreak(false, margin)
+	pdf.SetLeftMargin(margin)
 
-	pdf.SetDrawColor(slateR, slateG, slateB)
-	pdf.SetLineWidth(0.5)
-	pdf.Line(margin, startY+0.5, margin, pdf.GetY()-1)
-	pdf.SetLineWidth(0.2)
-	pdf.SetDrawColor(hairR, hairG, hairB)
+	// Accent rule alongside the note (only when it stayed on one page).
+	if pdf.PageNo() == startPage {
+		pdf.SetDrawColor(slateR, slateG, slateB)
+		pdf.SetLineWidth(0.5)
+		pdf.Line(margin, startY+0.5, margin, pdf.GetY()-1)
+		pdf.SetLineWidth(0.2)
+		pdf.SetDrawColor(hairR, hairG, hairB)
+	}
+}
+
+// writeNotaRich writes the note with inline highlighting: follow-up dates and
+// ****markers**** in semibold, single-* account markers as bullets, the rest as
+// body text. Uses Write so the text word-wraps while switching fonts per token.
+func writeNotaRich(pdf *fpdf.Fpdf, nota string) {
+	const lineH = 4.6
+	normal := func() { pdf.SetFont("Poppins", "", 8.5); pdf.SetTextColor(inkR, inkG, inkB) }
+	strong := func() { pdf.SetFont("PoppinsSB", "", 8.5); pdf.SetTextColor(inkR, inkG, inkB) }
+
+	last := 0
+	for _, loc := range notaTokenRe.FindAllStringSubmatchIndex(nota, -1) {
+		if loc[0] > last {
+			normal()
+			pdf.Write(lineH, nota[last:loc[0]])
+		}
+		switch {
+		case loc[2] >= 0: // ****emphasis**** → strip asterisks, bold
+			strong()
+			pdf.Write(lineH, strings.TrimSpace(strings.ReplaceAll(nota[loc[2]:loc[3]], "*", "")))
+		case loc[4] >= 0: // date → bold
+			strong()
+			pdf.Write(lineH, nota[loc[4]:loc[5]])
+		default: // single "*" account marker → bullet
+			pdf.SetFont("Poppins", "", 8.5)
+			pdf.SetTextColor(grayR, grayG, grayB)
+			pdf.Write(lineH, "• ")
+		}
+		last = loc[1]
+	}
+	if last < len(nota) {
+		normal()
+		pdf.Write(lineH, nota[last:])
+	}
+	pdf.Ln(lineH)
 }
 
 // drawResumenBand renders the 6-metric financial summary strip. abonadoIngreso
