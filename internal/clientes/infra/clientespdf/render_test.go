@@ -43,6 +43,9 @@ func buildSample() outbound.ReporteCliente {
 	noing := func(fecha, concepto, cobrador, importe, cat string) outbound.ReportePago {
 		return outbound.ReportePago{Fecha: tp(fecha), Concepto: concepto, Cobrador: cobrador, Importe: d(importe), EsIngreso: false, Categoria: cat}
 	}
+	prod := func(cant, nombre, unit, imp string) outbound.ReporteProducto {
+		return outbound.ReporteProducto{Cantidad: d(cant), Nombre: nombre, PrecioUnitario: d(unit), Importe: d(imp)}
+	}
 
 	return outbound.ReporteCliente{
 		Cliente: outbound.ReporteClienteDatos{
@@ -71,6 +74,15 @@ func buildSample() outbound.ReporteCliente {
 				Total:     d("18500.00"),
 				Saldo:     d("0.00"),
 				Liquidada: true,
+				Productos: []outbound.ReporteProducto{
+					prod("1", "Ropero 3 puertas chocolate", "9500.00", "9500.00"),
+					prod("1", "Comedor 6 sillas Madeira", "9000.00", "9000.00"),
+				},
+				Credito: &outbound.ReporteCredito{
+					Parcialidad: d("2000.00"), FormaPago: "Quincenal", PlazoMeses: 12,
+					Enganche: d("3700.00"), PrecioContado: d("16500.00"),
+					Vendedores: []string{"ANDRÉS RODRÍGUEZ"},
+				},
 				Pagos: []outbound.ReportePago{
 					ing("2024-03-15", "Enganche", "RUTA 36 - OSCAR ROQUE", "3700.00", "enganche"),
 					ing("2024-04-10", "Cobranza en ruta", "RUTA 36 - OSCAR ROQUE", "2000.00", "pago"),
@@ -88,6 +100,15 @@ func buildSample() outbound.ReporteCliente {
 				Total:     d("30000.00"),
 				Saldo:     d("17300.00"),
 				Liquidada: false,
+				Productos: []outbound.ReporteProducto{
+					prod("1", "Recámara matrimonial King Versalles", "18000.00", "18000.00"),
+					prod("1", "Refrigerador 14 pies Acros", "12000.00", "12000.00"),
+				},
+				Credito: &outbound.ReporteCredito{
+					Parcialidad: d("1500.00"), FormaPago: "Semanal", PlazoMeses: 24,
+					Enganche: d("6000.00"), PrecioContado: d("26000.00"),
+					Vendedores: []string{"ANDRÉS RODRÍGUEZ"},
+				},
 				Pagos: []outbound.ReportePago{
 					ing("2025-01-20", "Enganche", "RUTA 36 - OSCAR ROQUE", "6000.00", "enganche"),
 					ing("2025-02-18", "Cobranza en ruta", "RUTA 36 - OSCAR ROQUE", "1500.00", "pago"),

@@ -29,7 +29,8 @@ type ReporteClienteDatos struct {
 	Notas string
 }
 
-// ReporteVenta is a single sale record in the report, with its payment history.
+// ReporteVenta is a single sale record in the report, with its line items,
+// credit terms (when on credit), and payment history.
 type ReporteVenta struct {
 	DoctoPvID int
 	Folio     string
@@ -38,7 +39,29 @@ type ReporteVenta struct {
 	Total     decimal.Decimal
 	Saldo     decimal.Decimal
 	Liquidada bool
-	Pagos     []ReportePago
+	Productos []ReporteProducto
+	// Credito holds the credit terms; nil for contado sales.
+	Credito *ReporteCredito
+	Pagos   []ReportePago
+}
+
+// ReporteProducto is one line item of a sale.
+type ReporteProducto struct {
+	Nombre         string
+	Cantidad       decimal.Decimal
+	PrecioUnitario decimal.Decimal
+	Importe        decimal.Decimal
+	PctDescuento   decimal.Decimal
+}
+
+// ReporteCredito holds the credit-contract terms of a sale.
+type ReporteCredito struct {
+	Parcialidad   decimal.Decimal
+	FormaPago     string
+	PlazoMeses    int
+	Enganche      decimal.Decimal
+	PrecioContado decimal.Decimal
+	Vendedores    []string
 }
 
 // ReportePago is a single payment entry within a sale's payment history.

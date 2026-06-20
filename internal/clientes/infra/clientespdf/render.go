@@ -328,24 +328,108 @@ func drawVentas(pdf *fpdf.Fpdf, ventas []outbound.ReporteVenta) {
 	}
 }
 
-// drawVenta renders one venta section with its payment table.
+// drawVenta renders one venta section: header, line items, credit terms (when
+// applicable) and its payment table.
 func drawVenta(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
-	// Keep the venta header with the start of its table: if too little room
-	// remains, start on a fresh page so the folio is never orphaned at the
-	// bottom of a page, separated from its rows.
-	const ventaHeaderBlock = 42.0
-	if pdf.GetY()+ventaHeaderBlock > bottomLimit {
+	// Keep the venta header + meta with the start of its table: if too little
+	// room remains, start on a fresh page so the section is never orphaned.
+	metaH := 22.0 + float64(len(v.Productos))*4.4
+	if len(v.Productos) > 0 {
+		metaH += 4
+	}
+	if v.Credito != nil {
+		metaH += 6
+	}
+	if metaH > 80 {
+		metaH = 80
+	}
+	if pdf.GetY()+metaH+18 > bottomLimit {
 		pdf.AddPage()
 	}
 	pdf.Ln(2)
 
-	// Venta header row
 	drawVentaHeader(pdf, v)
-
-	// Payment table
+	drawArticulos(pdf, v.Productos)
+	if v.Credito != nil {
+		drawCredito(pdf, v.Credito)
+	}
 	drawPagosTable(pdf, v)
 
 	pdf.Ln(4)
+}
+
+// drawArticulos renders the sale's line items: "cantidad × nombre", unit price
+// and line total.
+func drawArticulos(pdf *fpdf.Fpdf, productos []outbound.ReporteProducto) {
+	if len(productos) == 0 {
+		return
+	}
+	const labelW, unitW, impW = 22.0, 30.0, 30.0
+	nameW := bodyW - labelW - unitW - impW
+	for i, p := range productos {
+		pdf.SetFont("PlexMono", "", 7)
+		pdf.SetTextColor(grayR, grayG, grayB)
+		label := ""
+		if i == 0 {
+			label = "ARTÍCULOS"
+		}
+		pdf.CellFormat(labelW, 4.4, label, "", 0, "L", false, 0, "")
+
+		pdf.SetFont("Poppins", "", 8)
+		pdf.SetTextColor(inkR, inkG, inkB)
+		nombre := trimDecimal(p.Cantidad) + " × " + p.Nombre
+		pdf.CellFormat(nameW, 4.4, fitText(pdf, nombre, nameW), "", 0, "L", false, 0, "")
+
+		pdf.SetFont("PlexMono", "", 7)
+		pdf.SetTextColor(grayR, grayG, grayB)
+		pdf.CellFormat(unitW, 4.4, "c/u "+formatMXN(p.PrecioUnitario), "", 0, "R", false, 0, "")
+		pdf.SetFont("PlexMonoMed", "", 7.5)
+		pdf.SetTextColor(inkR, inkG, inkB)
+		pdf.CellFormat(impW, 4.4, formatMXN(p.Importe), "", 1, "R", false, 0, "")
+	}
+	pdf.Ln(1)
+}
+
+// drawCredito renders the credit-contract terms on a single wrapped line.
+func drawCredito(pdf *fpdf.Fpdf, c *outbound.ReporteCredito) {
+	var parts []string
+	if c.Parcialidad.IsPositive() {
+		s := "Parcialidad " + formatMXN(c.Parcialidad)
+		if c.FormaPago != "" {
+			s += " " + strings.ToLower(c.FormaPago)
+		}
+		parts = append(parts, s)
+	}
+	if c.PlazoMeses > 0 {
+		parts = append(parts, fmt.Sprintf("Plazo %d meses", c.PlazoMeses))
+	}
+	if c.Enganche.IsPositive() {
+		parts = append(parts, "Enganche "+formatMXN(c.Enganche))
+	}
+	if c.PrecioContado.IsPositive() {
+		parts = append(parts, "Contado "+formatMXN(c.PrecioContado))
+	}
+	if len(c.Vendedores) > 0 {
+		parts = append(parts, "Vendedor: "+strings.Join(c.Vendedores, ", "))
+	}
+	if len(parts) == 0 {
+		return
+	}
+	pdf.SetFont("PlexMono", "", 7)
+	pdf.SetTextColor(grayR, grayG, grayB)
+	pdf.CellFormat(22, 4.6, "CRÉDITO", "", 0, "L", false, 0, "")
+	pdf.SetFont("Poppins", "", 8)
+	pdf.SetTextColor(inkR, inkG, inkB)
+	pdf.MultiCell(bodyW-22, 4.6, strings.Join(parts, " · "), "", "L", false)
+	pdf.Ln(1)
+}
+
+// trimDecimal formats a quantity without trailing zeros (2 not 2.00; 1.5 kept).
+func trimDecimal(d decimal.Decimal) string {
+	if d.Equal(d.Truncate(0)) {
+		return d.Truncate(0).String()
+	}
+	return d.StringFixed(2)
 }
 
 // drawContinuation re-establishes which venta a table belongs to at the top of

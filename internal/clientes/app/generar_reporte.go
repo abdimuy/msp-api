@@ -142,6 +142,29 @@ func (s *Service) buildReporteVenta(ctx context.Context, v *domain.VentaCliente,
 		})
 	}
 
+	productos := make([]outbound.ReporteProducto, 0, len(detalle.Productos))
+	for _, p := range detalle.Productos {
+		productos = append(productos, outbound.ReporteProducto{
+			Nombre:         p.Nombre(),
+			Cantidad:       p.Unidades(),
+			PrecioUnitario: p.PrecioUnitario(),
+			Importe:        p.PrecioTotalNeto(),
+			PctDescuento:   p.PctjeDscto(),
+		})
+	}
+
+	var credito *outbound.ReporteCredito
+	if c := detalle.Contrato; c != nil {
+		credito = &outbound.ReporteCredito{
+			Parcialidad:   c.Parcialidad,
+			FormaPago:     c.FormaDePago,
+			PlazoMeses:    c.PlazoMeses,
+			Enganche:      c.Enganche,
+			PrecioContado: c.PrecioDeContado,
+			Vendedores:    c.Vendedores,
+		}
+	}
+
 	return outbound.ReporteVenta{
 		DoctoPvID: v.DoctoPVID(),
 		Folio:     v.Folio(),
@@ -150,6 +173,8 @@ func (s *Service) buildReporteVenta(ctx context.Context, v *domain.VentaCliente,
 		Total:     v.Total(),
 		Saldo:     v.SaldoVenta(),
 		Liquidada: v.SaldoVenta().IsZero(),
+		Productos: productos,
+		Credito:   credito,
 		Pagos:     pagos,
 	}, nil
 }
