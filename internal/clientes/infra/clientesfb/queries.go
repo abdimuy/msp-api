@@ -637,7 +637,7 @@ SELECT
     WHERE i2.DOCTO_CC_ID = p.DOCTO_CC_ID
       AND i2.TIPO_IMPTE = 'R'
       AND i2.CANCELADO  = 'N'
-    ORDER BY i2.IMPORTE + i2.IMPUESTO DESC
+    ORDER BY i2.IMPORTE + i2.IMPUESTO DESC, i2.DOCTO_CC_ACR_ID DESC
     ROWS 1
   ), 0)                                         AS APLICA_A_CARGO_ID,
   (
@@ -649,7 +649,7 @@ SELECT
       WHERE i2.DOCTO_CC_ID = p.DOCTO_CC_ID
         AND i2.TIPO_IMPTE = 'R'
         AND i2.CANCELADO  = 'N'
-      ORDER BY i2.IMPORTE + i2.IMPUESTO DESC
+      ORDER BY i2.IMPORTE + i2.IMPUESTO DESC, i2.DOCTO_CC_ACR_ID DESC
       ROWS 1
     )
     ROWS 1
@@ -665,7 +665,7 @@ SELECT
         WHERE i2.DOCTO_CC_ID = p.DOCTO_CC_ID
           AND i2.TIPO_IMPTE = 'R'
           AND i2.CANCELADO  = 'N'
-        ORDER BY i2.IMPORTE + i2.IMPUESTO DESC
+        ORDER BY i2.IMPORTE + i2.IMPUESTO DESC, i2.DOCTO_CC_ACR_ID DESC
         ROWS 1
       )
     ROWS 1

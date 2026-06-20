@@ -2,6 +2,7 @@
 package domain_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -38,7 +39,7 @@ func TestClasificarConcepto_AllKnownIDs(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		t.Run("", func(t *testing.T) {
+		t.Run(fmt.Sprintf("id=%d", tc.conceptoCCID), func(t *testing.T) {
 			t.Parallel()
 			got := domain.ClasificarConcepto(tc.conceptoCCID)
 			assert.Equal(t, tc.wantCategoria, got,

@@ -211,6 +211,8 @@ func ritmoPagoToDTO(r domain.RitmoPago) RitmoPagoDTO {
 	semanas := make([]SemanaRitmoDTO, 0, len(r.Semanas))
 	for _, s := range r.Semanas {
 		pagoIDs := s.PagoIDs
+		// Belt-and-suspenders: buildSemanas already initializes PagoIDs to []int{},
+		// but guard here so the JSON contract (array, never null) holds regardless of caller.
 		if pagoIDs == nil {
 			pagoIDs = []int{}
 		}
