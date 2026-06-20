@@ -170,10 +170,14 @@ func toSeriesDTO(r outbound.ResumenFicha) SeriesDTO {
 	cvsa := make([]PuntoCompradoAbonadoDTO, 0, len(r.CompradoVsAbonado))
 	for _, p := range r.CompradoVsAbonado {
 		cvsa = append(cvsa, PuntoCompradoAbonadoDTO{
-			Anio:     p.Anio,
-			Mes:      p.Mes,
-			Comprado: p.Comprado.StringFixed(moneyScale),
-			Abonado:  p.Abonado.StringFixed(moneyScale),
+			Anio:        p.Anio,
+			Mes:         p.Mes,
+			Comprado:    p.Comprado.StringFixed(moneyScale),
+			Cobranza:    p.Cobranza.StringFixed(moneyScale),
+			Enganche:    p.Enganche.StringFixed(moneyScale),
+			Condonacion: p.Condonacion.StringFixed(moneyScale),
+			Perdida:     p.Perdida.StringFixed(moneyScale),
+			Otro:        p.Otro.StringFixed(moneyScale),
 		})
 	}
 

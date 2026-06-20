@@ -424,3 +424,67 @@ func TestClientesRepo_ObtenerPagoDetalle_NotFound(t *testing.T) {
 		assert.ErrorIs(t, err, domain.ErrPagoNotFound)
 	})
 }
+
+// ─── CompradoVsAbonado — desglose por categoría ───────────────────────────────
+
+// TestClientesRepo_CompradoVsAbonado_DesgloseCategorias verifies that the monthly
+// comprado-vs-abonado series returns buckets correctly separated: Cobranza > 0 in
+// months with cobranza payments, Condonacion > 0 and Perdida > 0 in the month
+// of the known condonacion/perdida movements, and Comprado is never mixed into
+// any abono bucket.
+//
+// Fixture: DOCTO_CC_ID=4070585 (PV 4070523, cliente 202468) has movements:
+//   - 7× cobranza (CONCEPTO_CC_ID=87327)
+//   - 1× enganche (CONCEPTO_CC_ID=24533, $200)
+//   - 1× condonación (CONCEPTO_CC_ID=27969, ~$900)
+//   - 1× mal cliente (CONCEPTO_CC_ID=27968, ~$4150)
+//
+// READ-ONLY: fbtestutil.WithTestTransaction always rolls back.
+func TestClientesRepo_CompradoVsAbonado_DesgloseCategorias(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := clientesfb.NewClientesRepo(pool)
+
+	// Cliente 202468 owns DOCTO_PV_ID=4070523 which has the known fixture above.
+	const clienteID = 202468
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		resumen, err := repo.ObtenerResumenFicha(ctx, clienteID, outbound.RangoFechas{})
+		require.NoError(t, err)
+
+		serie := resumen.CompradoVsAbonado
+		require.NotEmpty(t, serie, "cliente 202468 debe tener datos en CompradoVsAbonado")
+
+		// Track which buckets appear across all months.
+		var totalComprado, totalCobranza, totalEnganche, totalCondonacion, totalPerdida decimal.Decimal
+		for _, pt := range serie {
+			totalComprado = totalComprado.Add(pt.Comprado)
+			totalCobranza = totalCobranza.Add(pt.Cobranza)
+			totalEnganche = totalEnganche.Add(pt.Enganche)
+			totalCondonacion = totalCondonacion.Add(pt.Condonacion)
+			totalPerdida = totalPerdida.Add(pt.Perdida)
+
+			assert.True(t, pt.Cobranza.IsPositive() || pt.Cobranza.IsZero(),
+				"Cobranza must be >= 0 (mes %d/%d got %s)", pt.Anio, pt.Mes, pt.Cobranza)
+			assert.True(t, pt.Enganche.IsPositive() || pt.Enganche.IsZero(),
+				"Enganche must be >= 0 (mes %d/%d got %s)", pt.Anio, pt.Mes, pt.Enganche)
+			assert.True(t, pt.Condonacion.IsPositive() || pt.Condonacion.IsZero(),
+				"Condonacion must be >= 0 (mes %d/%d got %s)", pt.Anio, pt.Mes, pt.Condonacion)
+			assert.True(t, pt.Perdida.IsPositive() || pt.Perdida.IsZero(),
+				"Perdida must be >= 0 (mes %d/%d got %s)", pt.Anio, pt.Mes, pt.Perdida)
+
+			t.Logf("mes %d/%d: comprado=%s cobranza=%s enganche=%s condonacion=%s perdida=%s otro=%s",
+				pt.Anio, pt.Mes,
+				pt.Comprado, pt.Cobranza, pt.Enganche, pt.Condonacion, pt.Perdida, pt.Otro)
+		}
+
+		assert.True(t, totalComprado.IsPositive(), "TotalComprado agregado debe ser positivo")
+		assert.True(t, totalCobranza.IsPositive(), "TotalCobranza agregado debe ser positivo (hay pagos de cobranza)")
+		assert.True(t, totalEnganche.IsPositive(), "TotalEnganche agregado debe ser positivo (hay un enganche de $200)")
+		assert.True(t, totalCondonacion.IsPositive(), "TotalCondonacion debe ser positivo (hay una condonacion de ~$900)")
+		assert.True(t, totalPerdida.IsPositive(), "TotalPerdida debe ser positivo (hay un mal cliente de ~$4150)")
+
+		t.Logf("CompradoVsAbonado cliente=%d puntos=%d comprado=%s cobranza=%s enganche=%s condonacion=%s perdida=%s",
+			clienteID, len(serie), totalComprado, totalCobranza, totalEnganche, totalCondonacion, totalPerdida)
+	})
+}

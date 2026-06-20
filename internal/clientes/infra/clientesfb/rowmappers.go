@@ -507,40 +507,59 @@ func (r *abonoMesRowRaw) assemble() (outbound.PuntoMensual, error) {
 
 // ─── compradoVsAbonadoRowRaw ─────────────────────────────────────────────────
 
+// compradoVsAbonadoFila is the intermediate row returned by the dual-series
+// chart query after scanning. Each row is either a compra (concepto == -1) or a
+// single abono with its concepto identifier. The fold in fetchCompradoVsAbonado
+// groups rows by (anio, mes) and dispatches to the correct bucket.
+type compradoVsAbonadoFila struct {
+	anio     int
+	mes      int
+	concepto int
+	comprado decimal.Decimal
+	abonado  decimal.Decimal
+}
+
 // compradoVsAbonadoRowRaw holds raw scan targets for the dual-series chart query.
+// Each row now carries ANIO, MES, CONCEPTO, COMPRADO, ABONADO (5 columns).
 type compradoVsAbonadoRowRaw struct {
 	anioRaw     any
 	mesRaw      any
+	conceptoRaw any
 	compradoRaw any
 	abonadoRaw  any
 }
 
 func (r *compradoVsAbonadoRowRaw) scanFrom(s scannable) error {
-	return s.Scan(&r.anioRaw, &r.mesRaw, &r.compradoRaw, &r.abonadoRaw)
+	return s.Scan(&r.anioRaw, &r.mesRaw, &r.conceptoRaw, &r.compradoRaw, &r.abonadoRaw)
 }
 
-func (r *compradoVsAbonadoRowRaw) assemble() (outbound.PuntoCompradoAbonado, error) {
+func (r *compradoVsAbonadoRowRaw) assemble() (compradoVsAbonadoFila, error) {
 	anio, err := scanIntFromAny(r.anioRaw)
 	if err != nil {
-		return outbound.PuntoCompradoAbonado{}, err
+		return compradoVsAbonadoFila{}, err
 	}
 	mes, err := scanIntFromAny(r.mesRaw)
 	if err != nil {
-		return outbound.PuntoCompradoAbonado{}, err
+		return compradoVsAbonadoFila{}, err
+	}
+	concepto, err := scanIntFromAny(r.conceptoRaw)
+	if err != nil {
+		return compradoVsAbonadoFila{}, err
 	}
 	comprado, err := firebird.ScanDecimal(r.compradoRaw, 2)
 	if err != nil {
-		return outbound.PuntoCompradoAbonado{}, err
+		return compradoVsAbonadoFila{}, err
 	}
 	abonado, err := firebird.ScanDecimal(r.abonadoRaw, 2)
 	if err != nil {
-		return outbound.PuntoCompradoAbonado{}, err
+		return compradoVsAbonadoFila{}, err
 	}
-	return outbound.PuntoCompradoAbonado{
-		Anio:     anio,
-		Mes:      mes,
-		Comprado: comprado,
-		Abonado:  abonado,
+	return compradoVsAbonadoFila{
+		anio:     anio,
+		mes:      mes,
+		concepto: concepto,
+		comprado: comprado,
+		abonado:  abonado,
 	}, nil
 }
 

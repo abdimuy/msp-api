@@ -68,12 +68,18 @@ type PuntoMensual struct {
 }
 
 // PuntoCompradoAbonado is a dual-series data point comparing purchased vs.
-// paid amounts for a given (year, month). Used in the ficha summary chart.
+// paid amounts for a given (year, month). The abonado side is broken down into
+// five category buckets (cobranza, enganche, condonacion, perdida, otro) so the
+// frontend can stack them with different colors. Used in the ficha summary chart.
 type PuntoCompradoAbonado struct {
-	Anio     int
-	Mes      int
-	Comprado decimal.Decimal
-	Abonado  decimal.Decimal
+	Anio        int
+	Mes         int
+	Comprado    decimal.Decimal
+	Cobranza    decimal.Decimal
+	Enganche    decimal.Decimal
+	Condonacion decimal.Decimal
+	Perdida     decimal.Decimal
+	Otro        decimal.Decimal
 }
 
 // ResumenFicha is the pre-aggregated financial summary shown at the top of

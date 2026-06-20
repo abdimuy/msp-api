@@ -214,13 +214,14 @@ ORDER BY ANIO, MES`
 func buildCompradoVsAbonadoQuery(compradoExtra, abonadoExtra string) string {
 	return `
 SELECT
-  ANIO, MES,
+  ANIO, MES, CONCEPTO,
   CAST(SUM(COMPRADO) AS NUMERIC(18,2)) AS COMPRADO,
   CAST(SUM(ABONADO)  AS NUMERIC(18,2)) AS ABONADO
 FROM (
   SELECT
     EXTRACT(YEAR FROM cargo.FECHA)  AS ANIO,
     EXTRACT(MONTH FROM cargo.FECHA) AS MES,
+    -1                              AS CONCEPTO,
     i.IMPORTE + i.IMPUESTO          AS COMPRADO,
     0                               AS ABONADO
   FROM IMPORTES_DOCTOS_CC i
@@ -234,6 +235,7 @@ FROM (
   SELECT
     EXTRACT(YEAR FROM abono.FECHA)  AS ANIO,
     EXTRACT(MONTH FROM abono.FECHA) AS MES,
+    abono.CONCEPTO_CC_ID            AS CONCEPTO,
     0                               AS COMPRADO,
     i.IMPORTE                       AS ABONADO
   FROM IMPORTES_DOCTOS_CC i
@@ -245,8 +247,8 @@ FROM (
     AND i.TIPO_IMPTE = 'R'
     AND i.CANCELADO = 'N'` + abonadoExtra + `
 ) t
-GROUP BY ANIO, MES
-ORDER BY ANIO, MES`
+GROUP BY ANIO, MES, CONCEPTO
+ORDER BY ANIO, MES, CONCEPTO`
 }
 
 // ─── RitmoPago ────────────────────────────────────────────────────────────────

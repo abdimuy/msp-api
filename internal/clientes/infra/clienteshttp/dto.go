@@ -152,12 +152,17 @@ type PuntoMensualDTO struct {
 	Monto string `json:"monto" doc:"Monto del período (2 decimales)"`
 }
 
-// PuntoCompradoAbonadoDTO is a dual-series (year, month) data point.
+// PuntoCompradoAbonadoDTO is a dual-series (year, month) data point with the
+// abonado side broken down into five category buckets.
 type PuntoCompradoAbonadoDTO struct {
-	Anio     int    `json:"anio"     doc:"Año"`
-	Mes      int    `json:"mes"      doc:"Mes (1–12)"`
-	Comprado string `json:"comprado" doc:"Total comprado en el período (2 decimales)"`
-	Abonado  string `json:"abonado"  doc:"Total abonado en el período (2 decimales)"`
+	Anio        int    `json:"anio"        doc:"Año"`
+	Mes         int    `json:"mes"         doc:"Mes (1–12)"`
+	Comprado    string `json:"comprado"    doc:"Total comprado en el período (2 decimales)"`
+	Cobranza    string `json:"cobranza"    doc:"Abonado por cobranza en el período (2 decimales)"`
+	Enganche    string `json:"enganche"    doc:"Abonado por enganche en el período (2 decimales)"`
+	Condonacion string `json:"condonacion" doc:"Condonado en el período (2 decimales)"`
+	Perdida     string `json:"perdida"     doc:"Pérdida/fuga/mal cliente en el período (2 decimales)"`
+	Otro        string `json:"otro"        doc:"Otros movimientos en el período (2 decimales)"`
 }
 
 // PulsoDTO holds the analytics pulse fields shown in the ficha when TienePulso.

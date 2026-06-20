@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -282,22 +283,71 @@ func (r *ClientesRepo) fetchCompradoVsAbonado(ctx context.Context, q firebird.Qu
 		return nil, firebird.MapError(err)
 	}
 	defer func() { _ = rows.Close() }()
-	var pts []outbound.PuntoCompradoAbonado
+
+	var filas []compradoVsAbonadoFila
 	for rows.Next() {
 		var raw compradoVsAbonadoRowRaw
 		if serr := raw.scanFrom(rows); serr != nil {
 			return nil, firebird.MapError(serr)
 		}
-		pt, aerr := raw.assemble()
+		fila, aerr := raw.assemble()
 		if aerr != nil {
 			return nil, aerr
 		}
-		pts = append(pts, pt)
+		filas = append(filas, fila)
 	}
 	if rerr := rows.Err(); rerr != nil {
 		return nil, firebird.MapError(rerr)
 	}
-	return pts, nil
+	return foldCompradoVsAbonadoFilas(filas), nil
+}
+
+// foldCompradoVsAbonadoFilas folds intermediate rows into []PuntoCompradoAbonado
+// grouped by (anio, mes). Rows with concepto == -1 are compras; all others are
+// abonos classified via domain.ClasificarConcepto. Result is sorted (anio, mes) asc.
+func foldCompradoVsAbonadoFilas(filas []compradoVsAbonadoFila) []outbound.PuntoCompradoAbonado {
+	type key = [2]int
+	byMes := make(map[key]*outbound.PuntoCompradoAbonado)
+	var order []key
+
+	for _, f := range filas {
+		k := key{f.anio, f.mes}
+		pt, exists := byMes[k]
+		if !exists {
+			pt = &outbound.PuntoCompradoAbonado{Anio: f.anio, Mes: f.mes}
+			byMes[k] = pt
+			order = append(order, k)
+		}
+		if f.concepto == -1 {
+			pt.Comprado = pt.Comprado.Add(f.comprado)
+		} else {
+			switch domain.ClasificarConcepto(f.concepto) {
+			case domain.CategoriaIngresoPago:
+				pt.Cobranza = pt.Cobranza.Add(f.abonado)
+			case domain.CategoriaIngresoEnganche:
+				pt.Enganche = pt.Enganche.Add(f.abonado)
+			case domain.CategoriaCondonacion:
+				pt.Condonacion = pt.Condonacion.Add(f.abonado)
+			case domain.CategoriaPerdida:
+				pt.Perdida = pt.Perdida.Add(f.abonado)
+			case domain.CategoriaOtro:
+				pt.Otro = pt.Otro.Add(f.abonado)
+			}
+		}
+	}
+
+	sort.Slice(order, func(i, j int) bool {
+		if order[i][0] != order[j][0] {
+			return order[i][0] < order[j][0]
+		}
+		return order[i][1] < order[j][1]
+	})
+
+	pts := make([]outbound.PuntoCompradoAbonado, 0, len(order))
+	for _, k := range order {
+		pts = append(pts, *byMes[k])
+	}
+	return pts
 }
 
 // ObtenerResumenFicha returns the pre-aggregated financial summary for a client.
