@@ -271,8 +271,14 @@ ORDER BY ANIO, MES`
 //   - DOCTO_PV_ID: the linked PV sale resolved via DOCTOS_ENTRE_SIS (PV→CC bridge), or 0.
 //   - FOLIO: the linked PV sale's folio (ASCII string), or "" when not resolvable.
 //
-// Both DOCTO_PV_ID and FOLIO use correlated scalar subqueries with ROWS 1 (not
-// derived-table JOINs with ?) to avoid the firebirdsql v0.9.19 parameter-binding
+// BE-R2 enrichment column added:
+//   - ARTICULO: name of the first J/N article (by POSICION) of the linked PV sale.
+//     Uses ARTICULOS.NOMBRE (Win1252 legacy col) via a nested correlated scalar subquery
+//     that first resolves DOCTO_PV_ID from DOCTOS_ENTRE_SIS, then fetches the first
+//     DOCTOS_PV_DET row with ROL IN ('J','N') ordered by POSICION. COALESCE to ”.
+//
+// Both DOCTO_PV_ID, FOLIO, and ARTICULO use correlated scalar subqueries with ROWS 1
+// (not derived-table JOINs with ?) to avoid the firebirdsql v0.9.19 parameter-binding
 // bug that rejects ? inside FROM-clause derived tables.
 const queryRitmoPagosBase = `
 SELECT
@@ -302,7 +308,20 @@ SELECT
       ROWS 1
     )
     ROWS 1
-  ), '') AS FOLIO
+  ), '') AS FOLIO,
+  COALESCE((
+    SELECT a.NOMBRE
+    FROM DOCTOS_PV_DET d
+    JOIN ARTICULOS a ON a.ARTICULO_ID = d.ARTICULO_ID
+    WHERE d.DOCTO_PV_ID = (
+      SELECT des.DOCTO_FTE_ID FROM DOCTOS_ENTRE_SIS des
+      WHERE des.CLAVE_SIS_FTE='PV' AND des.CLAVE_SIS_DEST='CC'
+        AND des.DOCTO_DEST_ID = cargo.DOCTO_CC_ID ROWS 1
+    )
+    AND d.ROL IN ('J','N')
+    ORDER BY d.POSICION
+    ROWS 1
+  ), '') AS ARTICULO
 FROM IMPORTES_DOCTOS_CC i
 JOIN DOCTOS_CC cargo ON cargo.DOCTO_CC_ID = i.DOCTO_CC_ACR_ID
 JOIN DOCTOS_CC abono ON abono.DOCTO_CC_ID = i.DOCTO_CC_ID

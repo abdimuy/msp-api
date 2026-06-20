@@ -40,6 +40,7 @@ type PagoCrudo struct {
 	Concepto     string          // human-readable concepto name (Win1252-decoded)
 	DoctoPVID    int             // linked sale's DOCTO_PV_ID (0 when not resolvable)
 	Folio        string          // linked sale's FOLIO (empty when not resolvable)
+	Articulo     string          // name of the first J/N article of the linked sale (Win1252-decoded; empty when not resolvable)
 }
 
 // PagoRitmo is an enriched payment entry within a SemanaRitmo bucket.
@@ -56,6 +57,7 @@ type PagoRitmo struct {
 	Categoria    Categoria // ClasificarConcepto(ConceptoCCID)
 	DoctoPVID    int       // sale this payment was applied to (0 when not resolvable)
 	Folio        string    // folio of the sale (empty when not resolvable)
+	Articulo     string    // name of the first J/N article of the linked sale (empty when not resolvable)
 }
 
 // VentaCruda is the raw sale header read from Firebird by the repository before
@@ -320,6 +322,7 @@ func indexarPagos(semanas []SemanaRitmo, pagos []PagoCrudo) {
 					Categoria:    ClasificarConcepto(p.ConceptoCCID),
 					DoctoPVID:    p.DoctoPVID,
 					Folio:        p.Folio,
+					Articulo:     p.Articulo,
 				})
 				break
 			}

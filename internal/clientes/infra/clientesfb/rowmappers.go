@@ -548,9 +548,11 @@ func (r *compradoVsAbonadoRowRaw) assemble() (outbound.PuntoCompradoAbonado, err
 
 // pagoCrudoRowRaw holds raw scan targets for a single payment row returned by
 // queryRitmoPagosBase. Ordering matches the SELECT column list exactly:
-// FECHA, IMPORTE, DOCTO_CC_ID, HORA, CONCEPTO_CC_ID, NOMBRE (concepto), DOCTO_PV_ID, FOLIO.
+// FECHA, IMPORTE, DOCTO_CC_ID, HORA, CONCEPTO_CC_ID, NOMBRE (concepto), DOCTO_PV_ID, FOLIO, ARTICULO.
 //
 // concetoRaw is Win1252 because CONCEPTOS_CC.NOMBRE is a legacy Microsip column
+// (CHARACTER SET NONE, raw Windows-1252 bytes).
+// articuloRaw is Win1252 because ARTICULOS.NOMBRE is also a legacy Microsip column
 // (CHARACTER SET NONE, raw Windows-1252 bytes).
 // horaStr and folio are plain ASCII strings decoded directly.
 type pagoCrudoRowRaw struct {
@@ -562,6 +564,7 @@ type pagoCrudoRowRaw struct {
 	conceptoRaw  firebird.Win1252 // CONCEPTOS_CC.NOMBRE — CHARACTER SET NONE (Win1252)
 	doctoPVID    int
 	folio        string
+	articuloRaw  firebird.Win1252 // ARTICULOS.NOMBRE — CHARACTER SET NONE (Win1252)
 }
 
 func (r *pagoCrudoRowRaw) scanFrom(s scannable) error {
@@ -574,6 +577,7 @@ func (r *pagoCrudoRowRaw) scanFrom(s scannable) error {
 		&r.conceptoRaw,
 		&r.doctoPVID,
 		&r.folio,
+		&r.articuloRaw,
 	)
 }
 
@@ -595,6 +599,7 @@ func (r *pagoCrudoRowRaw) assemble() (domain.PagoCrudo, error) {
 		Concepto:     string(r.conceptoRaw),
 		DoctoPVID:    r.doctoPVID,
 		Folio:        r.folio,
+		Articulo:     string(r.articuloRaw),
 	}, nil
 }
 

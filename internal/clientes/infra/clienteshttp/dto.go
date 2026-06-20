@@ -336,6 +336,7 @@ type PagoRitmoDTO struct {
 	EsIngreso    bool   `json:"es_ingreso"     doc:"verdadero si el movimiento representa ingreso real (pago o enganche)"`
 	DoctoPVID    int    `json:"docto_pv_id"    doc:"DOCTO_PV_ID de la venta a la que se aplicó; 0 cuando no resoluble"`
 	Folio        string `json:"folio"          doc:"folio de la venta; vacío cuando no resoluble"`
+	Articulo     string `json:"articulo"       doc:"nombre del primer artículo (líneas J/N) de la venta; vacío cuando no resoluble"`
 }
 
 // EventoRitmoDTO is a notable event in the payment-rhythm window.

@@ -614,6 +614,47 @@ func TestBuildRitmoPago_Resumen_IngresoVsPerdon(t *testing.T) {
 		"semana 1 MontoAbonado debe incluir perdida = $100, obtenido %s", r.Semanas[1].MontoAbonado)
 }
 
+// ─── Artículo del 1er artículo [BE-R2] ────────────────────────────────────────
+
+func TestBuildRitmoPago_Pagos_ArticuloPropagado(t *testing.T) {
+	t.Parallel()
+
+	// Pago con Articulo poblado → PagoRitmo debe conservar el nombre del artículo.
+	pagos := []domain.PagoCrudo{
+		{
+			Fecha: monday(2026, 6, 1), Importe: mustDecimal("500"), DoctoCCID: 301,
+			Hora: "10:00:00", ConceptoCCID: 87327, Concepto: "Cobranza en ruta",
+			DoctoPVID: 12843622, Folio: "AB0001714",
+			Articulo: "JUEGO DE SALA MODELO ATLANTA",
+		},
+	}
+	ahora := time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC)
+	r := domain.BuildRitmoPago(pagos, nil, decimal.Zero, ahora, noRango())
+
+	require.Len(t, r.Semanas, 3)
+	require.Len(t, r.Semanas[0].Pagos, 1)
+	assert.Equal(t, "JUEGO DE SALA MODELO ATLANTA", r.Semanas[0].Pagos[0].Articulo,
+		"Articulo debe propagarse de PagoCrudo a PagoRitmo")
+}
+
+func TestBuildRitmoPago_Pagos_ArticuloVacioPermitido(t *testing.T) {
+	t.Parallel()
+
+	// Pago sin artículo resolvable (Articulo="") → PagoRitmo.Articulo también vacío.
+	pagos := []domain.PagoCrudo{
+		{
+			Fecha: monday(2026, 6, 1), Importe: mustDecimal("200"), DoctoCCID: 401,
+			Hora: "08:00:00", ConceptoCCID: 87327, Concepto: "Cobranza en ruta",
+			DoctoPVID: 0, Folio: "", Articulo: "",
+		},
+	}
+	ahora := time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC)
+	r := domain.BuildRitmoPago(pagos, nil, decimal.Zero, ahora, noRango())
+
+	require.Len(t, r.Semanas[0].Pagos, 1)
+	assert.Empty(t, r.Semanas[0].Pagos[0].Articulo, "Articulo vacío cuando no resoluble")
+}
+
 // ─── Constantes EventoTipo ─────────────────────────────────────────────────────
 
 func TestEventoTipo_Constantes(t *testing.T) {

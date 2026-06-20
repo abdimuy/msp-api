@@ -201,6 +201,7 @@ func ritmoPagosToDTOs(pagos []domain.PagoRitmo) []PagoRitmoDTO {
 			EsIngreso:    p.Categoria.EsIngreso(),
 			DoctoPVID:    p.DoctoPVID,
 			Folio:        p.Folio,
+			Articulo:     p.Articulo,
 		})
 	}
 	return result
