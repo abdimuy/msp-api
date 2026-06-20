@@ -163,15 +163,21 @@ func (r *directorioRowRaw) assemble() (outbound.DirectorioItem, error) {
 
 // ventaClienteRowRaw holds raw scan targets for a VentaCliente row.
 // Ordering matches selectVentaClienteCols exactly.
+// BE-2: horaStr, almacenRaw, primerArticuloRaw, numArticulosRaw are the four
+// enrichment columns added in task BE-2.
 type ventaClienteRowRaw struct {
-	doctoPVID   int
-	clienteID   int
-	fechaRaw    any
-	folio       string
-	importeRaw  any
-	tipoStr     string
-	saldoRaw    any
-	numPagosRaw any
+	doctoPVID         int
+	clienteID         int
+	fechaRaw          any
+	folio             string
+	importeRaw        any
+	tipoStr           string
+	saldoRaw          any
+	numPagosRaw       any
+	horaStr           string           // "HH:MM:SS" from SUBSTRING(CAST(HORA AS VARCHAR(13)))
+	almacenRaw        firebird.Win1252 // ALMACENES.NOMBRE — CHARACTER SET NONE
+	primerArticuloRaw firebird.Win1252 // ARTICULOS.NOMBRE — CHARACTER SET NONE
+	numArticulosRaw   any              // COUNT(*) — scanIntFromAny
 }
 
 func (r *ventaClienteRowRaw) scanFrom(s scannable) error {
@@ -184,6 +190,10 @@ func (r *ventaClienteRowRaw) scanFrom(s scannable) error {
 		&r.tipoStr,
 		&r.saldoRaw,
 		&r.numPagosRaw,
+		&r.horaStr,
+		&r.almacenRaw,
+		&r.primerArticuloRaw,
+		&r.numArticulosRaw,
 	)
 }
 
@@ -208,16 +218,24 @@ func (r *ventaClienteRowRaw) assemble() (*domain.VentaCliente, error) {
 	if err != nil {
 		return nil, err
 	}
+	numArticulos, err := scanIntFromAny(r.numArticulosRaw)
+	if err != nil {
+		numArticulos = 0
+	}
 	tipo := tipoVentaFromStr(r.tipoStr)
 	return domain.HydrateVentaCliente(domain.HydrateVentaClienteParams{
-		DoctoPVID:  r.doctoPVID,
-		ClienteID:  r.clienteID,
-		Fecha:      fecha,
-		Folio:      r.folio,
-		Tipo:       tipo,
-		Total:      total,
-		SaldoVenta: saldo,
-		NumPagos:   numPagos,
+		DoctoPVID:      r.doctoPVID,
+		ClienteID:      r.clienteID,
+		Fecha:          fecha,
+		Folio:          r.folio,
+		Tipo:           tipo,
+		Total:          total,
+		SaldoVenta:     saldo,
+		NumPagos:       numPagos,
+		Hora:           r.horaStr,
+		Almacen:        string(r.almacenRaw),
+		PrimerArticulo: string(r.primerArticuloRaw),
+		NumArticulos:   numArticulos,
 	}), nil
 }
 

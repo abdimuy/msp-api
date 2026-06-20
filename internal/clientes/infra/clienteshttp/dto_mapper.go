@@ -295,13 +295,17 @@ func toPagoDetalleDTO(d outbound.PagoDetalle) PagoDetalleDTO {
 // toVentaListItemDTO maps a VentaCliente to its list-row wire DTO.
 func toVentaListItemDTO(v *domain.VentaCliente) VentaListItemDTO {
 	return VentaListItemDTO{
-		DoctoPVID:  v.DoctoPVID(),
-		Fecha:      formatTime(v.Fecha()),
-		Folio:      v.Folio(),
-		Tipo:       v.Tipo().String(),
-		Total:      v.Total().StringFixed(moneyScale),
-		SaldoVenta: v.SaldoVenta().StringFixed(moneyScale),
-		NumPagos:   v.NumPagos(),
+		DoctoPVID:      v.DoctoPVID(),
+		Fecha:          formatTime(v.Fecha()),
+		Folio:          v.Folio(),
+		Tipo:           v.Tipo().String(),
+		Total:          v.Total().StringFixed(moneyScale),
+		SaldoVenta:     v.SaldoVenta().StringFixed(moneyScale),
+		NumPagos:       v.NumPagos(),
+		Hora:           v.Hora(),
+		Almacen:        v.Almacen(),
+		PrimerArticulo: v.PrimerArticulo(),
+		NumArticulos:   v.NumArticulos(),
 	}
 }
 

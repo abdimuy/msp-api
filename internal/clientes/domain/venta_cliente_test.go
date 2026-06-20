@@ -19,14 +19,18 @@ func TestHydrateVentaCliente_AllGettersRoundTrip(t *testing.T) {
 	saldo := decimal.NewFromFloat(4000.00)
 
 	v := domain.HydrateVentaCliente(domain.HydrateVentaClienteParams{
-		DoctoPVID:  101,
-		ClienteID:  42,
-		Fecha:      fixedFecha,
-		Folio:      "PV-000123",
-		Tipo:       domain.TipoVentaCredito,
-		Total:      total,
-		SaldoVenta: saldo,
-		NumPagos:   3,
+		DoctoPVID:      101,
+		ClienteID:      42,
+		Fecha:          fixedFecha,
+		Folio:          "PV-000123",
+		Tipo:           domain.TipoVentaCredito,
+		Total:          total,
+		SaldoVenta:     saldo,
+		NumPagos:       3,
+		Hora:           "18:06:49",
+		Almacen:        "TIENDA DE EXHIBICION",
+		PrimerArticulo: "LAVADORA REDONDA EASY 15 KG. MOD. LRE-15M",
+		NumArticulos:   1,
 	})
 
 	assert.Equal(t, 101, v.DoctoPVID())
@@ -37,6 +41,10 @@ func TestHydrateVentaCliente_AllGettersRoundTrip(t *testing.T) {
 	assert.True(t, total.Equal(v.Total()), "Total round-trip")
 	assert.True(t, saldo.Equal(v.SaldoVenta()), "SaldoVenta round-trip")
 	assert.Equal(t, 3, v.NumPagos())
+	assert.Equal(t, "18:06:49", v.Hora())
+	assert.Equal(t, "TIENDA DE EXHIBICION", v.Almacen())
+	assert.Equal(t, "LAVADORA REDONDA EASY 15 KG. MOD. LRE-15M", v.PrimerArticulo())
+	assert.Equal(t, 1, v.NumArticulos())
 }
 
 func TestHydrateVentaCliente_FechaUTCNormalization(t *testing.T) {
@@ -89,6 +97,10 @@ func TestHydrateVentaCliente_ZeroValues(t *testing.T) {
 	assert.True(t, decimal.Zero.Equal(v.Total()))
 	assert.True(t, decimal.Zero.Equal(v.SaldoVenta()))
 	assert.Zero(t, v.NumPagos())
+	assert.Empty(t, v.Hora())
+	assert.Empty(t, v.Almacen())
+	assert.Empty(t, v.PrimerArticulo())
+	assert.Zero(t, v.NumArticulos())
 }
 
 func TestHydrateVentaCliente_ReturnsPointer(t *testing.T) {

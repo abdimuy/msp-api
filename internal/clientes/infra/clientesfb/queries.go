@@ -392,11 +392,39 @@ const selectVentaClienteCols = `
 		  AND des.DOCTO_FTE_ID   = pv.DOCTO_PV_ID
 		  AND i.TIPO_IMPTE       = 'R'
 		  AND i.CANCELADO        = 'N'
-	), 0) AS NUM_PAGOS`
+	), 0) AS NUM_PAGOS,
+	-- BE-2 enrichment: hora de la venta (wall-clock local, display string only).
+	-- DOCTOS_PV.HORA is a Firebird TIME column; CAST to VARCHAR(13) then SUBSTRING
+	-- to extract "HH:MM:SS" without driver-specific time handling.
+	SUBSTRING(CAST(pv.HORA AS VARCHAR(13)) FROM 1 FOR 8) AS HORA,
+	-- BE-2 enrichment: almacén/ruta name via ALMACENES.
+	-- ALMACENES.NOMBRE is CHARACTER SET NONE (Win1252) — scanned with firebird.Win1252.
+	alm.NOMBRE AS ALMACEN_NOMBRE,
+	-- BE-2 enrichment: name of first J/N line item (kit-header or normal article).
+	-- Correlated scalar subquery with ROWS 1 sidesteps the firebirdsql v0.9.19
+	-- param bug (cannot bind ? inside FROM-clause derived tables). COALESCE to ''
+	-- covers sales with no J/N lines. ARTICULOS.NOMBRE is Win1252.
+	COALESCE((
+		SELECT a.NOMBRE
+		FROM DOCTOS_PV_DET d
+		JOIN ARTICULOS a ON a.ARTICULO_ID = d.ARTICULO_ID
+		WHERE d.DOCTO_PV_ID = pv.DOCTO_PV_ID
+		  AND d.ROL IN ('J', 'N')
+		ORDER BY d.POSICION
+		ROWS 1
+	), '') AS PRIMER_ARTICULO,
+	-- BE-2 enrichment: count of J/N lines (excludes ROL='C' kit-component rows).
+	COALESCE((
+		SELECT COUNT(*)
+		FROM DOCTOS_PV_DET d
+		WHERE d.DOCTO_PV_ID = pv.DOCTO_PV_ID
+		  AND d.ROL IN ('J', 'N')
+	), 0) AS NUM_ARTICULOS`
 
 const queryListarVentasBase = `
 SELECT FIRST ? ` + selectVentaClienteCols + `
 FROM DOCTOS_PV pv
+LEFT JOIN ALMACENES alm ON alm.ALMACEN_ID = pv.ALMACEN_ID
 WHERE pv.CLIENTE_ID = ?
   AND pv.TIPO_DOCTO IN ('V', 'P')
   AND pv.ESTATUS = 'N'`
@@ -405,9 +433,13 @@ WHERE pv.CLIENTE_ID = ?
 
 // queryVentaHeader fetches the venta header only — used to establish the sale
 // exists before fetching children. Reuses selectVentaClienteCols shape.
+// The LEFT JOIN ALMACENES is required because selectVentaClienteCols now
+// references alm.NOMBRE (BE-2 enrichment). The venta-detalle header carries
+// hora, almacen, primer_articulo and num_articulos just like the list row.
 const queryVentaHeader = `
 SELECT ` + selectVentaClienteCols + `
 FROM DOCTOS_PV pv
+LEFT JOIN ALMACENES alm ON alm.ALMACEN_ID = pv.ALMACEN_ID
 WHERE pv.DOCTO_PV_ID = ?
   AND pv.TIPO_DOCTO IN ('V', 'P')
   AND pv.ESTATUS = 'N'`

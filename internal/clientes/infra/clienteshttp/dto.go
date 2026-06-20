@@ -212,13 +212,17 @@ type ListarVentasClienteOutput struct {
 
 // VentaListItemDTO is the wire representation of a single sale header.
 type VentaListItemDTO struct {
-	DoctoPVID  int    `json:"docto_pv_id"  doc:"ID del documento de venta en Microsip"`
-	Fecha      string `json:"fecha"        format:"date-time" doc:"RFC3339 UTC de la fecha de la venta"`
-	Folio      string `json:"folio"        doc:"Folio del documento en Microsip"`
-	Tipo       string `json:"tipo"         doc:"CONTADO o CREDITO"`
-	Total      string `json:"total"        doc:"Importe neto de la venta (2 decimales)"`
-	SaldoVenta string `json:"saldo_venta"  doc:"Saldo pendiente de la venta (2 decimales)"`
-	NumPagos   int    `json:"num_pagos"    doc:"Número de pagos aplicados"`
+	DoctoPVID      int    `json:"docto_pv_id"      doc:"ID del documento de venta en Microsip"`
+	Fecha          string `json:"fecha"            format:"date-time" doc:"RFC3339 UTC de la fecha de la venta"`
+	Folio          string `json:"folio"            doc:"Folio del documento en Microsip"`
+	Tipo           string `json:"tipo"             doc:"CONTADO o CREDITO"`
+	Total          string `json:"total"            doc:"Importe neto de la venta (2 decimales)"`
+	SaldoVenta     string `json:"saldo_venta"      doc:"Saldo pendiente de la venta (2 decimales)"`
+	NumPagos       int    `json:"num_pagos"        doc:"Número de pagos aplicados"`
+	Hora           string `json:"hora"             doc:"hora de registro de la venta (HH:MM:SS, hora local del servidor Microsip, no UTC)"`
+	Almacen        string `json:"almacen"          doc:"nombre del almacén o sucursal donde se realizó la venta"`
+	PrimerArticulo string `json:"primer_articulo"  doc:"nombre del primer artículo vendido (líneas J/N); vacío si sin detalle"`
+	NumArticulos   int    `json:"num_articulos"    doc:"número de líneas de artículos (J/N) en la venta"`
 }
 
 // ─── Endpoint 4: GET /clientes/{id}/ventas/{doctoPvId} ──────────────────────

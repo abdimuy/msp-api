@@ -310,6 +310,46 @@ func TestClientesRepo_ObtenerVentaDetalle_PagosEnriquecidos(t *testing.T) {
 	})
 }
 
+// ─── ListarVentas — campos enriquecidos ────────────────────────────────────────
+
+// TestClientesRepo_ListarVentas_CamposEnriquecidos verifies the enriched fields
+// (hora, almacen, primer_articulo, num_articulos) added in task BE-2.
+//
+// Fixture — cliente 202468, verified live against MUEBLERA.FDB:
+//   - Exactly 1 venta: DOCTO_PV_ID = 4070523
+//   - hora          = "18:06:49"
+//   - almacen       = "TIENDA DE EXHIBICION" (ALMACEN_ID 11058)
+//   - primer_articulo = "LAVADORA REDONDA EASY 15 KG. MOD. LRE-15M" (ARTICULO_ID 1290, ROL 'N')
+//   - num_articulos  = 1
+//
+// READ-ONLY: fbtestutil.WithTestTransaction always rolls back.
+func TestClientesRepo_ListarVentas_CamposEnriquecidos(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := clientesfb.NewClientesRepo(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		const clienteID = 202468
+
+		page, err := repo.ListarVentas(ctx, clienteID, outbound.ListParams{PageSize: 10})
+		require.NoError(t, err)
+		require.Len(t, page.Items, 1,
+			"cliente 202468 should have exactly 1 venta (DOCTO_PV_ID=4070523)")
+
+		v := page.Items[0]
+		require.NotNil(t, v)
+
+		assert.Equal(t, 4070523, v.DoctoPVID(), "DoctoPVID")
+		assert.Equal(t, "18:06:49", v.Hora(), "Hora")
+		assert.Equal(t, "TIENDA DE EXHIBICION", v.Almacen(), "Almacen")
+		assert.Equal(t, "LAVADORA REDONDA EASY 15 KG. MOD. LRE-15M", v.PrimerArticulo(), "PrimerArticulo")
+		assert.Equal(t, 1, v.NumArticulos(), "NumArticulos")
+
+		t.Logf("ListarVentas CamposEnriquecidos: doctoPVID=%d hora=%q almacen=%q primerArticulo=%q numArticulos=%d",
+			v.DoctoPVID(), v.Hora(), v.Almacen(), v.PrimerArticulo(), v.NumArticulos())
+	})
+}
+
 // ─── ObtenerPagoDetalle ───────────────────────────────────────────────────────
 
 func TestClientesRepo_ObtenerPagoDetalle_Found(t *testing.T) {
