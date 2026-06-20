@@ -220,7 +220,7 @@ func (r *ventaClienteRowRaw) assemble() (*domain.VentaCliente, error) {
 	}
 	numArticulos, err := scanIntFromAny(r.numArticulosRaw)
 	if err != nil {
-		numArticulos = 0
+		return nil, err
 	}
 	tipo := tipoVentaFromStr(r.tipoStr)
 	return domain.HydrateVentaCliente(domain.HydrateVentaClienteParams{
