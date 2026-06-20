@@ -46,6 +46,11 @@ func MountRouter(r chi.Router, svc *clientesapp.Service) huma.API {
 	api := humachi.New(r, config)
 	handlers := NewHandlers(svc)
 	registerOperations(api, handlers)
+
+	// Raw chi route for PDF streaming — registered outside Huma to bypass JSON
+	// serialization. Auth is inherited from the middleware already applied to r.
+	r.Get("/clientes/{id}/reporte", handlers.Reporte)
+
 	return api
 }
 

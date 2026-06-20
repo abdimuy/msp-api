@@ -32,13 +32,15 @@ estilo) — requisito no negociable. Es un reporte de análisis de oficina, fact
 
 ## Sistema visual (NO NEGOCIABLE)
 
-**Tipografías (OFL, embebidas en el binario vía `go:embed` + `fpdf.AddUTF8FontFromBytes`):**
-- **Títulos / masthead / encabezados de sección:** Manrope (Bold / ExtraBold).
-- **Cuerpo y etiquetas:** Inter (Regular / Medium / SemiBold).
-- **Cifras (dinero, fechas, conteos):** Inter, **alineadas a la derecha** en columnas numéricas
-  para alineación de decimales limpia (fpdf no expone la feature OpenType `tnum`; el right-align
-  resuelve la alineación tabular de forma confiable).
+**Tipografías (OFL, **TTF estáticos** embebidos vía `go:embed` + `fpdf.AddUTF8FontFromBytes`):**
+- **Títulos / masthead / encabezados / cuerpo:** **Poppins** (Regular / SemiBold / Bold) —
+  geométrica, moderna.
+- **Cifras (dinero, fechas, conteos):** **IBM Plex Mono** (Regular / Medium), monoespaciada →
+  alineación tabular real; además **alineadas a la derecha** en columnas numéricas.
 - Unicode nativo por embeber TTF → acentos y ñ correctos sin el truco cp1252.
+- Nota: se eligieron Poppins + IBM Plex Mono (no Manrope/Inter) porque estas últimas solo se
+  publican como *variable fonts*, que fpdf no embebe de forma confiable. Misma dirección
+  "moderno minimal". Archivos en `internal/clientes/infra/clientespdf/fonts/` (+ `OFL.txt`).
 
 **Color (sobrio, acentos mínimos):**
 - Tinta principal casi-negra `#1A1A1A` sobre blanco.
