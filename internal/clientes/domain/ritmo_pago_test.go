@@ -489,55 +489,84 @@ func TestBuildRitmoPago_Rango_DesdeYHastaExplicitos(t *testing.T) {
 	assert.True(t, mustDecimal("200").Equal(r.Semanas[0].MontoAbonado))
 }
 
-// ─── PagoIDs por semana [BE-4] ────────────────────────────────────────────────
+// ─── Pagos por semana [BE-R] ──────────────────────────────────────────────────
 
-func TestBuildRitmoPago_PagoIDs_MultiPagoEnMismaSemana(t *testing.T) {
+func TestBuildRitmoPago_Pagos_MultiPagoEnMismaSemana(t *testing.T) {
 	t.Parallel()
 
 	// Dos pagos en la semana 01-jun (lunes), uno en 08-jun, semana 15-jun vacía.
-	// Semana 0: pagos con DoctoCCID 101 y 102.
-	// Semana 1: pago con DoctoCCID 201.
-	// Semana 2: sin pagos → PagoIDs vacío (no nil).
+	// Semana 0: pagos con DoctoCCID 101 (concepto 87327 → pago) y 102 (concepto 25116 → condonacion).
+	// Semana 1: pago con DoctoCCID 201 (concepto 24533 → enganche) que apunta a venta 9001/AB0001.
+	// Semana 2: sin pagos → Pagos vacío (no nil).
 	pagos := []domain.PagoCrudo{
-		{Fecha: monday(2026, 6, 1), Importe: mustDecimal("100"), DoctoCCID: 101},
-		{Fecha: monday(2026, 6, 1), Importe: mustDecimal("50"), DoctoCCID: 102},
-		{Fecha: monday(2026, 6, 8), Importe: mustDecimal("200"), DoctoCCID: 201},
+		{
+			Fecha: monday(2026, 6, 1), Importe: mustDecimal("100"), DoctoCCID: 101,
+			Hora: "10:00:00", ConceptoCCID: 87327, Concepto: "Cobranza en ruta",
+			DoctoPVID: 5001, Folio: "AB0001714",
+		},
+		{
+			Fecha: monday(2026, 6, 1), Importe: mustDecimal("50"), DoctoCCID: 102,
+			Hora: "11:00:00", ConceptoCCID: 25116, Concepto: "Condonación",
+			DoctoPVID: 5001, Folio: "AB0001714",
+		},
+		{
+			Fecha: monday(2026, 6, 8), Importe: mustDecimal("200"), DoctoCCID: 201,
+			Hora: "14:30:00", ConceptoCCID: 24533, Concepto: "Enganche",
+			DoctoPVID: 9001, Folio: "AB0001",
+		},
 	}
 	ahora := time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC)
 	r := domain.BuildRitmoPago(pagos, nil, decimal.Zero, ahora, noRango())
 
 	require.Len(t, r.Semanas, 3)
 
-	// Semana 0 (01-jun): dos pagos → ambos ids presentes, en orden de entrada.
-	assert.Equal(t, []int{101, 102}, r.Semanas[0].PagoIDs, "semana 0: dos pagos → [101, 102]")
+	// Semana 0 (01-jun): dos pagos → DoctoCCIDs en orden de entrada.
+	require.Len(t, r.Semanas[0].Pagos, 2, "semana 0: dos pagos")
+	assert.Equal(t, 101, r.Semanas[0].Pagos[0].DoctoCCID)
+	assert.Equal(t, domain.CategoriaIngresoPago, r.Semanas[0].Pagos[0].Categoria)
+	assert.Equal(t, 5001, r.Semanas[0].Pagos[0].DoctoPVID)
+	assert.Equal(t, "AB0001714", r.Semanas[0].Pagos[0].Folio)
+	assert.Equal(t, "10:00:00", r.Semanas[0].Pagos[0].Hora)
+	assert.Equal(t, 102, r.Semanas[0].Pagos[1].DoctoCCID)
+	assert.Equal(t, domain.CategoriaCondonacion, r.Semanas[0].Pagos[1].Categoria)
 
-	// Semana 1 (08-jun): un pago.
-	assert.Equal(t, []int{201}, r.Semanas[1].PagoIDs, "semana 1: un pago → [201]")
+	// Semana 1 (08-jun): un pago enganche.
+	require.Len(t, r.Semanas[1].Pagos, 1, "semana 1: un pago")
+	assert.Equal(t, 201, r.Semanas[1].Pagos[0].DoctoCCID)
+	assert.Equal(t, domain.CategoriaIngresoEnganche, r.Semanas[1].Pagos[0].Categoria)
+	assert.Equal(t, 9001, r.Semanas[1].Pagos[0].DoctoPVID)
+	assert.Equal(t, "AB0001", r.Semanas[1].Pagos[0].Folio)
 
 	// Semana 2 (15-jun): sin pagos → slice vacío, NO nil.
-	assert.NotNil(t, r.Semanas[2].PagoIDs, "semana vacía: PagoIDs debe ser no-nil")
-	assert.Empty(t, r.Semanas[2].PagoIDs, "semana vacía: PagoIDs debe estar vacío")
+	assert.NotNil(t, r.Semanas[2].Pagos, "semana vacía: Pagos debe ser no-nil")
+	assert.Empty(t, r.Semanas[2].Pagos, "semana vacía: Pagos debe estar vacío")
 }
 
-func TestBuildRitmoPago_PagoIDs_SemanaVaciaNoEsNil(t *testing.T) {
+func TestBuildRitmoPago_Pagos_SemanaVaciaNoEsNil(t *testing.T) {
 	t.Parallel()
 
 	// Un único pago en la primera semana; la segunda semana queda vacía.
 	pagos := []domain.PagoCrudo{
-		{Fecha: monday(2026, 6, 1), Importe: mustDecimal("300"), DoctoCCID: 999},
+		{
+			Fecha: monday(2026, 6, 1), Importe: mustDecimal("300"), DoctoCCID: 999,
+			Hora: "09:00:00", ConceptoCCID: 11, Concepto: "Cobro mostrador",
+			DoctoPVID: 8888, Folio: "AB0009",
+		},
 	}
 	ahora := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
 	r := domain.BuildRitmoPago(pagos, nil, decimal.Zero, ahora, noRango())
 
 	require.GreaterOrEqual(t, len(r.Semanas), 2, "esperamos al menos 2 semanas")
 
-	// Primera semana: DoctoCCID 999.
-	assert.Equal(t, []int{999}, r.Semanas[0].PagoIDs)
+	// Primera semana: DoctoCCID 999, categoría pago.
+	require.Len(t, r.Semanas[0].Pagos, 1)
+	assert.Equal(t, 999, r.Semanas[0].Pagos[0].DoctoCCID)
+	assert.Equal(t, domain.CategoriaIngresoPago, r.Semanas[0].Pagos[0].Categoria)
 
-	// Semanas vacías: PagoIDs no-nil y vacío.
+	// Semanas vacías: Pagos no-nil y vacío.
 	for i := 1; i < len(r.Semanas); i++ {
-		assert.NotNil(t, r.Semanas[i].PagoIDs, "semana %d: PagoIDs no debe ser nil", i)
-		assert.Empty(t, r.Semanas[i].PagoIDs, "semana %d: PagoIDs debe estar vacío", i)
+		assert.NotNil(t, r.Semanas[i].Pagos, "semana %d: Pagos no debe ser nil", i)
+		assert.Empty(t, r.Semanas[i].Pagos, "semana %d: Pagos debe estar vacío", i)
 	}
 }
 

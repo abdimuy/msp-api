@@ -315,11 +315,27 @@ type RitmoPagoDTO struct {
 
 // SemanaRitmoDTO is a single weekly bucket in the payment-rhythm series.
 type SemanaRitmoDTO struct {
-	SemanaInicio string `json:"semana_inicio" format:"date-time" doc:"RFC3339 UTC del inicio de la semana"`
-	MontoAbonado string `json:"monto_abonado"                   doc:"Total abonado en la semana (2 decimales)"`
-	Saldo        string `json:"saldo"                           doc:"Saldo reconstruido al cierre de la semana (2 decimales)"`
-	NumPagos     int    `json:"num_pagos"                       doc:"Número de pagos en la semana"`
-	PagoIDs      []int  `json:"pago_ids"                        doc:"IDs de los documentos de abono (DOCTO_CC_ID) aplicados en la semana; heterogéneos por concepto (cobranza, enganche, condonación y pérdida mezclados); para distinguir ingreso real de perdón de deuda consultar es_ingreso/categoria por pago vía GET /clientes/{id}/pagos/{doctoCcId}; arreglo vacío cuando no hay pagos"`
+	SemanaInicio string         `json:"semana_inicio" format:"date-time" doc:"RFC3339 UTC del inicio de la semana"`
+	MontoAbonado string         `json:"monto_abonado"                   doc:"total abonado en la semana (2 decimales)"`
+	Saldo        string         `json:"saldo"                           doc:"saldo reconstruido al cierre de la semana (2 decimales)"`
+	NumPagos     int            `json:"num_pagos"                       doc:"número de pagos en la semana"`
+	Pagos        []PagoRitmoDTO `json:"pagos"                           doc:"detalle enriquecido de cada pago de la semana; arreglo vacío cuando no hay pagos"`
+}
+
+// PagoRitmoDTO is the enriched detail of a single payment within a weekly bucket.
+// It provides enough context for the frontend to render a meaningful payment entry
+// without additional round-trips.
+type PagoRitmoDTO struct {
+	DoctoCCID    int    `json:"docto_cc_id"    doc:"ID del documento de abono en Microsip (DOCTOS_CC)"`
+	Fecha        string `json:"fecha"          format:"date-time" doc:"RFC3339 UTC de la fecha del abono"`
+	Hora         string `json:"hora"           doc:"hora de registro en el servidor Microsip (HH:MM:SS, hora local, no UTC)"`
+	Importe      string `json:"importe"        doc:"importe bruto del pago (2 decimales)"`
+	ConceptoCCID int    `json:"concepto_cc_id" doc:"ID del concepto de cuenta corriente"`
+	Concepto     string `json:"concepto"       doc:"nombre del concepto del movimiento"`
+	Categoria    string `json:"categoria"      doc:"categoría derivada del concepto: pago, enganche, condonacion, perdida u otro"`
+	EsIngreso    bool   `json:"es_ingreso"     doc:"verdadero si el movimiento representa ingreso real (pago o enganche)"`
+	DoctoPVID    int    `json:"docto_pv_id"    doc:"DOCTO_PV_ID de la venta a la que se aplicó; 0 cuando no resoluble"`
+	Folio        string `json:"folio"          doc:"folio de la venta; vacío cuando no resoluble"`
 }
 
 // EventoRitmoDTO is a notable event in the payment-rhythm window.

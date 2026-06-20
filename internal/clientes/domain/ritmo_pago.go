@@ -32,9 +32,30 @@ const (
 // PagoCrudo is the raw payment data read from Firebird by the repository before
 // being passed to BuildRitmoPago. Fields use UTC time.
 type PagoCrudo struct {
-	Fecha     time.Time       // UTC
-	Importe   decimal.Decimal // positive amount
-	DoctoCCID int             // DOCTOS_CC primary key of the abono document
+	Fecha        time.Time       // UTC
+	Hora         string          // "HH:MM:SS" wall-clock (Microsip local, display only)
+	Importe      decimal.Decimal // positive amount
+	DoctoCCID    int             // DOCTOS_CC primary key of the abono document
+	ConceptoCCID int             // CONCEPTO_CC_ID of the abono
+	Concepto     string          // human-readable concepto name (Win1252-decoded)
+	DoctoPVID    int             // linked sale's DOCTO_PV_ID (0 when not resolvable)
+	Folio        string          // linked sale's FOLIO (empty when not resolvable)
+}
+
+// PagoRitmo is an enriched payment entry within a SemanaRitmo bucket.
+// It carries full context — date/time, amount, concepto, category, and the
+// linked sale — so the frontend can render meaningful payment entries without
+// additional round-trips.
+type PagoRitmo struct {
+	DoctoCCID    int
+	Fecha        time.Time // UTC date of the abono
+	Hora         string    // "HH:MM:SS" local wall-clock (Microsip, display only — not UTC)
+	Importe      decimal.Decimal
+	ConceptoCCID int
+	Concepto     string    // human-readable concepto name
+	Categoria    Categoria // ClasificarConcepto(ConceptoCCID)
+	DoctoPVID    int       // sale this payment was applied to (0 when not resolvable)
+	Folio        string    // folio of the sale (empty when not resolvable)
 }
 
 // VentaCruda is the raw sale header read from Firebird by the repository before
@@ -59,11 +80,11 @@ type SemanaRitmo struct {
 	Saldo decimal.Decimal
 	// NumPagos is the count of individual payments in this week.
 	NumPagos int
-	// PagoIDs holds the DOCTO_CC_ID of each payment applied in this week,
+	// Pagos holds the enriched detail of each payment applied in this week,
 	// in the same order they appear in the input pagos slice. An empty week
 	// carries an empty (non-nil) slice so that the JSON serialization is []
 	// rather than null.
-	PagoIDs []int
+	Pagos []PagoRitmo
 }
 
 // EventoRitmo is a notable event that occurred within the payment rhythm window.
@@ -253,7 +274,7 @@ func computeWindow(
 }
 
 // buildSemanas generates all weekly buckets from windowStart to windowEnd inclusive.
-// PagoIDs is initialized to a non-nil empty slice so that empty weeks serialize
+// Pagos is initialized to a non-nil empty slice so that empty weeks serialize
 // as [] rather than null in JSON.
 func buildSemanas(windowStart, windowEnd time.Time) []SemanaRitmo {
 	if windowEnd.Before(windowStart) {
@@ -267,7 +288,7 @@ func buildSemanas(windowStart, windowEnd time.Time) []SemanaRitmo {
 			MontoAbonado: decimal.Zero,
 			Saldo:        decimal.Zero,
 			NumPagos:     0,
-			PagoIDs:      []int{},
+			Pagos:        []PagoRitmo{},
 		})
 		cur = cur.AddDate(0, 0, 7)
 	}
@@ -275,7 +296,7 @@ func buildSemanas(windowStart, windowEnd time.Time) []SemanaRitmo {
 }
 
 // indexarPagos distributes pagos into their corresponding weekly buckets.
-// Each pago's DoctoCCID is appended to the bucket's PagoIDs in input order.
+// Each pago is converted to a PagoRitmo and appended to the bucket's Pagos in input order.
 func indexarPagos(semanas []SemanaRitmo, pagos []PagoCrudo) {
 	for _, p := range pagos {
 		f := p.Fecha.UTC()
@@ -284,7 +305,17 @@ func indexarPagos(semanas []SemanaRitmo, pagos []PagoCrudo) {
 			if !f.Before(semanas[i].SemanaInicio) && f.Before(bucketEnd) {
 				semanas[i].MontoAbonado = semanas[i].MontoAbonado.Add(p.Importe)
 				semanas[i].NumPagos++
-				semanas[i].PagoIDs = append(semanas[i].PagoIDs, p.DoctoCCID)
+				semanas[i].Pagos = append(semanas[i].Pagos, PagoRitmo{
+					DoctoCCID:    p.DoctoCCID,
+					Fecha:        p.Fecha,
+					Hora:         p.Hora,
+					Importe:      p.Importe,
+					ConceptoCCID: p.ConceptoCCID,
+					Concepto:     p.Concepto,
+					Categoria:    ClasificarConcepto(p.ConceptoCCID),
+					DoctoPVID:    p.DoctoPVID,
+					Folio:        p.Folio,
+				})
 				break
 			}
 		}

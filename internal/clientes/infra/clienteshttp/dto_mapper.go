@@ -185,6 +185,27 @@ func toSeriesDTO(r outbound.ResumenFicha) SeriesDTO {
 
 // ─── Endpoint 5: ritmo-pago ───────────────────────────────────────────────────
 
+// ritmoPagosToDTOs converts a slice of domain.PagoRitmo to []PagoRitmoDTO.
+// A nil or empty input always returns a non-nil empty slice ([] in JSON, never null).
+func ritmoPagosToDTOs(pagos []domain.PagoRitmo) []PagoRitmoDTO {
+	result := make([]PagoRitmoDTO, 0, len(pagos))
+	for _, p := range pagos {
+		result = append(result, PagoRitmoDTO{
+			DoctoCCID:    p.DoctoCCID,
+			Fecha:        formatTime(p.Fecha),
+			Hora:         p.Hora,
+			Importe:      p.Importe.StringFixed(moneyScale),
+			ConceptoCCID: p.ConceptoCCID,
+			Concepto:     p.Concepto,
+			Categoria:    string(p.Categoria),
+			EsIngreso:    p.Categoria.EsIngreso(),
+			DoctoPVID:    p.DoctoPVID,
+			Folio:        p.Folio,
+		})
+	}
+	return result
+}
+
 // diasSemanaES maps time.Weekday to its Spanish lowercase name.
 func diasSemanaES(d time.Weekday) string {
 	switch d {
@@ -210,18 +231,13 @@ func diasSemanaES(d time.Weekday) string {
 func ritmoPagoToDTO(r domain.RitmoPago) RitmoPagoDTO {
 	semanas := make([]SemanaRitmoDTO, 0, len(r.Semanas))
 	for _, s := range r.Semanas {
-		pagoIDs := s.PagoIDs
-		// Belt-and-suspenders: buildSemanas already initializes PagoIDs to []int{},
-		// but guard here so the JSON contract (array, never null) holds regardless of caller.
-		if pagoIDs == nil {
-			pagoIDs = []int{}
-		}
+		pagos := ritmoPagosToDTOs(s.Pagos)
 		semanas = append(semanas, SemanaRitmoDTO{
 			SemanaInicio: formatTime(s.SemanaInicio),
 			MontoAbonado: s.MontoAbonado.StringFixed(moneyScale),
 			Saldo:        s.Saldo.StringFixed(moneyScale),
 			NumPagos:     s.NumPagos,
-			PagoIDs:      pagoIDs,
+			Pagos:        pagos,
 		})
 	}
 

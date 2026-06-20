@@ -263,14 +263,50 @@ ORDER BY ANIO, MES`
 // FORMA_COBRO_ID=71 but with a placeholder contado contract (parcialidad=1, plazo=1,
 // enganche=0). Including them would inflate ABONADO totals and break saldo
 // reconstruction in the rhythm chart.
+//
+// BE-R enrichment columns added:
+//   - HORA: wall-clock display string "HH:MM:SS" from DOCTOS_CC.HORA (TIME column).
+//   - CONCEPTO_CC_ID: the abono's concepto identifier for ClasificarConcepto in Go.
+//   - NOMBRE (from CONCEPTOS_CC): human-readable concepto name (Win1252-encoded legacy col).
+//   - DOCTO_PV_ID: the linked PV sale resolved via DOCTOS_ENTRE_SIS (PV→CC bridge), or 0.
+//   - FOLIO: the linked PV sale's folio (ASCII string), or "" when not resolvable.
+//
+// Both DOCTO_PV_ID and FOLIO use correlated scalar subqueries with ROWS 1 (not
+// derived-table JOINs with ?) to avoid the firebirdsql v0.9.19 parameter-binding
+// bug that rejects ? inside FROM-clause derived tables.
 const queryRitmoPagosBase = `
 SELECT
   abono.FECHA,
   CAST(COALESCE(i.IMPORTE + i.IMPUESTO, 0) AS NUMERIC(18,2)) AS IMPORTE,
-  abono.DOCTO_CC_ID
+  abono.DOCTO_CC_ID,
+  SUBSTRING(CAST(abono.HORA AS VARCHAR(13)) FROM 1 FOR 8) AS HORA,
+  abono.CONCEPTO_CC_ID,
+  conc.NOMBRE,
+  COALESCE((
+    SELECT des.DOCTO_FTE_ID
+    FROM DOCTOS_ENTRE_SIS des
+    WHERE des.CLAVE_SIS_FTE  = 'PV'
+      AND des.CLAVE_SIS_DEST = 'CC'
+      AND des.DOCTO_DEST_ID  = cargo.DOCTO_CC_ID
+    ROWS 1
+  ), 0) AS DOCTO_PV_ID,
+  COALESCE((
+    SELECT pv.FOLIO
+    FROM DOCTOS_PV pv
+    WHERE pv.DOCTO_PV_ID = (
+      SELECT des.DOCTO_FTE_ID
+      FROM DOCTOS_ENTRE_SIS des
+      WHERE des.CLAVE_SIS_FTE  = 'PV'
+        AND des.CLAVE_SIS_DEST = 'CC'
+        AND des.DOCTO_DEST_ID  = cargo.DOCTO_CC_ID
+      ROWS 1
+    )
+    ROWS 1
+  ), '') AS FOLIO
 FROM IMPORTES_DOCTOS_CC i
 JOIN DOCTOS_CC cargo ON cargo.DOCTO_CC_ID = i.DOCTO_CC_ACR_ID
 JOIN DOCTOS_CC abono ON abono.DOCTO_CC_ID = i.DOCTO_CC_ID
+LEFT JOIN CONCEPTOS_CC conc ON conc.CONCEPTO_CC_ID = abono.CONCEPTO_CC_ID
 WHERE cargo.CLIENTE_ID = ?
   AND cargo.CONCEPTO_CC_ID = 5
   AND cargo.CANCELADO = 'N'
