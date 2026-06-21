@@ -8,9 +8,12 @@
 --   arreglo de rasgos validados (e.g. "buen pagador", "comprador estacional").
 --   Para no llamar al LLM en cada petición, la narrativa se materializa en
 --   MSP_AN_CLIENTE_NARRATIVA y se invalida cuando cambia el hash sha256 de los
---   hechos de entrada (INPUT_HASH). Un cliente cuya narrativa está vencida o
---   nunca fue generada se encola en MSP_AN_NARRATIVA_PENDIENTE; el worker de
---   generación procesa la cola y escribe el resultado de vuelta.
+--   hechos de entrada (INPUT_HASH). La lectura (ObtenerPulsoCliente) compara
+--   INPUT_HASH contra los hechos actuales y encola regeneración si hay mismatch
+--   o stale cache. El worker de generación procesa la cola recomputando el hash
+--   desde los hechos más recientes y regenerando la narrativa sin comparación.
+--   Una fila cacheada cuyo INPUT_HASH coincida con los hechos actuales se sirve
+--   como-está sin regeneración.
 --
 -- MSP_AN_CLIENTE_NARRATIVA:
 --   Una fila por cliente (garantizada por UNIQUE(CLIENTE_ID)). El PK es UUID

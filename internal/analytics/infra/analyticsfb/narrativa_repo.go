@@ -180,6 +180,9 @@ func (r *Repo) Encolar(ctx context.Context, clienteID int, inputHash string) err
 // ListarPendientes returns up to limit queued clients ordered by ENCOLADA_EN ASC.
 func (r *Repo) ListarPendientes(ctx context.Context, limit int) ([]outbound.PendienteRow, error) {
 	q := firebird.GetQuerier(ctx, r.pool.DB)
+	// limit is interpolated (not bound) because Firebird's FIRST clause does not accept
+	// a positional parameter; limit is a trusted internal int (config BatchSize / constants),
+	// so there is no injection vector.
 	query := fmt.Sprintf("SELECT FIRST %d CLIENTE_ID, INPUT_HASH FROM MSP_AN_NARRATIVA_PENDIENTE ORDER BY ENCOLADA_EN", limit)
 	rows, err := q.QueryContext(ctx, query)
 	if err != nil {

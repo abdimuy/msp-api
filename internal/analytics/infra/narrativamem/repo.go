@@ -81,6 +81,8 @@ func (r *Repo) Encolar(_ context.Context, clienteID int, inputHash string) error
 
 // ListarPendientes returns up to limit queued clients in deterministic order
 // (ascending by clienteID). A limit of 0 returns all pending rows.
+// NOTE: this fake orders by CLIENTE_ID, whereas the real Firebird adapter orders
+// by ENCOLADA_EN (enqueue time); tests must not assume FIFO/enqueue-order semantics.
 func (r *Repo) ListarPendientes(_ context.Context, limit int) ([]outbound.PendienteRow, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
