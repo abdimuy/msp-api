@@ -141,6 +141,12 @@ func (s *Service) ExportCandidatoYPulso(ctx context.Context, clienteID int) (*do
 	return s.candidatoYPulso(ctx, clienteID)
 }
 
+// ExportAplicarNarrativa exposes the internal aplicarNarrativa method for
+// unit tests in narrativa_read_test.go.
+func ExportAplicarNarrativa(ctx context.Context, s *Service, clienteID int, comp *analytics.PulsoComputado) {
+	s.aplicarNarrativa(ctx, clienteID, comp)
+}
+
 // FeatureContrib is an exported mirror of featureContrib for test use.
 // It allows tests to build feature contributions without importing internal types.
 type FeatureContrib struct {

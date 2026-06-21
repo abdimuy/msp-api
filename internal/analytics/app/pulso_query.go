@@ -122,6 +122,8 @@ func (s *Service) ObtenerPulsoCliente(ctx context.Context, clienteID int) (analy
 	p90 := pagos90dFor(live, ok, c)
 	comp := s.computePulso(c, now, p90)
 
+	s.aplicarNarrativa(ctx, c.ClienteID(), &comp)
+
 	return analytics.ToClientePulsoContract(c, comp), nil
 }
 
