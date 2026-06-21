@@ -65,9 +65,9 @@ func (s *Service) ObtenerPulsoCliente(ctx context.Context, clienteID int) (analy
 	seg, score, recencia, ep := computeSegmentoScore(c, now)
 	tier := computeCobranzaTier(c, now)
 	diasAtraso, pctPuntualidad := ajustarCobranzaRecencia(c, now)
-	cScore, cBanda, cDrivers, _ := computeCreditoScore(c, now, s.scorecard, p90)
-	rScore, rBanda, rDrivers, _ := computeRecompraScore(c, now, s.recompraScorecard, s.btyd)
-	clvMonto, clvBanda, _ := computeCLV(c, now, s.btyd, s.scorecard, s.clvParams, p90)
+	cScore, cBanda, cDrivers, cAplica := computeCreditoScore(c, now, s.scorecard, p90)
+	rScore, rBanda, rDrivers, rAplica := computeRecompraScore(c, now, s.recompraScorecard, s.btyd)
+	clvMonto, clvBanda, clvDrivers, clvResumen, _ := computeCLVConRazones(c, now, s.btyd, s.scorecard, s.clvParams, p90)
 
 	comp := analytics.PulsoComputado{
 		Segmento:        seg.String(),
@@ -85,6 +85,10 @@ func (s *Service) ObtenerPulsoCliente(ctx context.Context, clienteID int) (analy
 		RecompraDrivers: rDrivers,
 		MontoCLV:        clvMonto.Decimal(),
 		BandaCLV:        clvBanda.String(),
+		CLVDrivers:      clvDrivers,
+		CreditoResumen:  resumenCredito(c, now, cBanda, cScore, cAplica),
+		RecompraResumen: resumenRecompra(c, now, rBanda, rScore, rAplica),
+		CLVResumen:      clvResumen,
 	}
 
 	return analytics.ToClientePulsoContract(c, comp), nil
@@ -122,9 +126,9 @@ func (s *Service) ObtenerPulsosClientes(ctx context.Context, clienteIDs []int) (
 		seg, score, recencia, ep := computeSegmentoScore(c, now)
 		tier := computeCobranzaTier(c, now)
 		diasAtraso, pctPuntualidad := ajustarCobranzaRecencia(c, now)
-		cScore, cBanda, cDrivers, _ := computeCreditoScore(c, now, s.scorecard, p90)
-		rScore, rBanda, rDrivers, _ := computeRecompraScore(c, now, s.recompraScorecard, s.btyd)
-		clvMonto, clvBanda, _ := computeCLV(c, now, s.btyd, s.scorecard, s.clvParams, p90)
+		cScore, cBanda, cDrivers, cAplica := computeCreditoScore(c, now, s.scorecard, p90)
+		rScore, rBanda, rDrivers, rAplica := computeRecompraScore(c, now, s.recompraScorecard, s.btyd)
+		clvMonto, clvBanda, clvDrivers, clvResumen, _ := computeCLVConRazones(c, now, s.btyd, s.scorecard, s.clvParams, p90)
 
 		comp := analytics.PulsoComputado{
 			Segmento:        seg.String(),
@@ -142,6 +146,10 @@ func (s *Service) ObtenerPulsosClientes(ctx context.Context, clienteIDs []int) (
 			RecompraDrivers: rDrivers,
 			MontoCLV:        clvMonto.Decimal(),
 			BandaCLV:        clvBanda.String(),
+			CLVDrivers:      clvDrivers,
+			CreditoResumen:  resumenCredito(c, now, cBanda, cScore, cAplica),
+			RecompraResumen: resumenRecompra(c, now, rBanda, rScore, rAplica),
+			CLVResumen:      clvResumen,
 		}
 
 		result[c.ClienteID()] = analytics.ToClientePulsoContract(c, comp)

@@ -64,6 +64,11 @@ type PulsoComputado struct {
 	RecompraDrivers []string
 	MontoCLV        decimal.Decimal
 	BandaCLV        string
+	// ─── Quantified drivers and titulars ─────────────────────────────────────────
+	CLVDrivers      []string
+	CreditoResumen  string
+	RecompraResumen string
+	CLVResumen      string
 }
 
 // ToClientePulsoContract projects a WinbackCandidato plus the read-time computed
@@ -100,5 +105,9 @@ func ToClientePulsoContract(c *domain.WinbackCandidato, comp PulsoComputado) Cli
 		RecompraDrivers:   comp.RecompraDrivers,
 		MontoCLV:          comp.MontoCLV,
 		BandaCLV:          comp.BandaCLV,
+		CLVDrivers:        comp.CLVDrivers,
+		CreditoResumen:    comp.CreditoResumen,
+		RecompraResumen:   comp.RecompraResumen,
+		CLVResumen:        comp.CLVResumen,
 	}
 }

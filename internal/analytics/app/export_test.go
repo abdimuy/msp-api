@@ -74,3 +74,52 @@ func ExportMonthIndex(t time.Time) int {
 func ExportComputeCLV(c *domain.WinbackCandidato, now time.Time, btyd BTYD, creditSc Scorecard, params CLVParams, pagos90d int) (domain.MontoCLV, domain.BandaCLV, bool) {
 	return computeCLV(c, now, btyd, creditSc, params, pagos90d)
 }
+
+// ExportComputeCLVConRazones exposes the internal computeCLVConRazones function
+// for table-driven tests in the app_test package.
+func ExportComputeCLVConRazones(c *domain.WinbackCandidato, now time.Time, btyd BTYD, creditSc Scorecard, params CLVParams, pagos90d int) (domain.MontoCLV, domain.BandaCLV, []string, string, bool) {
+	return computeCLVConRazones(c, now, btyd, creditSc, params, pagos90d)
+}
+
+// ExportRazonesCredito exposes the internal razonesCredito function for tests.
+func ExportRazonesCredito(c *domain.WinbackCandidato, contribs []FeatureContrib) []string {
+	fcs := make([]featureContrib, len(contribs))
+	for i, fc := range contribs {
+		fcs[i] = featureContrib{name: fc.Name, label: fc.Label, valor: fc.Valor, logit: fc.Logit}
+	}
+	return razonesCredito(c, fcs)
+}
+
+// ExportRazonesRecompra exposes the internal razonesRecompra function for tests.
+func ExportRazonesRecompra(c *domain.WinbackCandidato, contribs []FeatureContrib) []string {
+	fcs := make([]featureContrib, len(contribs))
+	for i, fc := range contribs {
+		fcs[i] = featureContrib{name: fc.Name, label: fc.Label, valor: fc.Valor, logit: fc.Logit}
+	}
+	return razonesRecompra(c, fcs)
+}
+
+// ExportResumenCredito exposes the internal resumenCredito function for tests.
+func ExportResumenCredito(c *domain.WinbackCandidato, now time.Time, banda domain.BandaCredito, score domain.ScoreCredito, aplica bool) string {
+	return resumenCredito(c, now, banda, score, aplica)
+}
+
+// ExportResumenRecompra exposes the internal resumenRecompra function for tests.
+func ExportResumenRecompra(c *domain.WinbackCandidato, now time.Time, banda domain.BandaRecompra, score domain.ScoreRecompra, aplica bool) string {
+	return resumenRecompra(c, now, banda, score, aplica)
+}
+
+// ExportPesosMiles exposes the internal pesosMiles helper for tests.
+func ExportPesosMiles(d decimal.Decimal) string { return pesosMiles(d) }
+
+// ExportPesosCompact exposes the internal pesosCompact helper for tests.
+func ExportPesosCompact(d decimal.Decimal) string { return pesosCompact(d) }
+
+// FeatureContrib is an exported mirror of featureContrib for test use.
+// It allows tests to build feature contributions without importing internal types.
+type FeatureContrib struct {
+	Name  string
+	Label string
+	Valor float64
+	Logit float64
+}

@@ -8,6 +8,7 @@
 package app
 
 import (
+	"fmt"
 	"math"
 	"time"
 
@@ -397,7 +398,8 @@ func computeCreditoScore(c *domain.WinbackCandidato, now time.Time, sc Scorecard
 		return domain.ScoreCredito{}, domain.BandaCredito(""), nil, false
 	}
 	features := buildCreditoFeatures(c, now, pagos90d)
-	score, banda, drivers := sc.Aplicar(features)
+	score, banda, contribs := sc.aplicarContribs(features)
+	drivers := razonesCredito(c, contribs)
 	return score, banda, drivers, true
 }
 
@@ -486,7 +488,8 @@ func computeRecompraScore(c *domain.WinbackCandidato, now time.Time, sc Recompra
 		return domain.ScoreRecompra{}, domain.BandaRecompra(""), nil, false
 	}
 	features := buildRecompraFeatures(c, now, btyd)
-	score, banda, drivers := sc.Aplicar(features)
+	score, banda, contribs := sc.aplicarContribs(features)
+	drivers := razonesRecompra(c, contribs)
 
 	// Dormancy gate: cap recompra banda at MEDIA for clients dormant beyond
 	// recompraRecenciaMaxMeses. The BG/BB P_alive inflates the score for dormant
@@ -541,31 +544,90 @@ func clvBandaFor(clvPesos float64, params CLVParams) domain.BandaCLV {
 	}
 }
 
-// computeCLV computes the risk-adjusted customer lifetime value (pesos) for a
-// client as of now. Returns aplica=false (zero monto, empty banda) when there is
-// no purchase history to project from (no V grid), or btyd/params not loaded.
+// applyCLVBandaGates applies dormancy and no-repeat-signal caps to a CLV banda.
+// The pesos monto is always kept unchanged — only the display band is capped.
+func applyCLVBandaGates(banda domain.BandaCLV, x, recenciaMeses int) domain.BandaCLV {
+	if recenciaMeses > clvRecenciaMaxMeses && banda == domain.BandaCLVAlto {
+		banda = domain.BandaCLVMedio
+	}
+	if x == 0 && banda == domain.BandaCLVAlto {
+		banda = clvSinRepeatSignalMaxBanda
+	}
+	return banda
+}
+
+// buildCLVDrivers builds the ordered list of up to 3 quantified CLV driver bullets.
+func buildCLVDrivers(det, saldo, pPaga, perdida, eM float64) []string {
+	drivers := make([]string, 0, 3)
+
+	// 1. Recompra phrase based on DET (expected transaction count).
+	switch {
+	case det >= 1:
+		drivers = append(drivers, "recompra recurrente esperada")
+	case det >= 0.5:
+		drivers = append(drivers, "recompra moderada esperada")
+	default:
+		drivers = append(drivers, "poca recompra esperada")
+	}
+
+	// 2. Credit loss driver — only when meaningful.
+	if saldo > 0 && pPaga < 1 && perdida > 0 {
+		drivers = append(drivers, fmt.Sprintf("riesgo de impago (-%s esperado)", pesosCompact(decimal.NewFromFloat(perdida))))
+	}
+
+	// 3. Ticket.
+	drivers = append(drivers, "ticket "+pesosMiles(decimal.NewFromFloat(eM)))
+
+	// Cap to 3.
+	if len(drivers) > 3 {
+		drivers = drivers[:3]
+	}
+	return drivers
+}
+
+// buildCLVResumen builds the one-line titular for a CLV score.
+func buildCLVResumen(monto domain.MontoCLV, eM, saldo, clvRaw, clvFinal, perdida float64, horizonMonths int) string {
+	switch {
+	case saldo > 0 && clvRaw <= 0 && perdida > 0:
+		// Loss-dominated zero: the expected credit loss erases future purchase value.
+		return fmt.Sprintf(
+			"Vale ~$0 ajustado por riesgo: debe %s y su probabilidad de pago es muy baja, así que la pérdida esperada borra el valor de sus compras futuras.",
+			pesosCompact(decimal.NewFromFloat(saldo)),
+		)
+	case clvFinal <= 0:
+		return fmt.Sprintf("Valor bajo: ~$0 estimado en %dm.", horizonMonths)
+	default:
+		return fmt.Sprintf(
+			"Valor estimado %s en %dm por su recompra y ticket de %s.",
+			pesosCompact(monto.Decimal()),
+			horizonMonths,
+			pesosMiles(decimal.NewFromFloat(eM)),
+		)
+	}
+}
+
+// computeCLVConRazones computes CLV plus its quantified drivers and titular.
+// computeCLV delegates to this and drops the extra returns (keeps its signature).
+//
+// Returns aplica=false (zero monto, empty banda, nil drivers, empty resumen)
+// when there is no purchase history to project from (no V grid), or
+// btyd/params not loaded.
 //
 // CLV_final = margin · E[M] · DET · P(paga) − pérdida_esperada, floored at 0.
 //
 //	E[M]  = Gamma-Gamma expected ticket (btyd.ExpectedAvgProfit); for x==0 (no
-//	        repeat signal) falls back to the observed mean V ticket (MonetaryVProm),
-//	        per clv_params monetary_fallback_when_freq0.
+//	        repeat signal) falls back to the observed mean V ticket (MonetaryVProm).
 //	DET   = btyd.DET over the configured horizon/discount.
-//	P(paga) = credit Score / 100 when the credit score applies; else 1.0
-//	          (no open credit exposure → no modeled default on future value).
+//	P(paga) = credit Score / 100 when the credit score applies; else 1.0.
 //	pérdida_esperada = (1 − P(paga)) · saldo_actual · LGD.
-//
-// Bands: monto >= alto_min → ALTO; >= medio_min → MEDIO; else BAJO (pesos cuts).
-//
-// v1 limitation: a dormant ower whose credit score does not apply gets P(paga)=1.0
-// (existing-saldo default risk not subtracted) — mitigated because such clients
-// have low DET → low gross CLV, and are flagged separately by the cobranza TierRiesgo.
-func computeCLV(c *domain.WinbackCandidato, now time.Time, btyd BTYD, creditSc Scorecard, params CLVParams, pagos90d int) (domain.MontoCLV, domain.BandaCLV, bool) {
+func computeCLVConRazones(c *domain.WinbackCandidato, now time.Time, btyd BTYD, creditSc Scorecard, params CLVParams, pagos90d int) (domain.MontoCLV, domain.BandaCLV, []string, string, bool) {
+	const noAplicaResumen = "Sin historial de compras — no se evalúa."
+
 	if !btyd.Loaded() || !params.Loaded() {
-		return domain.MontoCLV{}, domain.BandaCLV(""), false
+		return domain.MontoCLV{}, domain.BandaCLV(""), nil, noAplicaResumen, false
 	}
 	if c.FechaPrimerVenta().IsZero() || c.VentasMesesDistintos() < 1 {
-		return domain.MontoCLV{}, domain.BandaCLV(""), false
+		return domain.MontoCLV{}, domain.BandaCLV(""), nil, noAplicaResumen, false
 	}
 
 	x, tx, n := clvVGrid(c, now)
@@ -590,7 +652,8 @@ func computeCLV(c *domain.WinbackCandidato, now time.Time, btyd BTYD, creditSc S
 	perdida := (1 - pPaga) * saldo * params.LGD()
 
 	gross := params.Margin() * eM * det
-	clvFinal := gross*pPaga - perdida
+	clvRaw := gross*pPaga - perdida
+	clvFinal := clvRaw
 	if clvFinal < 0 {
 		clvFinal = 0
 	}
@@ -603,26 +666,38 @@ func computeCLV(c *domain.WinbackCandidato, now time.Time, btyd BTYD, creditSc S
 	}
 
 	banda := clvBandaFor(clvFinal, params)
-
-	// Dormancy gate: BG/BB P_alive does not decay fast enough for long-dormant
-	// clients because gamma≈0.046 (slow churn). Cap the CLV banda at MEDIO when
-	// the client has not made a V purchase in > clvRecenciaMaxMeses months. The
-	// pesos monto is kept unchanged (ordering within MEDIO still works).
 	nowMonth := monthIndex(now)
 	lastMonth := monthIndex(c.FechaUltimaVenta())
-	recenciaMeses := nowMonth - lastMonth
-	if recenciaMeses > clvRecenciaMaxMeses && banda == domain.BandaCLVAlto {
-		banda = domain.BandaCLVMedio
-	}
+	banda = applyCLVBandaGates(banda, x, nowMonth-lastMonth)
 
-	// No-repeat-signal gate: x==0 means we only have population priors (DET and
-	// P_alive default to their prior means). Cap at clvSinRepeatSignalMaxBanda
-	// until a repeat purchase is observed and individual signal replaces the prior.
-	if x == 0 && banda == domain.BandaCLVAlto {
-		banda = clvSinRepeatSignalMaxBanda
-	}
+	drivers := buildCLVDrivers(det, saldo, pPaga, perdida, eM)
+	resumen := buildCLVResumen(monto, eM, saldo, clvRaw, clvFinal, perdida, params.HorizonMonths())
 
-	return monto, banda, true
+	return monto, banda, drivers, resumen, true
+}
+
+// computeCLV computes the risk-adjusted customer lifetime value (pesos) for a
+// client as of now. Returns aplica=false (zero monto, empty banda) when there is
+// no purchase history to project from (no V grid), or btyd/params not loaded.
+//
+// CLV_final = margin · E[M] · DET · P(paga) − pérdida_esperada, floored at 0.
+//
+//	E[M]  = Gamma-Gamma expected ticket (btyd.ExpectedAvgProfit); for x==0 (no
+//	        repeat signal) falls back to the observed mean V ticket (MonetaryVProm),
+//	        per clv_params monetary_fallback_when_freq0.
+//	DET   = btyd.DET over the configured horizon/discount.
+//	P(paga) = credit Score / 100 when the credit score applies; else 1.0
+//	          (no open credit exposure → no modeled default on future value).
+//	pérdida_esperada = (1 − P(paga)) · saldo_actual · LGD.
+//
+// Bands: monto >= alto_min → ALTO; >= medio_min → MEDIO; else BAJO (pesos cuts).
+//
+// v1 limitation: a dormant ower whose credit score does not apply gets P(paga)=1.0
+// (existing-saldo default risk not subtracted) — mitigated because such clients
+// have low DET → low gross CLV, and are flagged separately by the cobranza TierRiesgo.
+func computeCLV(c *domain.WinbackCandidato, now time.Time, btyd BTYD, creditSc Scorecard, params CLVParams, pagos90d int) (domain.MontoCLV, domain.BandaCLV, bool) {
+	monto, banda, _, _, aplica := computeCLVConRazones(c, now, btyd, creditSc, params, pagos90d)
+	return monto, banda, aplica
 }
 
 // ─── Cobranza tier constants ──────────────────────────────────────────────────
