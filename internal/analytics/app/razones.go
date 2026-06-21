@@ -73,7 +73,7 @@ func pesosCompact(d decimal.Decimal) string {
 	abs := d.Abs().InexactFloat64()
 	if abs >= 1000 {
 		k := abs / 1000.0
-		// One decimal, strip trailing zero only when it is ".0" — fmt %.1f handles it.
+		// One decimal place always — e.g. "$19.1k", "$20.0k" (round values keep the .0).
 		return fmt.Sprintf("$%.1fk", k)
 	}
 	// Whole pesos.
@@ -238,7 +238,7 @@ func resumenCredito(c *domain.WinbackCandidato, now time.Time, banda domain.Band
 	switch banda {
 	case domain.BandaCreditoBajo:
 		if cad > 0 {
-			return fmt.Sprintf("Buen pagador: paga cada ~%d días, %.0f%% a tiempo.", cad, pct)
+			return fmt.Sprintf("Buen pagador: paga cada ~%s, %.0f%% a tiempo.", pluralDias(cad), pct)
 		}
 		return fmt.Sprintf("Buen pagador: %.0f%% de pagos a tiempo.", pct)
 

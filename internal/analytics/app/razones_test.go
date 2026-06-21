@@ -129,6 +129,30 @@ func TestResumenCredito_BuenPagador(t *testing.T) {
 	assert.Contains(t, got, "92%", "debe mencionar puntualidad; got: %q", got)
 }
 
+func TestResumenCredito_BuenPagador_Cadencia1(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
+	// cadencia==1 must render "~1 día" (singular), not "~1 días".
+	c := mustCandidato(domain.CrearWinbackCandidatoParams{
+		ClienteID:       11,
+		Nombre:          "Perez Diario",
+		Zona:            "Z1",
+		Saldo:           decimal.NewFromInt(1000),
+		FechaUltimoPago: now.AddDate(0, 0, -1),
+		CadenciaDias:    1,
+		PctPagosATiempo: decimal.NewFromFloat(99),
+		CohorteFecha:    now.AddDate(-1, 0, 0),
+		Now:             now,
+	})
+
+	score, err := domain.NewScoreCredito(85)
+	require.NoError(t, err)
+	got := app.ExportResumenCredito(c, now, domain.BandaCreditoBajo, score, true)
+	assert.True(t, strings.HasPrefix(got, "Buen pagador:"), "resumen debe empezar con 'Buen pagador:'; got: %q", got)
+	assert.Contains(t, got, "cada ~1 día,", "debe usar singular 'día' cuando cadencia==1; got: %q", got)
+}
+
 func TestResumenCredito_RiesgoCritico(t *testing.T) {
 	t.Parallel()
 
