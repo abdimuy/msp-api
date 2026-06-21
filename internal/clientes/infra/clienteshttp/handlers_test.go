@@ -1197,3 +1197,66 @@ func TestListarClientes_CLV_EmptyWhenNoPulso(t *testing.T) {
 	assert.Empty(t, it.BandaCLV, "no aplica → empty banda_clv")
 	assert.Empty(t, it.CLV, "no aplica → empty clv (not \"0.00\")")
 }
+
+// ─── Narrativa + RasgosIA pass-through (Fase 2) ──────────────────────────────
+
+// TestObtenerFicha_Narrativa_RasgosIA_Populated verifies that when the contract
+// carries Narrativa and RasgosIA, both map through to the ficha DTO unchanged.
+func TestObtenerFicha_Narrativa_RasgosIA_Populated(t *testing.T) {
+	t.Parallel()
+
+	c := newCliente(55)
+	pulso := newPulso(55)
+	pulso.Narrativa = "Cliente con historial sólido; prioridad de contacto esta semana."
+	pulso.RasgosIA = []string{"pagador_puntual", "recompra_probable", "ticket_alto"}
+
+	repo := &fakeRepo{cliente: c}
+	ac := &fakeAnalytics{pulsos: map[int]analytics.ClientePulsoContract{55: pulso}}
+	svc := buildService(repo, ac)
+	cu := userWith(auth.PermClientesLeer)
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/55", nil)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	var resp struct {
+		Pulso *struct {
+			Narrativa string   `json:"narrativa"`
+			RasgosIA  []string `json:"rasgos_ia"`
+		} `json:"pulso"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	require.NotNil(t, resp.Pulso, "pulso debe estar presente")
+	assert.Equal(t, "Cliente con historial sólido; prioridad de contacto esta semana.", resp.Pulso.Narrativa)
+	assert.Equal(t, []string{"pagador_puntual", "recompra_probable", "ticket_alto"}, resp.Pulso.RasgosIA)
+}
+
+// TestObtenerFicha_Narrativa_RasgosIA_Empty verifies that when the contract
+// carries empty Narrativa and nil RasgosIA, the DTO fields are empty.
+func TestObtenerFicha_Narrativa_RasgosIA_Empty(t *testing.T) {
+	t.Parallel()
+
+	c := newCliente(56)
+	pulso := newPulso(56)
+	// Narrativa and RasgosIA are zero values (empty string / nil slice).
+
+	repo := &fakeRepo{cliente: c}
+	ac := &fakeAnalytics{pulsos: map[int]analytics.ClientePulsoContract{56: pulso}}
+	svc := buildService(repo, ac)
+	cu := userWith(auth.PermClientesLeer)
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/56", nil)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	var resp struct {
+		Pulso *struct {
+			Narrativa string   `json:"narrativa"`
+			RasgosIA  []string `json:"rasgos_ia"`
+		} `json:"pulso"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	require.NotNil(t, resp.Pulso, "pulso debe estar presente")
+	assert.Empty(t, resp.Pulso.Narrativa, "narrativa debe estar vacío cuando el contrato no la tiene")
+	assert.Empty(t, resp.Pulso.RasgosIA, "rasgos_ia debe estar vacío cuando el contrato no los tiene")
+}

@@ -154,6 +154,8 @@ func toFichaDTO(ficha clientesapp.FichaCliente) FichaDTO {
 			CreditoResumen:    p.CreditoResumen,
 			RecompraResumen:   p.RecompraResumen,
 			CLVResumen:        p.CLVResumen,
+			Narrativa:         p.Narrativa,
+			RasgosIA:          p.RasgosIA,
 		}
 	}
 
