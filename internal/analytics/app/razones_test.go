@@ -44,21 +44,6 @@ func TestPesosMiles(t *testing.T) {
 func TestPesosCompact(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		input float64
-		want  string
-	}{
-		{19094.0, "$19.1k"},
-		{950.4, "$950"},
-		{1000.0, "$1.0k"},
-		{999.9, "$1,000"}, // rounds to 1000 whole pesos? No — pesosCompact uses abs<1000 → whole pesos
-		// Actually 999.9 < 1000 → "$1000" (whole = 1000). Wait, fmt "%.0f" of 999.9 → "1000".
-		// Let's use values that clearly fall in each branch.
-		{500.0, "$500"},
-		{1500.0, "$1.5k"},
-	}
-
-	// Override with the exact spec examples:
 	specTests := []struct {
 		input float64
 		want  string
@@ -75,7 +60,6 @@ func TestPesosCompact(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
-	_ = tests // suppress unused
 }
 
 // ─── Resumen crédito ──────────────────────────────────────────────────────────
@@ -149,7 +133,9 @@ func TestResumenCredito_RiesgoCritico(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
-	// Moroso: 131 días sin pagar, saldo ~19,000, cadencia ~6
+	// Moroso: 131 días sin pagar, saldo ~19,000, cadencia ~6.
+	// Pass BandaCreditoCritico directly — we are testing the resumen string builder,
+	// not the scorecard thresholds (which can change between versions).
 	c := mustCandidato(domain.CrearWinbackCandidatoParams{
 		ClienteID:        20,
 		Nombre:           "Torres Morales",
@@ -166,16 +152,11 @@ func TestResumenCredito_RiesgoCritico(t *testing.T) {
 		Now:              now,
 	})
 
-	sc, err := app.LoadScorecard()
+	score, err := domain.NewScoreCredito(10)
 	require.NoError(t, err)
-	score, banda, _, aplica := app.ExportComputeCreditoScore(c, now, sc, 0)
-	require.True(t, aplica)
-
-	got := app.ExportResumenCredito(c, now, banda, score, aplica)
-	// Must start with the appropriate risk level and contain "131 días"
-	assert.True(t,
-		strings.HasPrefix(got, "Riesgo crítico:") || strings.HasPrefix(got, "Riesgo alto:") || strings.HasPrefix(got, "Riesgo medio:"),
-		"resumen debe indicar un nivel de riesgo; got: %q", got)
+	got := app.ExportResumenCredito(c, now, domain.BandaCreditoCritico, score, true)
+	assert.True(t, strings.HasPrefix(got, "Riesgo crítico:"),
+		"resumen debe empezar con 'Riesgo crítico:'; got: %q", got)
 	assert.Contains(t, got, "131 días", "resumen debe mencionar 131 días; got: %q", got)
 	assert.Contains(t, got, "$19", "resumen debe mencionar el saldo compacto; got: %q", got)
 }
@@ -326,12 +307,11 @@ func TestComputeCLVConRazones_CLVPositivo(t *testing.T) {
 	assert.NotEmpty(t, drivers, "drivers no deben estar vacíos cuando aplica")
 	assert.LessOrEqual(t, len(drivers), 3, "máximo 3 drivers")
 
-	if monto.Decimal().IsPositive() {
-		assert.True(t, strings.HasPrefix(resumen, "Valor estimado $"),
-			"resumen positivo debe empezar con 'Valor estimado $'; got: %q", resumen)
-		assert.Contains(t, resumen, "ticket de $",
-			"resumen positivo debe mencionar el ticket; got: %q", resumen)
-	}
+	require.True(t, monto.Decimal().IsPositive(), "fixture (saldo=0, no credit exposure → pPaga=1) must produce CLV>0; got %s", monto.Decimal())
+	assert.True(t, strings.HasPrefix(resumen, "Valor estimado $"),
+		"resumen positivo debe empezar con 'Valor estimado $'; got: %q", resumen)
+	assert.Contains(t, resumen, "ticket de $",
+		"resumen positivo debe mencionar el ticket; got: %q", resumen)
 
 	// Drivers must contain a ticket entry.
 	hasTicket := false
@@ -355,17 +335,17 @@ func TestComputeCLVConRazones_CLVCeroPorPerdida(t *testing.T) {
 	require.NoError(t, err)
 
 	now := time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
-	// High-risk delinquent: large saldo + very low credit score → pPaga≈0 → CLV raw <= 0.
-	// Use creditoPerformingMaxDias = 180; last payment must be within that window for
-	// the credit scorecard to apply. Set last payment to 150 days ago with very bad features.
+	// High-risk delinquent: massive saldo (500000) + very low credit score → pPaga≈0 → perdida
+	// overwhelmingly dominates gross*pPaga regardless of future model tuning.
+	// Last payment within performing window (150 days) so the credit scorecard applies.
 	fechaPrimerVenta := now.AddDate(-2, 0, 0)
 	fechaUltimaVenta := now.AddDate(0, -3, 0)
 	c := mustCandidato(domain.CrearWinbackCandidatoParams{
 		ClienteID:            70,
 		Nombre:               "Mendoza Crítico",
 		Zona:                 "Z1",
-		Saldo:                decimal.NewFromInt(50000), // very high balance
-		FechaUltimoPago:      now.AddDate(0, 0, -150),   // within performing window
+		Saldo:                decimal.NewFromInt(500000), // overwhelmingly large to lock loss-dominated branch
+		FechaUltimoPago:      now.AddDate(0, 0, -150),    // within performing window
 		FechaPrimerCargo:     now.AddDate(-2, 0, 0),
 		CadenciaDias:         30,
 		PctPagosATiempo:      decimal.NewFromFloat(5), // extremely low punctuality
@@ -384,40 +364,18 @@ func TestComputeCLVConRazones_CLVCeroPorPerdida(t *testing.T) {
 
 	require.True(t, aplica, "cliente con ventas debe tener aplica=true")
 	assert.NotNil(t, drivers, "drivers no deben ser nil cuando aplica")
+	require.True(t, monto.Decimal().IsZero(), "fixture (saldo=500000, credit CRITICO → pPaga≈0) must produce CLV=0; got %s", monto.Decimal())
 
-	if monto.Decimal().IsZero() {
-		// When CLV = 0 due to loss-dominated scenario, check resumen.
-		assert.True(t,
-			strings.HasPrefix(resumen, "Vale ~$0 ajustado por riesgo:") ||
-				strings.HasPrefix(resumen, "Valor bajo:"),
-			"resumen con CLV=0 debe indicar '~$0' o 'Valor bajo'; got: %q", resumen)
+	assert.True(t, strings.HasPrefix(resumen, "Vale ~$0 ajustado por riesgo:"),
+		"resumen con CLV=0 debe empezar con 'Vale ~$0 ajustado por riesgo:'; got: %q", resumen)
+	assert.Contains(t, resumen, "borra el valor", "resumen debe mencionar 'borra el valor'; got: %q", resumen)
 
-		// If it's loss-dominated, the resumen should mention "borra el valor".
-		if strings.HasPrefix(resumen, "Vale ~$0 ajustado por riesgo:") {
-			assert.Contains(t, resumen, "borra el valor", "resumen debe mencionar 'borra el valor'; got: %q", resumen)
-			// Check that drivers include a "riesgo de impago" entry.
-			hasImpago := false
-			for _, d := range drivers {
-				if strings.HasPrefix(d, "riesgo de impago (-$") {
-					hasImpago = true
-					break
-				}
-			}
-			assert.True(t, hasImpago, "drivers deben incluir 'riesgo de impago (-$...'; got: %v", drivers)
+	hasImpago := false
+	for _, d := range drivers {
+		if strings.HasPrefix(d, "riesgo de impago (-$") {
+			hasImpago = true
+			break
 		}
 	}
-}
-
-// ─── Mapper round-trip ────────────────────────────────────────────────────────
-
-// TestPulsoComputado_NuevosFieldsRoundTrip verifies that the 4 new fields
-// (CLVDrivers, CreditoResumen, RecompraResumen, CLVResumen) round-trip through
-// ToClientePulsoContract.
-func TestPulsoComputado_NuevosFieldsRoundTrip(t *testing.T) {
-	t.Parallel()
-	// This test lives here for import convenience; it exercises the analytics
-	// contract mapper, which is in the analytics package.
-	// We use the ExportComputeCLVConRazones wrapper instead of importing analytics directly.
-	// The actual mapper test is in analytics_contracts_mapper_test.go (see below).
-	t.Skip("covered by analytics_contracts_mapper_test.go#TestToClientePulsoContract_NuevosFields")
+	assert.True(t, hasImpago, "drivers deben incluir 'riesgo de impago (-$...'; got: %v", drivers)
 }
