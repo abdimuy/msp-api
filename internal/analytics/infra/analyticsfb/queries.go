@@ -84,9 +84,18 @@ VALUES (?, ?, ?)`
 // ─── Microsip read queries ─────────────────────────────────────────────────────
 //
 // All Microsip text columns (CLIENTES.NOMBRE, ZONAS_CLIENTES.NOMBRE,
-// DIRS_CLIENTES.TELEFONO1, ARTICULOS.NOMBRE) are Win1252-encoded (CHARACTER
-// SET NONE / ISO8859_1). Scan targets for those columns must be firebird.Win1252
-// values, not plain string, so the driver round-trips the bytes correctly.
+// DIRS_CLIENTES.TELEFONO1, ARTICULOS.NOMBRE) are CHARACTER SET NONE (raw
+// Win1252 bytes in the DB). Because the Firebird connection uses charset=UTF8,
+// the server automatically transliterates those columns to UTF-8 on the wire
+// before the driver receives them. Scan targets are therefore plain string /
+// sql.NullString — NOT firebird.Win1252. Using Win1252.Scan on already-UTF-8
+// bytes would apply a second Win1252→UTF-8 decode, producing mojibake (e.g.
+// "Ã'" instead of "ñ"). NULL results from LEFT JOINs are mapped to "" in Go.
+//
+// COALESCE with string literals is intentionally OMITTED: a '' literal in a
+// UTF-8 connection forces Firebird to coerce the NONE column to UTF-8 at the
+// point of the expression, which can fail with "Malformed string" on Win1252
+// bytes (e.g. accented characters). NULL → "" is handled in Go instead.
 //
 // Money aggregates use CAST(SUM(…) AS NUMERIC(18,2)) to avoid the nakagami
 // driver bug where SUM over NUMERIC returns *big.Int without applying the
@@ -148,15 +157,15 @@ VALUES (?, ?, ?)`
 // Column order (must match anclaRowRaw.scanFrom exactly):
 //
 //	1  cliente_id
-//	2  nombre         (Win1252)
-//	3  zona           (Win1252, may be empty)
-//	4  telefono       (Win1252, may be NULL)
+//	2  nombre         (string; UTF-8 via server-side transliteration of NONE col)
+//	3  zona           (sql.NullString; NULL when client has no zona — Go maps to "")
+//	4  telefono       (sql.NullString; NULL when no primary address — Go maps to "")
 //	5  fecha_ultima_compra
 //	6  frecuencia
 //	7  monetary
 //	8  saldo          (floored at 0)
 //	9  por_liquidar   (NUMERIC(5,2), 0–100)
-//	10 next_best_product (Win1252, may be '')
+//	10 next_best_product (sql.NullString; NULL when no purchases — Go maps to "")
 //	11 fecha_ultimo_pago (TIMESTAMP, may be NULL)
 //	12 fecha_primer_cargo (TIMESTAMP, may be NULL)
 //	13 fecha_primer_venta (TIMESTAMP, may be NULL)
@@ -255,7 +264,11 @@ nbp AS (
 SELECT
   rfm.CLIENTE_ID,
   c.NOMBRE                                                            AS NOMBRE,
-  COALESCE(z.NOMBRE, '')                                             AS ZONA,
+  -- Do NOT COALESCE z.NOMBRE with a '' literal: '' is a UTF-8 connection
+  -- literal and would force Firebird to coerce the CHARACTER SET NONE column
+  -- to UTF-8, potentially causing "Malformed string" errors on Win1252 bytes.
+  -- NULL is handled in Go by nullStringVal (returns "").
+  z.NOMBRE                                                           AS ZONA,
   d.TELEFONO1                                                        AS TELEFONO,
   rfm.FECHA_ULTIMA_COMPRA,
   rfm.FRECUENCIA,
@@ -268,7 +281,9 @@ SELECT
               AS NUMERIC(5,2))
        ELSE 0
   END                                                                AS POR_LIQUIDAR_PCT,
-  SUBSTRING(COALESCE(nbp.ARTICULO_NOMBRE, '') FROM 1 FOR 120)        AS NEXT_BEST_PRODUCT,
+  -- Do NOT COALESCE nbp.ARTICULO_NOMBRE with '' for the same NONE-charset
+  -- reason. SUBSTRING returns NULL when the argument is NULL; Go maps NULL→"".
+  SUBSTRING(nbp.ARTICULO_NOMBRE FROM 1 FOR 120)                      AS NEXT_BEST_PRODUCT,
   sc.FECHA_ULTIMO_PAGO                                               AS FECHA_ULTIMO_PAGO,
   sc.FECHA_PRIMER_CARGO                                              AS FECHA_PRIMER_CARGO,
   vv.FECHA_PRIMER_VENTA                                             AS FECHA_PRIMER_VENTA,
@@ -364,9 +379,9 @@ const (
 //	8  pagos_90d          (INTEGER COALESCE to 0; param: cutoff date 90 days before refresh_now)
 
 // leerCobranzaBase opens the WITH block and the gaps CTE through its WHERE clause.
-// The caller appends an optional FECHA predicate then leerCobranzaClose.
-// Built via fmt.Sprintf so the abono concept constants are referenced directly,
-// keeping the SQL literals and the named constants in sync at compile time.
+// The caller appends leerCobranzaClose. Built via fmt.Sprintf so the abono concept
+// constants are referenced directly, keeping the SQL literals and the named
+// constants in sync at compile time.
 //
 //nolint:gochecknoglobals // query fragment; value is immutable after init.
 var leerCobranzaBase = fmt.Sprintf(`
@@ -382,17 +397,24 @@ WITH gaps AS (
     AND CONCEPTO_CC_ID IN (%d, %d, %d)`,
 	conceptoCobranzaRuta, conceptoCobro155, conceptoCobroGenerico)
 
-// leerCobranzaClose closes the gaps CTE, adds cadencias, atrasos, and pagos90 CTEs,
-// and the final SELECT aggregating per-client cobranza signals.
+// leerCobranzaClose closes the gaps CTE, adds cadencias (HAVING ≥1 gap → ≥2
+// payments), atrasos and pagos90, then the per-client SELECT — and finally
+// UNION ALLs a cheap single-payment branch so clients with exactly one
+// qualifying payment are NOT dropped (bug #2a). The single-payment branch emits
+// NUM_PAGOS=1, ULTIMA_FECHA, MONTO and a 0/1 PAGOS_90D, with CADENCIA / DIAS_ATRASO
+// = 0 and PCT NULL (no cadence derivable from one payment).
+//
+// Two positional ? params (both bound to the same cutoff): the pagos90 CTE and
+// the single-payment branch's trailing-90-day count.
 //
 // Column order (must match cobranzaRowRaw.scanFrom exactly):
 //
 //	1  cliente_id
-//	2  num_pagos          (NUM_GAPS + 1: total payments including the first)
-//	3  cadencia_dias      (INTEGER avg gap)
-//	4  dias_atraso_prom   (INTEGER avg positive lateness)
-//	5  pct_pagos_a_tiempo (NUMERIC(5,2))
-//	6  ultima_fecha       (TIMESTAMP, raw last payment date for Go-side next-pago derivation)
+//	2  num_pagos          (NUM_GAPS + 1 ≥2-payment branch; literal 1 single-payment branch)
+//	3  cadencia_dias      (INTEGER avg gap; 0 for single-payment)
+//	4  dias_atraso_prom   (INTEGER avg positive lateness; 0 for single-payment)
+//	5  pct_pagos_a_tiempo (NUMERIC(5,2); NULL for single-payment)
+//	6  ultima_fecha       (TIMESTAMP, last payment date)
 //	7  monto_prox_pago    (NUMERIC(18,2) avg importe)
 //	8  pagos_90d          (INTEGER COALESCE to 0; param: cutoff date 90 days before refresh_now)
 //
@@ -446,5 +468,22 @@ SELECT
 FROM cadencias c
 JOIN atrasos a ON a.CLIENTE_ID = c.CLIENTE_ID
 LEFT JOIN pagos90 p90 ON p90.CLIENTE_ID = c.CLIENTE_ID
-GROUP BY c.CLIENTE_ID, c.NUM_GAPS, c.CADENCIA_DIAS, c.AVG_IMPORTE, c.ULTIMA_FECHA, p90.PAGOS_90D`,
+GROUP BY c.CLIENTE_ID, c.NUM_GAPS, c.CADENCIA_DIAS, c.AVG_IMPORTE, c.ULTIMA_FECHA, p90.PAGOS_90D
+UNION ALL
+SELECT
+  CLIENTE_ID,
+  CAST(1 AS BIGINT)                                                               AS NUM_PAGOS,
+  CAST(0 AS NUMERIC(10,0))                                                        AS CADENCIA_DIAS,
+  CAST(0 AS NUMERIC(10,0))                                                        AS DIAS_ATRASO_PROM,
+  CAST(NULL AS NUMERIC(5,2))                                                      AS PCT_PAGOS_A_TIEMPO,
+  MAX(FECHA)                                                                      AS ULTIMA_FECHA,
+  CAST(AVG(CAST(IMPORTE AS NUMERIC(18,4))) AS NUMERIC(18,2))                      AS MONTO_PROX_PAGO,
+  CAST(SUM(CASE WHEN FECHA >= ? THEN 1 ELSE 0 END) AS BIGINT)                     AS PAGOS_90D
+FROM MSP_PAGOS_VENTAS
+WHERE CANCELADO = 'N'
+  AND APLICADO  = 'S'
+  AND CONCEPTO_CC_ID IN (%d, %d, %d)
+GROUP BY CLIENTE_ID
+HAVING COUNT(*) = 1`,
+	conceptoCobranzaRuta, conceptoCobro155, conceptoCobroGenerico,
 	conceptoCobranzaRuta, conceptoCobro155, conceptoCobroGenerico)

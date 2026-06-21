@@ -34,16 +34,22 @@ func ExportComputeCobranzaTier(c *domain.WinbackCandidato, now time.Time) domain
 	return computeCobranzaTier(c, now)
 }
 
+// ExportAjustarCobranzaRecencia exposes the internal ajustarCobranzaRecencia
+// function for table-driven tests in the app_test package.
+func ExportAjustarCobranzaRecencia(c *domain.WinbackCandidato, now time.Time) (int, decimal.Decimal) {
+	return ajustarCobranzaRecencia(c, now)
+}
+
 // ExportBuildCreditoFeatures exposes the internal buildCreditoFeatures function
 // for table-driven tests in the app_test package.
-func ExportBuildCreditoFeatures(c *domain.WinbackCandidato, now time.Time) map[string]float64 {
-	return buildCreditoFeatures(c, now)
+func ExportBuildCreditoFeatures(c *domain.WinbackCandidato, now time.Time, pagos90d int) map[string]float64 {
+	return buildCreditoFeatures(c, now, pagos90d)
 }
 
 // ExportComputeCreditoScore exposes the internal computeCreditoScore function
 // for table-driven tests in the app_test package.
-func ExportComputeCreditoScore(c *domain.WinbackCandidato, now time.Time, sc Scorecard) (domain.ScoreCredito, domain.BandaCredito, []string, bool) {
-	return computeCreditoScore(c, now, sc)
+func ExportComputeCreditoScore(c *domain.WinbackCandidato, now time.Time, sc Scorecard, pagos90d int) (domain.ScoreCredito, domain.BandaCredito, []string, bool) {
+	return computeCreditoScore(c, now, sc, pagos90d)
 }
 
 // ExportBuildRecompraFeatures exposes the internal buildRecompraFeatures function
@@ -65,6 +71,6 @@ func ExportMonthIndex(t time.Time) int {
 
 // ExportComputeCLV exposes the internal computeCLV function for table-driven
 // tests in the app_test package.
-func ExportComputeCLV(c *domain.WinbackCandidato, now time.Time, btyd BTYD, creditSc Scorecard, params CLVParams) (domain.MontoCLV, domain.BandaCLV, bool) {
-	return computeCLV(c, now, btyd, creditSc, params)
+func ExportComputeCLV(c *domain.WinbackCandidato, now time.Time, btyd BTYD, creditSc Scorecard, params CLVParams, pagos90d int) (domain.MontoCLV, domain.BandaCLV, bool) {
+	return computeCLV(c, now, btyd, creditSc, params, pagos90d)
 }

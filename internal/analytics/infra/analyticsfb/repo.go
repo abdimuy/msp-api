@@ -5,7 +5,10 @@
 //     MSP_AN_REFRESH_STATE (CHARACTER SET UTF8 — no Win1252 decoding).
 //   - outbound.MicrosipReader: read-only access to legacy Microsip tables
 //     (CLIENTES, DOCTOS_PV, DOCTOS_CC, DIRS_CLIENTES, ARTICULOS) whose text
-//     columns are Win1252-encoded and require firebird.Win1252 scan targets.
+//     columns are CHARACTER SET NONE (raw Win1252 bytes in the DB). The
+//     connection uses charset=UTF8, so Firebird server-side transliterates
+//     those columns to UTF-8 on the wire. Scan targets are plain string /
+//     sql.NullString — NOT firebird.Win1252 (which would double-decode).
 //
 // All DB access goes through firebird.GetQuerier(ctx, r.pool.DB) so the
 // ambient transaction injected by fbtestutil.WithTestTransaction (or by the
@@ -550,6 +553,68 @@ func (r *Repo) listCandidatosByChunk(ctx context.Context, q firebird.Querier, cl
 	return scanCandidatoRows(rows)
 }
 
+// contarPagosRecientesBase is the per-chunk count query, sans the CLIENTE_ID IN
+// clause (appended per chunk). The abono concept constants are baked in so the
+// SQL literals stay in sync with the named constants at compile time, matching
+// the materialization filter in leerCobranzaBase exactly.
+//
+//nolint:gochecknoglobals // query fragment; value is immutable after init.
+var contarPagosRecientesBase = fmt.Sprintf(`
+SELECT CLIENTE_ID, COUNT(*)
+FROM MSP_PAGOS_VENTAS
+WHERE CANCELADO = 'N'
+  AND APLICADO  = 'S'
+  AND CONCEPTO_CC_ID IN (%d, %d, %d)
+  AND FECHA >= ?
+  AND FECHA <  ?
+  AND CLIENTE_ID IN (`,
+	conceptoCobranzaRuta, conceptoCobro155, conceptoCobroGenerico)
+
+// ContarPagosRecientes counts real customer payments per client in [desde, hasta).
+// See the outbound.WinbackRepo port doc. Clients with zero payments are absent.
+func (r *Repo) ContarPagosRecientes(ctx context.Context, clienteIDs []int, desde, hasta time.Time) (map[int]int, error) {
+	result := make(map[int]int, len(clienteIDs))
+	if len(clienteIDs) == 0 {
+		return result, nil
+	}
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	for i := 0; i < len(clienteIDs); i += candidatoChunkSize {
+		end := i + candidatoChunkSize
+		if end > len(clienteIDs) {
+			end = len(clienteIDs)
+		}
+		if err := r.contarPagosChunk(ctx, q, clienteIDs[i:end], desde, hasta, result); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
+func (r *Repo) contarPagosChunk(ctx context.Context, q firebird.Querier, chunk []int, desde, hasta time.Time, out map[int]int) error {
+	placeholders := make([]string, len(chunk))
+	// args order mirrors the SQL: desde, hasta, then the CLIENTE_ID list.
+	args := make([]any, 0, len(chunk)+2)
+	args = append(args, firebird.ToWallClock(desde), firebird.ToWallClock(hasta))
+	for i, id := range chunk {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	query := contarPagosRecientesBase + strings.Join(placeholders, ",") + ") GROUP BY CLIENTE_ID"
+	rows, err := q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return firebird.MapError(err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var clienteID, n int
+		if err := rows.Scan(&clienteID, &n); err != nil {
+			return firebird.MapError(err)
+		}
+		out[clienteID] = n
+	}
+	return firebird.MapError(rows.Err())
+}
+
 // ─── MicrosipReader ───────────────────────────────────────────────────────────
 
 // LeerAnclasDesde returns per-cliente RFM + saldo + NBP anchor facts from
@@ -569,8 +634,10 @@ func (r *Repo) listCandidatosByChunk(ctx context.Context, q firebird.Querier, cl
 //     migration 000010). ONE row per cargo; no row explosion.
 //   - NBP: most-frequently-purchased ARTICULOS.NOMBRE per cliente, computed
 //     in a single pass using ROW_NUMBER() OVER PARTITION BY CLIENTE_ID.
-//   - Text columns decoded via firebird.Win1252 (CLIENTES.NOMBRE, ZONAS_CLIENTES.NOMBRE,
-//     DIRS_CLIENTES.TELEFONO1, ARTICULOS.NOMBRE are CHARACTER SET NONE / Win1252).
+//   - Text columns (CLIENTES.NOMBRE, ZONAS_CLIENTES.NOMBRE, DIRS_CLIENTES.TELEFONO1,
+//     ARTICULOS.NOMBRE) are CHARACTER SET NONE. With charset=UTF8 on the connection
+//     Firebird transliterates them to UTF-8 server-side; scan targets are plain
+//     string / sql.NullString (no firebird.Win1252 — that would double-decode).
 func (r *Repo) LeerAnclasDesde(ctx context.Context, since *time.Time) ([]outbound.AnclaCliente, error) {
 	// Build query from CTE parts. When since != nil we inject an extra AND
 	// predicate into both the rfm CTE and the nbp_raw CTE before their GROUP BY.
@@ -643,20 +710,36 @@ func (r *Repo) LeerAnclasDesde(ctx context.Context, since *time.Time) ([]outboun
 		result[i].FechaProxPago = sig.FechaProxPago
 		result[i].MontoProxPago = sig.MontoProxPago
 		result[i].Pagos90D = sig.Pagos90D
+		result[i].FechaUltimoPago = coalesceUltimoPago(result[i].FechaUltimoPago, sig.UltimaFecha)
 	}
 
 	return result, nil
 }
 
+// coalesceUltimoPago returns the saldo-cache last-payment date
+// (MSP_SALDOS_VENTAS.FECHA_ULT_PAGO) when present, otherwise falls back to the
+// last real payment from MSP_PAGOS_VENTAS (cobranza signals). The saldo cache is
+// NULL for fully-liquidated or unlinked-payment clients; the fallback keeps
+// FechaUltimoPago — and thus EstadoPago / recencia — populated whenever the
+// client has any qualifying payment (bug #2: prevents spurious SIN_CREDITO).
+func coalesceUltimoPago(saldoCache, pagosVentas time.Time) time.Time {
+	if saldoCache.IsZero() {
+		return pagosVentas
+	}
+	return saldoCache
+}
+
 // leerCobranzaSignals queries MSP_PAGOS_VENTAS to compute per-client cadence
 // and punctuality facts using leerCobranzaBase + leerCobranzaClose.
-// cutoff is bound as the single positional parameter (? in leerCobranzaClose)
-// that filters the PAGOS_90D subquery to payments on or after that date.
+// cutoff is bound as BOTH positional parameters (the PAGOS_90D CTE in the
+// ≥2-payment branch and the trailing-90-day count in the single-payment UNION
+// branch) so both count payments on or after that date.
 // The lifetime cadence/punctuality aggregation is always a full scan.
 // Returns a map[clienteID → CobranzaSignals].
 func (r *Repo) leerCobranzaSignals(ctx context.Context, cutoff time.Time) (map[int]outbound.CobranzaSignals, error) {
 	query := leerCobranzaBase + leerCobranzaClose
-	args := []any{firebird.ToWallClock(cutoff)}
+	wall := firebird.ToWallClock(cutoff)
+	args := []any{wall, wall}
 
 	result := make(map[int]outbound.CobranzaSignals)
 	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {

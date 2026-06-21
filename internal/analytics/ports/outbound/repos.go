@@ -95,4 +95,17 @@ type WinbackRepo interface {
 	// clienteIDs. Clients not materialized are simply absent from the result
 	// (no error). An empty input returns an empty slice.
 	ListCandidatosByClienteIDs(ctx context.Context, clienteIDs []int) ([]*domain.WinbackCandidato, error)
+
+	// ContarPagosRecientes returns, per clienteID, the count of real customer
+	// payments (abono concepts 87327/155/11, CANCELADO='N' AND APLICADO='S')
+	// with FECHA in the half-open interval [desde, hasta). Clients with zero
+	// payments in the window are absent from the result map. An empty input
+	// returns an empty map.
+	//
+	// This powers the live computation of the credit feature PAGOS_90D at read
+	// time. The materialized PAGOS_90D column is a trailing-90-day count frozen
+	// at refresh time, so it goes stale the moment the serving clock diverges
+	// from the last refresh; computing it live keeps it consistent with the
+	// rest of the recency-aware features (e.g. DIAS_SIN_PAGAR).
+	ContarPagosRecientes(ctx context.Context, clienteIDs []int, desde, hasta time.Time) (map[int]int, error)
 }

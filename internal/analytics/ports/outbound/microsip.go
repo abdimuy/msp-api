@@ -127,9 +127,13 @@ type CobranzaSignals struct {
 	CadenciaDias    int
 	DiasAtrasoProm  int
 	PctPagosATiempo decimal.Decimal
-	FechaProxPago   time.Time
-	MontoProxPago   decimal.Decimal
-	Pagos90D        int
+	// UltimaFecha is the last real payment date from MSP_PAGOS_VENTAS. Exposed so
+	// the refresh can fall back to it for FechaUltimoPago when the saldo-cache
+	// source (MSP_SALDOS_VENTAS.FECHA_ULT_PAGO) is null (closed/unlinked cargos).
+	UltimaFecha   time.Time
+	FechaProxPago time.Time
+	MontoProxPago decimal.Decimal
+	Pagos90D      int
 }
 
 // MicrosipReader is the analytics module's read-only view of Microsip.

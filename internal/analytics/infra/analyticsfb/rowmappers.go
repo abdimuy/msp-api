@@ -276,42 +276,46 @@ func scanCandidatoRows(rows *sql.Rows) ([]*domain.WinbackCandidato, error) {
 
 // anclaRowRaw is the intermediate scan target for one row from leerAnclasBase.
 // Microsip text columns (CLIENTES.NOMBRE, ZONAS_CLIENTES.NOMBRE,
-// DIRS_CLIENTES.TELEFONO1, ARTICULOS.NOMBRE) are Win1252-encoded. We use
-// firebird.Win1252 as the scan destination so the driver bytes are decoded
-// to UTF-8 before the domain sees them.
+// DIRS_CLIENTES.TELEFONO1, ARTICULOS.NOMBRE) are CHARACTER SET NONE (raw
+// Windows-1252 bytes) in Microsip's schema. However, because the Firebird
+// connection uses charset=UTF8, the Firebird server automatically transliterates
+// those NONE columns to UTF-8 on the wire before the driver receives them. We
+// therefore scan them as plain string / sql.NullString — NOT as firebird.Win1252.
+// Using Win1252.Scan on already-UTF-8 bytes would apply a second Win1252→UTF-8
+// decode, producing the classic "Ã'" double-encoding mojibake for ñ (C3 91).
 //
 // Column order must match leerAnclasBase SELECT list exactly.
 type anclaRowRaw struct {
 	clienteID               int
-	nombre                  firebird.Win1252  // Win1252: CLIENTES.NOMBRE
-	zona                    firebird.Win1252  // Win1252: ZONAS_CLIENTES.NOMBRE (COALESCE to '')
-	telefono                *firebird.Win1252 // Win1252 nullable: DIRS_CLIENTES.TELEFONO1
-	fechaUltimaCompra       any               // DATE from DOCTOS_PV.FECHA MAX
-	frecuencia              int               // COUNT(DISTINCT …)
-	monetaryRaw             any               // CAST(SUM(IMPORTE_NETO) AS NUMERIC(18,2))
-	saldoRaw                any               // CAST(… AS NUMERIC(18,2))
-	porLiquidarRaw          any               // CAST(… AS NUMERIC(5,2))
-	nextBestProduct         firebird.Win1252  // Win1252: ARTICULOS.NOMBRE (COALESCE to '')
-	fechaUltimoPagoRaw      any               // TIMESTAMP nullable: MAX(sv.FECHA_ULT_PAGO)
-	fechaPrimerCargoRaw     any               // TIMESTAMP nullable: MIN(sv.FECHA_CARGO)
-	fechaPrimerVentaRaw     any               // TIMESTAMP nullable: MIN(pv.FECHA) WHERE TIPO_DOCTO='V'
-	fechaUltimaVentaRaw     any               // TIMESTAMP nullable: MAX(pv.FECHA) WHERE TIPO_DOCTO='V'
-	ventasMesesDistintosRaw any               // INTEGER nullable: COUNT(DISTINCT month) over V
-	monetaryVPromRaw        any               // NUMERIC(18,2) nullable: AVG(IMPORTE_NETO) over V
+	nombre                  string         // CLIENTES.NOMBRE — transliterated to UTF-8 by Firebird
+	zona                    sql.NullString // ZONAS_CLIENTES.NOMBRE — transliterated; NULL → ""
+	telefono                sql.NullString // DIRS_CLIENTES.TELEFONO1 — transliterated; NULL → ""
+	fechaUltimaCompra       any            // DATE from DOCTOS_PV.FECHA MAX
+	frecuencia              int            // COUNT(DISTINCT …)
+	monetaryRaw             any            // CAST(SUM(IMPORTE_NETO) AS NUMERIC(18,2))
+	saldoRaw                any            // CAST(… AS NUMERIC(18,2))
+	porLiquidarRaw          any            // CAST(… AS NUMERIC(5,2))
+	nextBestProduct         sql.NullString // ARTICULOS.NOMBRE — transliterated; NULL → ""
+	fechaUltimoPagoRaw      any            // TIMESTAMP nullable: MAX(sv.FECHA_ULT_PAGO)
+	fechaPrimerCargoRaw     any            // TIMESTAMP nullable: MIN(sv.FECHA_CARGO)
+	fechaPrimerVentaRaw     any            // TIMESTAMP nullable: MIN(pv.FECHA) WHERE TIPO_DOCTO='V'
+	fechaUltimaVentaRaw     any            // TIMESTAMP nullable: MAX(pv.FECHA) WHERE TIPO_DOCTO='V'
+	ventasMesesDistintosRaw any            // INTEGER nullable: COUNT(DISTINCT month) over V
+	monetaryVPromRaw        any            // NUMERIC(18,2) nullable: AVG(IMPORTE_NETO) over V
 }
 
 func (r *anclaRowRaw) scanFrom(s rowScanner) error {
 	return s.Scan(
 		&r.clienteID,
-		&r.nombre,
-		&r.zona,
-		&r.telefono,
+		&r.nombre,   // string: Firebird already delivered UTF-8 via transliteration
+		&r.zona,     // sql.NullString: NULL handled in assembleAncla
+		&r.telefono, // sql.NullString: NULL handled in assembleAncla
 		&r.fechaUltimaCompra,
 		&r.frecuencia,
 		&r.monetaryRaw,
 		&r.saldoRaw,
 		&r.porLiquidarRaw,
-		&r.nextBestProduct,
+		&r.nextBestProduct, // sql.NullString: NULL handled in assembleAncla
 		&r.fechaUltimoPagoRaw,
 		&r.fechaPrimerCargoRaw,
 		&r.fechaPrimerVentaRaw,
@@ -362,22 +366,17 @@ func assembleAncla(r *anclaRowRaw) (outbound.AnclaCliente, error) {
 	if err != nil {
 		return outbound.AnclaCliente{}, err
 	}
-	// Decode Win1252 nullable telefono.
-	var telefono string
-	if r.telefono != nil {
-		telefono = string(*r.telefono)
-	}
 	return outbound.AnclaCliente{
 		ClienteID:            r.clienteID,
-		Nombre:               string(r.nombre),
-		Zona:                 string(r.zona),
-		Telefono:             telefono,
+		Nombre:               r.nombre,
+		Zona:                 nullStringVal(r.zona),
+		Telefono:             nullStringVal(r.telefono),
 		FechaUltimaCompra:    fechaUltimaCompra,
 		Frecuencia:           r.frecuencia,
 		Monetary:             monetary,
 		Saldo:                saldo,
 		PorLiquidarPct:       porLiquidarPct,
-		NextBestProduct:      string(r.nextBestProduct),
+		NextBestProduct:      nullStringVal(r.nextBestProduct),
 		FechaUltimoPago:      fechaUltimoPago,
 		FechaPrimerCargo:     fechaPrimerCargo,
 		FechaPrimerVenta:     fechaPrimerVenta,
@@ -451,6 +450,7 @@ func assembleCobranza(r *cobranzaRowRaw) (outbound.CobranzaSignals, error) {
 		CadenciaDias:    cadenciaDias,
 		DiasAtrasoProm:  diasAtrasoProm,
 		PctPagosATiempo: pctPagosATiempo,
+		UltimaFecha:     ultimaFecha,
 		FechaProxPago:   fechaProxPago,
 		MontoProxPago:   montoProxPago,
 		Pagos90D:        pagos90,

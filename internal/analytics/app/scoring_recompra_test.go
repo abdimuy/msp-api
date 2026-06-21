@@ -257,6 +257,139 @@ func TestBuildRecompraFeatures_DiaSinPagarFallback(t *testing.T) {
 	assert.InDelta(t, 60.0, got["DIAS_SIN_PAGAR"], 1.0, "DIAS_SIN_PAGAR fallback to FechaPrimerCargo ≈60d")
 }
 
+// TestComputeRecompraScore_DormancyGate_CapsAltaBanda verifies that a client
+// dormant beyond recompraRecenciaMaxMeses (24 months) cannot receive BandaRecompraAlta,
+// even when the logistic model's raw score would exceed the alta_min threshold.
+// The BG/BB P_alive for dormant high-frequency clients stays artificially high
+// (γ≈0.046 slow churn), inflating the recompra score past the 53-point ALTA threshold.
+//
+// Based on real audit (2026-02-20 clock):
+//   - Cliente 69230: 28 months dormant, P_alive=0.93, score=64 ALTA → must be MEDIA.
+func TestComputeRecompraScore_DormancyGate_CapsAltaBanda(t *testing.T) {
+	t.Parallel()
+
+	sc, err := app.LoadRecompraScorecard()
+	require.NoError(t, err)
+	btyd, err := app.LoadBTYD()
+	require.NoError(t, err)
+
+	now := time.Date(2026, 2, 20, 12, 0, 0, 0, time.UTC)
+
+	type dormantCase struct {
+		name             string
+		firstVenta       time.Time
+		lastVenta        time.Time
+		ventasMeses      int
+		wantBandaNotAlta bool
+	}
+
+	cases := []dormantCase{
+		{
+			// 69230-like: 6 distinct months, last purchase 28 months ago.
+			// Raw score=64 (ALTA) due to high P_alive and FRECUENCIA_V.
+			name:             "28 months dormant (like 69230) — must not be ALTA",
+			firstVenta:       time.Date(2019, 3, 1, 0, 0, 0, 0, time.UTC),
+			lastVenta:        time.Date(2023, 10, 1, 0, 0, 0, 0, time.UTC),
+			ventasMeses:      6,
+			wantBandaNotAlta: true,
+		},
+		{
+			// Active client: last purchase 1 month ago — gate should not fire.
+			name:             "1 month dormant (active) — ALTA allowed",
+			firstVenta:       time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC),
+			lastVenta:        time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC),
+			ventasMeses:      5,
+			wantBandaNotAlta: false,
+		},
+		{
+			// Exactly at boundary: 24 months dormant — gate fires at >24, so 24 is OK.
+			name:             "24 months dormant (boundary) — ALTA still allowed if score warrants",
+			firstVenta:       time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC),
+			lastVenta:        time.Date(2024, 2, 15, 0, 0, 0, 0, time.UTC),
+			ventasMeses:      5,
+			wantBandaNotAlta: false,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			c := mustCandidato(domain.CrearWinbackCandidatoParams{
+				ClienteID:            800,
+				Nombre:               "Recompra Dormancy Gate Test",
+				Zona:                 "Z1",
+				FechaUltimaCompra:    tc.lastVenta,
+				Frecuencia:           tc.ventasMeses,
+				Monetary:             decimal.NewFromInt(20_000),
+				Saldo:                decimal.Zero,
+				PorLiquidarPct:       decimal.Zero,
+				CohorteFecha:         tc.firstVenta,
+				Now:                  now,
+				FechaPrimerVenta:     tc.firstVenta,
+				FechaUltimaVenta:     tc.lastVenta,
+				VentasMesesDistintos: tc.ventasMeses,
+				MonetaryVProm:        decimal.NewFromInt(3_700),
+				PctPagosATiempo:      decimal.NewFromFloat(97),
+				FechaUltimoPago:      tc.lastVenta.AddDate(0, 1, 0),
+			})
+
+			score, banda, _, aplica := app.ExportComputeRecompraScore(c, now, sc, btyd)
+
+			require.True(t, aplica, "client with V history must have aplica=true")
+			t.Logf("%s: score=%d banda=%s", tc.name, score.Int(), banda)
+
+			if tc.wantBandaNotAlta {
+				assert.NotEqual(t, domain.BandaRecompraAlta, banda,
+					"dormant client must not be rated recompra ALTA (score=%d)", score.Int())
+			}
+			assert.True(t, banda.IsValid(), "banda must be a valid BandaRecompra")
+		})
+	}
+}
+
+// TestComputeRecompraScore_ActiveFrequentClient_StillAlta verifies that the
+// dormancy gate does NOT regress a genuinely active, frequent client.
+func TestComputeRecompraScore_ActiveFrequentClient_StillAlta(t *testing.T) {
+	t.Parallel()
+
+	sc, err := app.LoadRecompraScorecard()
+	require.NoError(t, err)
+	btyd, err := app.LoadBTYD()
+	require.NoError(t, err)
+
+	now := time.Date(2026, 2, 20, 12, 0, 0, 0, time.UTC)
+
+	// Active frequent client: 8 distinct months over 4 years, last purchase 1 month ago.
+	c := mustCandidato(domain.CrearWinbackCandidatoParams{
+		ClienteID:            900,
+		Nombre:               "Cliente Activo Recompra",
+		Zona:                 "Z1",
+		Telefono:             "555-9000",
+		FechaUltimaCompra:    time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC),
+		Frecuencia:           8,
+		Monetary:             decimal.NewFromInt(96_000),
+		Saldo:                decimal.Zero,
+		PorLiquidarPct:       decimal.Zero,
+		CohorteFecha:         time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC),
+		Now:                  now,
+		FechaPrimerVenta:     time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC),
+		FechaUltimaVenta:     time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC),
+		VentasMesesDistintos: 8,
+		MonetaryVProm:        decimal.NewFromInt(12_000),
+		PctPagosATiempo:      decimal.NewFromFloat(90),
+		FechaUltimoPago:      time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC),
+	})
+
+	score, banda, _, aplica := app.ExportComputeRecompraScore(c, now, sc, btyd)
+
+	require.True(t, aplica)
+	assert.Equal(t, domain.BandaRecompraAlta, banda,
+		"active frequent client must remain recompra ALTA after gate: score=%d", score.Int())
+	t.Logf("active frequent recompra: score=%d banda=%s", score.Int(), banda)
+}
+
 func TestBuildRecompraFeatures_AllEightKeysPresent(t *testing.T) {
 	t.Parallel()
 

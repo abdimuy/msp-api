@@ -54,6 +54,8 @@ type PulsoComputado struct {
 	RecenciaDias    int
 	EstadoPago      string
 	TierRiesgo      string
+	DiasAtrasoProm  int
+	PctPagosATiempo decimal.Decimal
 	ScoreCredito    int
 	BandaCredito    string
 	CreditoDrivers  []string
@@ -85,8 +87,8 @@ func ToClientePulsoContract(c *domain.WinbackCandidato, comp PulsoComputado) Cli
 		NextBestProduct:   c.NextBestProduct(),
 		NumPagos:          c.NumPagos(),
 		CadenciaDias:      c.CadenciaDias(),
-		DiasAtrasoProm:    c.DiasAtrasoProm(),
-		PctPagosATiempo:   c.PctPagosATiempo(),
+		DiasAtrasoProm:    comp.DiasAtrasoProm,
+		PctPagosATiempo:   comp.PctPagosATiempo,
 		FechaProxPago:     c.FechaProxPago(),
 		MontoProxPago:     c.MontoProxPago(),
 		TierRiesgo:        comp.TierRiesgo,

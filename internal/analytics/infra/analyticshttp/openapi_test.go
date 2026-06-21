@@ -52,6 +52,10 @@ func (stubRepo) ListCandidatosByClienteIDs(_ context.Context, _ []int) ([]*domai
 	return []*domain.WinbackCandidato{}, nil
 }
 
+func (stubRepo) ContarPagosRecientes(_ context.Context, _ []int, _, _ time.Time) (map[int]int, error) {
+	return map[int]int{}, nil
+}
+
 // stubMicrosip satisfies outbound.MicrosipReader with a no-op implementation.
 type stubMicrosip struct{}
 

@@ -102,6 +102,10 @@ func (r *internalFakeRepo) ListCandidatosByClienteIDs(_ context.Context, _ []int
 	return []*domain.WinbackCandidato{}, nil
 }
 
+func (r *internalFakeRepo) ContarPagosRecientes(_ context.Context, _ []int, _, _ time.Time) (map[int]int, error) {
+	return map[int]int{}, nil
+}
+
 // internalFakeMicrosip is a minimal MicrosipReader for worker tick tests.
 type internalFakeMicrosip struct {
 	anclas []outbound.AnclaCliente
@@ -166,6 +170,10 @@ func (r *errorInternalFakeRepo) GetCandidato(_ context.Context, _ int) (*domain.
 
 func (r *errorInternalFakeRepo) ListCandidatosByClienteIDs(_ context.Context, _ []int) ([]*domain.WinbackCandidato, error) {
 	return []*domain.WinbackCandidato{}, nil
+}
+
+func (r *errorInternalFakeRepo) ContarPagosRecientes(_ context.Context, _ []int, _, _ time.Time) (map[int]int, error) {
+	return map[int]int{}, nil
 }
 
 // buildInternalAnclas creates n valid AnclaCliente values for tick tests.

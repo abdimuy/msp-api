@@ -280,6 +280,41 @@ func clamp01(v float64) float64 {
 	}
 }
 
+// ─── Recompra / CLV dormancy gates ───────────────────────────────────────────
+
+// clvRecenciaMaxMeses is the maximum months since the last V purchase for a
+// client to receive CLV banda ALTO. Clients dormant beyond this threshold have
+// a BG/BB P_alive that remains artificially high (the model was fit on 2022-2023
+// obs windows where the max observation span was ~24 months; gamma≈0.046 gives
+// a very slow modeled churn rate). Empirical audit at 2026-02-20 found:
+//   - 28 months dormant → P_alive=0.93, CLV=$2,803 ALTO  (cliente 69230)
+//   - 36 months dormant → P_alive=0.82, CLV=$1,380 ALTO  (cliente 1255115)
+//   - 52 months dormant → P_alive=0.75, CLV=$818  MEDIO  (cliente 457649)
+//
+// A 2-3 year dormant client rated ALTO CLV is not operationally defensible.
+// This gate hard-caps the CLV banda at MEDIO for clients beyond the threshold,
+// keeping the pesos monto (used for ordering) unchanged. The threshold mirrors
+// the BG/BB training horizon of 24 months so served scores stay in-distribution.
+// Tune this constant if a new model is fit with a longer observation window.
+const clvRecenciaMaxMeses = 24
+
+// clvSinRepeatSignalMaxBanda caps the CLV banda at MEDIO when x==0 (the client
+// has only a single V purchase month — no repeat signal). With x==0 the BG/BB
+// engine falls back to population priors (DET≈1.35, P_alive=1.0) producing
+// CLV ALTO from zero individual evidence. Empirical: cliente 3074781, brand new
+// 3 days ago, single $5,500 purchase → CLV=$3,932 ALTO — indefensible.
+// BAJO is not appropriate either (the client just bought, signal is neutral),
+// so MEDIO is the right conservative band until a repeat purchase is observed.
+const clvSinRepeatSignalMaxBanda = domain.BandaCLVMedio
+
+// recompraRecenciaMaxMeses is the maximum months since the last V purchase for a
+// client to receive recompra banda ALTA. Mirrors clvRecenciaMaxMeses rationale:
+// cliente 69230 (28 months dormant) scored recompra=64 ALTA because
+// P_alive=0.93 and FRECUENCIA_V=5 outweigh the RECENCIA_MESES=-0.559 term.
+// A dormant-beyond-2yr client rated ALTA recompra overrides the field team's
+// judgment about who to prioritise for outreach. Gate caps at MEDIA.
+const recompraRecenciaMaxMeses = 24
+
 // ─── Credit risk scoring ──────────────────────────────────────────────────────
 
 // buildCreditoFeatures assembles the read-time feature vector for the credit
@@ -295,8 +330,14 @@ func clamp01(v float64) float64 {
 //	NUM_PAGOS_TOTAL       — total applied payment count.
 //	ANTIGUEDAD_DIAS       — days since first cargo (FechaPrimerCargo); 0 when zero.
 //
+// pagos90d is the count of real payments in the trailing 90 days, supplied by
+// the caller. It is passed in (not read from c.Pagos90D()) because it must be
+// computed LIVE at read time: the materialized column is a rolling-window count
+// frozen at refresh time and goes stale as soon as the serving clock moves past
+// the last refresh. See outbound.WinbackRepo.ContarPagosRecientes.
+//
 // The keys MUST match the feature names in scorecard.json. Pure and deterministic.
-func buildCreditoFeatures(c *domain.WinbackCandidato, now time.Time) map[string]float64 {
+func buildCreditoFeatures(c *domain.WinbackCandidato, now time.Time, pagos90d int) map[string]float64 {
 	antiguedadDias := daysSince(c.FechaPrimerCargo(), now)
 	diasSinPagar := daysSince(c.FechaUltimoPago(), now)
 	if c.FechaUltimoPago().IsZero() {
@@ -304,7 +345,7 @@ func buildCreditoFeatures(c *domain.WinbackCandidato, now time.Time) map[string]
 	}
 	return map[string]float64{
 		"DIAS_SIN_PAGAR":        diasSinPagar,
-		"PAGOS_90D":             float64(c.Pagos90D()),
+		"PAGOS_90D":             float64(pagos90d),
 		"PCT_PAGOS_A_TIEMPO_6M": c.PctPagosATiempo().InexactFloat64() / 100.0,
 		"CADENCIA_DIAS":         float64(c.CadenciaDias()),
 		"NUM_PAGOS_TOTAL":       float64(c.NumPagos()),
@@ -343,7 +384,7 @@ const creditoPerformingMaxDias = 180
 // The caller renders "no aplica". now must be UTC. This gate keeps the served
 // population aligned with the offline training population so the score bands are
 // meaningful (see project_credito_scorecard_pit).
-func computeCreditoScore(c *domain.WinbackCandidato, now time.Time, sc Scorecard) (domain.ScoreCredito, domain.BandaCredito, []string, bool) {
+func computeCreditoScore(c *domain.WinbackCandidato, now time.Time, sc Scorecard, pagos90d int) (domain.ScoreCredito, domain.BandaCredito, []string, bool) {
 	if !sc.Loaded() {
 		return domain.ScoreCredito{}, domain.BandaCredito(""), nil, false
 	}
@@ -355,7 +396,7 @@ func computeCreditoScore(c *domain.WinbackCandidato, now time.Time, sc Scorecard
 	if c.FechaUltimoPago().IsZero() || daysSince(c.FechaUltimoPago(), now) > creditoPerformingMaxDias {
 		return domain.ScoreCredito{}, domain.BandaCredito(""), nil, false
 	}
-	features := buildCreditoFeatures(c, now)
+	features := buildCreditoFeatures(c, now, pagos90d)
 	score, banda, drivers := sc.Aplicar(features)
 	return score, banda, drivers, true
 }
@@ -446,6 +487,17 @@ func computeRecompraScore(c *domain.WinbackCandidato, now time.Time, sc Recompra
 	}
 	features := buildRecompraFeatures(c, now, btyd)
 	score, banda, drivers := sc.Aplicar(features)
+
+	// Dormancy gate: cap recompra banda at MEDIA for clients dormant beyond
+	// recompraRecenciaMaxMeses. The BG/BB P_alive inflates the score for dormant
+	// clients with strong historical frequency (e.g. cliente 69230: 28 months
+	// dormant, P_alive=0.93, recompra=64 ALTA). See recompraRecenciaMaxMeses comment.
+	nowMonth := monthIndex(now)
+	lastMonth := monthIndex(c.FechaUltimaVenta())
+	if nowMonth-lastMonth > recompraRecenciaMaxMeses && banda == domain.BandaRecompraAlta {
+		banda = domain.BandaRecompraMedia
+	}
+
 	return score, banda, drivers, true
 }
 
@@ -508,7 +560,7 @@ func clvBandaFor(clvPesos float64, params CLVParams) domain.BandaCLV {
 // v1 limitation: a dormant ower whose credit score does not apply gets P(paga)=1.0
 // (existing-saldo default risk not subtracted) — mitigated because such clients
 // have low DET → low gross CLV, and are flagged separately by the cobranza TierRiesgo.
-func computeCLV(c *domain.WinbackCandidato, now time.Time, btyd BTYD, creditSc Scorecard, params CLVParams) (domain.MontoCLV, domain.BandaCLV, bool) {
+func computeCLV(c *domain.WinbackCandidato, now time.Time, btyd BTYD, creditSc Scorecard, params CLVParams, pagos90d int) (domain.MontoCLV, domain.BandaCLV, bool) {
 	if !btyd.Loaded() || !params.Loaded() {
 		return domain.MontoCLV{}, domain.BandaCLV(""), false
 	}
@@ -528,7 +580,7 @@ func computeCLV(c *domain.WinbackCandidato, now time.Time, btyd BTYD, creditSc S
 	det := btyd.DET(x, tx, n, params.HorizonMonths(), params.MonthlyDiscount())
 
 	// P(paga): pull from credit score when client has active performing credit.
-	cScore, _, _, cAplica := computeCreditoScore(c, now, creditSc)
+	cScore, _, _, cAplica := computeCreditoScore(c, now, creditSc, pagos90d)
 	pPaga := 1.0
 	if cAplica {
 		pPaga = float64(cScore.Int()) / 100.0
@@ -550,7 +602,27 @@ func computeCLV(c *domain.WinbackCandidato, now time.Time, btyd BTYD, creditSc S
 		panic("analytics.scoring: CLV monto negative after floor — programming error: " + err.Error())
 	}
 
-	return monto, clvBandaFor(clvFinal, params), true
+	banda := clvBandaFor(clvFinal, params)
+
+	// Dormancy gate: BG/BB P_alive does not decay fast enough for long-dormant
+	// clients because gamma≈0.046 (slow churn). Cap the CLV banda at MEDIO when
+	// the client has not made a V purchase in > clvRecenciaMaxMeses months. The
+	// pesos monto is kept unchanged (ordering within MEDIO still works).
+	nowMonth := monthIndex(now)
+	lastMonth := monthIndex(c.FechaUltimaVenta())
+	recenciaMeses := nowMonth - lastMonth
+	if recenciaMeses > clvRecenciaMaxMeses && banda == domain.BandaCLVAlto {
+		banda = domain.BandaCLVMedio
+	}
+
+	// No-repeat-signal gate: x==0 means we only have population priors (DET and
+	// P_alive default to their prior means). Cap at clvSinRepeatSignalMaxBanda
+	// until a repeat purchase is observed and individual signal replaces the prior.
+	if x == 0 && banda == domain.BandaCLVAlto {
+		banda = clvSinRepeatSignalMaxBanda
+	}
+
+	return monto, banda, true
 }
 
 // ─── Cobranza tier constants ──────────────────────────────────────────────────
@@ -666,4 +738,62 @@ func estadoPagoFor(saldo decimal.Decimal, fechaUltimoPago, now time.Time) domain
 	default:
 		return domain.EstadoPagoMoroso
 	}
+}
+
+// ajustarCobranzaRecencia corrects the two materialized cobranza metrics that are
+// computed at refresh time purely from the gaps between historical payments and
+// therefore ignore the currently-open gap (days since the last payment until now):
+//   - DiasAtrasoProm — average historical arrears in days.
+//   - PctPagosATiempo — share of historical payments made on time (0–100).
+//
+// A client correctly flagged MOROSO who has not paid in months still shows a tiny
+// historical atraso and a high punctuality, which misrepresents the open debt. This
+// read-time adjustment folds the open gap into both values, mirroring how
+// estadoPagoFor already uses now to derive the solvency signal.
+//
+// The historical values are returned unchanged when there is nothing to correct:
+//   - saldo == 0 (liquidado / sin crédito): a client with no debt is not "behind".
+//   - no known payment rhythm (cadencia <= 0, no payments, or no last-payment date):
+//     there is no baseline to project the open gap against; EstadoPago already
+//     flags such clients as MOROSO.
+//
+// now must be UTC.
+func ajustarCobranzaRecencia(c *domain.WinbackCandidato, now time.Time) (int, decimal.Decimal) {
+	diasHist := c.DiasAtrasoProm()
+	pctHist := c.PctPagosATiempo()
+
+	// No outstanding balance → not "behind"; keep historical values untouched.
+	if !c.Saldo().IsPositive() {
+		return diasHist, pctHist
+	}
+
+	cadencia := c.CadenciaDias()
+	// No known payment rhythm → leave historical values as-is.
+	if cadencia <= 0 || c.NumPagos() == 0 || c.FechaUltimoPago().IsZero() {
+		return diasHist, pctHist
+	}
+
+	diasSinPagar := int(now.Sub(c.FechaUltimoPago()).Hours() / 24)
+	if diasSinPagar < 0 {
+		diasSinPagar = 0
+	}
+	// Arrears of the currently-open gap: days overdue beyond one cadence cycle.
+	atrasoActual := diasSinPagar - cadencia
+	if atrasoActual < 0 {
+		atrasoActual = 0
+	}
+
+	diasAtraso := diasHist
+	if atrasoActual > diasAtraso {
+		diasAtraso = atrasoActual
+	}
+
+	// missed = expected payments skipped within the open gap (integer division).
+	missed := atrasoActual / cadencia
+	pct := pctHist
+	if denom := c.NumPagos() + missed; denom > 0 {
+		numPagos := decimal.NewFromInt(int64(c.NumPagos()))
+		pct = pctHist.Mul(numPagos).Div(decimal.NewFromInt(int64(denom)))
+	}
+	return diasAtraso, pct
 }

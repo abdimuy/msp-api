@@ -134,6 +134,25 @@ func (r *fakeWinbackRepo) ListCandidatosByClienteIDs(_ context.Context, clienteI
 	return result, nil
 }
 
+// ContarPagosRecientes simulates the live count by echoing each requested
+// candidate's materialized Pagos90D, so the live read path is exercised while
+// preserving the candidates' configured credit-scoring behavior.
+func (r *fakeWinbackRepo) ContarPagosRecientes(_ context.Context, clienteIDs []int, _, _ time.Time) (map[int]int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	want := make(map[int]struct{}, len(clienteIDs))
+	for _, id := range clienteIDs {
+		want[id] = struct{}{}
+	}
+	out := make(map[int]int)
+	for _, c := range r.candidates {
+		if _, ok := want[c.ClienteID()]; ok {
+			out[c.ClienteID()] = c.Pagos90D()
+		}
+	}
+	return out, nil
+}
+
 // ─── Fake MicrosipReader ──────────────────────────────────────────────────────
 
 type fakeMicrosipReader struct {

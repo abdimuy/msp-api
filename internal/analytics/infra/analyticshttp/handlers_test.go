@@ -115,6 +115,10 @@ func (r *controlledRepo) ListCandidatosByClienteIDs(_ context.Context, _ []int) 
 	return []*domain.WinbackCandidato{}, nil
 }
 
+func (r *controlledRepo) ContarPagosRecientes(_ context.Context, _ []int, _, _ time.Time) (map[int]int, error) {
+	return map[int]int{}, nil
+}
+
 // noopMicrosip returns an empty ancla list by default.
 type noopMicrosip struct {
 	anclas []outbound.AnclaCliente

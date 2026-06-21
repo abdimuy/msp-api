@@ -35,7 +35,10 @@ func (s *Service) LogDistribucionBandasCredito(ctx context.Context) {
 
 	var d bandaDist
 	for _, c := range page.Items {
-		_, banda, _, aplica := computeCreditoScore(c, now, s.scorecard)
+		// This nightly job runs right after a full refresh, so now ≈ refresh
+		// time and the materialized PAGOS_90D is fresh; using it here avoids a
+		// per-client live query over the whole ~43k-row table.
+		_, banda, _, aplica := computeCreditoScore(c, now, s.scorecard, c.Pagos90D())
 		d.add(banda, aplica)
 	}
 

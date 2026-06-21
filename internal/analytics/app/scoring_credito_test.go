@@ -45,7 +45,7 @@ func TestBuildCreditoFeatures(t *testing.T) {
 			Now:               testNowLocal,
 		})
 
-		got := app.ExportBuildCreditoFeatures(c, testNowLocal)
+		got := app.ExportBuildCreditoFeatures(c, testNowLocal, c.Pagos90D())
 
 		require.Contains(t, got, "DIAS_SIN_PAGAR")
 		require.Contains(t, got, "PAGOS_90D")
@@ -83,7 +83,7 @@ func TestBuildCreditoFeatures(t *testing.T) {
 			Now:              testNowLocal,
 		})
 
-		got := app.ExportBuildCreditoFeatures(c, testNowLocal)
+		got := app.ExportBuildCreditoFeatures(c, testNowLocal, c.Pagos90D())
 
 		// When FechaUltimoPago is zero, DIAS_SIN_PAGAR == ANTIGUEDAD_DIAS
 		assert.InDelta(t, got["ANTIGUEDAD_DIAS"], got["DIAS_SIN_PAGAR"], delta, "DIAS_SIN_PAGAR should equal ANTIGUEDAD_DIAS when FechaUltimoPago is zero")
@@ -108,7 +108,7 @@ func TestBuildCreditoFeatures(t *testing.T) {
 			Now:            testNowLocal,
 		})
 
-		got := app.ExportBuildCreditoFeatures(c, testNowLocal)
+		got := app.ExportBuildCreditoFeatures(c, testNowLocal, c.Pagos90D())
 
 		assert.InDelta(t, 0.0, got["DIAS_SIN_PAGAR"], delta, "DIAS_SIN_PAGAR zero when both dates are zero")
 		assert.InDelta(t, 0.0, got["ANTIGUEDAD_DIAS"], delta, "ANTIGUEDAD_DIAS zero when FechaPrimerCargo is zero")
@@ -131,7 +131,7 @@ func TestBuildCreditoFeatures(t *testing.T) {
 			Now:               testNowLocal,
 		})
 
-		got := app.ExportBuildCreditoFeatures(c, testNowLocal)
+		got := app.ExportBuildCreditoFeatures(c, testNowLocal, c.Pagos90D())
 
 		assert.InDelta(t, 0.8, got["PCT_PAGOS_A_TIEMPO_6M"], delta, "PCT_PAGOS_A_TIEMPO_6M=0.8")
 	})
@@ -171,7 +171,7 @@ func TestComputeCreditoScore(t *testing.T) {
 			Now:               now,
 		})
 
-		score, banda, drivers, aplica := app.ExportComputeCreditoScore(c, now, sc)
+		score, banda, drivers, aplica := app.ExportComputeCreditoScore(c, now, sc, c.Pagos90D())
 
 		assert.True(t, aplica, "credit client must have aplica=true")
 		assert.GreaterOrEqual(t, score.Int(), 0, "score must be >= 0")
@@ -198,7 +198,7 @@ func TestComputeCreditoScore(t *testing.T) {
 			// FechaUltimoPago intentionally zero — contado client
 		})
 
-		score, banda, drivers, aplica := app.ExportComputeCreditoScore(c, now, sc)
+		score, banda, drivers, aplica := app.ExportComputeCreditoScore(c, now, sc, c.Pagos90D())
 
 		assert.False(t, aplica, "SIN_CREDITO client must have aplica=false")
 		assert.Equal(t, 0, score.Int(), "score must be 0 when no aplica")
@@ -227,7 +227,7 @@ func TestComputeCreditoScore(t *testing.T) {
 		// Zero Scorecard{} — Loaded() == false
 		var zeroSc app.Scorecard
 
-		score, banda, drivers, aplica := app.ExportComputeCreditoScore(c, now, zeroSc)
+		score, banda, drivers, aplica := app.ExportComputeCreditoScore(c, now, zeroSc, c.Pagos90D())
 
 		assert.False(t, aplica, "zero scorecard must return aplica=false")
 		assert.Equal(t, 0, score.Int())
@@ -282,8 +282,8 @@ func TestComputeCreditoScore(t *testing.T) {
 			Now:               now,
 		})
 
-		lowScore, _, _, lowAplica := app.ExportComputeCreditoScore(lowRisk, now, sc)
-		highScore, _, highDrivers, highAplica := app.ExportComputeCreditoScore(highRisk, now, sc)
+		lowScore, _, _, lowAplica := app.ExportComputeCreditoScore(lowRisk, now, sc, lowRisk.Pagos90D())
+		highScore, _, highDrivers, highAplica := app.ExportComputeCreditoScore(highRisk, now, sc, highRisk.Pagos90D())
 
 		require.True(t, lowAplica, "low-risk client must have aplica=true")
 		require.True(t, highAplica, "high-risk client must have aplica=true")

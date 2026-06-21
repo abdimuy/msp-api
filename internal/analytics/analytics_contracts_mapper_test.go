@@ -196,3 +196,38 @@ func TestToClientePulsoContract_CreditoNoAplica(t *testing.T) {
 	assert.Empty(t, got.BandaRecompra)
 	assert.Nil(t, got.RecompraDrivers)
 }
+
+// TestToClientePulsoContract_CobranzaRecenciaFromComp verifies that the
+// recency-adjusted cobranza metrics (DiasAtrasoProm / PctPagosATiempo) come from
+// the computed PulsoComputado, NOT from the entity's materialized values.
+func TestToClientePulsoContract_CobranzaRecenciaFromComp(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 13, 10, 0, 0, 0, time.UTC)
+	cohorteFecha := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// Entity carries the stale historical values (atraso 1, puntualidad 88.5).
+	c := domain.HydrateWinbackCandidato(domain.HydrateWinbackCandidatoParams{
+		ClienteID:       60,
+		Nombre:          "Moroso Recencia",
+		CohorteFecha:    cohorteFecha,
+		DiasAtrasoProm:  1,
+		PctPagosATiempo: decimal.NewFromFloat(88.5),
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	})
+
+	// comp carries the recency-corrected values.
+	comp := analytics.PulsoComputado{
+		Segmento:        "FRIO",
+		EstadoPago:      "MOROSO",
+		DiasAtrasoProm:  113,
+		PctPagosATiempo: decimal.NewFromFloat(67.6),
+	}
+
+	got := analytics.ToClientePulsoContract(c, comp)
+
+	assert.Equal(t, 113, got.DiasAtrasoProm, "must use comp value, not entity historical")
+	assert.Truef(t, decimal.NewFromFloat(67.6).Equal(got.PctPagosATiempo),
+		"must use comp value, got %s", got.PctPagosATiempo)
+}

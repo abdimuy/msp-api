@@ -43,7 +43,7 @@ func TestComputeCLV_NoVHistory_AplicaFalse(t *testing.T) {
 		VentasMesesDistintos: 0, // zero months → aplica=false
 	})
 
-	monto, banda, aplica := app.ExportComputeCLV(c, now, btyd, sc, params)
+	monto, banda, aplica := app.ExportComputeCLV(c, now, btyd, sc, params, c.Pagos90D())
 
 	assert.False(t, aplica, "VentasMesesDistintos=0 must yield aplica=false")
 	assert.True(t, monto.Decimal().IsZero(), "monto must be zero when aplica=false")
@@ -76,7 +76,7 @@ func TestComputeCLV_ZeroFechaPrimerVenta_AplicaFalse(t *testing.T) {
 		VentasMesesDistintos: 3, // non-zero months but FechaPrimerVenta is zero
 	})
 
-	monto, banda, aplica := app.ExportComputeCLV(c, now, btyd, sc, params)
+	monto, banda, aplica := app.ExportComputeCLV(c, now, btyd, sc, params, c.Pagos90D())
 
 	assert.False(t, aplica, "zero FechaPrimerVenta must yield aplica=false")
 	assert.True(t, monto.Decimal().IsZero())
@@ -111,7 +111,7 @@ func TestComputeCLV_BTYDNotLoaded_AplicaFalse(t *testing.T) {
 	})
 
 	var zeroBTYD app.BTYD // Loaded() == false
-	monto, banda, aplica := app.ExportComputeCLV(c, now, zeroBTYD, sc, params)
+	monto, banda, aplica := app.ExportComputeCLV(c, now, zeroBTYD, sc, params, c.Pagos90D())
 
 	assert.False(t, aplica, "zero BTYD must return aplica=false")
 	assert.True(t, monto.Decimal().IsZero())
@@ -146,7 +146,7 @@ func TestComputeCLV_ParamsNotLoaded_AplicaFalse(t *testing.T) {
 	})
 
 	var zeroParams app.CLVParams // Loaded() == false
-	monto, banda, aplica := app.ExportComputeCLV(c, now, btyd, sc, zeroParams)
+	monto, banda, aplica := app.ExportComputeCLV(c, now, btyd, sc, zeroParams, c.Pagos90D())
 
 	assert.False(t, aplica, "zero CLVParams must return aplica=false")
 	assert.True(t, monto.Decimal().IsZero())
@@ -190,7 +190,7 @@ func TestComputeCLV_FrequentHighTicket_NosaldoPositiveCLV(t *testing.T) {
 		MonetaryVProm:        decimal.NewFromInt(12_000),
 	})
 
-	monto, banda, aplica := app.ExportComputeCLV(c, now, btyd, sc, params)
+	monto, banda, aplica := app.ExportComputeCLV(c, now, btyd, sc, params, c.Pagos90D())
 
 	assert.True(t, aplica, "client with V history must have aplica=true")
 	assert.True(t, monto.Decimal().IsPositive(), "frequent high-ticket buyer with no saldo must have positive CLV")
@@ -230,7 +230,7 @@ func TestComputeCLV_Freq0_TicketFallback(t *testing.T) {
 		MonetaryVProm:        decimal.NewFromInt(8_000),
 	})
 
-	monto, banda, aplica := app.ExportComputeCLV(c, now, btyd, sc, params)
+	monto, banda, aplica := app.ExportComputeCLV(c, now, btyd, sc, params, c.Pagos90D())
 
 	assert.True(t, aplica, "VentasMesesDistintos=1 must have aplica=true")
 	// Must not panic and must return non-negative monto.
@@ -291,8 +291,8 @@ func TestComputeCLV_DebtorVsSameProfileNoSaldo(t *testing.T) {
 	paramsB.Saldo = decimal.Zero
 	cNoSaldo := mustCandidato(paramsB)
 
-	montoDebtor, bandaDebtor, aplicaDebtor := app.ExportComputeCLV(cDebtor, now, btyd, sc, params)
-	montoNoSaldo, bandaNoSaldo, aplicaNoSaldo := app.ExportComputeCLV(cNoSaldo, now, btyd, sc, params)
+	montoDebtor, bandaDebtor, aplicaDebtor := app.ExportComputeCLV(cDebtor, now, btyd, sc, params, cDebtor.Pagos90D())
+	montoNoSaldo, bandaNoSaldo, aplicaNoSaldo := app.ExportComputeCLV(cNoSaldo, now, btyd, sc, params, cNoSaldo.Pagos90D())
 
 	assert.True(t, aplicaDebtor, "debtor must have aplica=true")
 	assert.True(t, aplicaNoSaldo, "no-saldo must have aplica=true")
@@ -360,7 +360,7 @@ func TestComputeCLV_HandChecked_NumericExample(t *testing.T) {
 		MonetaryVProm:        decimal.NewFromFloat(monetaryV),
 	})
 
-	monto, banda, aplica := app.ExportComputeCLV(c, now, btyd, sc, params)
+	monto, banda, aplica := app.ExportComputeCLV(c, now, btyd, sc, params, c.Pagos90D())
 
 	require.True(t, aplica, "hand-check client must have aplica=true")
 
@@ -391,6 +391,219 @@ func TestComputeCLV_HandChecked_NumericExample(t *testing.T) {
 	assert.True(t, banda.IsValid(), "banda must be valid")
 	t.Logf("hand-check: n=%d tx=%d x=%d det=%.6f eM=%.2f margin=%.4f → CLV=%s banda=%s",
 		n, tx, x, det, monetaryV, params.Margin(), monto.Decimal(), banda)
+}
+
+// ─── Dormancy gate tests ──────────────────────────────────────────────────────
+
+// TestComputeCLV_DormancyGate_CapsBandaAlto verifies that a client dormant beyond
+// clvRecenciaMaxMeses (24 months) cannot receive BandaCLVAlto, even when the raw
+// CLV formula would yield ALTO. This prevents the slow-churn BG/BB model (γ≈0.046)
+// from rating 2-3yr dormant clients as high-value.
+//
+// Based on real audit (2026-02-20 clock):
+//   - Cliente 69230: 28 months dormant, raw CLV=$2,803 ALTO → should be capped MEDIO.
+//   - Cliente 1255115: 36 months dormant, raw CLV=$1,380 ALTO → should be capped MEDIO.
+func TestComputeCLV_DormancyGate_CapsBandaAlto(t *testing.T) {
+	t.Parallel()
+
+	btyd, err := app.LoadBTYD()
+	require.NoError(t, err)
+	sc, err := app.LoadScorecard()
+	require.NoError(t, err)
+	params, err := app.LoadCLVParams()
+	require.NoError(t, err)
+
+	now := time.Date(2026, 2, 20, 12, 0, 0, 0, time.UTC)
+
+	type dormantCase struct {
+		name             string
+		firstVenta       time.Time
+		lastVenta        time.Time
+		ventasMeses      int
+		monetaryVProm    float64
+		recenciaMeses    int // expected months since last V purchase
+		wantBandaNotAlto bool
+	}
+
+	cases := []dormantCase{
+		{
+			// 69230-like: 6 distinct months, last purchase 28 months ago.
+			name:             "28 months dormant (like 69230) — must not be ALTO",
+			firstVenta:       time.Date(2019, 3, 1, 0, 0, 0, 0, time.UTC),
+			lastVenta:        time.Date(2023, 10, 1, 0, 0, 0, 0, time.UTC),
+			ventasMeses:      6,
+			monetaryVProm:    3712.07,
+			recenciaMeses:    28,
+			wantBandaNotAlto: true,
+		},
+		{
+			// 1255115-like: 2 distinct months, last purchase 36 months ago.
+			name:             "36 months dormant (like 1255115) — must not be ALTO",
+			firstVenta:       time.Date(2022, 5, 1, 0, 0, 0, 0, time.UTC),
+			lastVenta:        time.Date(2023, 2, 1, 0, 0, 0, 0, time.UTC),
+			ventasMeses:      2,
+			monetaryVProm:    5577.59,
+			recenciaMeses:    36,
+			wantBandaNotAlto: true,
+		},
+		{
+			// Active client: last purchase 1 month ago — gate should not fire.
+			name:             "1 month dormant (active) — ALTO allowed",
+			firstVenta:       time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC),
+			lastVenta:        time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC),
+			ventasMeses:      5,
+			monetaryVProm:    8000,
+			recenciaMeses:    1,
+			wantBandaNotAlto: false, // gate does NOT fire for active clients
+		},
+		{
+			// Exactly at boundary: 24 months dormant — gate fires at >24, so 24 is OK.
+			name:             "24 months dormant (boundary) — ALTO still allowed",
+			firstVenta:       time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC),
+			lastVenta:        time.Date(2024, 2, 15, 0, 0, 0, 0, time.UTC),
+			ventasMeses:      4,
+			monetaryVProm:    6000,
+			recenciaMeses:    24,
+			wantBandaNotAlto: false,
+		},
+		{
+			// Just over boundary: 25 months dormant — gate fires.
+			name:             "25 months dormant (just over boundary) — must not be ALTO",
+			firstVenta:       time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC),
+			lastVenta:        time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC),
+			ventasMeses:      4,
+			monetaryVProm:    6000,
+			recenciaMeses:    25,
+			wantBandaNotAlto: true,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			c := mustCandidato(domain.CrearWinbackCandidatoParams{
+				ClienteID:            500,
+				Nombre:               "Dormancy Gate Test",
+				Zona:                 "Z1",
+				FechaUltimaCompra:    tc.lastVenta,
+				Frecuencia:           tc.ventasMeses,
+				Monetary:             decimal.NewFromFloat(tc.monetaryVProm * float64(tc.ventasMeses)),
+				Saldo:                decimal.Zero,
+				PorLiquidarPct:       decimal.Zero,
+				CohorteFecha:         tc.firstVenta,
+				Now:                  now,
+				FechaPrimerVenta:     tc.firstVenta,
+				FechaUltimaVenta:     tc.lastVenta,
+				VentasMesesDistintos: tc.ventasMeses,
+				MonetaryVProm:        decimal.NewFromFloat(tc.monetaryVProm),
+				PctPagosATiempo:      decimal.NewFromFloat(97),
+			})
+
+			monto, banda, aplica := app.ExportComputeCLV(c, now, btyd, sc, params, 0)
+
+			require.True(t, aplica, "client with V history must have aplica=true")
+			t.Logf("%s: monto=%s banda=%s", tc.name, monto.Decimal(), banda)
+
+			if tc.wantBandaNotAlto {
+				assert.NotEqual(t, domain.BandaCLVAlto, banda,
+					"dormant client (recencia=%dm) must not be rated CLV ALTO", tc.recenciaMeses)
+			}
+			// The monto is unchanged (gate only affects banda, not the pesos amount).
+			assert.False(t, monto.Decimal().IsNegative(), "monto must be >= 0")
+			assert.True(t, banda.IsValid(), "banda must be a valid BandaCLV")
+		})
+	}
+}
+
+// TestComputeCLV_NoRepeatSignalGate_CapsBandaAlto verifies that a brand-new client
+// with only one V purchase month (x=0, population prior only) cannot receive ALTO CLV.
+// Empirical: cliente 3074781 (single $5,500 purchase 3 days old) got CLV=$3,932 ALTO
+// from population priors alone — indefensible without individual repeat signal.
+func TestComputeCLV_NoRepeatSignalGate_CapsBandaAlto(t *testing.T) {
+	t.Parallel()
+
+	btyd, err := app.LoadBTYD()
+	require.NoError(t, err)
+	sc, err := app.LoadScorecard()
+	require.NoError(t, err)
+	params, err := app.LoadCLVParams()
+	require.NoError(t, err)
+
+	now := time.Date(2026, 2, 20, 12, 0, 0, 0, time.UTC)
+	acqDate := time.Date(2026, 2, 17, 0, 0, 0, 0, time.UTC) // 3 days ago
+
+	// VentasMesesDistintos=1 → x=0 → no repeat signal → band must not be ALTO.
+	c := mustCandidato(domain.CrearWinbackCandidatoParams{
+		ClienteID:            600,
+		Nombre:               "Brand New Client",
+		Zona:                 "Z1",
+		FechaUltimaCompra:    acqDate,
+		Frecuencia:           1,
+		Monetary:             decimal.NewFromInt(5_500),
+		Saldo:                decimal.Zero,
+		PorLiquidarPct:       decimal.Zero,
+		CohorteFecha:         acqDate,
+		Now:                  now,
+		FechaPrimerVenta:     acqDate,
+		FechaUltimaVenta:     acqDate,
+		VentasMesesDistintos: 1, // x = max(0, 1-1) = 0
+		MonetaryVProm:        decimal.NewFromInt(5_500),
+	})
+
+	monto, banda, aplica := app.ExportComputeCLV(c, now, btyd, sc, params, 0)
+
+	require.True(t, aplica, "client with V history must have aplica=true")
+	assert.NotEqual(t, domain.BandaCLVAlto, banda,
+		"brand-new client with x=0 must not receive CLV ALTO (raw CLV=%.2f)", monto.Decimal().InexactFloat64())
+	assert.False(t, monto.Decimal().IsNegative(), "monto must be >= 0")
+	assert.True(t, banda.IsValid(), "banda must be a valid BandaCLV")
+	t.Logf("brand-new x=0: monto=%s banda=%s (raw would be ALTO without gate)", monto.Decimal(), banda)
+}
+
+// TestComputeCLV_ActiveFrequentClient_StillAlto verifies that the dormancy and
+// no-repeat-signal gates do NOT regress genuinely active, frequent clients.
+// An active client with repeat purchases must still be able to reach CLV ALTO.
+func TestComputeCLV_ActiveFrequentClient_StillAlto(t *testing.T) {
+	t.Parallel()
+
+	btyd, err := app.LoadBTYD()
+	require.NoError(t, err)
+	sc, err := app.LoadScorecard()
+	require.NoError(t, err)
+	params, err := app.LoadCLVParams()
+	require.NoError(t, err)
+
+	now := time.Date(2026, 2, 20, 12, 0, 0, 0, time.UTC)
+
+	// Active frequent client: 8 distinct months over 4 years, last purchase 1 month ago.
+	// x=7, well within the repeat signal gate; recencia=1 month, well within dormancy gate.
+	c := mustCandidato(domain.CrearWinbackCandidatoParams{
+		ClienteID:            700,
+		Nombre:               "Cliente Activo Frecuente",
+		Zona:                 "Z1",
+		Telefono:             "555-7000",
+		FechaUltimaCompra:    time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC),
+		Frecuencia:           8,
+		Monetary:             decimal.NewFromInt(96_000),
+		Saldo:                decimal.Zero,
+		PorLiquidarPct:       decimal.Zero,
+		CohorteFecha:         time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC),
+		Now:                  now,
+		FechaPrimerVenta:     time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC),
+		FechaUltimaVenta:     time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC),
+		VentasMesesDistintos: 8,
+		MonetaryVProm:        decimal.NewFromInt(12_000),
+		PctPagosATiempo:      decimal.NewFromFloat(90),
+	})
+
+	monto, banda, aplica := app.ExportComputeCLV(c, now, btyd, sc, params, 0)
+
+	require.True(t, aplica)
+	assert.Equal(t, domain.BandaCLVAlto, banda,
+		"active frequent client must remain CLV ALTO after gates: monto=%s", monto.Decimal())
+	t.Logf("active frequent: monto=%s banda=%s", monto.Decimal(), banda)
 }
 
 // ─── Pulso wiring tests ───────────────────────────────────────────────────────
