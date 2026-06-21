@@ -460,9 +460,12 @@ const selectVentaClienteCols = `
 	alm.NOMBRE AS ALMACEN_NOMBRE,
 	-- BE-2 enrichment: name of first J/N line item (kit-header or normal article).
 	-- Correlated scalar subquery with ROWS 1 sidesteps the firebirdsql v0.9.19
-	-- param bug (cannot bind ? inside FROM-clause derived tables). COALESCE to ''
-	-- covers sales with no J/N lines. ARTICULOS.NOMBRE is Win1252.
-	COALESCE((
+	-- param bug (cannot bind ? inside FROM-clause derived tables). Returns NULL
+	-- when there are no J/N lines; the Win1252 scanner maps nil→"". NO COALESCE
+	-- with a '' literal here: that literal is the connection charset (UTF8) and
+	-- would coerce the CHARACTER SET NONE column to UTF8, throwing "Malformed
+	-- string" on Win1252 bytes (e.g. accented article names).
+	(
 		SELECT a.NOMBRE
 		FROM DOCTOS_PV_DET d
 		JOIN ARTICULOS a ON a.ARTICULO_ID = d.ARTICULO_ID
@@ -470,7 +473,7 @@ const selectVentaClienteCols = `
 		  AND d.ROL IN ('J', 'N')
 		ORDER BY d.POSICION
 		ROWS 1
-	), '') AS PRIMER_ARTICULO,
+	) AS PRIMER_ARTICULO,
 	-- BE-2 enrichment: count of J/N lines (excludes ROL='C' kit-component rows).
 	COALESCE((
 		SELECT COUNT(*)
@@ -633,8 +636,12 @@ SELECT
 	), '') AS FORMA_COBRO,
 	des.DOCTO_DEST_ID,
 	pago.CONCEPTO_CC_ID,
-	COALESCE(conc.NOMBRE, '') AS CONCEPTO_NOMBRE,
-	COALESCE(cob.NOMBRE, pago.DESCRIPCION, '') AS COBRADOR_NOMBRE
+	-- Read text raw (CHARACTER SET NONE) so the Win1252 scanner decodes it; the
+	-- scanner maps nil→"". Do NOT COALESCE with a '' literal: it is UTF8 and
+	-- coerces NONE→UTF8, throwing "Malformed string" on Win1252 bytes (e.g. the
+	-- concepto "Devolución en mostrador").
+	conc.NOMBRE AS CONCEPTO_NOMBRE,
+	COALESCE(cob.NOMBRE, pago.DESCRIPCION) AS COBRADOR_NOMBRE
 FROM DOCTOS_ENTRE_SIS des
 JOIN IMPORTES_DOCTOS_CC i   ON i.DOCTO_CC_ACR_ID  = des.DOCTO_DEST_ID
 JOIN DOCTOS_CC pago         ON pago.DOCTO_CC_ID   = i.DOCTO_CC_ID
