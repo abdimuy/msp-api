@@ -95,4 +95,8 @@ type ClientePulsoContract struct {
 	CreditoResumen  string   // titular crédito (always set, incl. "no aplica")
 	RecompraResumen string   // titular recompra
 	CLVResumen      string   // titular CLV
+
+	// ─── Lectura del analista (IA) — Fase 2 ──────────────────────────────────────
+	Narrativa string   // analyst paragraph (empty when LLM off / not yet generated)
+	RasgosIA  []string // resolved Spanish display labels (empty when none)
 }

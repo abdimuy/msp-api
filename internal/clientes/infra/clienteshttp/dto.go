@@ -205,6 +205,10 @@ type PulsoDTO struct {
 	CreditoResumen  string   `json:"credito_resumen"  doc:"Frase de síntesis del riesgo crediticio"`
 	RecompraResumen string   `json:"recompra_resumen" doc:"Frase de síntesis de la propensión de recompra"`
 	CLVResumen      string   `json:"clv_resumen"      doc:"Frase de síntesis del valor del cliente"`
+
+	// ─── Lectura del analista (IA) — Fase 2 ──────────────────────────────────────
+	Narrativa string   `json:"narrativa"  doc:"Lectura del analista generada por IA (síntesis + acción interna); vacío si no disponible o LLM apagado"`
+	RasgosIA  []string `json:"rasgos_ia"  doc:"Rasgos conductuales asignados por IA (etiquetas en español); vacío si ninguno"`
 }
 
 // ─── Endpoint 3: GET /clientes/{id}/ventas ───────────────────────────────────

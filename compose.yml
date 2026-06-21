@@ -86,6 +86,28 @@ services:
     networks:
       - default
 
+  # Ollama (dev only). Sirve modelos LLM locales para el motor de inteligencia.
+  # En producción (Windows Server 2016) se instala ollama.exe vía nssm o se
+  # usa llama-server; no requiere Docker. Ver CLAUDE.md rule 5.
+  #
+  # Para usar: `docker compose up -d ollama` y luego
+  # `docker exec msp-ollama ollama pull qwen3:4b`.
+  # El API arranca con LLM_ENABLED=false — cambiar solo en la fase habilitada.
+  # La API corre en el host → LLM_BASE_URL=http://localhost:11434/v1.
+  # Si la API corre dentro de compose → LLM_BASE_URL=http://ollama:11434/v1.
+  ollama:
+    image: ollama/ollama
+    container_name: msp-ollama
+    restart: unless-stopped
+    ports:
+      # Bind to loopback only: Ollama has NO auth. Host reaches it at
+      # localhost:11434; in-compose callers use the `ollama:11434` DNS name.
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - msp-ollama-data:/root/.ollama
+    networks:
+      - default
+
 volumes:
   api-go-cache:
     name: msp-api-go-cache
@@ -93,6 +115,8 @@ volumes:
     name: msp-api-build-cache
   meilisearch-data:
     name: msp-meilisearch-data
+  msp-ollama-data:
+    name: msp-ollama-data
 
 # firebird_default es una red creada externamente cuando el contenedor
 # mueblera-firebird se levantó manualmente. Compose la referencia como

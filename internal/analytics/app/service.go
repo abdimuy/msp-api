@@ -42,6 +42,13 @@ type Service struct {
 	btyd              BTYD
 	clvParams         CLVParams
 
+	// narrativaRepo enables the read-path narrativa serve + lazy enqueue.
+	// nil means the read-path serves no AI narrativa (default, no-op).
+	narrativaRepo outbound.NarrativaRepo
+	// llmEnabled controls whether a cache miss/stale triggers lazy enqueue.
+	// false means serve the cache only, never enqueue (default).
+	llmEnabled bool
+
 	// refreshRunning is the single-flight guard for RefrescarEnSegundoPlano.
 	// atomic.Bool is safe for concurrent access without a mutex.
 	refreshRunning atomic.Bool
@@ -112,6 +119,15 @@ func (s *Service) WithLogger(l *slog.Logger) *Service {
 	if l != nil {
 		s.logger = l
 	}
+	return s
+}
+
+// WithNarrativa enables read-time narrativa serve + lazy enqueue. When repo is
+// nil the read-path serves no AI narrativa; when enabled is false it serves the
+// cache but never enqueues new generation. Returns s for chaining.
+func (s *Service) WithNarrativa(repo outbound.NarrativaRepo, enabled bool) *Service {
+	s.narrativaRepo = repo
+	s.llmEnabled = enabled
 	return s
 }
 

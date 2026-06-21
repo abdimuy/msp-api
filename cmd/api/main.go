@@ -147,8 +147,13 @@ func appOptions() []fx.Option {
 			provideAnalyticsMicrosipReader,
 			provideAnalyticsClock,
 			provideAnalyticsTxRunner,
+			provideAnalyticsNarrativaRepo,
 			provideAnalyticsService,
 			provideAnalyticsRefreshWorker,
+			// LLM client + analytics narrativa worker (Fase 2).
+			provideLLMClient,
+			provideAnalyticsNarrativeGenerator,
+			provideAnalyticsNarrativaWorker,
 			// Meilisearch.
 			provideMeilisearchClient,
 			// Clients hub module.
@@ -189,6 +194,7 @@ func appOptions() []fx.Option {
 			registerCobranzaFbEventSourceLifecycle,
 			registerCobranzaFbEventListenerLifecycle,
 			registerAnalyticsRefreshWorkerLifecycle,
+			registerAnalyticsNarrativaWorkerLifecycle,
 			registerMeilisearchBootstrapLifecycle,
 			registerClientesDirectoryReconcileWorkerLifecycle,
 			registerHTTPLifecycle,
