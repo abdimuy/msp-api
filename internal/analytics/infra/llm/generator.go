@@ -70,7 +70,8 @@ func (g *Generator) Generar(ctx context.Context, in outbound.NarrativeInput) (ou
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userMsg},
 		},
-		Temperature: 0,
+		// Pointer required: bare 0 is the Go zero value and would be omitted.
+		Temperature: platformllm.Float64(0),
 		ResponseFormat: &platformllm.ResponseFormat{
 			Type:   "json_schema",
 			Schema: schema,
@@ -145,6 +146,8 @@ func buildUserMessage(in outbound.NarrativeInput) string {
 // and returns the first balanced JSON object in s.
 func extractJSON(s string) (string, bool) {
 	// Remove <think>...</think> blocks (some reasoning models emit these).
+	// An unclosed <think> is stripped to end-of-string so stray '{' inside
+	// a malformed block can't be mis-parsed as a JSON object.
 	for {
 		start := strings.Index(s, "<think>")
 		if start == -1 {
@@ -152,6 +155,7 @@ func extractJSON(s string) (string, bool) {
 		}
 		end := strings.Index(s, "</think>")
 		if end == -1 {
+			s = s[:start]
 			break
 		}
 		s = s[:start] + s[end+len("</think>"):]

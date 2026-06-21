@@ -18,6 +18,7 @@ func TestExtractJSON(t *testing.T) {
 		{"with string braces", `{"a":"{not a brace}"}`, `{"a":"{not a brace}"}`, true},
 		{"no json", "just text", "", false},
 		{"only think", "<think>stuff</think>", "", false},
+		{"unclosed think", "<think>reasoning {not json", "", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -98,6 +98,58 @@ func TestRealClient_HappyPath(t *testing.T) {
 	}
 }
 
+func TestRealClient_ExplicitZeroTemperature_IsSerialized(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		val, exists := body["temperature"]
+		if !exists {
+			t.Fatal("temperature key absent from request body; explicit 0 must be serialized")
+		}
+		if val.(float64) != 0 {
+			t.Errorf("temperature: got %v, want 0", val)
+		}
+		cannedResponse("ok")(w, r)
+	}))
+	defer srv.Close()
+
+	c := newEnabledClient(t, srv)
+	_, err := c.Chat(context.Background(), llm.ChatReq{
+		Messages:    []llm.Message{{Role: "user", Content: "hi"}},
+		Temperature: llm.Float64(0),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRealClient_NilTemperature_IsOmitted(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if _, exists := body["temperature"]; exists {
+			t.Error("temperature key must be absent when Temperature is nil")
+		}
+		cannedResponse("ok")(w, r)
+	}))
+	defer srv.Close()
+
+	c := newEnabledClient(t, srv)
+	_, err := c.Chat(context.Background(), llm.ChatReq{
+		Messages: []llm.Message{{Role: "user", Content: "hi"}},
+		// Temperature is nil (zero value for *float64) — must be omitted.
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestRealClient_SendsResponseFormat(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

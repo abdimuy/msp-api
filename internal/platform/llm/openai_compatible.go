@@ -182,7 +182,7 @@ func (c *realClient) Chat(ctx context.Context, req ChatReq) (string, error) {
 }
 
 // buildRequestBody marshals a ChatReq into the OpenAI-compatible JSON wire
-// format. Temperature is omitted when zero.
+// format. Temperature is omitted when nil; an explicit 0.0 is serialized.
 func (c *realClient) buildRequestBody(req ChatReq) ([]byte, error) {
 	msgs := make([]openaiMessage, len(req.Messages))
 	for i, m := range req.Messages {
@@ -194,9 +194,8 @@ func (c *realClient) buildRequestBody(req ChatReq) ([]byte, error) {
 		Messages: msgs,
 	}
 
-	if req.Temperature != 0 {
-		t := req.Temperature
-		body.Temperature = &t
+	if req.Temperature != nil {
+		body.Temperature = req.Temperature
 	}
 
 	if req.ResponseFormat != nil {

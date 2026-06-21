@@ -25,12 +25,18 @@ type ResponseFormat struct {
 type ChatReq struct {
 	// Messages is the ordered conversation history sent to the model.
 	Messages []Message
-	// Temperature controls sampling randomness. A zero value is omitted from
-	// the request, letting the server apply its default.
-	Temperature float64
+	// Temperature controls sampling randomness. Nil omits the field from the
+	// request, letting the server apply its default. Use Float64(0) to request
+	// fully deterministic (greedy) sampling — a bare 0 would be indistinguishable
+	// from the zero value and would be silently omitted.
+	Temperature *float64
 	// ResponseFormat constrains the output format. Nil means no constraint.
 	ResponseFormat *ResponseFormat
 }
+
+// Float64 returns a pointer to v, allowing callers to express an explicit
+// float64 value (including 0.0) in ChatReq.Temperature without ambiguity.
+func Float64(v float64) *float64 { return &v }
 
 // Client is the interface satisfied by both realClient and disabledClient.
 //

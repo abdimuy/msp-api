@@ -4,6 +4,7 @@ package llm_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/shopspring/decimal"
@@ -120,17 +121,23 @@ func TestGenerar_PromptAnchoring(t *testing.T) {
 
 	userContent := capturedReq.Messages[1].Content
 
-	if !strContains(userContent, "RIESGO_BAJO") {
+	if !strings.Contains(userContent, "RIESGO_BAJO") {
 		t.Error("user message should contain BandaCredito 'RIESGO_BAJO'")
 	}
-	if !strContains(userContent, "Pagador puntual") {
+	if !strings.Contains(userContent, "Pagador puntual") {
 		t.Error("user message should contain CreditoResumen 'Pagador puntual'")
 	}
-	if !strContains(userContent, "code_a") {
+	if !strings.Contains(userContent, "code_a") {
 		t.Error("user message should contain catalog code 'code_a'")
 	}
-	if !strContains(userContent, "code_b") {
+	if !strings.Contains(userContent, "code_b") {
 		t.Error("user message should contain catalog code 'code_b'")
+	}
+
+	if capturedReq.Temperature == nil {
+		t.Fatal("Temperature should be non-nil (explicit 0 for determinism)")
+	} else if *capturedReq.Temperature != 0 {
+		t.Errorf("Temperature: got %v, want 0", *capturedReq.Temperature)
 	}
 
 	if capturedReq.ResponseFormat == nil {
@@ -257,19 +264,4 @@ func TestGenerar_ClientError(t *testing.T) {
 	if !errors.Is(err, platformllm.ErrLLMDisabled) {
 		t.Errorf("expected ErrLLMDisabled, got: %v", err)
 	}
-}
-
-func strContains(s, substr string) bool {
-	if len(substr) == 0 {
-		return true
-	}
-	if len(s) < len(substr) {
-		return false
-	}
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
