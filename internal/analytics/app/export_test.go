@@ -115,6 +115,15 @@ func ExportPesosMiles(d decimal.Decimal) string { return pesosMiles(d) }
 // ExportPesosCompact exposes the internal pesosCompact helper for tests.
 func ExportPesosCompact(d decimal.Decimal) string { return pesosCompact(d) }
 
+// ExportPluralDias exposes the internal pluralDias helper for tests.
+func ExportPluralDias(n int) string { return pluralDias(n) }
+
+// ExportPluralMeses exposes the internal pluralMeses helper for tests.
+func ExportPluralMeses(n int) string { return pluralMeses(n) }
+
+// ExportPluralAnios exposes the internal pluralAnios helper for tests.
+func ExportPluralAnios(n int) string { return pluralAnios(n) }
+
 // FeatureContrib is an exported mirror of featureContrib for test use.
 // It allows tests to build feature contributions without importing internal types.
 type FeatureContrib struct {

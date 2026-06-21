@@ -17,6 +17,32 @@ import (
 	"github.com/abdimuy/msp-api/internal/analytics/domain"
 )
 
+// ─── Plural unit helpers ──────────────────────────────────────────────────────
+
+// pluralDias returns "1 día" when n==1, else "%d días".
+func pluralDias(n int) string {
+	if n == 1 {
+		return "1 día"
+	}
+	return fmt.Sprintf("%d días", n)
+}
+
+// pluralMeses returns "1 mes" when n==1, else "%d meses".
+func pluralMeses(n int) string {
+	if n == 1 {
+		return "1 mes"
+	}
+	return fmt.Sprintf("%d meses", n)
+}
+
+// pluralAnios returns "1 año" when n==1, else "%d años".
+func pluralAnios(n int) string {
+	if n == 1 {
+		return "1 año"
+	}
+	return fmt.Sprintf("%d años", n)
+}
+
 // ─── Money helpers ────────────────────────────────────────────────────────────
 
 // pesosMiles renders a peso amount rounded to whole pesos with thousands
@@ -82,14 +108,15 @@ func topContribsByAbs(contribs []featureContrib, n int) []featureContrib {
 func razonCreditoTexto(c *domain.WinbackCandidato, fc featureContrib) string {
 	switch fc.name {
 	case "DIAS_SIN_PAGAR":
+		d := int(fc.valor)
 		if fc.logit > 0 {
 			cad := c.CadenciaDias()
 			if cad > 0 {
-				return fmt.Sprintf("%d días sin pagar (su ritmo: ~%d)", int(fc.valor), cad)
+				return fmt.Sprintf("%s (su ritmo: ~%d)", pluralDias(d)+" sin pagar", cad)
 			}
-			return fmt.Sprintf("%d días sin pagar", int(fc.valor))
+			return pluralDias(d) + " sin pagar"
 		}
-		return fmt.Sprintf("pagó hace %d días", int(fc.valor))
+		return "pagó hace " + pluralDias(d)
 
 	case "PAGOS_90D":
 		return fmt.Sprintf("%d pagos en los últimos 90 días", int(fc.valor))
@@ -98,10 +125,11 @@ func razonCreditoTexto(c *domain.WinbackCandidato, fc featureContrib) string {
 		return fmt.Sprintf("%.0f%% de pagos a tiempo", fc.valor*100)
 
 	case "CADENCIA_DIAS":
+		d := int(fc.valor)
 		if fc.logit > 0 {
-			return fmt.Sprintf("cobranza espaciada (cada ~%d días)", int(fc.valor))
+			return fmt.Sprintf("cobranza espaciada (cada ~%s)", pluralDias(d))
 		}
-		return fmt.Sprintf("paga seguido (cada ~%d días)", int(fc.valor))
+		return fmt.Sprintf("paga seguido (cada ~%s)", pluralDias(d))
 
 	case "NUM_PAGOS_TOTAL":
 		return fmt.Sprintf("%d pagos en total", int(fc.valor))
@@ -109,9 +137,9 @@ func razonCreditoTexto(c *domain.WinbackCandidato, fc featureContrib) string {
 	case "ANTIGUEDAD_DIAS":
 		meses := int(fc.valor/30.44 + 0.5)
 		if meses >= 12 {
-			return fmt.Sprintf("cliente desde hace ~%d años", meses/12)
+			return "cliente desde hace ~" + pluralAnios(meses/12)
 		}
-		return fmt.Sprintf("cliente desde hace ~%d meses", meses)
+		return "cliente desde hace ~" + pluralMeses(meses)
 
 	default:
 		return fc.label
@@ -142,13 +170,13 @@ func razonRecompraTexto(_ *domain.WinbackCandidato, fc featureContrib) string {
 		return fmt.Sprintf("%.0f%% prob. de seguir activo", fc.valor*100)
 
 	case "RECENCIA_MESES":
-		return fmt.Sprintf("compró hace %d meses", int(fc.valor))
+		return "compró hace " + pluralMeses(int(fc.valor))
 
 	case "FRECUENCIA_V":
-		return fmt.Sprintf("%d meses con compra", int(fc.valor))
+		return pluralMeses(int(fc.valor)) + " con compra"
 
 	case "ANTIGUEDAD_MESES":
-		return fmt.Sprintf("%d meses de antigüedad", int(fc.valor))
+		return pluralMeses(int(fc.valor)) + " de antigüedad"
 
 	case "MONETARY_LOG":
 		ticket := math.Expm1(fc.valor)
@@ -158,7 +186,7 @@ func razonRecompraTexto(_ *domain.WinbackCandidato, fc featureContrib) string {
 		return fmt.Sprintf("%.0f%% de pagos a tiempo", fc.valor*100)
 
 	case "DIAS_SIN_PAGAR":
-		return fmt.Sprintf("%d días sin pagar", int(fc.valor))
+		return pluralDias(int(fc.valor)) + " sin pagar"
 
 	default:
 		return fc.label
@@ -215,16 +243,16 @@ func resumenCredito(c *domain.WinbackCandidato, now time.Time, banda domain.Band
 		return fmt.Sprintf("Buen pagador: %.0f%% de pagos a tiempo.", pct)
 
 	case domain.BandaCreditoMedio:
-		return fmt.Sprintf("Riesgo medio: %d días sin pagar, debe %s.", d, saldo)
+		return fmt.Sprintf("Riesgo medio: %s sin pagar, debe %s.", pluralDias(d), saldo)
 
 	case domain.BandaCreditoAlto:
-		return fmt.Sprintf("Riesgo alto: %d días sin pagar y debe %s.", d, saldo)
+		return fmt.Sprintf("Riesgo alto: %s sin pagar y debe %s.", pluralDias(d), saldo)
 
 	case domain.BandaCreditoCritico:
-		return fmt.Sprintf("Riesgo crítico: %d días sin pagar y debe %s.", d, saldo)
+		return fmt.Sprintf("Riesgo crítico: %s sin pagar y debe %s.", pluralDias(d), saldo)
 
 	default:
-		return fmt.Sprintf("Riesgo crítico: %d días sin pagar y debe %s.", d, saldo)
+		return fmt.Sprintf("Riesgo crítico: %s sin pagar y debe %s.", pluralDias(d), saldo)
 	}
 }
 
@@ -248,13 +276,13 @@ func resumenRecompra(c *domain.WinbackCandidato, now time.Time, banda domain.Ban
 
 	case domain.BandaRecompraBaja:
 		if recenciaMeses >= 12 {
-			return fmt.Sprintf("Poco probable — no compra hace %d meses.", recenciaMeses)
+			return "Poco probable — no compra hace " + pluralMeses(recenciaMeses) + "."
 		}
 		return fmt.Sprintf("Poco probable que recompre — compró %s.", mesesFrase(recenciaMeses))
 
 	default:
 		if recenciaMeses >= 12 {
-			return fmt.Sprintf("Poco probable — no compra hace %d meses.", recenciaMeses)
+			return "Poco probable — no compra hace " + pluralMeses(recenciaMeses) + "."
 		}
 		return fmt.Sprintf("Poco probable que recompre — compró %s.", mesesFrase(recenciaMeses))
 	}

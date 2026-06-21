@@ -379,3 +379,28 @@ func TestComputeCLVConRazones_CLVCeroPorPerdida(t *testing.T) {
 	}
 	assert.True(t, hasImpago, "drivers deben incluir 'riesgo de impago (-$...'; got: %v", drivers)
 }
+
+// ─── Plural unit helpers ──────────────────────────────────────────────────────
+
+func TestPluralDias(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "1 día", app.ExportPluralDias(1))
+	assert.Equal(t, "6 días", app.ExportPluralDias(6))
+	assert.Equal(t, "131 días", app.ExportPluralDias(131))
+}
+
+func TestPluralMeses(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "1 mes", app.ExportPluralMeses(1))
+	assert.Equal(t, "5 meses", app.ExportPluralMeses(5))
+	assert.Equal(t, "28 meses", app.ExportPluralMeses(28))
+}
+
+func TestPluralAnios(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "1 año", app.ExportPluralAnios(1))
+	assert.Equal(t, "2 años", app.ExportPluralAnios(2))
+}
