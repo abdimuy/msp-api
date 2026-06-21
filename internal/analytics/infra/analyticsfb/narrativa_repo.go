@@ -190,7 +190,9 @@ func (r *Repo) ListarPendientes(ctx context.Context, limit int) ([]outbound.Pend
 	}
 	defer func() { _ = rows.Close() }()
 
-	var result []outbound.PendienteRow
+	// Initialize non-nil so an empty queue returns [] (matches the in-memory fake
+	// and the NarrativaRepo contract), not a nil slice.
+	result := make([]outbound.PendienteRow, 0, limit)
 	for rows.Next() {
 		var row outbound.PendienteRow
 		if err := rows.Scan(&row.ClienteID, &row.InputHash); err != nil {
