@@ -11,6 +11,64 @@ import (
 	"github.com/abdimuy/msp-api/internal/platform/apperror"
 )
 
+// computePulso assembles the read-time PulsoComputado for one candidate. Shared
+// by ObtenerPulsoCliente and ObtenerPulsosClientes (and the narrativa worker) so
+// the scoring assembly lives in exactly one place.
+func (s *Service) computePulso(c *domain.WinbackCandidato, now time.Time, p90 int) analytics.PulsoComputado {
+	seg, score, recencia, ep := computeSegmentoScore(c, now)
+	tier := computeCobranzaTier(c, now)
+	diasAtraso, pctPuntualidad := ajustarCobranzaRecencia(c, now)
+	cScore, cBanda, cDrivers, cAplica := computeCreditoScore(c, now, s.scorecard, p90)
+	rScore, rBanda, rDrivers, rAplica := computeRecompraScore(c, now, s.recompraScorecard, s.btyd)
+	clvMonto, clvBanda, clvDrivers, clvResumen, _ := computeCLVConRazones(c, now, s.btyd, s.scorecard, s.clvParams, p90)
+
+	return analytics.PulsoComputado{
+		Segmento:        seg.String(),
+		Score:           score.Int(),
+		RecenciaDias:    recencia,
+		EstadoPago:      ep.String(),
+		TierRiesgo:      tier.String(),
+		DiasAtrasoProm:  diasAtraso,
+		PctPagosATiempo: pctPuntualidad,
+		ScoreCredito:    cScore.Int(),
+		BandaCredito:    cBanda.String(),
+		CreditoDrivers:  cDrivers,
+		ScoreRecompra:   rScore.Int(),
+		BandaRecompra:   rBanda.String(),
+		RecompraDrivers: rDrivers,
+		MontoCLV:        clvMonto.Decimal(),
+		BandaCLV:        clvBanda.String(),
+		CLVDrivers:      clvDrivers,
+		CreditoResumen:  resumenCredito(c, now, cBanda, cScore, cAplica),
+		RecompraResumen: resumenRecompra(c, now, rBanda, rScore, rAplica),
+		CLVResumen:      clvResumen,
+	}
+}
+
+// candidatoYPulso loads a candidate and computes its pulso, mirroring the load
+// path of ObtenerPulsoCliente without the contract projection. Used by the
+// narrativa worker. Returns the same not-found error semantics as GetCandidato.
+func (s *Service) candidatoYPulso(ctx context.Context, clienteID int) (*domain.WinbackCandidato, analytics.PulsoComputado, error) {
+	const source = "analytics.candidatoYPulso"
+
+	c, err := s.repo.GetCandidato(ctx, clienteID)
+	if err != nil {
+		appErr, ok := apperror.As(err)
+		if ok {
+			return nil, analytics.PulsoComputado{}, appErr.WithSource(source)
+		}
+		return nil, analytics.PulsoComputado{}, apperror.NewInternal(
+			"candidato_pulso_failed",
+			"error al obtener candidato y pulso",
+		).WithSource(source).WithError(err)
+	}
+
+	now := s.clock.Now()
+	live, ok := s.pagos90Recientes(ctx, []int{c.ClienteID()}, now)
+	p90 := pagos90dFor(live, ok, c)
+	return c, s.computePulso(c, now, p90), nil
+}
+
 // pagos90Window is the trailing window (days) for the live PAGOS_90D credit
 // feature — counts of real payments in [now-pagos90Window, now).
 const pagos90Window = 90
@@ -62,34 +120,7 @@ func (s *Service) ObtenerPulsoCliente(ctx context.Context, clienteID int) (analy
 	now := s.clock.Now()
 	live, ok := s.pagos90Recientes(ctx, []int{c.ClienteID()}, now)
 	p90 := pagos90dFor(live, ok, c)
-	seg, score, recencia, ep := computeSegmentoScore(c, now)
-	tier := computeCobranzaTier(c, now)
-	diasAtraso, pctPuntualidad := ajustarCobranzaRecencia(c, now)
-	cScore, cBanda, cDrivers, cAplica := computeCreditoScore(c, now, s.scorecard, p90)
-	rScore, rBanda, rDrivers, rAplica := computeRecompraScore(c, now, s.recompraScorecard, s.btyd)
-	clvMonto, clvBanda, clvDrivers, clvResumen, _ := computeCLVConRazones(c, now, s.btyd, s.scorecard, s.clvParams, p90)
-
-	comp := analytics.PulsoComputado{
-		Segmento:        seg.String(),
-		Score:           score.Int(),
-		RecenciaDias:    recencia,
-		EstadoPago:      ep.String(),
-		TierRiesgo:      tier.String(),
-		DiasAtrasoProm:  diasAtraso,
-		PctPagosATiempo: pctPuntualidad,
-		ScoreCredito:    cScore.Int(),
-		BandaCredito:    cBanda.String(),
-		CreditoDrivers:  cDrivers,
-		ScoreRecompra:   rScore.Int(),
-		BandaRecompra:   rBanda.String(),
-		RecompraDrivers: rDrivers,
-		MontoCLV:        clvMonto.Decimal(),
-		BandaCLV:        clvBanda.String(),
-		CLVDrivers:      clvDrivers,
-		CreditoResumen:  resumenCredito(c, now, cBanda, cScore, cAplica),
-		RecompraResumen: resumenRecompra(c, now, rBanda, rScore, rAplica),
-		CLVResumen:      clvResumen,
-	}
+	comp := s.computePulso(c, now, p90)
 
 	return analytics.ToClientePulsoContract(c, comp), nil
 }
@@ -123,35 +154,7 @@ func (s *Service) ObtenerPulsosClientes(ctx context.Context, clienteIDs []int) (
 	result := make(map[int]analytics.ClientePulsoContract, len(candidates))
 	for _, c := range candidates {
 		p90 := pagos90dFor(live, ok, c)
-		seg, score, recencia, ep := computeSegmentoScore(c, now)
-		tier := computeCobranzaTier(c, now)
-		diasAtraso, pctPuntualidad := ajustarCobranzaRecencia(c, now)
-		cScore, cBanda, cDrivers, cAplica := computeCreditoScore(c, now, s.scorecard, p90)
-		rScore, rBanda, rDrivers, rAplica := computeRecompraScore(c, now, s.recompraScorecard, s.btyd)
-		clvMonto, clvBanda, clvDrivers, clvResumen, _ := computeCLVConRazones(c, now, s.btyd, s.scorecard, s.clvParams, p90)
-
-		comp := analytics.PulsoComputado{
-			Segmento:        seg.String(),
-			Score:           score.Int(),
-			RecenciaDias:    recencia,
-			EstadoPago:      ep.String(),
-			TierRiesgo:      tier.String(),
-			DiasAtrasoProm:  diasAtraso,
-			PctPagosATiempo: pctPuntualidad,
-			ScoreCredito:    cScore.Int(),
-			BandaCredito:    cBanda.String(),
-			CreditoDrivers:  cDrivers,
-			ScoreRecompra:   rScore.Int(),
-			BandaRecompra:   rBanda.String(),
-			RecompraDrivers: rDrivers,
-			MontoCLV:        clvMonto.Decimal(),
-			BandaCLV:        clvBanda.String(),
-			CLVDrivers:      clvDrivers,
-			CreditoResumen:  resumenCredito(c, now, cBanda, cScore, cAplica),
-			RecompraResumen: resumenRecompra(c, now, rBanda, rScore, rAplica),
-			CLVResumen:      clvResumen,
-		}
-
+		comp := s.computePulso(c, now, p90)
 		result[c.ClienteID()] = analytics.ToClientePulsoContract(c, comp)
 	}
 	return result, nil
