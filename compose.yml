@@ -100,7 +100,9 @@ services:
     container_name: msp-ollama
     restart: unless-stopped
     ports:
-      - "11434:11434"
+      # Bind to loopback only: Ollama has NO auth. Host reaches it at
+      # localhost:11434; in-compose callers use the `ollama:11434` DNS name.
+      - "127.0.0.1:11434:11434"
     volumes:
       - msp-ollama-data:/root/.ollama
     networks:
