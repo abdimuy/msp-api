@@ -199,6 +199,12 @@ type PulsoDTO struct {
 	// ─── CLV signals (Fase B) ───────────────────────────────────────────────────────
 	CLV      string `json:"clv"      doc:"Valor de vida del cliente ajustado por riesgo, en pesos; vacío si no aplica"`
 	BandaCLV string `json:"banda_clv" doc:"Banda de CLV: ALTO, MEDIO, BAJO; vacío si no aplica"`
+
+	// ─── Quantified drivers and titulars (Fase R) ────────────────────────────────
+	CLVDrivers      []string `json:"clv_drivers"      doc:"Hasta 3 razones (en español) que explican el CLV; vacío si no aplica"`
+	CreditoResumen  string   `json:"credito_resumen"  doc:"Frase de síntesis del riesgo crediticio"`
+	RecompraResumen string   `json:"recompra_resumen" doc:"Frase de síntesis de la propensión de recompra"`
+	CLVResumen      string   `json:"clv_resumen"      doc:"Frase de síntesis del valor del cliente"`
 }
 
 // ─── Endpoint 3: GET /clientes/{id}/ventas ───────────────────────────────────

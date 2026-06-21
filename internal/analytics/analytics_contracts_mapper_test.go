@@ -197,6 +197,71 @@ func TestToClientePulsoContract_CreditoNoAplica(t *testing.T) {
 	assert.Nil(t, got.RecompraDrivers)
 }
 
+// TestToClientePulsoContract_NuevosFields verifies that the four new driver/resumen
+// fields (CLVDrivers, CreditoResumen, RecompraResumen, CLVResumen) round-trip through
+// ToClientePulsoContract from PulsoComputado.
+func TestToClientePulsoContract_NuevosFields(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
+	cohorteFecha := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	c := domain.HydrateWinbackCandidato(domain.HydrateWinbackCandidatoParams{
+		ClienteID:    70,
+		Nombre:       "Hernández Muñoz",
+		CohorteFecha: cohorteFecha,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	})
+
+	comp := analytics.PulsoComputado{
+		Segmento:        "ACTIVO",
+		Score:           55,
+		CLVDrivers:      []string{"recompra recurrente esperada", "ticket $12,000"},
+		CreditoResumen:  "Buen pagador: paga cada ~28 días, 92% a tiempo.",
+		RecompraResumen: "Muy probable que recompre — compró hace 2 meses.",
+		CLVResumen:      "Valor estimado $8.5k en 12m por su recompra y ticket de $12,000.",
+	}
+
+	got := analytics.ToClientePulsoContract(c, comp)
+
+	assert.Equal(t, []string{"recompra recurrente esperada", "ticket $12,000"}, got.CLVDrivers)
+	assert.Equal(t, "Buen pagador: paga cada ~28 días, 92% a tiempo.", got.CreditoResumen)
+	assert.Equal(t, "Muy probable que recompre — compró hace 2 meses.", got.RecompraResumen)
+	assert.Equal(t, "Valor estimado $8.5k en 12m por su recompra y ticket de $12,000.", got.CLVResumen)
+}
+
+// TestToClientePulsoContract_NuevosFields_NilCLVDrivers verifies that nil CLVDrivers
+// round-trips correctly (no aplica case).
+func TestToClientePulsoContract_NuevosFields_NilCLVDrivers(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
+	cohorteFecha := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	c := domain.HydrateWinbackCandidato(domain.HydrateWinbackCandidatoParams{
+		ClienteID:    71,
+		Nombre:       "Sánchez Valdés",
+		CohorteFecha: cohorteFecha,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	})
+
+	comp := analytics.PulsoComputado{
+		CLVDrivers:      nil,
+		CreditoResumen:  "Sin saldo a crédito — no se evalúa.",
+		RecompraResumen: "Sin historial de compras — no se evalúa.",
+		CLVResumen:      "Sin historial de compras — no se evalúa.",
+	}
+
+	got := analytics.ToClientePulsoContract(c, comp)
+
+	assert.Nil(t, got.CLVDrivers)
+	assert.Equal(t, "Sin saldo a crédito — no se evalúa.", got.CreditoResumen)
+	assert.Equal(t, "Sin historial de compras — no se evalúa.", got.RecompraResumen)
+	assert.Equal(t, "Sin historial de compras — no se evalúa.", got.CLVResumen)
+}
+
 // TestToClientePulsoContract_CobranzaRecenciaFromComp verifies that the
 // recency-adjusted cobranza metrics (DiasAtrasoProm / PctPagosATiempo) come from
 // the computed PulsoComputado, NOT from the entity's materialized values.

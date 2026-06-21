@@ -150,6 +150,10 @@ func toFichaDTO(ficha clientesapp.FichaCliente) FichaDTO {
 			RecompraDrivers:   p.RecompraDrivers,
 			BandaCLV:          p.BandaCLV,
 			CLV:               clvString(p),
+			CLVDrivers:        p.CLVDrivers,
+			CreditoResumen:    p.CreditoResumen,
+			RecompraResumen:   p.RecompraResumen,
+			CLVResumen:        p.CLVResumen,
 		}
 	}
 

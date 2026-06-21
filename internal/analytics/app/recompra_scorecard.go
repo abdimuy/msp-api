@@ -127,22 +127,19 @@ func (sc RecompraScorecard) Loaded() bool {
 // (weight_i * z_i > 0), sorted descending. These are the features that most
 // increase the probability of repurchase for this client.
 func (sc RecompraScorecard) Aplicar(features map[string]float64) (domain.ScoreRecompra, domain.BandaRecompra, []string) {
-	logit := sc.raw.Intercept
-	contribs := make([]featureContrib, 0, len(sc.raw.Features))
+	score, banda, contribs := sc.aplicarContribs(features)
+	drivers := topDrivers(positiveContribs(contribs), 3)
+	return score, banda, drivers
+}
 
-	for _, f := range sc.raw.Features {
-		zi := featureZ(features, f)
-		contrib := f.Weight * zi
-		logit += contrib
-		if contrib > 0 {
-			contribs = append(contribs, featureContrib{label: f.Label, logit: contrib})
-		}
-	}
-
+// aplicarContribs applies the recompra scorecard and returns the score, band,
+// and EVERY feature's signed contribution (both propensity-raising and
+// propensity-lowering) so the razones layer can phrase drivers by direction.
+func (sc RecompraScorecard) aplicarContribs(features map[string]float64) (domain.ScoreRecompra, domain.BandaRecompra, []featureContrib) {
+	logit, contribs := accumulateContribs(sc.raw.Intercept, sc.raw.Features, features)
 	score := logitToRecompraScore(logit)
 	banda := sc.scoreToBandaRecompra(score)
-	drivers := topDrivers(contribs, 3)
-	return score, banda, drivers
+	return score, banda, contribs
 }
 
 // logitToRecompraScore converts a logit (log-odds of repurchasing) to a score in

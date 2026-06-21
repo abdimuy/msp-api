@@ -89,4 +89,10 @@ type ClientePulsoContract struct {
 	// ─── CLV (Fase B) ────────────────────────────────────────────────────────────
 	MontoCLV decimal.Decimal // risk-adjusted CLV in pesos; 0 when no aplica
 	BandaCLV string          // ALTO|MEDIO|BAJO; "" when no aplica
+
+	// ─── Quantified drivers and titulars (Fase R) ────────────────────────────────
+	CLVDrivers      []string // quantified CLV drivers; nil when no aplica
+	CreditoResumen  string   // titular crédito (always set, incl. "no aplica")
+	RecompraResumen string   // titular recompra
+	CLVResumen      string   // titular CLV
 }

@@ -148,43 +148,78 @@ func (sc Scorecard) Aplicar(features map[string]float64) (domain.ScoreCredito, d
 	logit, contribs := sc.computeLogit(features)
 	score := logitToScore(logit)
 	banda := sc.scoreToBanda(score)
-	drivers := topDrivers(contribs, 3)
+	drivers := topDrivers(positiveContribs(contribs), 3)
 	return score, banda, drivers
 }
 
-// featureContrib holds a Spanish label and its logit contribution for driver ranking.
+// aplicarContribs applies the credit scorecard and returns the score, band, and
+// EVERY feature's signed contribution (both risk-increasing and protective) so
+// the razones layer can phrase drivers with the correct direction.
+func (sc Scorecard) aplicarContribs(features map[string]float64) (domain.ScoreCredito, domain.BandaCredito, []featureContrib) {
+	logit, contribs := sc.computeLogit(features)
+	score := logitToScore(logit)
+	banda := sc.scoreToBanda(score)
+	return score, banda, contribs
+}
+
+// featureContrib holds a feature's name, Spanish label, the raw value used in
+// scoring (the client's value, or the training mean when absent/non-finite),
+// and its signed logit contribution. The name and valor support quantified
+// driver phrasing (see razones.go); the sign of logit gives the driver direction.
 type featureContrib struct {
+	name  string
 	label string
+	valor float64
 	logit float64
 }
 
 // computeLogit iterates the scorecard features in definition order, computes
 // each standardised feature value z_i = (x - mean) / std (treating missing or
-// non-finite values as z_i = 0), accumulates the logit, and collects positive
-// contributions for driver ranking.
+// non-finite values as z_i = 0), accumulates the logit, and collects EVERY
+// feature's signed contribution (both risk-increasing and protective) so the
+// razones layer can phrase drivers with the correct direction. Callers that
+// only want risk drivers filter with positiveContribs.
 func (sc Scorecard) computeLogit(features map[string]float64) (float64, []featureContrib) {
-	logit := sc.raw.Intercept
-	contribs := make([]featureContrib, 0, len(sc.raw.Features))
+	return accumulateContribs(sc.raw.Intercept, sc.raw.Features, features)
+}
 
-	for _, f := range sc.raw.Features {
-		zi := featureZ(features, f)
+// accumulateContribs is the shared logit accumulator used by both the credit
+// and recompra scorecards. It sums intercept + Σ weight_i·z_i and returns every
+// feature's signed contribution (name, label, raw value, signed logit).
+func accumulateContribs(intercept float64, feats []featureJSON, features map[string]float64) (float64, []featureContrib) {
+	logit := intercept
+	contribs := make([]featureContrib, 0, len(feats))
+
+	for _, f := range feats {
+		val, zi := featureValZ(features, f)
 		contrib := f.Weight * zi
 		logit += contrib
-		if contrib > 0 {
-			contribs = append(contribs, featureContrib{label: f.Label, logit: contrib})
-		}
+		contribs = append(contribs, featureContrib{name: f.Name, label: f.Label, valor: val, logit: contrib})
 	}
 	return logit, contribs
 }
 
-// featureZ computes the standardised value z_i for feature f given the raw
-// feature vector. Returns 0 when the feature is absent, non-finite, or std==0.
-func featureZ(features map[string]float64, f featureJSON) float64 {
+// positiveContribs returns only the risk-increasing contributions (logit > 0).
+func positiveContribs(contribs []featureContrib) []featureContrib {
+	out := make([]featureContrib, 0, len(contribs))
+	for _, c := range contribs {
+		if c.logit > 0 {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// featureValZ computes the raw value used in scoring and the standardised value
+// z_i for feature f given the raw feature vector. The returned value is the
+// client's feature value, or the training mean when the feature is absent,
+// non-finite, or std==0 (the same conditions under which z_i = 0).
+func featureValZ(features map[string]float64, f featureJSON) (float64, float64) {
 	val, ok := features[f.Name]
 	if !ok || math.IsNaN(val) || math.IsInf(val, 0) || f.Std == 0 {
-		return 0
+		return f.Mean, 0
 	}
-	return (val - f.Mean) / f.Std
+	return val, (val - f.Mean) / f.Std
 }
 
 // logitToScore converts a logit (log-odds of being a bad payer) to a score in
