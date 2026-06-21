@@ -302,6 +302,58 @@ LEFT JOIN nbp                ON nbp.CLIENTE_ID = rfm.CLIENTE_ID`
 // It is assembled by concatenating the CTE parts with no additional predicates.
 const leerAnclasBase = leerAnclasRFMBase + leerAnclasRFMClose + leerAnclasNBPBase + leerAnclasNBPClose
 
+// ─── MSP_AN_CLIENTE_NARRATIVA ─────────────────────────────────────────────────
+
+// selectNarrativa fetches the cache row for one CLIENTE_ID.
+// Positional args (1): CLIENTE_ID.
+const selectNarrativa = `
+SELECT NARRATIVA, RASGOS, INPUT_HASH, MODELO
+FROM MSP_AN_CLIENTE_NARRATIVA
+WHERE CLIENTE_ID = ?`
+
+// updateNarrativa updates the mutable columns of an existing cache row.
+// Positional args (7): NARRATIVA, RASGOS, INPUT_HASH, MODELO, GENERADA_EN,
+// UPDATED_AT, CLIENTE_ID (WHERE).
+const updateNarrativa = `
+UPDATE MSP_AN_CLIENTE_NARRATIVA
+SET NARRATIVA   = ?,
+    RASGOS      = ?,
+    INPUT_HASH  = ?,
+    MODELO      = ?,
+    GENERADA_EN = ?,
+    UPDATED_AT  = ?
+WHERE CLIENTE_ID = ?`
+
+// insertNarrativa inserts a new cache row.
+// Positional args (9): ID, CLIENTE_ID, NARRATIVA, RASGOS, INPUT_HASH, MODELO,
+// GENERADA_EN, CREATED_AT, UPDATED_AT.
+const insertNarrativa = `
+INSERT INTO MSP_AN_CLIENTE_NARRATIVA
+  (ID, CLIENTE_ID, NARRATIVA, RASGOS, INPUT_HASH, MODELO, GENERADA_EN, CREATED_AT, UPDATED_AT)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+// ─── MSP_AN_NARRATIVA_PENDIENTE ───────────────────────────────────────────────
+
+// updatePendiente refreshes an existing queue row's hash and timestamp.
+// Positional args (3): INPUT_HASH, ENCOLADA_EN, CLIENTE_ID (WHERE).
+const updatePendiente = `
+UPDATE MSP_AN_NARRATIVA_PENDIENTE
+SET INPUT_HASH  = ?,
+    ENCOLADA_EN = ?
+WHERE CLIENTE_ID = ?`
+
+// insertPendiente inserts a new queue row.
+// Positional args (3): CLIENTE_ID, INPUT_HASH, ENCOLADA_EN.
+const insertPendiente = `
+INSERT INTO MSP_AN_NARRATIVA_PENDIENTE (CLIENTE_ID, INPUT_HASH, ENCOLADA_EN)
+VALUES (?, ?, ?)`
+
+// deletePendiente removes a client from the queue.
+// Positional args (1): CLIENTE_ID.
+const deletePendiente = `
+DELETE FROM MSP_AN_NARRATIVA_PENDIENTE
+WHERE CLIENTE_ID = ?`
+
 // ─── Cobranza signals: abono concept filter ────────────────────────────────────
 //
 // MSP_PAGOS_VENTAS mixes recurring customer payments (abonos) with one-time or
