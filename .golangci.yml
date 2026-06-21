@@ -254,6 +254,10 @@ linters:
           alias: analyticsfb
         - pkg: github.com/abdimuy/msp-api/internal/analytics/infra/analyticshttp
           alias: analyticshttp
+        - pkg: github.com/abdimuy/msp-api/internal/analytics/infra/llm
+          alias: analyticsllm
+        - pkg: github.com/abdimuy/msp-api/internal/platform/llm
+          alias: platformllm
         - pkg: github.com/abdimuy/msp-api/internal/clientes/app
           alias: clientesapp
         - pkg: github.com/abdimuy/msp-api/internal/clientes/domain
