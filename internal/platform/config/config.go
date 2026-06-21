@@ -30,6 +30,7 @@ var (
 	errMeilisearchURLRequired = errors.New("config: MEILISEARCH_URL is required " +
 		"in this environment (set MEILISEARCH_ALLOW_UNCONFIGURED=true to explicitly " +
 		"opt out of Meilisearch-backed search)")
+	errLLMBaseURLRequired = errors.New("config: LLM_BASE_URL is required when LLM_ENABLED=true")
 )
 
 // Environment is the runtime environment.
@@ -60,6 +61,7 @@ type Config struct {
 	Firebird       Firebird
 	Firebase       Firebase
 	Meilisearch    Meilisearch
+	LLM            LLM
 	Sync           Sync
 	Storage        Storage
 	ImageProcessor ImageProcessor
@@ -283,6 +285,35 @@ type Meilisearch struct {
 	AllowUnconfigured bool `env:"MEILISEARCH_ALLOW_UNCONFIGURED" envDefault:"false"`
 }
 
+// LLM holds settings for the local LLM client (Ollama dev / llama-server prod).
+//
+// Enabled defaults to false — the model never runs unless explicitly turned on
+// via LLM_ENABLED=true. When Enabled is true, BaseURL is required.
+type LLM struct {
+	// BaseURL is the base URL of the local inference server (e.g. http://localhost:11434).
+	// Required when Enabled is true.
+	BaseURL string `env:"LLM_BASE_URL"`
+	// Model is the model tag to use for inference requests. Defaults to "qwen3:4b".
+	Model string `env:"LLM_MODEL" envDefault:"qwen3:4b"`
+	// Enabled gates all LLM-backed features. Default false: the client is a
+	// no-op and no network connection to an inference server is attempted.
+	Enabled bool `env:"LLM_ENABLED" envDefault:"false"`
+	// Timeout is the per-request deadline for inference calls. Defaults to 30s.
+	Timeout time.Duration `env:"LLM_TIMEOUT" envDefault:"30s"`
+}
+
+// validate enforces that the LLM configuration is internally consistent.
+// BaseURL is only required when Enabled is true.
+func (l LLM) validate() error {
+	if !l.Enabled {
+		return nil
+	}
+	if l.BaseURL == "" {
+		return errLLMBaseURLRequired
+	}
+	return nil
+}
+
 // validate enforces that the Meilisearch configuration is internally
 // consistent. See the [Meilisearch] type doc for the conditional-URL matrix.
 func (m Meilisearch) validate(appEnv Environment) error {
@@ -367,6 +398,10 @@ func (c *Config) validate() error {
 	}
 
 	if err := c.Meilisearch.validate(c.App.Env); err != nil {
+		errs = append(errs, err)
+	}
+
+	if err := c.LLM.validate(); err != nil {
 		errs = append(errs, err)
 	}
 
