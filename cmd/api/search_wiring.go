@@ -30,20 +30,36 @@ type meilisearchBootstrap struct {
 	indexName string
 }
 
-// Start calls EnsureIndex so the clientes index is created and configured
-// before the HTTP server begins accepting traffic.
+// Start kicks off the index bootstrap (create + settings) and returns
+// immediately, running EnsureIndex detached in the background.
+//
+// Why detached: applying settings on an already-populated index can make
+// Meilisearch trigger a full reindex that runs far longer than fx's
+// StartTimeout. Doing it inline made Start exceed the deadline, so fx aborted
+// boot with "context deadline exceeded" — and because the reindex kept running
+// server-side, every retry re-queued the same settings task and the app could
+// never boot. Detaching (the same pattern the background workers use) lets boot
+// complete immediately while settings converge in the background. Serving
+// before settings are applied is safe: the directory index is unusable until
+// the reconcile worker's first tick anyway.
 func (b *meilisearchBootstrap) Start(ctx context.Context) error {
 	idxCfg := clientessearchmeili.DefaultIndexConfig(b.indexName)
-	if err := b.client.EnsureIndex(ctx, idxCfg); err != nil {
-		// NotConfiguredClient returns ErrMeilisearchNotConfigured — log and
-		// continue. The directory will fall back to SQL sort / Bleve until the
-		// reconcile worker (Task A3) is in place.
-		if isNotConfiguredErr(err) {
-			slog.WarnContext(ctx, "meilisearch.bootstrap_skipped: not configured")
-			return nil
+	// Drop fx's start-phase cancellation+deadline but keep ctx's values; the
+	// goroutine outlives Start. Bounded internally by meilisearch taskTimeout.
+	bgCtx := context.WithoutCancel(ctx)
+	go func() {
+		if err := b.client.EnsureIndex(bgCtx, idxCfg); err != nil {
+			// NotConfiguredClient returns ErrMeilisearchNotConfigured — log and
+			// continue. The directory falls back to SQL sort until configured.
+			if isNotConfiguredErr(err) {
+				slog.WarnContext(bgCtx, "meilisearch.bootstrap_skipped: not configured")
+				return
+			}
+			slog.ErrorContext(bgCtx, "meilisearch.bootstrap_failed", "error", err.Error())
+			return
 		}
-		return err
-	}
+		slog.InfoContext(bgCtx, "meilisearch.bootstrap_done", "index", b.indexName)
+	}()
 	return nil
 }
 

@@ -21,8 +21,11 @@ import (
 const taskWaitInterval = 100 * time.Millisecond
 
 // taskTimeout caps the total wait for any single index-management task
-// (create + settings). 30 s is generous; the operations are fast in practice.
-const taskTimeout = 30 * time.Second
+// (create + settings). Index creation is near-instant, but a settings update on
+// an already-populated index can make Meilisearch run a full reindex that takes
+// minutes; the bootstrap runs detached (see meilisearchBootstrap.Start) so this
+// ceiling only bounds that background wait, never blocks boot.
+const taskTimeout = 5 * time.Minute
 
 // RealClient is the production Meilisearch client wrapping the meilisearch-go
 // SDK. It satisfies the Client interface.
