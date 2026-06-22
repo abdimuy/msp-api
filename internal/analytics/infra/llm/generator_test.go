@@ -243,3 +243,90 @@ func TestGenerar_ClientError(t *testing.T) {
 		t.Errorf("expected ErrLLMDisabled, got: %v", err)
 	}
 }
+
+// TestGenerar_NotaIncludedInUserMessage verifies that when in.Nota is non-empty
+// the user message contains a "=== NOTA DEL COBRADOR ===" section with the note.
+func TestGenerar_NotaIncludedInUserMessage(t *testing.T) {
+	t.Parallel()
+
+	var captured platformllm.ChatReq
+	stub := &stubClient{
+		ChatFunc: func(_ context.Context, req platformllm.ChatReq) (string, error) {
+			captured = req
+			return `{"narrativa":"Texto.","rasgos":[],"contexto_operativo":""}`, nil
+		},
+	}
+
+	in := outbound.NarrativeInput{
+		Nota: "paga los viernes con María",
+		Catalogo: []domain.Rasgo{
+			{Codigo: "code_a", Etiqueta: "A", Definicion: "Def A."},
+		},
+	}
+
+	gen := analyticsllm.NewGenerator(stub, "test-model")
+	if _, err := gen.Generar(context.Background(), in); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	userMsg := captured.Messages[1].Content
+	if !strings.Contains(userMsg, "=== NOTA DEL COBRADOR ===") {
+		t.Error("user message must contain '=== NOTA DEL COBRADOR ===' when Nota is non-empty")
+	}
+	if !strings.Contains(userMsg, "paga los viernes con María") {
+		t.Error("user message must contain the nota text")
+	}
+}
+
+// TestGenerar_NotaOmittedWhenEmpty verifies that when in.Nota is empty the
+// user message does NOT contain a "=== NOTA DEL COBRADOR ===" section.
+func TestGenerar_NotaOmittedWhenEmpty(t *testing.T) {
+	t.Parallel()
+
+	var captured platformllm.ChatReq
+	stub := &stubClient{
+		ChatFunc: func(_ context.Context, req platformllm.ChatReq) (string, error) {
+			captured = req
+			return `{"narrativa":"Texto.","rasgos":[],"contexto_operativo":""}`, nil
+		},
+	}
+
+	in := outbound.NarrativeInput{
+		Nota: "", // explicitly empty
+		Catalogo: []domain.Rasgo{
+			{Codigo: "code_a", Etiqueta: "A", Definicion: "Def A."},
+		},
+	}
+
+	gen := analyticsllm.NewGenerator(stub, "test-model")
+	if _, err := gen.Generar(context.Background(), in); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	userMsg := captured.Messages[1].Content
+	if strings.Contains(userMsg, "=== NOTA DEL COBRADOR ===") {
+		t.Error("user message must NOT contain '=== NOTA DEL COBRADOR ===' when Nota is empty")
+	}
+}
+
+// TestGenerar_ContextoOperativoPopulated verifies that a 3-field JSON response
+// with "contexto_operativo" populates NarrativeOutput.ContextoOperativo.
+func TestGenerar_ContextoOperativoPopulated(t *testing.T) {
+	t.Parallel()
+
+	responseJSON := `{"narrativa":"Texto de prueba.","rasgos":["loyal_but_stagnant"],"contexto_operativo":"paga los lunes con Rafael"}`
+	stub := &stubClient{
+		ChatFunc: func(_ context.Context, _ platformllm.ChatReq) (string, error) {
+			return responseJSON, nil
+		},
+	}
+
+	gen := analyticsllm.NewGenerator(stub, "test-model")
+	out, err := gen.Generar(context.Background(), sampleInput())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.ContextoOperativo != "paga los lunes con Rafael" {
+		t.Errorf("ContextoOperativo: got %q, want %q", out.ContextoOperativo, "paga los lunes con Rafael")
+	}
+}

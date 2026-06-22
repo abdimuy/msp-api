@@ -307,30 +307,31 @@ const leerAnclasBase = leerAnclasRFMBase + leerAnclasRFMClose + leerAnclasNBPBas
 // selectNarrativa fetches the cache row for one CLIENTE_ID.
 // Positional args (1): CLIENTE_ID.
 const selectNarrativa = `
-SELECT NARRATIVA, RASGOS, INPUT_HASH, MODELO
+SELECT NARRATIVA, RASGOS, CONTEXTO_OPERATIVO, INPUT_HASH, MODELO
 FROM MSP_AN_CLIENTE_NARRATIVA
 WHERE CLIENTE_ID = ?`
 
 // updateNarrativa updates the mutable columns of an existing cache row.
-// Positional args (7): NARRATIVA, RASGOS, INPUT_HASH, MODELO, GENERADA_EN,
-// UPDATED_AT, CLIENTE_ID (WHERE).
+// Positional args (8): NARRATIVA, RASGOS, CONTEXTO_OPERATIVO, INPUT_HASH, MODELO,
+// GENERADA_EN, UPDATED_AT, CLIENTE_ID (WHERE).
 const updateNarrativa = `
 UPDATE MSP_AN_CLIENTE_NARRATIVA
-SET NARRATIVA   = ?,
-    RASGOS      = ?,
-    INPUT_HASH  = ?,
-    MODELO      = ?,
-    GENERADA_EN = ?,
-    UPDATED_AT  = ?
+SET NARRATIVA          = ?,
+    RASGOS             = ?,
+    CONTEXTO_OPERATIVO = ?,
+    INPUT_HASH         = ?,
+    MODELO             = ?,
+    GENERADA_EN        = ?,
+    UPDATED_AT         = ?
 WHERE CLIENTE_ID = ?`
 
 // insertNarrativa inserts a new cache row.
-// Positional args (9): ID, CLIENTE_ID, NARRATIVA, RASGOS, INPUT_HASH, MODELO,
-// GENERADA_EN, CREATED_AT, UPDATED_AT.
+// Positional args (10): ID, CLIENTE_ID, NARRATIVA, RASGOS, CONTEXTO_OPERATIVO,
+// INPUT_HASH, MODELO, GENERADA_EN, CREATED_AT, UPDATED_AT.
 const insertNarrativa = `
 INSERT INTO MSP_AN_CLIENTE_NARRATIVA
-  (ID, CLIENTE_ID, NARRATIVA, RASGOS, INPUT_HASH, MODELO, GENERADA_EN, CREATED_AT, UPDATED_AT)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  (ID, CLIENTE_ID, NARRATIVA, RASGOS, CONTEXTO_OPERATIVO, INPUT_HASH, MODELO, GENERADA_EN, CREATED_AT, UPDATED_AT)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 // ─── MSP_AN_NARRATIVA_PENDIENTE ───────────────────────────────────────────────
 
@@ -352,6 +353,13 @@ VALUES (?, ?, ?)`
 // Positional args (1): CLIENTE_ID.
 const deletePendiente = `
 DELETE FROM MSP_AN_NARRATIVA_PENDIENTE
+WHERE CLIENTE_ID = ?`
+
+// selectNotaCliente fetches the cobrador's free-text note for one client.
+// Positional args (1): CLIENTE_ID.
+const selectNotaCliente = `
+SELECT NOTAS
+FROM CLIENTES
 WHERE CLIENTE_ID = ?`
 
 // ─── Cobranza signals: abono concept filter ────────────────────────────────────

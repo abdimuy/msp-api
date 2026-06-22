@@ -28,11 +28,12 @@ func (r *Repo) GetNarrativa(ctx context.Context, clienteID int) (*outbound.Narra
 	var (
 		texto     sql.NullString
 		rasgosRaw sql.NullString
+		contexto  sql.NullString
 		inputHash string
 		modelo    sql.NullString
 	)
 	err := q.QueryRowContext(ctx, selectNarrativa, clienteID).
-		Scan(&texto, &rasgosRaw, &inputHash, &modelo)
+		Scan(&texto, &rasgosRaw, &contexto, &inputHash, &modelo)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil //nolint:nilnil // (nil, nil) means "not found" per NarrativaRepo contract.
 	}
@@ -46,11 +47,12 @@ func (r *Repo) GetNarrativa(ctx context.Context, clienteID int) (*outbound.Narra
 	}
 
 	return &outbound.NarrativaRow{
-		ClienteID: clienteID,
-		Texto:     texto.String,
-		Rasgos:    rasgos,
-		InputHash: inputHash,
-		Modelo:    modelo.String,
+		ClienteID:         clienteID,
+		Texto:             texto.String,
+		Rasgos:            rasgos,
+		ContextoOperativo: contexto.String,
+		InputHash:         inputHash,
+		Modelo:            modelo.String,
 	}, nil
 }
 
@@ -91,6 +93,7 @@ func (r *Repo) UpsertNarrativa(ctx context.Context, n domain.Narrativa) error {
 	res, err := q.ExecContext(ctx, updateNarrativa,
 		n.Texto,
 		rasgosJSON,
+		n.ContextoOperativo,
 		n.InputHash,
 		n.Modelo,
 		generadaEn,
@@ -114,6 +117,7 @@ func (r *Repo) UpsertNarrativa(ctx context.Context, n domain.Narrativa) error {
 		n.ClienteID,
 		n.Texto,
 		rasgosJSON,
+		n.ContextoOperativo,
 		n.InputHash,
 		n.Modelo,
 		generadaEn,

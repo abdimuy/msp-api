@@ -62,7 +62,7 @@ func TestBuildNarrativeInput_Mapping(t *testing.T) {
 		CLVResumen:      "CLV alto",
 	}
 
-	in := app.ExportBuildNarrativeInput(c, comp, app.CatalogoRasgos)
+	in := app.ExportBuildNarrativeInput(c, comp, "", app.CatalogoRasgos)
 
 	// Identity fields from candidate
 	assert.Equal(t, 123, in.ClienteID)

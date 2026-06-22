@@ -129,6 +129,8 @@ func (m *noopMicrosip) LeerAnclasDesde(_ context.Context, _ *time.Time) ([]outbo
 	return m.anclas, m.err
 }
 
+func (m *noopMicrosip) GetNotaCliente(_ context.Context, _ int) (string, error) { return "", nil }
+
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 // buildService constructs a real *analyticsapp.Service with the given fake ports.
@@ -604,6 +606,10 @@ type blockingMicrosipImpl struct {
 func (b *blockingMicrosipImpl) LeerAnclasDesde(_ context.Context, _ *time.Time) ([]outbound.AnclaCliente, error) {
 	<-b.release
 	return nil, nil
+}
+
+func (b *blockingMicrosipImpl) GetNotaCliente(_ context.Context, _ int) (string, error) {
+	return "", nil
 }
 
 // ─── Scenario 7: internal error → 500 ────────────────────────────────────────

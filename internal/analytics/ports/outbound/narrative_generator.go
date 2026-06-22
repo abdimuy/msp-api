@@ -46,6 +46,11 @@ type NarrativeInput struct {
 	RecompraDrivers []string
 	CLVDrivers      []string
 
+	// Nota is the cobrador's free-text note (CLIENTES.NOTAS) for the client,
+	// already decoded/NFC-normalized/trimmed/capped. Optional qualitative context
+	// (payment agreements, responsibles, shared address, dates). Empty when none.
+	Nota string
+
 	// The finite trait catalog the generator must pick 1-3 codes from.
 	Catalogo []domain.Rasgo
 }
@@ -56,6 +61,9 @@ type NarrativeInput struct {
 type NarrativeOutput struct {
 	Narrativa string
 	Rasgos    []string
+	// ContextoOperativo is the operational signals distilled from in.Nota (raw,
+	// unvalidated — the app layer trims and caps it). Empty when the note adds nothing.
+	ContextoOperativo string
 }
 
 // NarrativeGenerator produces an analyst reading + trait selection for one client

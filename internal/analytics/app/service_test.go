@@ -168,6 +168,10 @@ func (m *fakeMicrosipReader) LeerAnclasDesde(_ context.Context, since *time.Time
 	return m.anclas, nil
 }
 
+func (m *fakeMicrosipReader) GetNotaCliente(_ context.Context, _ int) (string, error) {
+	return "", nil
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 // mustCandidato builds a WinbackCandidato or panics. Used only in test helpers

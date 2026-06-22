@@ -57,7 +57,7 @@ func TestAplicarNarrativa_FreshHit(t *testing.T) {
 	t.Parallel()
 
 	comp := testPulsoComp()
-	hash := app.NarrativaInputHash(comp)
+	hash := app.NarrativaInputHash(comp, "")
 
 	nRepo := narrativamem.New()
 	require.NoError(t, nRepo.UpsertNarrativa(context.Background(), domain.Narrativa{
@@ -83,7 +83,7 @@ func TestAplicarNarrativa_UnknownCodeDropped(t *testing.T) {
 	t.Parallel()
 
 	comp := testPulsoComp()
-	hash := app.NarrativaInputHash(comp)
+	hash := app.NarrativaInputHash(comp, "")
 
 	nRepo := narrativamem.New()
 	require.NoError(t, nRepo.UpsertNarrativa(context.Background(), domain.Narrativa{
@@ -109,7 +109,7 @@ func TestAplicarNarrativa_NegativeCacheHit(t *testing.T) {
 	t.Parallel()
 
 	comp := testPulsoComp()
-	hash := app.NarrativaInputHash(comp)
+	hash := app.NarrativaInputHash(comp, "")
 
 	nRepo := narrativamem.New()
 	// Negative-cache row: hash matches but Texto is empty and Rasgos is empty.
@@ -138,7 +138,7 @@ func TestAplicarNarrativa_StaleEnabled(t *testing.T) {
 	t.Parallel()
 
 	comp := testPulsoComp()
-	currentHash := app.NarrativaInputHash(comp)
+	currentHash := app.NarrativaInputHash(comp, "")
 
 	nRepo := narrativamem.New()
 	// Seed a stale row (different hash).
@@ -171,7 +171,7 @@ func TestAplicarNarrativa_MissEnabled(t *testing.T) {
 	t.Parallel()
 
 	comp := testPulsoComp()
-	currentHash := app.NarrativaInputHash(comp)
+	currentHash := app.NarrativaInputHash(comp, "")
 
 	nRepo := narrativamem.New() // empty repo — miss
 
@@ -297,6 +297,33 @@ func makeNarrativaCandidato(clienteID int) *domain.WinbackCandidato {
 		CohorteFecha:      testNow.AddDate(-2, 0, 0),
 		Now:               testNow,
 	})
+}
+
+// TestAplicarNarrativa_ContextoOperativoServed verifies that a cached narrativa
+// row with ContextoOperativo="contexto X" populates comp.ContextoOperativo.
+func TestAplicarNarrativa_ContextoOperativoServed(t *testing.T) {
+	t.Parallel()
+
+	comp := testPulsoComp()
+	hash := app.NarrativaInputHash(comp, "")
+
+	nRepo := narrativamem.New()
+	require.NoError(t, nRepo.UpsertNarrativa(context.Background(), domain.Narrativa{
+		ClienteID:         testNarrativaClienteID,
+		Texto:             "lectura del analista",
+		Rasgos:            []string{"loyal_but_stagnant"},
+		InputHash:         hash,
+		Modelo:            "test-model",
+		ContextoOperativo: "contexto X",
+	}))
+
+	svc := app.NewService(newFakeWinbackRepo(), nil, fixedClock{testNow}, nil).
+		WithNarrativa(nRepo, false)
+
+	app.ExportAplicarNarrativa(context.Background(), svc, testNarrativaClienteID, &comp)
+
+	assert.Equal(t, "contexto X", comp.ContextoOperativo,
+		"ContextoOperativo from the cached row must be served into comp")
 }
 
 // Compile-time assertion: ExportAplicarNarrativa and ExportNarrativaInputHash

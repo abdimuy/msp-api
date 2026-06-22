@@ -115,6 +115,10 @@ func (m *internalFakeMicrosip) LeerAnclasDesde(_ context.Context, _ *time.Time) 
 	return m.anclas, nil
 }
 
+func (m *internalFakeMicrosip) GetNotaCliente(_ context.Context, _ int) (string, error) {
+	return "", nil
+}
+
 // errorInternalFakeRepo is a minimal repo that always errors on UpsertCandidatos,
 // causing the tick's error-logging branch to execute. It signals via notified
 // the first time the failing branch is reached and counts every call, so the

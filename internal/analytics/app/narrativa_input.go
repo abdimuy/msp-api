@@ -12,7 +12,7 @@ import (
 
 // buildNarrativeInput maps a candidate + its computed pulso + the trait catalog
 // into the generator's fact-anchored input DTO.
-func buildNarrativeInput(c *domain.WinbackCandidato, comp analytics.PulsoComputado, catalogo []domain.Rasgo) outbound.NarrativeInput {
+func buildNarrativeInput(c *domain.WinbackCandidato, comp analytics.PulsoComputado, nota string, catalogo []domain.Rasgo) outbound.NarrativeInput {
 	return outbound.NarrativeInput{
 		ClienteID: c.ClienteID(),
 		Nombre:    c.Nombre(),
@@ -44,6 +44,7 @@ func buildNarrativeInput(c *domain.WinbackCandidato, comp analytics.PulsoComputa
 		RecompraDrivers: comp.RecompraDrivers,
 		CLVDrivers:      comp.CLVDrivers,
 
+		Nota:     nota,
 		Catalogo: catalogo,
 	}
 }

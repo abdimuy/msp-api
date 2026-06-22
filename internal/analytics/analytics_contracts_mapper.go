@@ -72,6 +72,9 @@ type PulsoComputado struct {
 	// ─── Lectura del analista (IA) — Fase 2 ──────────────────────────────────────
 	Narrativa string   // analyst paragraph (empty when LLM off / not yet generated)
 	RasgosIA  []string // resolved Spanish display labels (empty when none)
+	// ContextoOperativo is the operational signals the IA distilled from the
+	// cobrador's note (Fase 2.1). Empty when none / LLM off.
+	ContextoOperativo string
 }
 
 // ToClientePulsoContract projects a WinbackCandidato plus the read-time computed
@@ -114,5 +117,6 @@ func ToClientePulsoContract(c *domain.WinbackCandidato, comp PulsoComputado) Cli
 		CLVResumen:        comp.CLVResumen,
 		Narrativa:         comp.Narrativa,
 		RasgosIA:          comp.RasgosIA,
+		ContextoOperativo: comp.ContextoOperativo,
 	}
 }

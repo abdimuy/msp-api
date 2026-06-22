@@ -129,15 +129,12 @@ func ExportPluralAnios(n int) string { return pluralAnios(n) }
 
 // ExportBuildNarrativeInput exposes the internal buildNarrativeInput function
 // for tests in the app_test package.
-func ExportBuildNarrativeInput(c *domain.WinbackCandidato, comp analytics.PulsoComputado, catalogo []domain.Rasgo) outbound.NarrativeInput {
-	return buildNarrativeInput(c, comp, catalogo)
+func ExportBuildNarrativeInput(c *domain.WinbackCandidato, comp analytics.PulsoComputado, nota string, catalogo []domain.Rasgo) outbound.NarrativeInput {
+	return buildNarrativeInput(c, comp, nota, catalogo)
 }
 
-// ExportCandidatoYPulso exposes candidatoYPulso for tests (worker integration
-// tests in Task 11 will call this through the production method; this export
-// makes the symbol reachable from the test package so the unused linter is
-// satisfied before the worker is wired in Task 11).
-func (s *Service) ExportCandidatoYPulso(ctx context.Context, clienteID int) (*domain.WinbackCandidato, analytics.PulsoComputado, error) {
+// ExportCandidatoYPulso exposes candidatoYPulso for tests.
+func (s *Service) ExportCandidatoYPulso(ctx context.Context, clienteID int) (*domain.WinbackCandidato, analytics.PulsoComputado, string, error) {
 	return s.candidatoYPulso(ctx, clienteID)
 }
 

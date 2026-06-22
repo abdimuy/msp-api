@@ -4,6 +4,7 @@ package app_test
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/abdimuy/msp-api/internal/analytics"
 	"github.com/abdimuy/msp-api/internal/analytics/app"
@@ -308,5 +309,70 @@ func TestValidarNarrativa_ExactBoundaryLengths(t *testing.T) {
 	rLong := app.ValidarNarrativa(outbound.NarrativeOutput{Narrativa: tooLong}, lowRiskComp())
 	if !rLong.UsedFallback {
 		t.Error("expected 1201-rune narrativa to fail")
+	}
+}
+
+// TestValidarNarrativa_ContextoTrimmed verifies that leading/trailing whitespace
+// in ContextoOperativo is removed.
+func TestValidarNarrativa_ContextoTrimmed(t *testing.T) {
+	t.Parallel()
+
+	raw := outbound.NarrativeOutput{
+		Narrativa:         validNarrativa(),
+		Rasgos:            []string{},
+		ContextoOperativo: "  paga los martes con Juan  ",
+	}
+	result := app.ValidarNarrativa(raw, lowRiskComp())
+
+	if result.ContextoOperativo != "paga los martes con Juan" {
+		t.Errorf("expected trimmed contexto, got %q", result.ContextoOperativo)
+	}
+}
+
+// TestValidarNarrativa_ContextoCappedAt240Runes verifies that a ContextoOperativo
+// longer than 240 runes is truncated to exactly 240 runes.
+func TestValidarNarrativa_ContextoCappedAt240Runes(t *testing.T) {
+	t.Parallel()
+
+	// Build a string with multibyte runes (á = 2 bytes) totalling 260 runes.
+	long := strings.Repeat("á", 260)
+	raw := outbound.NarrativeOutput{
+		Narrativa:         validNarrativa(),
+		ContextoOperativo: long,
+	}
+	result := app.ValidarNarrativa(raw, lowRiskComp())
+
+	got := utf8.RuneCountInString(result.ContextoOperativo)
+	if got != 240 {
+		t.Errorf("expected ContextoOperativo capped to 240 runes, got %d", got)
+	}
+}
+
+// TestValidarNarrativa_ContextoPreservedOnFallback verifies that ContextoOperativo
+// is still set even when the direction check fails (UsedFallback=true).
+func TestValidarNarrativa_ContextoPreservedOnFallback(t *testing.T) {
+	t.Parallel()
+
+	// High-risk comp + forbidden phrase → fallback.
+	comp := analytics.PulsoComputado{
+		TierRiesgo:   domain.TierRiesgoCritico.String(),
+		EstadoPago:   domain.EstadoPagoMoroso.String(),
+		BandaCredito: domain.BandaCreditoCritico.String(),
+	}
+	raw := outbound.NarrativeOutput{
+		Narrativa:         "Este cliente es un buen pagador que siempre cumple con sus obligaciones.",
+		Rasgos:            []string{"steady_reliable"},
+		ContextoOperativo: "acuerdo de pago con Carmelo",
+	}
+	result := app.ValidarNarrativa(raw, comp)
+
+	if !result.UsedFallback {
+		t.Fatal("expected UsedFallback=true")
+	}
+	if result.Texto != "" {
+		t.Errorf("expected empty Texto on fallback, got %q", result.Texto)
+	}
+	if result.ContextoOperativo != "acuerdo de pago con Carmelo" {
+		t.Errorf("ContextoOperativo must be preserved on fallback, got %q", result.ContextoOperativo)
 	}
 }

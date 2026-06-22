@@ -42,6 +42,10 @@ func (b *syncBlockingMicrosip) LeerAnclasDesde(_ context.Context, _ *time.Time) 
 	return nil, nil
 }
 
+func (b *syncBlockingMicrosip) GetNotaCliente(_ context.Context, _ int) (string, error) {
+	return "", nil
+}
+
 func (b *syncBlockingMicrosip) callCount() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
