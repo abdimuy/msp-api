@@ -109,7 +109,11 @@ func (w *NarrativaWorker) Start(ctx context.Context) error {
 	if w.running {
 		return nil
 	}
-	loopCtx, cancel := context.WithCancel(ctx)
+	// fx cancels the OnStart ctx once the start phase completes, so the loop
+	// must NOT inherit its cancellation or it would exit immediately after boot
+	// and never tick. Keep ctx's values (trace/log) but drop fx's cancellation;
+	// Stop() cancels loopCtx explicitly for clean shutdown.
+	loopCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	w.cancel = cancel
 	w.done = make(chan struct{})
 	w.running = true
