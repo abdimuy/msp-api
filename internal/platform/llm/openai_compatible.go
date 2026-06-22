@@ -101,6 +101,7 @@ type openaiResponse struct {
 type realClient struct {
 	baseURL    string
 	model      string
+	apiKey     string
 	httpClient *http.Client
 }
 
@@ -118,6 +119,7 @@ func newRealClient(cfg config.LLM) *realClient {
 	return &realClient{
 		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
 		model:   cfg.Model,
+		apiKey:  cfg.APIKey,
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
@@ -146,6 +148,11 @@ func (c *realClient) Chat(ctx context.Context, req ChatReq) (string, error) {
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
+	// Hosted providers (Gemini, OpenAI, Groq) require bearer auth; local
+	// inference servers leave APIKey empty and the header is omitted.
+	if c.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {

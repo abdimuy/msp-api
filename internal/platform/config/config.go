@@ -303,6 +303,10 @@ type LLM struct {
 	Enabled bool `env:"LLM_ENABLED" envDefault:"false"`
 	// Timeout is the per-request deadline for inference calls. Defaults to 30s.
 	Timeout time.Duration `env:"LLM_TIMEOUT" envDefault:"30s"`
+	// APIKey is the bearer token for hosted OpenAI-compatible providers (e.g.
+	// Gemini, OpenAI, Groq). Empty for local inference servers (Ollama,
+	// llama-server) that need no auth — the Authorization header is omitted then.
+	APIKey string `env:"LLM_API_KEY"`
 }
 
 // validate enforces that the LLM configuration is internally consistent.
