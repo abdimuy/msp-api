@@ -163,6 +163,9 @@ func appOptions() []fx.Option {
 			provideClientesDirectoryIndex,
 			provideClientesService,
 			provideClientesDirectoryReconcileWorker,
+			// Rutas module.
+			provideRutasRepo,
+			provideRutasService,
 			provideFbEventSource,
 			provideCobranzaPagosChangelogRepo,
 			provideCobranzaSaldosChangelogRepo,

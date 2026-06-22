@@ -44,6 +44,9 @@ import (
 
 	clientesapp "github.com/abdimuy/msp-api/internal/clientes/app"
 	"github.com/abdimuy/msp-api/internal/clientes/infra/clienteshttp"
+
+	rutasapp "github.com/abdimuy/msp-api/internal/rutas/app"
+	rutashttp "github.com/abdimuy/msp-api/internal/rutas/infra/rutashttp"
 )
 
 // RootHandler is the assembled chi router exposed as an fx-typed dependency.
@@ -148,6 +151,7 @@ func provideRootHandler(
 	inventarioSvc *inventarioapp.Service,
 	analyticsSvc *analyticsapp.Service,
 	clientesSvc *clientesapp.Service,
+	rutasSvc *rutasapp.Service,
 	logger *slog.Logger,
 ) RootHandler {
 	r := chi.NewRouter()
@@ -240,6 +244,13 @@ func provideRootHandler(
 		r.Group(func(r chi.Router) {
 			r.Use(skipAuthForPublicDocs(authn.Handler))
 			clienteshttp.MountRouter(r, clientesSvc)
+		})
+
+		// Rutas listing endpoint — read-only, authn only (no idempotency, no
+		// failed-intent capture). Final path: GET /v2/rutas.
+		r.Route("/rutas", func(r chi.Router) {
+			r.Use(skipAuthForPublicDocs(authn.Handler))
+			rutashttp.MountRouter(r, rutasSvc)
 		})
 
 		// Cobranza endpoints — authn only. Read (saldos, pagos, sync) plus
