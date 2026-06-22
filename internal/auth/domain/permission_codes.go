@@ -106,6 +106,9 @@ const (
 	// PermClientesReindexar grants triggering a manual rebuild of the clientes
 	// full-text search index.
 	PermClientesReindexar Permission = "clientes:reindexar"
+
+	// PermRutasLeer grants read access to the rutas listing endpoint.
+	PermRutasLeer Permission = "rutas:leer"
 )
 
 // PermissionMeta is a catalog entry pairing a permission code with the
@@ -178,6 +181,8 @@ func AllPermissions() []PermissionMeta {
 
 		{PermClientesLeer, "ver el directorio, ficha, ventas y detalle de clientes", categoriaClientes},
 		{PermClientesReindexar, "reconstruir el índice de búsqueda de clientes", categoriaClientes},
+
+		{PermRutasLeer, "ver el listado de zonas (rutas) con cobrador, clientes y saldo", categoriaClientes},
 	}
 	sort.Slice(perms, func(i, j int) bool { return perms[i].Code < perms[j].Code })
 	return perms

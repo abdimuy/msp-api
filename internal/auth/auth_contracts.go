@@ -121,4 +121,7 @@ const (
 	PermClientesLeer = domain.PermClientesLeer
 	// PermClientesReindexar — see domain.PermClientesReindexar.
 	PermClientesReindexar = domain.PermClientesReindexar
+
+	// PermRutasLeer — see domain.PermRutasLeer.
+	PermRutasLeer = domain.PermRutasLeer
 )

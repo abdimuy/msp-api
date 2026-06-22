@@ -270,6 +270,16 @@ linters:
           alias: clienteshttp
         - pkg: github.com/abdimuy/msp-api/internal/clientes/infra/search
           alias: clientessearch
+        - pkg: github.com/abdimuy/msp-api/internal/rutas/app
+          alias: rutasapp
+        - pkg: github.com/abdimuy/msp-api/internal/rutas/domain
+          alias: rutasdomain
+        - pkg: github.com/abdimuy/msp-api/internal/rutas/ports/outbound
+          alias: rutasoutbound
+        - pkg: github.com/abdimuy/msp-api/internal/rutas/infra/rutasfb
+          alias: rutasfb
+        - pkg: github.com/abdimuy/msp-api/internal/rutas/infra/rutashttp
+          alias: rutashttp
         - pkg: github.com/abdimuy/msp-api/internal/clientes/infra/clientessearch
           alias: clientessearchmeili
         - pkg: github.com/abdimuy/msp-api/internal/platform/meilisearch
