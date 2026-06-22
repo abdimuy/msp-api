@@ -148,4 +148,10 @@ type MicrosipReader interface {
 	// the caller is responsible for applying an overlap window to avoid
 	// missing rows that landed between runs.
 	LeerAnclasDesde(ctx context.Context, since *time.Time) ([]AnclaCliente, error)
+
+	// GetNotaCliente returns the cobrador's free-text note (CLIENTES.NOTAS) for a
+	// client, decoded from Windows-1252, NFC-normalized, trimmed, and capped. A
+	// client with no note (or no row) yields "" with no error — the note is
+	// optional qualitative context, never a hard dependency.
+	GetNotaCliente(ctx context.Context, clienteID int) (string, error)
 }

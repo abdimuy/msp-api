@@ -57,11 +57,12 @@ func (r *Repo) UpsertNarrativa(_ context.Context, n domain.Narrativa) error {
 	defer r.mu.Unlock()
 
 	r.rows[n.ClienteID] = &outbound.NarrativaRow{
-		ClienteID: n.ClienteID,
-		Texto:     n.Texto,
-		Rasgos:    append([]string(nil), n.Rasgos...),
-		InputHash: n.InputHash,
-		Modelo:    n.Modelo,
+		ClienteID:         n.ClienteID,
+		Texto:             n.Texto,
+		Rasgos:            append([]string(nil), n.Rasgos...),
+		InputHash:         n.InputHash,
+		Modelo:            n.Modelo,
+		ContextoOperativo: n.ContextoOperativo,
 	}
 	return nil
 }

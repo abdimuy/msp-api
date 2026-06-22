@@ -207,8 +207,9 @@ type PulsoDTO struct {
 	CLVResumen      string   `json:"clv_resumen"      doc:"Frase de síntesis del valor del cliente"`
 
 	// ─── Lectura del analista (IA) — Fase 2 ──────────────────────────────────────
-	Narrativa string   `json:"narrativa"  doc:"Lectura del analista generada por IA (síntesis + acción interna); vacío si no disponible o LLM apagado"`
-	RasgosIA  []string `json:"rasgos_ia"  doc:"Rasgos conductuales asignados por IA (etiquetas en español); vacío si ninguno"`
+	Narrativa         string   `json:"narrativa"          doc:"Lectura del analista generada por IA (síntesis + acción interna); vacío si no disponible o LLM apagado"`
+	RasgosIA          []string `json:"rasgos_ia"          doc:"Rasgos conductuales asignados por IA (etiquetas en español); vacío si ninguno"`
+	ContextoOperativo string   `json:"contexto_operativo" doc:"Señales operativas destiladas por IA de la nota del cobrador (acuerdos, responsables, domicilio compartido, fechas); vacío si la nota no aporta nada o el LLM está apagado"`
 }
 
 // ─── Endpoint 3: GET /clientes/{id}/ventas ───────────────────────────────────

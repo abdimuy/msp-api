@@ -63,6 +63,8 @@ func (stubMicrosip) LeerAnclasDesde(_ context.Context, _ *time.Time) ([]outbound
 	return nil, nil
 }
 
+func (stubMicrosip) GetNotaCliente(_ context.Context, _ int) (string, error) { return "", nil }
+
 // buildTestService wires a *analyticsapp.Service against in-memory fakes.
 // txMgr is nil so runInTx calls fn directly without a real transaction.
 func buildTestService() *analyticsapp.Service {

@@ -45,19 +45,21 @@ func (s *Service) computePulso(c *domain.WinbackCandidato, now time.Time, p90 in
 	}
 }
 
-// candidatoYPulso loads a candidate and computes its pulso, mirroring the load
-// path of ObtenerPulsoCliente without the contract projection. Used by the
-// narrativa worker. Returns the same not-found error semantics as GetCandidato.
-func (s *Service) candidatoYPulso(ctx context.Context, clienteID int) (*domain.WinbackCandidato, analytics.PulsoComputado, error) {
+// candidatoYPulso loads a candidate, computes its pulso, and reads the cobrador's
+// note, mirroring the load path of ObtenerPulsoCliente without the contract
+// projection. Used by the narrativa worker. Returns the same not-found error
+// semantics as GetCandidato. A note read failure degrades to "" (the note is
+// optional context, never a hard dependency).
+func (s *Service) candidatoYPulso(ctx context.Context, clienteID int) (*domain.WinbackCandidato, analytics.PulsoComputado, string, error) {
 	const source = "analytics.candidatoYPulso"
 
 	c, err := s.repo.GetCandidato(ctx, clienteID)
 	if err != nil {
 		appErr, ok := apperror.As(err)
 		if ok {
-			return nil, analytics.PulsoComputado{}, appErr.WithSource(source)
+			return nil, analytics.PulsoComputado{}, "", appErr.WithSource(source)
 		}
-		return nil, analytics.PulsoComputado{}, apperror.NewInternal(
+		return nil, analytics.PulsoComputado{}, "", apperror.NewInternal(
 			"candidato_pulso_failed",
 			"error al obtener candidato y pulso",
 		).WithSource(source).WithError(err)
@@ -66,7 +68,25 @@ func (s *Service) candidatoYPulso(ctx context.Context, clienteID int) (*domain.W
 	now := s.clock.Now()
 	live, ok := s.pagos90Recientes(ctx, []int{c.ClienteID()}, now)
 	p90 := pagos90dFor(live, ok, c)
-	return c, s.computePulso(c, now, p90), nil
+	return c, s.computePulso(c, now, p90), s.notaCliente(ctx, clienteID), nil
+}
+
+// notaCliente reads the cobrador's note for clienteID, degrading to "" on any
+// failure (or when no Microsip reader is wired). The note is optional
+// qualitative context for the narrativa, never a hard dependency.
+func (s *Service) notaCliente(ctx context.Context, clienteID int) string {
+	if s.micro == nil {
+		return ""
+	}
+	nota, err := s.micro.GetNotaCliente(ctx, clienteID)
+	if err != nil {
+		s.logger.WarnContext(ctx, "analytics.nota_get_failed",
+			slog.Int("cliente_id", clienteID),
+			slog.String("error", err.Error()),
+		)
+		return ""
+	}
+	return nota
 }
 
 // pagos90Window is the trailing window (days) for the live PAGOS_90D credit

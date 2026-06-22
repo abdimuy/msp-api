@@ -70,6 +70,10 @@ func (m *erroringMicrosip) LeerAnclasDesde(_ context.Context, _ *time.Time) ([]o
 	return m.anclas, nil
 }
 
+func (m *erroringMicrosip) GetNotaCliente(_ context.Context, _ int) (string, error) {
+	return "", nil
+}
+
 // ─── GetRefreshState non-NotFound error ───────────────────────────────────────
 
 // TestRefrescarCandidatos_GetRefreshState_NonNotFoundError covers the branch in

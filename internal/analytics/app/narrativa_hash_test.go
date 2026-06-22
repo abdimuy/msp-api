@@ -36,8 +36,8 @@ func TestNarrativaInputHash_Determinism(t *testing.T) {
 	t.Parallel()
 	comp := baseComp()
 
-	h1 := app.NarrativaInputHash(comp)
-	h2 := app.NarrativaInputHash(comp)
+	h1 := app.NarrativaInputHash(comp, "")
+	h2 := app.NarrativaInputHash(comp, "")
 
 	if h1 != h2 {
 		t.Fatalf("hash is not deterministic: %q != %q", h1, h2)
@@ -52,7 +52,7 @@ func TestNarrativaInputHash_Determinism(t *testing.T) {
 func TestNarrativaInputHash_SensitivityPerField(t *testing.T) {
 	t.Parallel()
 	base := baseComp()
-	baseHash := app.NarrativaInputHash(base)
+	baseHash := app.NarrativaInputHash(base, "")
 
 	inputMutations := []struct {
 		name   string
@@ -71,7 +71,7 @@ func TestNarrativaInputHash_SensitivityPerField(t *testing.T) {
 			t.Parallel()
 			comp := baseComp()
 			tc.mutate(&comp)
-			h := app.NarrativaInputHash(comp)
+			h := app.NarrativaInputHash(comp, "")
 			if h == baseHash {
 				t.Fatalf("expected hash to change when %s changes, but got same hash %q", tc.name, h)
 			}
@@ -92,7 +92,7 @@ func TestNarrativaInputHash_SensitivityPerField(t *testing.T) {
 			t.Parallel()
 			comp := baseComp()
 			tc.mutate(&comp)
-			h := app.NarrativaInputHash(comp)
+			h := app.NarrativaInputHash(comp, "")
 			if h != baseHash {
 				t.Fatalf("expected hash to be stable when %s changes, but got %q vs %q", tc.name, h, baseHash)
 			}
@@ -112,13 +112,40 @@ func TestNarrativaInputHash_FieldIndependence(t *testing.T) {
 	swapped.CreditoResumen = original.RecompraResumen
 	swapped.RecompraResumen = original.CreditoResumen
 
-	hOriginal := app.NarrativaInputHash(original)
-	hSwapped := app.NarrativaInputHash(swapped)
+	hOriginal := app.NarrativaInputHash(original, "")
+	hSwapped := app.NarrativaInputHash(swapped, "")
 
 	if hOriginal == hSwapped {
 		t.Fatalf(
 			"hash is order-insensitive: swapping CreditoResumen (%q) and RecompraResumen (%q) yielded the same hash %q",
 			original.CreditoResumen, original.RecompraResumen, hOriginal,
 		)
+	}
+}
+
+// TestNarrativaInputHash_NotaSensitivity verifies that the nota string affects
+// the hash: same comp + different nota ⇒ different hash; same nota ⇒ equal hash.
+func TestNarrativaInputHash_NotaSensitivity(t *testing.T) {
+	t.Parallel()
+
+	comp := baseComp()
+
+	hNoNota := app.NarrativaInputHash(comp, "")
+	hWithNota := app.NarrativaInputHash(comp, "acuerdo con Carmelo el viernes")
+
+	if hNoNota == hWithNota {
+		t.Fatalf("expected different hash for non-empty nota, got same: %q", hNoNota)
+	}
+
+	// Determinism: same non-empty nota ⇒ equal hash.
+	hRepeat := app.NarrativaInputHash(comp, "acuerdo con Carmelo el viernes")
+	if hWithNota != hRepeat {
+		t.Fatalf("hash is not deterministic for same nota: %q != %q", hWithNota, hRepeat)
+	}
+
+	// Empty nota is also deterministic.
+	hNoNota2 := app.NarrativaInputHash(comp, "")
+	if hNoNota != hNoNota2 {
+		t.Fatalf("hash is not deterministic for empty nota: %q != %q", hNoNota, hNoNota2)
 	}
 }

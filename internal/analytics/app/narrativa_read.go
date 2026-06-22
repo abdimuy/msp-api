@@ -21,7 +21,10 @@ func (s *Service) aplicarNarrativa(ctx context.Context, clienteID int, comp *ana
 		return
 	}
 
-	hash := NarrativaInputHash(*comp)
+	// The note is part of the invalidation key: editing it in Microsip regenerates
+	// the narrativa on the next view. A note read failure degrades to "".
+	nota := s.notaCliente(ctx, clienteID)
+	hash := NarrativaInputHash(*comp, nota)
 
 	row, err := s.narrativaRepo.GetNarrativa(ctx, clienteID)
 	if err != nil {
@@ -38,6 +41,7 @@ func (s *Service) aplicarNarrativa(ctx context.Context, clienteID int, comp *ana
 		// empty — no IA section, no re-enqueue.
 		comp.Narrativa = row.Texto
 		comp.RasgosIA = etiquetasDe(row.Rasgos)
+		comp.ContextoOperativo = row.ContextoOperativo
 		return
 	}
 

@@ -24,6 +24,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/abdimuy/msp-api/internal/analytics/domain"
 	"github.com/abdimuy/msp-api/internal/analytics/ports/outbound"
@@ -508,6 +511,33 @@ func (r *Repo) GetCandidato(ctx context.Context, clienteID int) (*domain.Winback
 		return nil, err
 	}
 	return c, nil
+}
+
+// notaMaxRunes caps the cobrador's free-text note before it reaches the LLM
+// prompt: long enough to carry payment agreements / shared-address context,
+// short enough to bound prompt size.
+const notaMaxRunes = 800
+
+// GetNotaCliente returns the cobrador's free-text note (CLIENTES.NOTAS) for a
+// client, decoded from Windows-1252 (BLOB Sub_Type 1), NFC-normalized, trimmed,
+// and capped to notaMaxRunes runes. A client with no note (or no row) yields ""
+// with no error — the note is optional qualitative context for the narrativa,
+// never a hard dependency.
+func (r *Repo) GetNotaCliente(ctx context.Context, clienteID int) (string, error) {
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	var notaRaw firebird.Win1252 // Win1252 handles nil→"" at scan time.
+	err := q.QueryRowContext(ctx, selectNotaCliente, clienteID).Scan(&notaRaw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", firebird.MapError(err)
+	}
+	nota := strings.TrimSpace(norm.NFC.String(string(notaRaw)))
+	if utf8.RuneCountInString(nota) > notaMaxRunes {
+		nota = string([]rune(nota)[:notaMaxRunes])
+	}
+	return nota, nil
 }
 
 // candidatoChunkSize is the maximum number of clienteIDs per IN clause.

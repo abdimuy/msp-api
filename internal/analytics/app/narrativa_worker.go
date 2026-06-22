@@ -28,7 +28,7 @@ import (
 // The interface is unexported to seal it to this package; the constructor
 // accepts it so tests can inject a fake without a fully-wired *Service.
 type pulsoLoader interface {
-	candidatoYPulso(ctx context.Context, clienteID int) (*domain.WinbackCandidato, analytics.PulsoComputado, error)
+	candidatoYPulso(ctx context.Context, clienteID int) (*domain.WinbackCandidato, analytics.PulsoComputado, string, error)
 }
 
 // NarrativaWorkerConfig tunes the worker's cadence and LLM settings.
@@ -177,8 +177,8 @@ func (w *NarrativaWorker) tick(ctx context.Context) {
 // On any error the loop continues; the pending entry is left in the queue
 // for a transient error and removed for a permanent error (or missing candidate).
 func (w *NarrativaWorker) procesarUno(ctx context.Context, clienteID int) {
-	// 1. Load candidate + pulso.
-	c, comp, err := w.loader.candidatoYPulso(ctx, clienteID)
+	// 1. Load candidate + pulso + cobrador's note.
+	c, comp, nota, err := w.loader.candidatoYPulso(ctx, clienteID)
 	if err != nil {
 		appErr, ok := apperror.As(err)
 		if ok && appErr.Kind == apperror.KindNotFound {
@@ -205,11 +205,11 @@ func (w *NarrativaWorker) procesarUno(ctx context.Context, clienteID int) {
 		return
 	}
 
-	// 2. Compute invalidation key from the current pulso facts.
-	hash := NarrativaInputHash(comp)
+	// 2. Compute invalidation key from the current pulso facts + the note.
+	hash := NarrativaInputHash(comp, nota)
 
-	// 3. Build the generator's fact-anchored input.
-	in := buildNarrativeInput(c, comp, CatalogoRasgos)
+	// 3. Build the generator's fact-anchored input (note included).
+	in := buildNarrativeInput(c, comp, nota, CatalogoRasgos)
 
 	// 4. Generate.
 	out, err := w.gen.Generar(ctx, in)
@@ -244,12 +244,13 @@ func (w *NarrativaWorker) procesarUno(ctx context.Context, clienteID int) {
 	//    cache keyed by InputHash that prevents pointless re-generation until
 	//    the facts change).
 	n := domain.Narrativa{
-		ClienteID:  clienteID,
-		Texto:      v.Texto,
-		Rasgos:     v.Rasgos,
-		InputHash:  hash,
-		Modelo:     w.cfg.Model,
-		GeneradaEn: w.clock.Now().UTC(),
+		ClienteID:         clienteID,
+		Texto:             v.Texto,
+		Rasgos:            v.Rasgos,
+		ContextoOperativo: v.ContextoOperativo,
+		InputHash:         hash,
+		Modelo:            w.cfg.Model,
+		GeneradaEn:        w.clock.Now().UTC(),
 	}
 
 	// 7. Persist (always upsert, even the empty fallback row).

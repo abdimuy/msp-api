@@ -71,6 +71,74 @@ func makeNarrativa(clienteID int, rasgos []string) domain.Narrativa {
 	}
 }
 
+// ─── CONTEXTO_OPERATIVO round-trip ────────────────────────────────────────────
+
+// TestNarrativaRepo_ContextoOperativo_RoundTrip verifies that the
+// CONTEXTO_OPERATIVO column (migration 000041) round-trips through both the
+// INSERT and UPDATE branches of UpsertNarrativa, including the empty-string case.
+//
+//nolint:paralleltest // serial: shares rollback-only tx.
+func TestNarrativaRepo_ContextoOperativo_RoundTrip(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		repo := analyticsfb.NewRepo(pool)
+		skipIfMigration000040Missing(ctx, t, repo)
+
+		const clienteID = -99010
+
+		// INSERT branch: contexto with accented text (UTF8 column).
+		n := makeNarrativa(clienteID, []string{"buen_pagador"})
+		n.ContextoOperativo = "Acuerdo de pago con Carmelo; domicilio compartido con Amada."
+		require.NoError(t, repo.UpsertNarrativa(ctx, n))
+
+		got, err := repo.GetNarrativa(ctx, clienteID)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, n.ContextoOperativo, got.ContextoOperativo,
+			"ContextoOperativo must round-trip through INSERT")
+
+		// UPDATE branch: overwrite with a new contexto.
+		n.ContextoOperativo = "Responsable de pago: la hija."
+		require.NoError(t, repo.UpsertNarrativa(ctx, n))
+
+		got2, err := repo.GetNarrativa(ctx, clienteID)
+		require.NoError(t, err)
+		require.NotNil(t, got2)
+		assert.Equal(t, "Responsable de pago: la hija.", got2.ContextoOperativo,
+			"ContextoOperativo must round-trip through UPDATE")
+
+		// Empty contexto persists as "" (not an error).
+		n.ContextoOperativo = ""
+		require.NoError(t, repo.UpsertNarrativa(ctx, n))
+		got3, err := repo.GetNarrativa(ctx, clienteID)
+		require.NoError(t, err)
+		require.NotNil(t, got3)
+		assert.Empty(t, got3.ContextoOperativo, "empty ContextoOperativo must round-trip as empty string")
+	})
+}
+
+// ─── GetNotaCliente ───────────────────────────────────────────────────────────
+
+// TestNarrativaRepo_GetNotaCliente_UnknownClient verifies that GetNotaCliente
+// returns ("", nil) for a client id that does not exist in CLIENTES — the note
+// is optional context, never a hard error.
+//
+//nolint:paralleltest // serial: shares rollback-only tx.
+func TestNarrativaRepo_GetNotaCliente_UnknownClient(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		repo := analyticsfb.NewRepo(pool)
+
+		nota, err := repo.GetNotaCliente(ctx, -99011)
+		require.NoError(t, err)
+		assert.Empty(t, nota, "unknown client must yield empty note, no error")
+	})
+}
+
 // ─── GetNarrativa — miss ──────────────────────────────────────────────────────
 
 // TestNarrativaRepo_GetNarrativa_Miss verifies that GetNarrativa returns

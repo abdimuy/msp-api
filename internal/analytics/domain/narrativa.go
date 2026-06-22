@@ -8,10 +8,14 @@ import "time"
 // catalog codes (see Rasgo). InputHash ties the row to the facts it was
 // generated from — when the facts change, the hash changes and the row is stale.
 type Narrativa struct {
-	ClienteID  int
-	Texto      string
-	Rasgos     []string
-	InputHash  string
-	Modelo     string
-	GeneradaEn time.Time
+	ClienteID int
+	Texto     string
+	Rasgos    []string
+	// ContextoOperativo is the 1-2 operational signals the LLM distilled from the
+	// cobrador's free-text note (payment agreements, responsibles, shared address,
+	// dates). Empty when there is no useful note. Factual, never a classification.
+	ContextoOperativo string
+	InputHash         string
+	Modelo            string
+	GeneradaEn        time.Time
 }

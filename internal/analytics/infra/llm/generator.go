@@ -34,10 +34,12 @@ var _ outbound.NarrativeGenerator = (*Generator)(nil)
 
 const systemPrompt = `Eres un analista interno de cartera. Tu análisis es para uso interno de oficina, nunca para el cliente.
 Se te dan hechos YA calculados sobre un cliente. NO inventes números ni contradigas las bandas o el nivel de riesgo indicados.
+Puede incluirse una NOTA DEL COBRADOR (texto libre: acuerdos de pago, responsables, domicilios compartidos, fechas). Úsala SOLO como contexto cualitativo: no inventes nada que no esté en ella y no dejes que contradiga las bandas ni el riesgo.
 Escribe UN solo párrafo en español neutro y profesional, de 2 a 3 frases (máximo 60 palabras), que CONECTE los tres ejes (crédito, recompra, valor), resuelva la tensión si la hay, y CIERRE con UNA acción interna concreta.
 No uses listas ni viñetas. No menciones en el texto los nombres de las bandas, los scores ni los códigos de rasgo: redacta en lenguaje natural.
 Luego elige entre 1 y 3 rasgos del catálogo que MEJOR y más específicamente describan a este cliente, usando EXCLUSIVAMENTE sus códigos exactos. Prefiere el rasgo más preciso; no elijas uno genérico si hay otro más específico que aplica.
-Responde SOLO con el objeto JSON {"narrativa": "...", "rasgos": ["codigo", ...]}, sin texto adicional.`
+Por último, destila de la NOTA DEL COBRADOR 1 o 2 señales operativas concretas (acuerdos de pago, responsables, domicilio compartido, fechas) en UNA sola línea en español neutro para el campo "contexto_operativo". Puedes citar nombres o fechas de la nota; es uso interno. Si la nota no aporta nada operativo (o no hay nota), deja "contexto_operativo" como cadena vacía "".
+Responde SOLO con el objeto JSON {"narrativa": "...", "rasgos": ["codigo", ...], "contexto_operativo": "..."}, sin texto adicional.`
 
 // Generar builds an anchored prompt from in, calls the LLM, and parses the JSON response.
 func (g *Generator) Generar(ctx context.Context, in outbound.NarrativeInput) (outbound.NarrativeOutput, error) {
@@ -68,16 +70,18 @@ func (g *Generator) Generar(ctx context.Context, in outbound.NarrativeInput) (ou
 	}
 
 	var parsed struct {
-		Narrativa string   `json:"narrativa"`
-		Rasgos    []string `json:"rasgos"`
+		Narrativa         string   `json:"narrativa"`
+		Rasgos            []string `json:"rasgos"`
+		ContextoOperativo string   `json:"contexto_operativo"`
 	}
 	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
 		return outbound.NarrativeOutput{}, fmt.Errorf("llm generator: parse response: %w", err)
 	}
 
 	return outbound.NarrativeOutput{
-		Narrativa: parsed.Narrativa,
-		Rasgos:    parsed.Rasgos,
+		Narrativa:         parsed.Narrativa,
+		Rasgos:            parsed.Rasgos,
+		ContextoOperativo: parsed.ContextoOperativo,
 	}, nil
 }
 
@@ -111,6 +115,10 @@ func buildUserMessage(in outbound.NarrativeInput) string {
 		in.BandaCLV, in.MontoCLV.String(), in.Monetary.String())
 	_, _ = fmt.Fprintf(&sb, "Titular: %s\n", in.CLVResumen)
 	_, _ = fmt.Fprintf(&sb, "Factores: %s\n", strings.Join(in.CLVDrivers, "; "))
+
+	if strings.TrimSpace(in.Nota) != "" {
+		_, _ = fmt.Fprintf(&sb, "\n=== NOTA DEL COBRADOR ===\n%s\n", in.Nota)
+	}
 
 	_, _ = fmt.Fprintf(&sb, "\n=== CATÁLOGO DE RASGOS ===\n")
 	for _, r := range in.Catalogo {

@@ -26,11 +26,12 @@ import (
 type fakePulsoLoader struct {
 	c    *domain.WinbackCandidato
 	comp analytics.PulsoComputado
+	Nota string
 	err  error
 }
 
-func (f *fakePulsoLoader) candidatoYPulso(_ context.Context, _ int) (*domain.WinbackCandidato, analytics.PulsoComputado, error) {
-	return f.c, f.comp, f.err
+func (f *fakePulsoLoader) candidatoYPulso(_ context.Context, _ int) (*domain.WinbackCandidato, analytics.PulsoComputado, string, error) {
+	return f.c, f.comp, f.Nota, f.err
 }
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
@@ -113,7 +114,7 @@ func TestNarrativaWorker_GeneratesValidatesAndCaches(t *testing.T) {
 	c := makeWorkerCandidato(clienteID)
 
 	repo := narrativamem.New()
-	require.NoError(t, repo.Encolar(context.Background(), clienteID, NarrativaInputHash(comp)))
+	require.NoError(t, repo.Encolar(context.Background(), clienteID, NarrativaInputHash(comp, "")))
 
 	gen := &llmfake.Generator{
 		Out: outbound.NarrativeOutput{
@@ -137,7 +138,7 @@ func TestNarrativaWorker_GeneratesValidatesAndCaches(t *testing.T) {
 
 	assert.Equal(t, validNarrativaText, row.Texto, "Texto should match the valid narrativa")
 	assert.Equal(t, []string{"loyal_but_stagnant"}, row.Rasgos, "Rasgos: invalid dropped and deduped")
-	assert.Equal(t, NarrativaInputHash(comp), row.InputHash, "InputHash must equal NarrativaInputHash(comp)")
+	assert.Equal(t, NarrativaInputHash(comp, ""), row.InputHash, "InputHash must equal NarrativaInputHash(comp)")
 	assert.Equal(t, "test-model-v1", row.Modelo, "Modelo must match config")
 }
 
@@ -172,7 +173,7 @@ func TestNarrativaWorker_TransientGenError_LeftInQueue(t *testing.T) {
 	c := makeWorkerCandidato(clienteID)
 
 	repo := narrativamem.New()
-	require.NoError(t, repo.Encolar(context.Background(), clienteID, NarrativaInputHash(comp)))
+	require.NoError(t, repo.Encolar(context.Background(), clienteID, NarrativaInputHash(comp, "")))
 
 	// Wrap a sentinel so llm.IsTransient returns true.
 	transientErr := &llm.TransientError{Cause: errors.New("connection timeout")}
@@ -199,7 +200,7 @@ func TestNarrativaWorker_PermanentGenError_Dropped(t *testing.T) {
 	c := makeWorkerCandidato(clienteID)
 
 	repo := narrativamem.New()
-	require.NoError(t, repo.Encolar(context.Background(), clienteID, NarrativaInputHash(comp)))
+	require.NoError(t, repo.Encolar(context.Background(), clienteID, NarrativaInputHash(comp, "")))
 
 	gen := &llmfake.Generator{Err: llm.ErrLLMDisabled}
 	loader := &fakePulsoLoader{c: c, comp: comp}
@@ -225,7 +226,7 @@ func TestNarrativaWorker_FallbackPath(t *testing.T) {
 	c := makeWorkerCandidato(clienteID)
 
 	repo := narrativamem.New()
-	require.NoError(t, repo.Encolar(context.Background(), clienteID, NarrativaInputHash(comp)))
+	require.NoError(t, repo.Encolar(context.Background(), clienteID, NarrativaInputHash(comp, "")))
 
 	// A contradictory "good payer" paragraph — will fail direction check.
 	gen := &llmfake.Generator{
@@ -249,7 +250,7 @@ func TestNarrativaWorker_FallbackPath(t *testing.T) {
 
 	assert.Empty(t, row.Texto, "Texto must be empty on direction-check failure")
 	assert.Empty(t, row.Rasgos, "Rasgos must be empty on direction-check failure")
-	assert.Equal(t, NarrativaInputHash(comp), row.InputHash, "InputHash must be set even on fallback")
+	assert.Equal(t, NarrativaInputHash(comp, ""), row.InputHash, "InputHash must be set even on fallback")
 }
 
 // TestNarrativaWorker_CandidateNotFound_Removed verifies that a not-found error
@@ -274,4 +275,48 @@ func TestNarrativaWorker_CandidateNotFound_Removed(t *testing.T) {
 
 	// No narrativa row must be created.
 	assert.Equal(t, 0, repo.NarrativaCount(), "no narrativa row must be created for missing candidate")
+}
+
+// TestNarrativaWorker_ContextoOperativo verifies that:
+//   - the worker passes loader.Nota to the generator (via NarrativeInput.Nota),
+//   - the generator's ContextoOperativo is persisted in the narrativa row, and
+//   - the row hash equals NarrativaInputHash(comp, nota).
+func TestNarrativaWorker_ContextoOperativo(t *testing.T) {
+	t.Parallel()
+
+	const clienteID = 201
+	const nota = "acuerdo con Carmelo"
+	const contextoOut = "paga con Carmelo"
+
+	comp := lowRiskCompWorker()
+	c := makeWorkerCandidato(clienteID)
+
+	repo := narrativamem.New()
+	require.NoError(t, repo.Encolar(context.Background(), clienteID, NarrativaInputHash(comp, nota)))
+
+	gen := &llmfake.Generator{
+		Out: outbound.NarrativeOutput{
+			Narrativa:         validNarrativaText,
+			Rasgos:            []string{"loyal_but_stagnant"},
+			ContextoOperativo: contextoOut,
+		},
+	}
+	loader := &fakePulsoLoader{c: c, comp: comp, Nota: nota}
+	w := buildWorker(loader, repo, gen, true)
+
+	w.tick(context.Background())
+
+	// Generator must have received the nota.
+	require.Len(t, gen.Inputs, 1, "generator must have been called once")
+	assert.Equal(t, nota, gen.Inputs[0].Nota, "generator must receive the loader's nota")
+
+	// Narrativa row must persist ContextoOperativo.
+	row, err := repo.GetNarrativa(context.Background(), clienteID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, contextoOut, row.ContextoOperativo, "ContextoOperativo must be persisted")
+
+	// Row hash must be keyed on (comp, nota).
+	assert.Equal(t, NarrativaInputHash(comp, nota), row.InputHash,
+		"InputHash must equal NarrativaInputHash(comp, nota)")
 }

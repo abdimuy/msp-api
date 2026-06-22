@@ -8,11 +8,12 @@ import (
 
 // NarrativaRow is the persisted cache record (matches MSP_AN_CLIENTE_NARRATIVA).
 type NarrativaRow struct {
-	ClienteID int
-	Texto     string
-	Rasgos    []string // validated catalog codes
-	InputHash string
-	Modelo    string
+	ClienteID         int
+	Texto             string
+	Rasgos            []string // validated catalog codes
+	ContextoOperativo string   // operational signals distilled from the cobrador's note; "" when none
+	InputHash         string
+	Modelo            string
 }
 
 // PendienteRow is one queued client awaiting generation (MSP_AN_NARRATIVA_PENDIENTE).

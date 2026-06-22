@@ -29,6 +29,10 @@ const narrativaMinRunes = 40
 // narrativaMaxRunes is the maximum acceptable rune count (runaway guard).
 const narrativaMaxRunes = 1200
 
+// contextoOperativoMaxRunes caps the distilled operational-context line. It is a
+// single sentence of 1-2 signals, never a paragraph.
+const contextoOperativoMaxRunes = 240
+
 // forbiddenPhrases lists Spanish "good-payer" phrases that must NOT appear in
 // a narrativa when the client carries high risk. Lowercase NFC; tunable here
 // without touching the validation logic.
@@ -48,9 +52,13 @@ var forbiddenPhrases = []string{
 
 // ValidatedNarrativa is the post-validation result the worker persists.
 type ValidatedNarrativa struct {
-	Texto        string
-	Rasgos       []string // validated catalog codes (≤3, deduped); nil on fallback
-	UsedFallback bool     // true ⇒ direction check failed; Texto is empty
+	Texto  string
+	Rasgos []string // validated catalog codes (≤3, deduped); nil on fallback
+	// ContextoOperativo is the distilled operational-context line (trimmed and
+	// capped). It is factual, never a classification, so it does NOT pass the
+	// direction check and is PRESERVED even when the narrativa falls to fallback.
+	ContextoOperativo string
+	UsedFallback      bool // true ⇒ direction check failed; Texto is empty
 }
 
 // ValidarNarrativa enforces that the model's output does not contradict the
@@ -60,15 +68,31 @@ type ValidatedNarrativa struct {
 // Fase-1 titulars in their existing place (no regression, no duplication, no
 // contradictory AI text).
 func ValidarNarrativa(raw outbound.NarrativeOutput, comp analytics.PulsoComputado) ValidatedNarrativa {
+	// contexto is factual (distilled from the cobrador's note), independent of the
+	// risk direction — keep it even when the narrativa itself is rejected.
+	contexto := caparContexto(raw.ContextoOperativo)
+
 	if !pasaDirectionCheck(raw.Narrativa, comp) {
-		return ValidatedNarrativa{Texto: "", Rasgos: nil, UsedFallback: true}
+		return ValidatedNarrativa{Texto: "", Rasgos: nil, ContextoOperativo: contexto, UsedFallback: true}
 	}
 
 	return ValidatedNarrativa{
-		Texto:        strings.TrimSpace(raw.Narrativa),
-		Rasgos:       filtrarRasgos(raw.Rasgos),
-		UsedFallback: false,
+		Texto:             strings.TrimSpace(raw.Narrativa),
+		Rasgos:            filtrarRasgos(raw.Rasgos),
+		ContextoOperativo: contexto,
+		UsedFallback:      false,
 	}
+}
+
+// caparContexto trims and caps the operational-context line to
+// contextoOperativoMaxRunes runes. It performs no direction/risk check —
+// contexto_operativo is factual context, not a classification.
+func caparContexto(s string) string {
+	s = strings.TrimSpace(s)
+	if utf8.RuneCountInString(s) <= contextoOperativoMaxRunes {
+		return s
+	}
+	return string([]rune(s)[:contextoOperativoMaxRunes])
 }
 
 // pasaDirectionCheck returns true when the narrativa passes all direction checks.
