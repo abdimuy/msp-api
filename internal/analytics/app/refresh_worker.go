@@ -76,7 +76,11 @@ func (w *RefreshWorker) Start(ctx context.Context) error {
 	if w.running {
 		return nil
 	}
-	loopCtx, cancel := context.WithCancel(ctx)
+	// fx cancels the OnStart ctx (and applies its StartTimeout deadline) once the
+	// start phase completes, so the loop must NOT inherit either or its refresh
+	// ticks would die with "context deadline exceeded" / cancellation. Keep ctx's
+	// values but drop fx's cancellation+deadline; Stop() cancels loopCtx for shutdown.
+	loopCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	w.cancel = cancel
 	w.done = make(chan struct{})
 	w.running = true
