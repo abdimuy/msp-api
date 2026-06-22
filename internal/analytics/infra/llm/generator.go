@@ -33,50 +33,28 @@ func NewGenerator(client platformllm.Client, model string) *Generator {
 var _ outbound.NarrativeGenerator = (*Generator)(nil)
 
 const systemPrompt = `Eres un analista interno de cartera. Tu análisis es para uso interno de oficina, nunca para el cliente.
-Se te proporcionan hechos ya calculados sobre un cliente. NO inventes números ni contradigas las bandas o el nivel de riesgo que se te indica.
-Redacta UN solo párrafo en español neutro (máximo 4 frases) que sintetice los tres ejes (crédito, recompra, valor) y cierre con UNA acción interna recomendada.
-Además, elige entre 1 y 3 rasgos del catálogo, usando EXCLUSIVAMENTE sus códigos exactos.
-Responde SOLO en el formato JSON indicado, sin texto adicional fuera del objeto JSON.`
+Se te dan hechos YA calculados sobre un cliente. NO inventes números ni contradigas las bandas o el nivel de riesgo indicados.
+Escribe UN solo párrafo en español neutro y profesional, de 2 a 3 frases (máximo 60 palabras), que CONECTE los tres ejes (crédito, recompra, valor), resuelva la tensión si la hay, y CIERRE con UNA acción interna concreta.
+No uses listas ni viñetas. No menciones en el texto los nombres de las bandas, los scores ni los códigos de rasgo: redacta en lenguaje natural.
+Luego elige entre 1 y 3 rasgos del catálogo que MEJOR y más específicamente describan a este cliente, usando EXCLUSIVAMENTE sus códigos exactos. Prefiere el rasgo más preciso; no elijas uno genérico si hay otro más específico que aplica.
+Responde SOLO con el objeto JSON {"narrativa": "...", "rasgos": ["codigo", ...]}, sin texto adicional.`
 
 // Generar builds an anchored prompt from in, calls the LLM, and parses the JSON response.
 func (g *Generator) Generar(ctx context.Context, in outbound.NarrativeInput) (outbound.NarrativeOutput, error) {
 	userMsg := buildUserMessage(in)
 
-	codes := make([]any, len(in.Catalogo))
-	for i, r := range in.Catalogo {
-		codes[i] = r.Codigo
-	}
-
-	schema := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"narrativa": map[string]any{"type": "string"},
-			"rasgos": map[string]any{
-				"type": "array",
-				"items": map[string]any{
-					"type": "string",
-					"enum": codes,
-				},
-				"minItems": 1,
-				"maxItems": 3,
-			},
-		},
-		"required":             []any{"narrativa", "rasgos"},
-		"additionalProperties": false,
-	}
-
+	// json_object (not a json_schema enum): a small instruct model selects traits
+	// more accurately from the prompt's catalog than under a strict enum grammar,
+	// and the app layer validates the returned codes against the catalog anyway
+	// (EsRasgoValido + cap/dedup), so the schema constraint is not load-bearing.
 	req := platformllm.ChatReq{
 		Messages: []platformllm.Message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userMsg},
 		},
 		// Pointer required: bare 0 is the Go zero value and would be omitted.
-		Temperature: platformllm.Float64(0),
-		ResponseFormat: &platformllm.ResponseFormat{
-			Type:   "json_schema",
-			Schema: schema,
-			Name:   "analyst_reading",
-		},
+		Temperature:    platformllm.Float64(0),
+		ResponseFormat: &platformllm.ResponseFormat{Type: "json_object"},
 	}
 
 	content, err := g.client.Chat(ctx, req)

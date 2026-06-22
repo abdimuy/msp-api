@@ -90,8 +90,16 @@ services:
   # En producción (Windows Server 2016) se instala ollama.exe vía nssm o se
   # usa llama-server; no requiere Docker. Ver CLAUDE.md rule 5.
   #
-  # Para usar: `docker compose up -d ollama` y luego
-  # `docker exec msp-ollama ollama pull qwen3:4b`.
+  # ⚠ macOS: NO uses este servicio Docker para desarrollar — Docker Desktop NO
+  # accede al GPU Metal, así que Ollama corre en CPU dentro de la VM y un modelo
+  # de 7B tarda ~minutos por respuesta (inusable). En Mac instala Ollama nativo
+  # (`brew install ollama` + `brew services start ollama`), que sí usa Metal.
+  # Este servicio compose queda para hosts Linux / CI.
+  #
+  # Para usar (Linux/CI): `docker compose up -d ollama` y luego
+  # `docker exec msp-ollama ollama pull qwen2.5:7b-instruct`.
+  # Usa un modelo INSTRUCT (no de razonamiento): qwen3 emite miles de tokens de
+  # "pensamiento" por petición y es ~25x más lento.
   # El API arranca con LLM_ENABLED=false — cambiar solo en la fase habilitada.
   # La API corre en el host → LLM_BASE_URL=http://localhost:11434/v1.
   # Si la API corre dentro de compose → LLM_BASE_URL=http://ollama:11434/v1.

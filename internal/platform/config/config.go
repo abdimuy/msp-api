@@ -293,8 +293,11 @@ type LLM struct {
 	// BaseURL is the base URL of the local inference server (e.g. http://localhost:11434).
 	// Required when Enabled is true.
 	BaseURL string `env:"LLM_BASE_URL"`
-	// Model is the model tag to use for inference requests. Defaults to "qwen3:4b".
-	Model string `env:"LLM_MODEL" envDefault:"qwen3:4b"`
+	// Model is the model tag to use for inference requests. Defaults to a small
+	// NON-reasoning instruct model: reasoning models (e.g. qwen3) emit thousands
+	// of hidden "thinking" tokens per request (~100s/client), unusable for the
+	// background worker; an instruct model answers directly (~10s/client).
+	Model string `env:"LLM_MODEL" envDefault:"qwen2.5:7b-instruct"`
 	// Enabled gates all LLM-backed features. Default false: the client is a
 	// no-op and no network connection to an inference server is attempted.
 	Enabled bool `env:"LLM_ENABLED" envDefault:"false"`

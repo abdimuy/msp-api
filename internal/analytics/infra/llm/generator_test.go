@@ -140,37 +140,15 @@ func TestGenerar_PromptAnchoring(t *testing.T) {
 		t.Errorf("Temperature: got %v, want 0", *capturedReq.Temperature)
 	}
 
+	// We use json_object (not a json_schema enum): a small instruct model selects
+	// traits more accurately from the prompt's catalog than under a strict enum
+	// grammar, and the app layer validates the returned codes against the catalog.
+	// The valid codes are conveyed via the user message (asserted above).
 	if capturedReq.ResponseFormat == nil {
 		t.Fatal("ResponseFormat should not be nil")
 	}
-	if capturedReq.ResponseFormat.Type != "json_schema" {
-		t.Errorf("ResponseFormat.Type: got %q, want %q", capturedReq.ResponseFormat.Type, "json_schema")
-	}
-	if capturedReq.ResponseFormat.Name != "analyst_reading" {
-		t.Errorf("ResponseFormat.Name: got %q, want %q", capturedReq.ResponseFormat.Name, "analyst_reading")
-	}
-
-	props, ok := capturedReq.ResponseFormat.Schema["properties"].(map[string]any)
-	if !ok {
-		t.Fatal("schema properties not a map[string]any")
-	}
-	rasgos, ok := props["rasgos"].(map[string]any)
-	if !ok {
-		t.Fatal("schema rasgos not a map[string]any")
-	}
-	items, ok := rasgos["items"].(map[string]any)
-	if !ok {
-		t.Fatal("schema rasgos.items not a map[string]any")
-	}
-	enum, ok := items["enum"].([]any)
-	if !ok {
-		t.Fatal("schema rasgos.items.enum not a []any")
-	}
-	if len(enum) != 2 {
-		t.Fatalf("expected 2 enum values, got %d", len(enum))
-	}
-	if enum[0] != "code_a" || enum[1] != "code_b" {
-		t.Errorf("unexpected enum values: %v", enum)
+	if capturedReq.ResponseFormat.Type != "json_object" {
+		t.Errorf("ResponseFormat.Type: got %q, want %q", capturedReq.ResponseFormat.Type, "json_object")
 	}
 }
 

@@ -20,7 +20,7 @@ func TestLoad_LLM_Defaults(t *testing.T) { //nolint:paralleltest // uses t.Seten
 	cfg, err := config.Load()
 	require.NoError(t, err)
 	assert.False(t, cfg.LLM.Enabled)
-	assert.Equal(t, "qwen3:4b", cfg.LLM.Model)
+	assert.Equal(t, "qwen2.5:7b-instruct", cfg.LLM.Model)
 	assert.Equal(t, 30*time.Second, cfg.LLM.Timeout)
 	assert.Empty(t, cfg.LLM.BaseURL)
 }
