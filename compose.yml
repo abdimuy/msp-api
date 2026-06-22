@@ -46,6 +46,10 @@ services:
       # El .env usa localhost:7700 para corridas nativas; aquí lo sobreescribimos
       # porque dentro del contenedor localhost es el propio contenedor.
       MEILISEARCH_URL: http://meilisearch:7700
+      # LLM: Ollama corre NATIVO en el host (Metal); dentro del contenedor
+      # localhost es el propio contenedor, así que apuntamos al host. Docker
+      # Desktop rutea host.docker.internal aunque Ollama escuche en 127.0.0.1.
+      LLM_BASE_URL: http://host.docker.internal:11434/v1
     volumes:
       # Bind mount del repo entero para hot reload via air. Los caches
       # de Go viven en volumes nombrados para que no se descarte cada
