@@ -52,22 +52,29 @@ func (s *Service) DesglosePorZona(
 		return nil, nil, err
 	}
 
-	// Enrich: compute Plazos, Vencidas, and Aporte now that we have fechaInicio.
-	enrichVentas(ventas, fechaInicio)
+	// Enrich: compute Plazos, Vencidas, Aporte and AplicaPonderado now that we have fechaInicio.
+	enrichVentas(ventas, fechaInicio, now)
 
 	fi := fechaInicio
 	return ventas, &fi, nil
 }
 
-// enrichVentas populates Aporte and Vencidas on each venta using fechaInicio.
+// enrichVentas populates Aporte, Vencidas, and AplicaPonderado on each venta
+// using fechaInicio (week start) and now (current time = window end).
 // This is called after the repo returns raw rows (repo does not have fechaInicio).
 // NOTE: This function mutates the slice in-place.
-func enrichVentas(ventas []rutasdomain.VentaCobranza, fechaInicio time.Time) {
+func enrichVentas(ventas []rutasdomain.VentaCobranza, fechaInicio, now time.Time) {
 	for i := range ventas {
 		v := &ventas[i]
-		cadencia := rutasdomain.CadenciaDias(v.Frecuencia)
-		windowDays := fechaInicio.UTC().Sub(v.FechaCargo.UTC()).Hours() / 24.0
-		plazos := decimal.NewFromFloat(windowDays / float64(cadencia))
+
+		grace := 0
+		if v.Frecuencia == rutasdomain.Quincenal || v.Frecuencia == rutasdomain.Mensual {
+			grace = 2
+		}
+		plazos := decimal.NewFromInt(int64(
+			rutasdomain.VencimientosVencidos(v.Frecuencia, v.FechaCargo, fechaInicio, grace),
+		))
+		v.AplicaPonderado = rutasdomain.AplicaEnVentana(v.Frecuencia, v.FechaCargo, fechaInicio, now)
 
 		in := rutasdomain.AporteInput{
 			Parcialidad:  v.Parcialidad,

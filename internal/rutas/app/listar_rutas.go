@@ -63,8 +63,8 @@ func (s *Service) ListarRutas(ctx context.Context) ([]rutasdomain.RutaResumen, e
 				"zona_id", r.ZonaID, "error", verr)
 			continue
 		}
-		enrichVentas(ventas, fechaInicio)
-		reporte := calcReporteZona(r.ZonaID, ventas, fechaInicio, now)
+		enrichVentas(ventas, fechaInicio, now)
+		reporte := calcReporteZona(r.ZonaID, ventas)
 		fi := fechaInicio
 		rutas[i].FechaInicioSemana = &fi
 		rutas[i].PctCoberturaSemanal = reporte.PctCoberturaSemanal
@@ -74,11 +74,12 @@ func (s *Service) ListarRutas(ctx context.Context) ([]rutasdomain.RutaResumen, e
 }
 
 // calcReporteZona computes the two weekly metrics for a set of ventas.
-// This function is pure (no I/O) and is exercised by unit tests.
+// AplicaPonderado must already be set on each venta by enrichVentas before
+// calling this function. This function is pure (no I/O) and is exercised by
+// unit tests.
 func calcReporteZona(
 	zonaID int,
 	ventas []rutasdomain.VentaCobranza,
-	fechaInicio, now time.Time,
 ) rutasdomain.ReporteZona {
 	var (
 		coberturaNum int
@@ -96,14 +97,9 @@ func calcReporteZona(
 			coberturaNum++
 		}
 
-		// Ponderado: cadencia determina si la venta "aplica".
-		// SEMANAL: siempre aplica.
-		// QUINCENAL/MENSUAL: solo si su próximo vencimiento cae en la ventana.
-		// NOTE: La regla de quincenal/mensual es un supuesto a confirmar en
-		// producción. El próximo vencimiento se infiere como
-		// FechaUltPago + cadenciaDias. Si FechaUltPago es nil (nunca pagó)
-		// se usa FechaCargo como base.
-		if v.Frecuencia == rutasdomain.Semanal || ventaAplicaEnVentana(v, fechaInicio, now) {
+		// Ponderado: venta counts only when there is a calendar due-date within
+		// the reporting window (set by enrichVentas via AplicaEnVentana).
+		if v.AplicaPonderado {
 			aporteDen++
 			aporteSum = aporteSum.Add(v.Aporte)
 		}
@@ -126,18 +122,4 @@ func calcReporteZona(
 	}
 
 	return reporte
-}
-
-// ventaAplicaEnVentana returns true when a QUINCENAL or MENSUAL venta has
-// its next expected payment falling within [fechaInicio, now].
-// The next due date is inferred as FechaUltPago + cadenciaDias; when
-// FechaUltPago is nil, FechaCargo is used as the base.
-func ventaAplicaEnVentana(v rutasdomain.VentaCobranza, fechaInicio, now time.Time) bool {
-	cadencia := rutasdomain.CadenciaDias(v.Frecuencia)
-	base := v.FechaCargo
-	if v.FechaUltPago != nil {
-		base = *v.FechaUltPago
-	}
-	nextDue := base.AddDate(0, 0, cadencia)
-	return !nextDue.Before(fechaInicio) && !nextDue.After(now)
 }

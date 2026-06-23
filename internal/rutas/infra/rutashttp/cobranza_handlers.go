@@ -42,14 +42,15 @@ func toVentaCobranzaDTOs(ventas []rutasdomain.VentaCobranza) []VentaCobranzaDTO 
 	dtos := make([]VentaCobranzaDTO, len(ventas))
 	for i, v := range ventas {
 		dtos[i] = VentaCobranzaDTO{
-			VentaID:     v.VentaID,
-			ClienteID:   v.ClienteID,
-			Parcialidad: v.Parcialidad.StringFixed(2),
-			Frecuencia:  string(v.Frecuencia),
-			AbonoSemana: v.AbonoSemana.StringFixed(2),
-			Vencidas:    v.Vencidas.StringFixed(4),
-			Aporte:      v.Aporte.StringFixed(4),
-			Saldo:       v.Saldo.StringFixed(2),
+			VentaID:         v.VentaID,
+			ClienteID:       v.ClienteID,
+			Parcialidad:     v.Parcialidad.StringFixed(2),
+			Frecuencia:      string(v.Frecuencia),
+			AbonoSemana:     v.AbonoSemana.StringFixed(2),
+			Vencidas:        v.Vencidas.StringFixed(4),
+			Aporte:          v.Aporte.StringFixed(4),
+			Saldo:           v.Saldo.StringFixed(2),
+			AplicaPonderado: v.AplicaPonderado,
 		}
 	}
 	return dtos

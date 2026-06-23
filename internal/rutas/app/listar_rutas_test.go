@@ -164,3 +164,83 @@ func TestService_ListarRutas_WithMetrics(t *testing.T) {
 		"ponderado %s", got[0].PctPonderadoSemanal,
 	)
 }
+
+// TestService_ListarRutas_PonderadoDenominador verifies that the ponderado
+// denominator respects AplicaPonderado (calendar-based) rather than frecuencia alone.
+// The zone has 3 ventas: one SEMANAL that applies (cargo far in the past), one
+// QUINCENAL whose next due-date is in the window, and one MENSUAL whose next
+// due-date is outside the window. Only the first two count in the denominator.
+func TestService_ListarRutas_PonderadoDenominador(t *testing.T) {
+	t.Parallel()
+
+	zonaID := 3
+
+	// Window: [fechaInicio=2026-01-12, now≈2026-01-18].
+	// For testing AplicaPonderado via enrichVentas, we set FechaCargo on each
+	// venta so that AplicaEnVentana gives the expected result:
+	//   v1 SEMANAL  cargo=2025-12-29 → k=1 lands on 2026-01-05 (antes de ventana),
+	//               k=2 lands on 2026-01-12 → dentro de [01-12..01-18] → aplica.
+	//   v2 QUINCENAL cargo=2025-12-20 → 2026-01-15 en ventana → aplica.
+	//   v3 MENSUAL   cargo=2026-01-12 → 2026-02-01 fuera de ventana (hasta=01-18) → NO aplica.
+	fechaInicio := time.Date(2026, 1, 12, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 1, 18, 0, 0, 0, 0, time.UTC)
+
+	ventas := []rutasdomain.VentaCobranza{
+		{ // v1: SEMANAL, aplica (k=2 → 2026-01-12 en ventana); pagó
+			VentaID:      10,
+			ClienteID:    200,
+			ZonaID:       zonaID,
+			Parcialidad:  decimal.NewFromInt(100),
+			Frecuencia:   rutasdomain.Semanal,
+			AbonoSemana:  decimal.NewFromInt(100),
+			Saldo:        decimal.NewFromInt(900),
+			TotalImporte: decimal.NewFromInt(4000),
+			FechaCargo:   time.Date(2025, 12, 29, 0, 0, 0, 0, time.UTC),
+		},
+		{ // v2: QUINCENAL, aplica (01-15 en ventana); no pagó
+			VentaID:      11,
+			ClienteID:    201,
+			ZonaID:       zonaID,
+			Parcialidad:  decimal.NewFromInt(200),
+			Frecuencia:   rutasdomain.Quincenal,
+			AbonoSemana:  decimal.Zero,
+			Saldo:        decimal.NewFromInt(2000),
+			TotalImporte: decimal.NewFromInt(4000),
+			FechaCargo:   time.Date(2025, 12, 20, 0, 0, 0, 0, time.UTC),
+		},
+		{ // v3: MENSUAL, NO aplica (02-01 fuera de ventana); no pagó
+			VentaID:      12,
+			ClienteID:    202,
+			ZonaID:       zonaID,
+			Parcialidad:  decimal.NewFromInt(150),
+			Frecuencia:   rutasdomain.Mensual,
+			AbonoSemana:  decimal.Zero,
+			Saldo:        decimal.NewFromInt(3000),
+			TotalImporte: decimal.NewFromInt(6000),
+			FechaCargo:   time.Date(2026, 1, 12, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	// We need a controlled now for the calendar window. Since the service always
+	// calls time.Now() internally, we drive enrichVentas directly in a unit test
+	// for calcReporteZona and trust the integration path via ListarRutas for the
+	// cobertura metric. Here we verify enrichVentas + calcReporteZona directly.
+	enrichVentas(ventas, fechaInicio, now)
+
+	assert.True(t, ventas[0].AplicaPonderado, "v1 SEMANAL should apply")
+	assert.True(t, ventas[1].AplicaPonderado, "v2 QUINCENAL 01-15 in window")
+	assert.False(t, ventas[2].AplicaPonderado, "v3 MENSUAL 02-01 outside window")
+
+	reporte := calcReporteZona(zonaID, ventas)
+
+	// Cobertura: 3 ventas, 1 pagó → 33.33…%
+	require.NotNil(t, reporte.PctCoberturaSemanal)
+
+	// Ponderado denominator: 2 (v1 + v2); v1 paid 1 cuota, v2 paid 0 cuotas.
+	// aporte(v1)=1, aporte(v2)=0 → sum=1, den=2 → 50%.
+	require.NotNil(t, reporte.PctPonderadoSemanal)
+	assert.True(t,
+		decimal.NewFromFloat(50.0).Equal(*reporte.PctPonderadoSemanal),
+		"ponderado %s (expected 50%%)", reporte.PctPonderadoSemanal,
+	)
+}

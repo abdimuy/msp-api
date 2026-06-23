@@ -18,12 +18,13 @@ type DesglosePorZonaOutput struct {
 // VentaCobranzaDTO is the wire representation of one venta's cobranza metrics.
 // All money fields are strings to avoid floating-point rounding.
 type VentaCobranzaDTO struct {
-	VentaID     int    `json:"venta_id"     doc:"DOCTO_CC_ID de la venta"`
-	ClienteID   int    `json:"cliente_id"   doc:"CLIENTE_ID"`
-	Parcialidad string `json:"parcialidad"  doc:"Cuota esperada en pesos (2 decimales)"`
-	Frecuencia  string `json:"frecuencia"   doc:"Cadencia de pago: SEMANAL, QUINCENAL o MENSUAL"`
-	AbonoSemana string `json:"abono_semana" doc:"Total abonado en la ventana semanal (2 decimales)"`
-	Vencidas    string `json:"vencidas"     doc:"Cuotas vencidas al inicio de la ventana (puede ser fracción)"`
-	Aporte      string `json:"aporte"       doc:"Aporte calculado para el reporte ponderado (puede ser fracción)"`
-	Saldo       string `json:"saldo"        doc:"Saldo pendiente actual (2 decimales)"`
+	VentaID         int    `json:"venta_id"          doc:"DOCTO_CC_ID de la venta"`
+	ClienteID       int    `json:"cliente_id"        doc:"CLIENTE_ID"`
+	Parcialidad     string `json:"parcialidad"       doc:"Cuota esperada en pesos (2 decimales)"`
+	Frecuencia      string `json:"frecuencia"        doc:"Cadencia de pago: SEMANAL, QUINCENAL o MENSUAL"`
+	AbonoSemana     string `json:"abono_semana"      doc:"Total abonado en la ventana semanal (2 decimales)"`
+	Vencidas        string `json:"vencidas"          doc:"Cuotas vencidas al inicio de la ventana (puede ser fracción)"`
+	Aporte          string `json:"aporte"            doc:"Aporte calculado para el reporte ponderado (puede ser fracción)"`
+	Saldo           string `json:"saldo"             doc:"Saldo pendiente actual (2 decimales)"`
+	AplicaPonderado bool   `json:"aplica_ponderado"  doc:"Si la venta cuenta en el denominador del % ponderado esta semana"`
 }

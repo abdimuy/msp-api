@@ -28,10 +28,15 @@ type VentaCobranza struct {
 	Aporte decimal.Decimal
 	// Saldo is MSP_SALDOS_VENTAS.SALDO (current outstanding balance).
 	Saldo decimal.Decimal
-	// FechaUltPago from MSP_SALDOS_VENTAS (used for next-due inference).
+	// FechaUltPago from MSP_SALDOS_VENTAS (retained for compatibility; no longer
+	// drives ponderado logic — use AplicaPonderado instead).
 	FechaUltPago *time.Time
 	// FechaCargo from MSP_SALDOS_VENTAS (used for plazos computation).
 	FechaCargo time.Time
+	// AplicaPonderado indicates whether this venta counts in the ponderado
+	// denominator (there is a calendar due-date within the reporting window).
+	// Populated by enrichVentas after the repo returns raw rows.
+	AplicaPonderado bool
 	// TotalImporte from MSP_SALDOS_VENTAS.
 	TotalImporte decimal.Decimal
 }
