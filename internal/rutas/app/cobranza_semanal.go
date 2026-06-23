@@ -38,7 +38,7 @@ func (s *Service) DesglosePorZona(
 
 	calendario, err := s.calendario.FechaInicioPorCobrador(ctx)
 	if err != nil {
-		calendario = map[int]time.Time{}
+		return nil, nil, err
 	}
 
 	fechaInicio, ok := calendario[*cobradorID]

@@ -3,6 +3,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -56,13 +57,14 @@ func TestDesglosePorZona_EnrichAporte(t *testing.T) {
 	rows := []rutasdomain.RutaResumen{
 		{ZonaID: zonaID, CobradorID: &cobradorID},
 	}
-	// fechaInicio: 10 days ago; cadencia SEMANAL=7 → plazos≈1.43
+	// fechaInicio: 10 days ago; FechaCargo is set 30 days before fechaInicio →
+	// windowDays = fechaInicio − FechaCargo = 30 days; cadencia SEMANAL=7 → plazos≈4.29
 	fechaInicio := time.Now().UTC().AddDate(0, 0, -10)
 	// Venta: parcialidad=100, saldo=2900, total=4000, abono=100
 	// pagado_antes = 4000 - (2900+100) = 1000
-	// plazos ≈ 1.43, debia = MIN(100×1.43, 4000) = 143
-	// vencidas = MAX(0, (143-1000)/100) = 0 (pagó más de lo debido)
-	// aporte = MIN(100/100, 0+1) = 1.00
+	// plazos ≈ 4.29, debia = MIN(100×4.29, 4000) = 428.57
+	// vencidas = MAX(0, (428.57-1000)/100) = 0 (pagadoAntes > debia)
+	// aporte = MIN(1, 0+1) = 1.00
 	ventas := []rutasdomain.VentaCobranza{
 		{
 			VentaID:      1,
@@ -89,4 +91,18 @@ func TestDesglosePorZona_EnrichAporte(t *testing.T) {
 	// Aporte must be 1.00 (al corriente pays 1 cuota).
 	assert.True(t, decimal.NewFromInt(1).Equal(got[0].Aporte),
 		"aporte=%s", got[0].Aporte)
+}
+
+func TestDesglosePorZona_CalendarioError(t *testing.T) {
+	t.Parallel()
+
+	cobradorID := 5
+	rows := []rutasdomain.RutaResumen{{ZonaID: 1, CobradorID: &cobradorID}}
+	svc := NewService(
+		&fakeRutasRepo{rows: rows},
+		&fakeCobranzaRepo{rows: map[int][]rutasdomain.VentaCobranza{}},
+		&fakeCalendario{err: errors.New("firestore down")},
+	)
+	_, _, err := svc.DesglosePorZona(context.Background(), 1)
+	require.Error(t, err)
 }
