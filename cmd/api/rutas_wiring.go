@@ -5,6 +5,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 	rutasapp "github.com/abdimuy/msp-api/internal/rutas/app"
 	rutasfb "github.com/abdimuy/msp-api/internal/rutas/infra/rutasfb"
+	"github.com/abdimuy/msp-api/internal/rutas/ports/outbound"
 )
 
 // provideRutasRepo builds the Firebird-backed RutasRepo for the rutas module.
@@ -15,6 +16,8 @@ func provideRutasRepo(pool *firebird.Pool) *rutasfb.RutasRepo {
 }
 
 // provideRutasService assembles the rutas read-only query service.
+// CobranzaRepo and CalendarioCobradorClient are stubbed with nil until
+// their concrete implementations are wired in a later task.
 func provideRutasService(repo *rutasfb.RutasRepo) *rutasapp.Service {
-	return rutasapp.NewService(repo)
+	return rutasapp.NewService(repo, outbound.CobranzaRepo(nil), outbound.CalendarioCobradorClient(nil))
 }

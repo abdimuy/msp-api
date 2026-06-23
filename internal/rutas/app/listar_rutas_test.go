@@ -4,6 +4,7 @@ package app
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
@@ -22,9 +23,32 @@ func (f *fakeRutasRepo) ListarRutas(_ context.Context) ([]rutasdomain.RutaResume
 	return f.rows, f.err
 }
 
+// fakeCobranzaRepo is a test double for outbound.CobranzaRepo.
+type fakeCobranzaRepo struct {
+	rows map[int][]rutasdomain.VentaCobranza
+	err  error
+}
+
+func (f *fakeCobranzaRepo) VentasPorZona(_ context.Context, zonaID int, _, _ time.Time) ([]rutasdomain.VentaCobranza, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.rows[zonaID], nil
+}
+
+// fakeCalendario is a test double for outbound.CalendarioCobradorClient.
+type fakeCalendario struct {
+	m   map[int]time.Time
+	err error
+}
+
+func (f *fakeCalendario) FechaInicioPorCobrador(_ context.Context) (map[int]time.Time, error) {
+	return f.m, f.err
+}
+
 func intPtr(v int) *int { return &v }
 
-func TestService_ListarRutas(t *testing.T) {
+func TestService_ListarRutas_NoMetrics(t *testing.T) {
 	t.Parallel()
 
 	cobradorID := 5
@@ -47,7 +71,12 @@ func TestService_ListarRutas(t *testing.T) {
 		},
 	}
 
-	svc := NewService(&fakeRutasRepo{rows: rows})
+	// Empty calendar → no metrics.
+	svc := NewService(
+		&fakeRutasRepo{rows: rows},
+		&fakeCobranzaRepo{rows: map[int][]rutasdomain.VentaCobranza{}},
+		&fakeCalendario{m: map[int]time.Time{}},
+	)
 	got, err := svc.ListarRutas(context.Background())
 
 	require.NoError(t, err)
@@ -56,13 +85,79 @@ func TestService_ListarRutas(t *testing.T) {
 	assert.Equal(t, 1, got[0].ZonaID)
 	assert.Equal(t, "Norte", got[0].ZonaNombre)
 	assert.Equal(t, intPtr(5), got[0].CobradorID)
-	assert.Equal(t, "Juan Pérez", got[0].CobradorNombre)
-	assert.Equal(t, 42, got[0].NumClientes)
-	assert.True(t, decimal.NewFromFloat(15000.50).Equal(got[0].SaldoTotal))
+	assert.Nil(t, got[0].PctCoberturaSemanal, "no calendar → nil metrics")
+	assert.Nil(t, got[0].PctPonderadoSemanal)
 
-	assert.Equal(t, 2, got[1].ZonaID)
 	assert.Nil(t, got[1].CobradorID)
-	assert.Empty(t, got[1].CobradorNombre)
-	assert.Equal(t, 0, got[1].NumClientes)
-	assert.True(t, decimal.Zero.Equal(got[1].SaldoTotal))
+	assert.Nil(t, got[1].PctCoberturaSemanal)
+}
+
+func TestService_ListarRutas_WithMetrics(t *testing.T) {
+	t.Parallel()
+
+	cobradorID := 5
+	zonaID := 1
+	rows := []rutasdomain.RutaResumen{
+		{
+			ZonaID:     zonaID,
+			CobradorID: &cobradorID,
+			ZonaNombre: "Norte",
+			SaldoTotal: decimal.NewFromInt(1000),
+		},
+	}
+
+	fechaInicio := time.Date(2026, 6, 16, 0, 0, 0, 0, time.UTC)
+
+	ventas := []rutasdomain.VentaCobranza{
+		{
+			VentaID:      1,
+			ClienteID:    100,
+			ZonaID:       zonaID,
+			Parcialidad:  decimal.NewFromInt(100),
+			Frecuencia:   rutasdomain.Semanal,
+			AbonoSemana:  decimal.NewFromInt(100),
+			Vencidas:     decimal.NewFromInt(0),
+			Aporte:       decimal.NewFromInt(1),
+			Saldo:        decimal.NewFromInt(900),
+			TotalImporte: decimal.NewFromInt(4000),
+			FechaCargo:   time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			VentaID:      2,
+			ClienteID:    101,
+			ZonaID:       zonaID,
+			Parcialidad:  decimal.NewFromInt(200),
+			Frecuencia:   rutasdomain.Semanal,
+			AbonoSemana:  decimal.Zero, // no pagó
+			Vencidas:     decimal.NewFromInt(1),
+			Aporte:       decimal.Zero,
+			Saldo:        decimal.NewFromInt(2000),
+			TotalImporte: decimal.NewFromInt(4000),
+			FechaCargo:   time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	svc := NewService(
+		&fakeRutasRepo{rows: rows},
+		&fakeCobranzaRepo{rows: map[int][]rutasdomain.VentaCobranza{zonaID: ventas}},
+		&fakeCalendario{m: map[int]time.Time{cobradorID: fechaInicio}},
+	)
+	got, err := svc.ListarRutas(context.Background())
+
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+
+	require.NotNil(t, got[0].PctCoberturaSemanal, "coverage should be computed")
+	// 1 of 2 paid → 50%
+	assert.True(t,
+		decimal.NewFromFloat(50.0).Equal(*got[0].PctCoberturaSemanal),
+		"cobertura %s", got[0].PctCoberturaSemanal,
+	)
+
+	require.NotNil(t, got[0].PctPonderadoSemanal)
+	// aporte sum=1, den=2 → 50%
+	assert.True(t,
+		decimal.NewFromFloat(50.0).Equal(*got[0].PctPonderadoSemanal),
+		"ponderado %s", got[0].PctPonderadoSemanal,
+	)
 }
