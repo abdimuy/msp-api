@@ -3,6 +3,7 @@ package app
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -57,9 +58,12 @@ func (s *Service) ListarRutas(ctx context.Context) ([]rutasdomain.RutaResumen, e
 		// Fetch ventas for this zona within the reporting window.
 		ventas, verr := s.cobranza.VentasPorZona(ctx, r.ZonaID, fechaInicio, now)
 		if verr != nil {
-			// Non-fatal per-zona: leave metrics nil and continue.
+			// Non-fatal per-zona: log and leave metrics nil, continue.
+			slog.WarnContext(ctx, "rutas.cobranza_metricas_zona_error",
+				"zona_id", r.ZonaID, "error", verr)
 			continue
 		}
+		enrichVentas(ventas, fechaInicio)
 		reporte := calcReporteZona(r.ZonaID, ventas, fechaInicio, now)
 		fi := fechaInicio
 		rutas[i].FechaInicioSemana = &fi

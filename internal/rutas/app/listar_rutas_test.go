@@ -108,6 +108,9 @@ func TestService_ListarRutas_WithMetrics(t *testing.T) {
 
 	fechaInicio := time.Date(2026, 6, 16, 0, 0, 0, 0, time.UTC)
 
+	// Raw values as the repo returns them — Aporte and Vencidas are zero
+	// (unset). enrichVentas computes them from Parcialidad, Saldo,
+	// TotalImporte, AbonoSemana and fechaInicio.
 	ventas := []rutasdomain.VentaCobranza{
 		{
 			VentaID:      1,
@@ -116,8 +119,8 @@ func TestService_ListarRutas_WithMetrics(t *testing.T) {
 			Parcialidad:  decimal.NewFromInt(100),
 			Frecuencia:   rutasdomain.Semanal,
 			AbonoSemana:  decimal.NewFromInt(100),
-			Vencidas:     decimal.NewFromInt(0),
-			Aporte:       decimal.NewFromInt(1),
+			Vencidas:     decimal.Zero,
+			Aporte:       decimal.Zero,
 			Saldo:        decimal.NewFromInt(900),
 			TotalImporte: decimal.NewFromInt(4000),
 			FechaCargo:   time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
@@ -129,7 +132,7 @@ func TestService_ListarRutas_WithMetrics(t *testing.T) {
 			Parcialidad:  decimal.NewFromInt(200),
 			Frecuencia:   rutasdomain.Semanal,
 			AbonoSemana:  decimal.Zero, // no pagó
-			Vencidas:     decimal.NewFromInt(1),
+			Vencidas:     decimal.Zero,
 			Aporte:       decimal.Zero,
 			Saldo:        decimal.NewFromInt(2000),
 			TotalImporte: decimal.NewFromInt(4000),
