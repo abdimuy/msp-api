@@ -25,6 +25,7 @@ func (h *Handlers) DesglosePorZona(ctx context.Context, in *DesglosePorZonaInput
 		return nil, mapAppError(err)
 	}
 
+	res := rutasdomain.CalcularResumenPonderado(ventas)
 	out := &DesglosePorZonaOutput{}
 	out.Body.ZonaID = in.ZonaID
 	if fechaInicio != nil {
@@ -32,6 +33,14 @@ func (h *Handlers) DesglosePorZona(ctx context.Context, in *DesglosePorZonaInput
 		out.Body.FechaInicioSemana = &s
 	}
 	out.Body.Items = toVentaCobranzaDTOs(ventas)
+	out.Body.Resumen = ResumenPonderadoDTO{
+		Numerador:   res.Numerador.StringFixed(4),
+		Denominador: res.Denominador,
+	}
+	if res.Pct != nil {
+		s := res.Pct.StringFixed(2)
+		out.Body.Resumen.PctPonderado = &s
+	}
 	return out, nil
 }
 
@@ -41,16 +50,25 @@ func toVentaCobranzaDTOs(ventas []rutasdomain.VentaCobranza) []VentaCobranzaDTO 
 	}
 	dtos := make([]VentaCobranzaDTO, len(ventas))
 	for i, v := range ventas {
+		dg := rutasdomain.DesglosarAporte(v.Parcialidad, v.Vencidas, v.AbonoSemana, v.Aporte)
 		dtos[i] = VentaCobranzaDTO{
-			VentaID:         v.VentaID,
-			ClienteID:       v.ClienteID,
-			Parcialidad:     v.Parcialidad.StringFixed(2),
-			Frecuencia:      string(v.Frecuencia),
-			AbonoSemana:     v.AbonoSemana.StringFixed(2),
-			Vencidas:        v.Vencidas.StringFixed(4),
-			Aporte:          v.Aporte.StringFixed(4),
-			Saldo:           v.Saldo.StringFixed(2),
-			AplicaPonderado: v.AplicaPonderado,
+			VentaID:             v.VentaID,
+			ClienteID:           v.ClienteID,
+			ClienteNombre:       v.ClienteNombre,
+			Folio:               v.Folio,
+			DoctoPVID:           v.DoctoPVID,
+			Parcialidad:         v.Parcialidad.StringFixed(2),
+			Frecuencia:          string(v.Frecuencia),
+			AbonoSemana:         v.AbonoSemana.StringFixed(2),
+			Vencidas:            v.Vencidas.StringFixed(4),
+			Aporte:              v.Aporte.StringFixed(4),
+			Saldo:               v.Saldo.StringFixed(2),
+			AplicaPonderado:     v.AplicaPonderado,
+			AtrasoAntesCuotas:   dg.AtrasoAntesCuotas.StringFixed(4),
+			AtrasoAntesPesos:    dg.AtrasoAntesPesos.StringFixed(2),
+			PagoCuotas:          dg.PagoCuotas.StringFixed(4),
+			AtrasoDespuesCuotas: dg.AtrasoDespuesCuotas.StringFixed(4),
+			AtrasoDespuesPesos:  dg.AtrasoDespuesPesos.StringFixed(2),
 		}
 	}
 	return dtos

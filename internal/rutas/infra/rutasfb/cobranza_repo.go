@@ -35,6 +35,10 @@ func NewCobranzaRepo(pool *firebird.Pool) *CobranzaRepo {
 // CAST(SUM(...) AS NUMERIC(18,2)) is mandatory — firebirdsql v0.9.x returns
 // NUMERIC aggregates unscaled without the explicit cast.
 //
+// DOCTO_PV_ID and FOLIO use correlated scalar subqueries with ROWS 1 to avoid
+// the firebirdsql v0.9.19 parameter-binding bug that rejects ? inside FROM-clause
+// derived tables.
+//
 // Parameters: $1=zonaID, $2=desde, $3=hasta, $4=zonaID (outer filter).
 const queryVentasPorZona = `
 SELECT
@@ -47,10 +51,33 @@ SELECT
   CAST(s.SALDO        AS NUMERIC(18,2))                    AS SALDO,
   CAST(s.TOTAL_IMPORTE AS NUMERIC(18,2))                   AS TOTAL_IMPORTE,
   s.FECHA_CARGO,
-  s.FECHA_ULT_PAGO
+  s.FECHA_ULT_PAGO,
+  c.NOMBRE                                                  AS CLIENTE_NOMBRE,
+  COALESCE((
+    SELECT des.DOCTO_FTE_ID
+    FROM DOCTOS_ENTRE_SIS des
+    WHERE des.CLAVE_SIS_FTE  = 'PV'
+      AND des.CLAVE_SIS_DEST = 'CC'
+      AND des.DOCTO_DEST_ID  = s.DOCTO_CC_ID
+    ROWS 1
+  ), 0)                                                     AS DOCTO_PV_ID,
+  COALESCE((
+    SELECT pv.FOLIO
+    FROM DOCTOS_PV pv
+    WHERE pv.DOCTO_PV_ID = (
+      SELECT des.DOCTO_FTE_ID
+      FROM DOCTOS_ENTRE_SIS des
+      WHERE des.CLAVE_SIS_FTE  = 'PV'
+        AND des.CLAVE_SIS_DEST = 'CC'
+        AND des.DOCTO_DEST_ID  = s.DOCTO_CC_ID
+      ROWS 1
+    )
+    ROWS 1
+  ), '')                                                    AS FOLIO
 FROM MSP_SALDOS_VENTAS s
 LEFT JOIN LIBRES_CARGOS_CC l    ON l.DOCTO_CC_ID      = s.DOCTO_CC_ID
 LEFT JOIN LISTAS_ATRIBUTOS lfp  ON lfp.LISTA_ATRIB_ID = l.FORMA_DE_PAGO
+LEFT JOIN CLIENTES c            ON c.CLIENTE_ID        = s.CLIENTE_ID
 LEFT JOIN (
   SELECT DOCTO_CC_ACR_ID,
          CAST(SUM(IMPORTE) AS NUMERIC(18,2)) AS ABONO_SEMANA
@@ -99,16 +126,19 @@ func (r *CobranzaRepo) VentasPorZona(
 
 // ventaCobranzaRaw holds raw scan targets for one cobranza row.
 type ventaCobranzaRaw struct {
-	ventaID        int
-	clienteID      int
-	zonaID         int
-	parcialidadRaw any
-	frecuencia     string
-	abonoRaw       any
-	saldoRaw       any
-	totalRaw       any
-	fechaCargo     time.Time
-	fechaUltPago   sql.NullTime
+	ventaID          int
+	clienteID        int
+	zonaID           int
+	parcialidadRaw   any
+	frecuencia       string
+	abonoRaw         any
+	saldoRaw         any
+	totalRaw         any
+	fechaCargo       time.Time
+	fechaUltPago     sql.NullTime
+	clienteNombreRaw firebird.Win1252 // CLIENTES.NOMBRE — CHARACTER SET NONE (Win1252)
+	doctoPVID        int
+	folioRaw         firebird.Win1252 // DOCTOS_PV.FOLIO — CHARACTER SET NONE (Win1252)
 }
 
 func scanVentaCobranza(s scannable) (rutasdomain.VentaCobranza, error) {
@@ -124,6 +154,9 @@ func scanVentaCobranza(s scannable) (rutasdomain.VentaCobranza, error) {
 		&raw.totalRaw,
 		&raw.fechaCargo,
 		&raw.fechaUltPago,
+		&raw.clienteNombreRaw,
+		&raw.doctoPVID,
+		&raw.folioRaw,
 	); err != nil {
 		return rutasdomain.VentaCobranza{}, err
 	}
@@ -163,16 +196,19 @@ func scanVentaCobranza(s scannable) (rutasdomain.VentaCobranza, error) {
 	// known (from the Firestore cobrador calendar). The repo returns raw fields
 	// only; the service calls enrichVentas after fetching.
 	return rutasdomain.VentaCobranza{
-		VentaID:      raw.ventaID,
-		ClienteID:    raw.clienteID,
-		ZonaID:       raw.zonaID,
-		Parcialidad:  parcialidad,
-		Frecuencia:   rutasdomain.Frecuencia(raw.frecuencia),
-		AbonoSemana:  abono,
-		Saldo:        saldo,
-		TotalImporte: total,
-		FechaCargo:   fechaCargo,
-		FechaUltPago: fechaUltPago,
+		VentaID:       raw.ventaID,
+		ClienteID:     raw.clienteID,
+		ZonaID:        raw.zonaID,
+		ClienteNombre: string(raw.clienteNombreRaw),
+		Folio:         string(raw.folioRaw),
+		DoctoPVID:     raw.doctoPVID,
+		Parcialidad:   parcialidad,
+		Frecuencia:    rutasdomain.Frecuencia(raw.frecuencia),
+		AbonoSemana:   abono,
+		Saldo:         saldo,
+		TotalImporte:  total,
+		FechaCargo:    fechaCargo,
+		FechaUltPago:  fechaUltPago,
 		// Aporte and Vencidas are computed in the app layer after Plazos is known.
 		Aporte:   decimal.Zero,
 		Vencidas: decimal.Zero,

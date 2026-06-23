@@ -16,6 +16,13 @@ type VentaCobranza struct {
 	ClienteID int
 	// ZonaID is MSP_SALDOS_VENTAS.ZONA_CLIENTE_ID.
 	ZonaID int
+	// ClienteNombre from CLIENTES.NOMBRE (legacy table; NFC in Go).
+	ClienteNombre string
+	// Folio de la venta PV (DOCTOS_PV.FOLIO), "" si no se resuelve.
+	Folio string
+	// DoctoPVID is the linked PV sale id (DOCTOS_ENTRE_SIS bridge), 0 si no se resuelve.
+	// Used by the FE to fetch products lazily via the clientes endpoint.
+	DoctoPVID int
 	// Parcialidad from LIBRES_CARGOS_CC.
 	Parcialidad decimal.Decimal
 	// Frecuencia resolved from LISTAS_ATRIBUTOS via LIBRES_CARGOS_CC.FORMA_DE_PAGO.
