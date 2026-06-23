@@ -139,3 +139,69 @@ func TestAplicaEnVentana(t *testing.T) {
 		})
 	}
 }
+
+// TestCalendario_TerminaConRangoInvertido is a regression test for an infinite
+// loop: when the start month is AFTER the end month, the month-iterating loops
+// must still terminate (return 0 / false), not spin forever. This happens in
+// real data when a venta's FechaCargo lands in a later month than the
+// cobrador's fechaInicio (QUINCENAL vencidos), or when the [desde, hasta]
+// window is degenerate. Each call runs in a goroutine guarded by a timeout so
+// the bug surfaces as a test failure instead of hanging the whole suite.
+func TestCalendario_TerminaConRangoInvertido(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		id   string
+		run  func() int // returns count, or 1/0 for the boolean calls
+		want int
+	}{
+		{
+			id: "vencidos_quincenal_cargo_mes_posterior",
+			run: func() int {
+				return rutasdomain.VencimientosVencidos(rutasdomain.Quincenal, d("2026-02-10"), d("2026-01-05"), 2)
+			},
+			want: 0,
+		},
+		{
+			id: "vencidos_mensual_cargo_mes_posterior",
+			run: func() int {
+				return rutasdomain.VencimientosVencidos(rutasdomain.Mensual, d("2026-02-10"), d("2026-01-05"), 2)
+			},
+			want: 0,
+		},
+		{
+			id: "aplica_quincenal_ventana_invertida",
+			run: func() int {
+				if rutasdomain.AplicaEnVentana(rutasdomain.Quincenal, d("2026-01-01"), d("2026-03-10"), d("2026-01-05")) {
+					return 1
+				}
+				return 0
+			},
+			want: 0,
+		},
+		{
+			id: "aplica_mensual_ventana_invertida",
+			run: func() int {
+				if rutasdomain.AplicaEnVentana(rutasdomain.Mensual, d("2026-01-01"), d("2026-03-10"), d("2026-01-05")) {
+					return 1
+				}
+				return 0
+			},
+			want: 0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.id, func(t *testing.T) {
+			t.Parallel()
+			done := make(chan int, 1)
+			go func() { done <- tc.run() }()
+			select {
+			case got := <-done:
+				assert.Equal(t, tc.want, got, tc.id)
+			case <-time.After(2 * time.Second):
+				t.Fatalf("%s: no terminó en 2s (loop infinito)", tc.id)
+			}
+		})
+	}
+}

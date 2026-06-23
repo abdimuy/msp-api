@@ -96,14 +96,20 @@ func contarVencidosMensual(cargo, inicio time.Time, graceDias int) int {
 func contarVencidosQuincenal(cargo, inicio time.Time, graceDias int) int {
 	count := 0
 	y, m, _ := cargo.Date()
-
-	// Iterate months from cargo's month up to inicio's month.
 	yEnd, mEnd, _ := inicio.Date()
 
-	for {
-		// Generate the two candidates for this month.
-		day15 := time.Date(y, m, 15, 0, 0, 0, 0, time.UTC)
-		lastDay := ultimoDiaDeMes(time.Date(y, m, 1, 0, 0, 0, 0, time.UTC))
+	// Iterate months from cargo's month up to inicio's month using a monotonic
+	// month index. When cargo's month is AFTER inicio's month (e.g. a venta
+	// created in a later month than the cobrador's week-start), idx > idxEnd and
+	// the loop body never runs — returning 0 instead of spinning forever.
+	idx := y*12 + int(m) - 1
+	idxEnd := yEnd*12 + int(mEnd) - 1
+
+	for ; idx <= idxEnd; idx++ {
+		yy := idx / 12
+		mm := time.Month(idx%12 + 1)
+		day15 := time.Date(yy, mm, 15, 0, 0, 0, 0, time.UTC)
+		lastDay := ultimoDiaDeMes(time.Date(yy, mm, 1, 0, 0, 0, 0, time.UTC))
 
 		for _, v := range []time.Time{day15, lastDay} {
 			// Must be strictly > cargo.
@@ -119,16 +125,6 @@ func contarVencidosQuincenal(cargo, inicio time.Time, graceDias int) int {
 			if withGrace.Before(inicio) {
 				count++
 			}
-		}
-
-		// Advance to next month; stop when past yEnd/mEnd.
-		if y == yEnd && m == mEnd {
-			break
-		}
-		m++
-		if m > 12 {
-			m = 1
-			y++
 		}
 	}
 	return count
@@ -219,9 +215,17 @@ func aplicaQuincenalEnVentana(cargo, lo, hi time.Time) bool {
 	y, m, _ := lo.Date()
 	yEnd, mEnd, _ := hi.Date()
 
-	for {
-		day15 := time.Date(y, m, 15, 0, 0, 0, 0, time.UTC)
-		lastDay := ultimoDiaDeMes(time.Date(y, m, 1, 0, 0, 0, 0, time.UTC))
+	// Monotonic month index from lo's month to hi's month. A degenerate window
+	// (lo's month after hi's month) yields idx > idxEnd → no iterations → false,
+	// instead of looping forever.
+	idx := y*12 + int(m) - 1
+	idxEnd := yEnd*12 + int(mEnd) - 1
+
+	for ; idx <= idxEnd; idx++ {
+		yy := idx / 12
+		mm := time.Month(idx%12 + 1)
+		day15 := time.Date(yy, mm, 15, 0, 0, 0, 0, time.UTC)
+		lastDay := ultimoDiaDeMes(time.Date(yy, mm, 1, 0, 0, 0, 0, time.UTC))
 
 		for _, v := range []time.Time{day15, lastDay} {
 			if v.After(hi) {
@@ -230,15 +234,6 @@ func aplicaQuincenalEnVentana(cargo, lo, hi time.Time) bool {
 			if !v.Before(lo) && v.After(cargo) {
 				return true
 			}
-		}
-
-		if y == yEnd && m == mEnd {
-			break
-		}
-		m++
-		if m > 12 {
-			m = 1
-			y++
 		}
 	}
 	return false
