@@ -247,8 +247,11 @@ func provideRootHandler(
 		})
 
 		// Rutas listing endpoint — read-only, authn only (no idempotency, no
-		// failed-intent capture). Final path: GET /v2/rutas.
-		r.Route("/rutas", func(r chi.Router) {
+		// failed-intent capture). MountRouter registers the operation at Path
+		// "/rutas", so mount it on a bare group (like clientes) — NOT via
+		// r.Route("/rutas"), which would double the prefix to /v2/rutas/rutas.
+		// Final path: GET /v2/rutas.
+		r.Group(func(r chi.Router) {
 			r.Use(skipAuthForPublicDocs(authn.Handler))
 			rutashttp.MountRouter(r, rutasSvc)
 		})
