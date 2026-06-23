@@ -347,6 +347,7 @@ linters:
             - github.com/abdimuy/msp-api/internal/inventario/domain
             - github.com/abdimuy/msp-api/internal/analytics/domain
             - github.com/abdimuy/msp-api/internal/clientes/domain
+            - github.com/abdimuy/msp-api/internal/rutas/domain
 
         app-no-infra:
           list-mode: lax
