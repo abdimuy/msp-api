@@ -3,6 +3,7 @@ package rutashttp
 
 import (
 	"context"
+	"time"
 
 	"github.com/abdimuy/msp-api/internal/auth"
 	rutasapp "github.com/abdimuy/msp-api/internal/rutas/app"
@@ -52,6 +53,18 @@ func toRutaResumenDTOs(rutas []rutasdomain.RutaResumen) []RutaResumenDTO {
 			CobradorNombre: r.CobradorNombre,
 			NumClientes:    r.NumClientes,
 			SaldoTotal:     r.SaldoTotal.StringFixed(2),
+		}
+		if r.PctCoberturaSemanal != nil {
+			s := r.PctCoberturaSemanal.StringFixed(2)
+			dtos[i].PctCoberturaSemanal = &s
+		}
+		if r.PctPonderadoSemanal != nil {
+			s := r.PctPonderadoSemanal.StringFixed(2)
+			dtos[i].PctPonderadoSemanal = &s
+		}
+		if r.FechaInicioSemana != nil {
+			s := r.FechaInicioSemana.UTC().Format(time.RFC3339)
+			dtos[i].FechaInicioSemana = &s
 		}
 	}
 	return dtos

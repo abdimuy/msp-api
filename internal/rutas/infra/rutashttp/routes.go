@@ -63,4 +63,15 @@ func registerOperations(api huma.API, h *Handlers) {
 		Security:      security,
 		DefaultStatus: http.StatusOK,
 	}, h.ListarRutas)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "desglose-cobranza-por-zona",
+		Method:        http.MethodGet,
+		Path:          "/rutas/{zona_id}/cobranza",
+		Summary:       "Desglose de cobranza semanal por zona",
+		Description:   "Devuelve el detalle por venta del reporte semanal de cobranza para una zona: abono, cuotas vencidas, aporte y saldo.",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+	}, h.DesglosePorZona)
 }
