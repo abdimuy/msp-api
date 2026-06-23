@@ -84,42 +84,26 @@ func calcReporteZona(
 	var (
 		coberturaNum int
 		coberturaDen int
-		aporteSum    decimal.Decimal
-		aporteDen    int
 	)
 
+	// Cobertura: count ventas and those that paid something in the window.
 	for _, v := range ventas {
-		// Denominador cobertura: ventas activas (SALDO > 0 OR pagó en ventana).
 		coberturaDen++
-
-		// Numerador cobertura: pagó algo en la ventana.
 		if v.AbonoSemana.IsPositive() {
 			coberturaNum++
 		}
-
-		// Ponderado: venta counts only when there is a calendar due-date within
-		// the reporting window (set by enrichVentas via AplicaEnVentana).
-		if v.AplicaPonderado {
-			aporteDen++
-			aporteSum = aporteSum.Add(v.Aporte)
-		}
 	}
 
-	reporte := rutasdomain.ReporteZona{ZonaID: zonaID}
+	// Ponderado: delegate to the shared aggregate so listing and modal agree.
+	resumen := rutasdomain.CalcularResumenPonderado(ventas)
 
+	reporte := rutasdomain.ReporteZona{ZonaID: zonaID}
 	if coberturaDen > 0 {
 		pct := decimal.NewFromInt(int64(coberturaNum)).
 			Div(decimal.NewFromInt(int64(coberturaDen))).
 			Mul(decimal.NewFromInt(100))
 		reporte.PctCoberturaSemanal = &pct
 	}
-
-	if aporteDen > 0 {
-		pct := aporteSum.
-			Div(decimal.NewFromInt(int64(aporteDen))).
-			Mul(decimal.NewFromInt(100))
-		reporte.PctPonderadoSemanal = &pct
-	}
-
+	reporte.PctPonderadoSemanal = resumen.Pct
 	return reporte
 }
