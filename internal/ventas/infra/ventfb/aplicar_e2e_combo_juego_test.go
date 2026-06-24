@@ -13,8 +13,9 @@ package ventfb_test
 // JuegosPorCombo is a genuine Microsip juego whose JUEGOS_DET recipe matches.
 //
 // All writes run inside WithTestTransaction (rollback-only). Gating: tests skip
-// when FB_DATABASE is unset (requireFBEnv) or when the dev DB lacks the minimum
-// component seed (discoverDosComponentes skips with a clear reason).
+// when FB_DATABASE is unset (requireFBEnv). When FB_DATABASE IS set,
+// discoverDosComponentes fails loudly (t.Fatalf) if the DB lacks the minimum
+// seed so a depleted dev DB never produces a false-green run.
 
 import (
 	"context"
@@ -40,57 +41,59 @@ const comboLineaArticuloID = 11774
 
 // ─── discovery ────────────────────────────────────────────────────────────────
 
-// componenteSeed is one discovered, well-stocked, almacenable component article
-// usable as a juego component.
+// componenteSeed is one discovered almacenable component article usable as a
+// juego component.
 type componenteSeed struct {
 	articuloID int
 	almacenID  int
 }
 
 // discoverDosComponentes finds two DISTINCT almacenable, active, non-juego
-// articles in the SAME almacén, each with a clave (ROL=17) and ample on-hand
-// existencia, so the combo's components discharge real stock from one almacén.
-// Skips the calling test when the dev DB lacks the minimum seed.
+// articles in the SAME almacén, each with a clave (ROL=17). On-hand existencia
+// is NOT required: all writes run inside WithTestTransaction (rollback-only) so
+// the discharge always rolls back regardless of ambient stock.
+//
+// When FB_DATABASE is set the function calls t.Fatalf on failure so a depleted
+// dev DB never produces a false-green suite. When FB_DATABASE is unset the
+// suite already skips via requireFBEnv, so t.Fatalf here is unreachable without
+// a live DB.
 func discoverDosComponentes(ctx context.Context, t *testing.T, q firebird.Querier) (componenteSeed, componenteSeed) {
 	t.Helper()
-	const minExistencia = 100
 
-	// Find an almacén with at least two qualifying components.
+	// Find an almacén that has at least two qualifying almacenable articles
+	// (ES_ALMACENABLE='S', active, non-juego, clave ROL=17). Existencia is not
+	// filtered: since every write rolls back, even an article with zero on-hand
+	// stock satisfies the discharge test.
 	var almacenID int
 	if err := q.QueryRowContext(ctx, `
-		SELECT FIRST 1 s.ALMACEN_ID
+		SELECT FIRST 1 a.ALMACEN_ID
 		FROM (
-			SELECT s.ARTICULO_ID, s.ALMACEN_ID
+			SELECT DISTINCT s.ARTICULO_ID, s.ALMACEN_ID
 			FROM SALDOS_IN s
-			JOIN ARTICULOS a ON a.ARTICULO_ID = s.ARTICULO_ID
-			WHERE a.ES_ALMACENABLE = 'S' AND a.ESTATUS = 'A' AND a.ES_JUEGO <> 'S'
+			JOIN ARTICULOS ar ON ar.ARTICULO_ID = s.ARTICULO_ID
+			WHERE ar.ES_ALMACENABLE = 'S' AND ar.ESTATUS = 'A' AND ar.ES_JUEGO <> 'S'
 			  AND EXISTS (SELECT 1 FROM CLAVES_ARTICULOS c
 			               WHERE c.ARTICULO_ID = s.ARTICULO_ID
 			                 AND c.ROL_CLAVE_ART_ID = 17)
-			GROUP BY s.ARTICULO_ID, s.ALMACEN_ID
-			HAVING SUM(s.ENTRADAS_UNIDADES - s.SALIDAS_UNIDADES) >= ?
-		) s
-		GROUP BY s.ALMACEN_ID
+		) a
+		GROUP BY a.ALMACEN_ID
 		HAVING COUNT(*) >= 2
-		ORDER BY COUNT(*) DESC`,
-		minExistencia,
-	).Scan(&almacenID); err != nil {
-		t.Skip("no almacén with >=2 well-stocked almacenable components (clave rol=17, existencia >= 100) in dev DB — skipping combo juego e2e tests")
+		ORDER BY COUNT(*) DESC`).Scan(&almacenID); err != nil {
+		t.Fatalf("discoverDosComponentes: no almacén with >=2 almacenable components (clave rol=17) in dev DB — fixture gap: %v", err)
 	}
 
 	rows, err := q.QueryContext(ctx, `
 		SELECT FIRST 2 s.ARTICULO_ID
 		FROM SALDOS_IN s
-		JOIN ARTICULOS a ON a.ARTICULO_ID = s.ARTICULO_ID
-		WHERE a.ES_ALMACENABLE = 'S' AND a.ESTATUS = 'A' AND a.ES_JUEGO <> 'S'
+		JOIN ARTICULOS ar ON ar.ARTICULO_ID = s.ARTICULO_ID
+		WHERE ar.ES_ALMACENABLE = 'S' AND ar.ESTATUS = 'A' AND ar.ES_JUEGO <> 'S'
 		  AND s.ALMACEN_ID = ?
 		  AND EXISTS (SELECT 1 FROM CLAVES_ARTICULOS c
 		               WHERE c.ARTICULO_ID = s.ARTICULO_ID
 		                 AND c.ROL_CLAVE_ART_ID = 17)
 		GROUP BY s.ARTICULO_ID
-		HAVING SUM(s.ENTRADAS_UNIDADES - s.SALIDAS_UNIDADES) >= ?
 		ORDER BY s.ARTICULO_ID`,
-		almacenID, minExistencia,
+		almacenID,
 	)
 	require.NoError(t, err, "query componentes")
 	defer rows.Close() //nolint:errcheck // best-effort after iteration
@@ -102,7 +105,9 @@ func discoverDosComponentes(ctx context.Context, t *testing.T, q firebird.Querie
 		ids = append(ids, id)
 	}
 	require.NoError(t, rows.Err())
-	require.Len(t, ids, 2, "expected exactly 2 component articles in almacén %d", almacenID)
+	if len(ids) < 2 {
+		t.Fatalf("discoverDosComponentes: almacén %d has fewer than 2 qualifying components after per-article query — fixture gap", almacenID)
+	}
 
 	return componenteSeed{articuloID: ids[0], almacenID: almacenID},
 		componenteSeed{articuloID: ids[1], almacenID: almacenID}
