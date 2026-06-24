@@ -284,9 +284,14 @@ func (r *JuegoResolver) insertJuego(
 		return 0, fmt.Errorf("claim articulo_id: %w", err)
 	}
 
-	// Phase 2: INSERT ARTICULOS. NOMBRE is a legacy Microsip column → Win1252.
+	// Phase 2: INSERT ARTICULOS. NOMBRE is ISO8859_1 in the Microsip schema.
+	// The API always connects with FB_CHARSET=UTF8, so the driver sends string
+	// values as UTF-8 and Firebird auto-transliterates UTF-8 → ISO8859_1 for
+	// columns declared as ISO8859_1. Passing a raw string (not Win1252) is
+	// correct for a UTF-8 connection — Win1252 sends raw bytes that the server
+	// rejects as "Malformed string" when the connection charset is UTF-8.
 	if _, err := q.ExecContext(ctx, insertArticuloJuego,
-		articuloID, firebird.Win1252(nombre), in.LineaArticuloID,
+		articuloID, nombre, in.LineaArticuloID,
 	); err != nil {
 		return 0, firebird.MapError(err)
 	}

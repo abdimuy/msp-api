@@ -281,3 +281,33 @@ func TestLoad_ImageProcessor_AcceptsPNGCompressionNoCompression(t *testing.T) { 
 	require.NoError(t, err)
 	assert.Equal(t, 0, cfg.ImageProcessor.PNGCompression)
 }
+
+// ─── MicrosipVenta.Juegos validation ────────────────────────────────────────
+
+func TestLoad_MicrosipVenta_JuegosDisabled_OK(t *testing.T) { //nolint:paralleltest // uses t.Setenv
+	setMinimal(t)
+	// Default: JuegosEnabled=false, JuegosLineaArticuloID=0 → valid.
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.False(t, cfg.MicrosipVenta.JuegosEnabled)
+	assert.Equal(t, 0, cfg.MicrosipVenta.JuegosLineaArticuloID)
+}
+
+func TestLoad_MicrosipVenta_JuegosEnabled_LineaSet_OK(t *testing.T) { //nolint:paralleltest // uses t.Setenv
+	setMinimal(t)
+	t.Setenv("MICROSIP_VENTA_JUEGOS_ENABLED", "true")
+	t.Setenv("MICROSIP_VENTA_JUEGOS_LINEA_ARTICULO_ID", "11774")
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.True(t, cfg.MicrosipVenta.JuegosEnabled)
+	assert.Equal(t, 11774, cfg.MicrosipVenta.JuegosLineaArticuloID)
+}
+
+func TestLoad_MicrosipVenta_JuegosEnabled_LineaZero_Fails(t *testing.T) { //nolint:paralleltest // uses t.Setenv
+	setMinimal(t)
+	t.Setenv("MICROSIP_VENTA_JUEGOS_ENABLED", "true")
+	// MICROSIP_VENTA_JUEGOS_LINEA_ARTICULO_ID left at default (0) → must fail.
+	_, err := config.Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "MICROSIP_VENTA_JUEGOS_LINEA_ARTICULO_ID")
+}

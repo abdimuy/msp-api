@@ -30,7 +30,8 @@ var (
 	errMeilisearchURLRequired = errors.New("config: MEILISEARCH_URL is required " +
 		"in this environment (set MEILISEARCH_ALLOW_UNCONFIGURED=true to explicitly " +
 		"opt out of Meilisearch-backed search)")
-	errLLMBaseURLRequired = errors.New("config: LLM_BASE_URL is required when LLM_ENABLED=true")
+	errLLMBaseURLRequired       = errors.New("config: LLM_BASE_URL is required when LLM_ENABLED=true")
+	errMicrosipVentaJuegosLinea = errors.New("config: invalid MICROSIP_VENTA_JUEGOS_* configuration")
 )
 
 // Environment is the runtime environment.
@@ -142,6 +143,26 @@ type MicrosipVenta struct {
 	// via FORMAS_COBRO_DOCTOS. Default 157 (the value used by the 66k real
 	// enganches in the production ledger).
 	FormaCobroEnganche int `env:"MICROSIP_FORMA_COBRO_ENGANCHE" envDefault:"157"`
+	// JuegosEnabled gates the combo→juego resolution step inside AplicarVenta.
+	// When false (the default), combos are flattened to ROL='N' standalone lines
+	// exactly as the legacy behavior. Flip to true only when
+	// JuegosLineaArticuloID is also configured — the validate() method enforces
+	// this invariant at boot.
+	JuegosEnabled bool `env:"MICROSIP_VENTA_JUEGOS_ENABLED" envDefault:"false"`
+	// JuegosLineaArticuloID is the LINEA_ARTICULO_ID stamped on every juego
+	// article created by the JuegoResolver. Must be a valid Microsip
+	// LINEAS_ARTICULOS row (e.g. 11774 in the dev DB). Required when
+	// JuegosEnabled is true; ignored otherwise.
+	JuegosLineaArticuloID int `env:"MICROSIP_VENTA_JUEGOS_LINEA_ARTICULO_ID" envDefault:"0"`
+}
+
+// validate enforces that the MicrosipVenta configuration is internally
+// consistent. JuegosLineaArticuloID is required when JuegosEnabled is true.
+func (m MicrosipVenta) validate() error {
+	if m.JuegosEnabled && m.JuegosLineaArticuloID <= 0 {
+		return fmt.Errorf("%w: MICROSIP_VENTA_JUEGOS_LINEA_ARTICULO_ID must be > 0 when MICROSIP_VENTA_JUEGOS_ENABLED=true", errMicrosipVentaJuegosLinea)
+	}
+	return nil
 }
 
 // Cobranza holds cobranza-module-specific runtime knobs.
@@ -417,6 +438,10 @@ func (c *Config) validate() error {
 	}
 
 	if err := c.ImageProcessor.validate(); err != nil {
+		errs = append(errs, err)
+	}
+
+	if err := c.MicrosipVenta.validate(); err != nil {
 		errs = append(errs, err)
 	}
 

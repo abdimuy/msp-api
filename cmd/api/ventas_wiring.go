@@ -104,10 +104,20 @@ func provideVentasMicrosipClienteWriter(p *firebird.Pool, cfg *config.Config) ve
 	return microsip.NewClienteWriter(p).WithLimiteCredito(cfg.MicrosipVenta.ClienteLimiteCredito)
 }
 
+// provideVentasMicrosipJuegoResolver builds the Firebird-backed
+// MicrosipJuegoResolver that matches or creates a Microsip juego (kit) for
+// each combo inside AplicarVenta. The resolver is always constructed but only
+// invoked when MICROSIP_VENTA_JUEGOS_ENABLED=true and a non-nil resolver is
+// wired into the Service via WithJuegos (see provideVentasService).
+func provideVentasMicrosipJuegoResolver(p *firebird.Pool) ventasoutbound.MicrosipJuegoResolver {
+	return microsip.NewJuegoResolver(p)
+}
+
 // provideVentasService assembles the ventas application service. Multi-step
 // writes are coordinated through the supplied Firebird transaction manager.
 // The inventario adapter is attached via WithInventario so CrearVenta /
 // CancelarVenta exercise stock validation + automatic traspaso.
+// p and cfg are used to wire the optional JuegoResolver (combo→juego feature).
 func provideVentasService(
 	repo ventasoutbound.VentaRepo,
 	clientes ventasoutbound.ClienteExistenceChecker,
@@ -124,10 +134,13 @@ func provideVentasService(
 	eventReader ventasoutbound.VentaEventReader,
 	usuarioResolver ventasoutbound.UsuarioNombreResolver,
 	almacenResolver ventasoutbound.AlmacenNombreResolver,
+	p *firebird.Pool,
+	cfg *config.Config,
 ) *ventasapp.Service {
 	return ventasapp.NewService(repo, clientes, usuarios, store, clock, outbox, imageProc, fbTxMgr, aplicarCfg, microsipWriter, microsipCliente).
 		WithInventario(inv).
 		WithEventReader(eventReader).
 		WithUsuarioResolver(usuarioResolver).
-		WithAlmacenResolver(almacenResolver)
+		WithAlmacenResolver(almacenResolver).
+		WithJuegos(provideVentasMicrosipJuegoResolver(p), cfg.MicrosipVenta.JuegosEnabled, cfg.MicrosipVenta.JuegosLineaArticuloID)
 }
