@@ -131,34 +131,36 @@ type AprobacionDTO struct {
 
 // VentaDTO is the full projection of a domain.Venta.
 type VentaDTO struct {
-	ID                 string             `json:"id"                    format:"uuid"`
-	Cliente            ClienteSnapshotDTO `json:"cliente"`
-	Direccion          DireccionDTO       `json:"direccion"`
-	GPS                GPSDTO             `json:"gps"`
-	FechaVenta         string             `json:"fecha_venta"`
-	TipoVenta          string             `json:"tipo_venta"            enum:"CONTADO,CREDITO"`
-	Estado             string             `json:"estado"                enum:"active,deleted"`
-	Situacion          string             `json:"situacion"             enum:"borrador,revisada,aprobada,cancelada"`
-	Sincronizacion     string             `json:"sincronizacion"        enum:"pendiente,aplicada"`
-	MicrosipFolio      *string            `json:"microsip_folio,omitempty"       maxLength:"9"`
-	MicrosipDoctoPVID  *int               `json:"microsip_docto_pv_id,omitempty"`
-	MicrosipAplicadaAt *string            `json:"microsip_aplicada_at,omitempty"`
-	Montos             MontosDTO          `json:"montos"`
-	PlanCredito        *PlanCreditoDTO    `json:"plan_credito,omitempty"`
-	DiaCobranza        *DiaCobranzaDTO    `json:"dia_cobranza,omitempty"`
-	Nota               *string            `json:"nota,omitempty"          maxLength:"500" doc:"Nota libre, máximo 500 caracteres"`
-	Combos             []ComboDTO         `json:"combos"`
-	Productos          []ProductoDTO      `json:"productos"`
-	Vendedores         []VendedorDTO      `json:"vendedores"`
-	Imagenes           []ImagenDTO        `json:"imagenes"`
-	Cancelacion        *CancelacionDTO    `json:"cancelacion,omitempty"`
-	Aprobacion         *AprobacionDTO     `json:"aprobacion,omitempty"`
-	CreatedAt          string             `json:"created_at"`
-	UpdatedAt          string             `json:"updated_at"`
-	CreatedBy          string             `json:"created_by"            format:"uuid"`
-	CreatedByNombre    string             `json:"created_by_nombre,omitempty" doc:"Nombre del usuario que creó la venta; ausente cuando no se pudo resolver"`
-	UpdatedBy          string             `json:"updated_by"            format:"uuid"`
-	UpdatedByNombre    string             `json:"updated_by_nombre,omitempty" doc:"Nombre del usuario que actualizó la venta por última vez; ausente cuando no se pudo resolver"`
+	ID                    string             `json:"id"                    format:"uuid"`
+	Cliente               ClienteSnapshotDTO `json:"cliente"`
+	Direccion             DireccionDTO       `json:"direccion"`
+	GPS                   GPSDTO             `json:"gps"`
+	FechaVenta            string             `json:"fecha_venta"`
+	TipoVenta             string             `json:"tipo_venta"            enum:"CONTADO,CREDITO"`
+	Estado                string             `json:"estado"                enum:"active,deleted"`
+	Situacion             string             `json:"situacion"             enum:"borrador,revisada,aprobada,cancelada"`
+	Sincronizacion        string             `json:"sincronizacion"        enum:"pendiente,aplicada"`
+	MicrosipFolio         *string            `json:"microsip_folio,omitempty"       maxLength:"9"`
+	MicrosipDoctoPVID     *int               `json:"microsip_docto_pv_id,omitempty"`
+	MicrosipAplicadaAt    *string            `json:"microsip_aplicada_at,omitempty"`
+	Montos                MontosDTO          `json:"montos"`
+	PlanCredito           *PlanCreditoDTO    `json:"plan_credito,omitempty"`
+	DiaCobranza           *DiaCobranzaDTO    `json:"dia_cobranza,omitempty"`
+	Nota                  *string            `json:"nota,omitempty"          maxLength:"500" doc:"Nota libre, máximo 500 caracteres"`
+	Combos                []ComboDTO         `json:"combos"`
+	Productos             []ProductoDTO      `json:"productos"`
+	Vendedores            []VendedorDTO      `json:"vendedores"`
+	Imagenes              []ImagenDTO        `json:"imagenes"`
+	Cancelacion           *CancelacionDTO    `json:"cancelacion,omitempty"`
+	Aprobacion            *AprobacionDTO     `json:"aprobacion,omitempty"`
+	CreatedAt             string             `json:"created_at"`
+	UpdatedAt             string             `json:"updated_at"`
+	CreatedBy             string             `json:"created_by"            format:"uuid"`
+	CreatedByNombre       string             `json:"created_by_nombre,omitempty" doc:"Nombre del usuario que creó la venta; ausente cuando no se pudo resolver"`
+	UpdatedBy             string             `json:"updated_by"            format:"uuid"`
+	UpdatedByNombre       string             `json:"updated_by_nombre,omitempty" doc:"Nombre del usuario que actualizó la venta por última vez; ausente cuando no se pudo resolver"`
+	ZonaMismatch          bool               `json:"zona_mismatch"                      doc:"true cuando la zona de la dirección de entrega difiere de la zona actual del cliente en Microsip"`
+	ZonaClienteMicrosipID *int               `json:"zona_cliente_microsip_id,omitempty" doc:"Zona actual del cliente en Microsip; ausente cuando no hay cliente vinculado, zona nula, o cliente no encontrado"`
 }
 
 // ─── Request bodies ─────────────────────────────────────────────────────────
