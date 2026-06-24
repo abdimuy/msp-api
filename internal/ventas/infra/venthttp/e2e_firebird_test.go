@@ -238,22 +238,37 @@ func TestE2E_Firebird_CrearVenta(t *testing.T) { //nolint:paralleltest // see co
 		require.NotNil(t, canceled.Cancelacion)
 		assert.Equal(t, "e2e cancel", canceled.Cancelacion.Reason)
 
-		// 6. GET /ventas?incluir_canceladas=true — list reflects the canceled venta.
-		req = httptest.NewRequest(http.MethodGet, "/ventas?incluir_canceladas=true&limit=10", nil)
-		rec = httptest.NewRecorder()
-		r.ServeHTTP(rec, req)
-		require.Equal(t, http.StatusOK, rec.Code, "list body=%s", rec.Body.String())
-
-		var list venthttp.ListResponse[venthttp.VentaDTO]
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
-		found := false
-		for _, item := range list.Items {
-			if item.ID == body.ID {
-				found = true
-				assert.NotNil(t, item.Cancelacion, "listed venta should be flagged canceled")
+		// 6. GET /ventas?incluir_canceladas=true — page through the cursor-paginated
+		// list until the just-canceled venta is found. The shared dev DB may have
+		// many ventas dated after the test fixture (2026-05-11), so a first-page
+		// check is not robust. We follow next_cursor until found or pages run out.
+		foundCanceled := false
+		listCursor := ""
+		for pageNum := 0; !foundCanceled; pageNum++ {
+			listURL := "/ventas?incluir_canceladas=true&limit=50"
+			if listCursor != "" {
+				listURL += "&cursor=" + listCursor
 			}
+			req = httptest.NewRequest(http.MethodGet, listURL, nil)
+			rec = httptest.NewRecorder()
+			r.ServeHTTP(rec, req)
+			require.Equal(t, http.StatusOK, rec.Code, "list page=%d body=%s", pageNum, rec.Body.String())
+
+			var listPage venthttp.ListResponse[venthttp.VentaDTO]
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &listPage))
+			for _, item := range listPage.Items {
+				if item.ID == body.ID {
+					foundCanceled = true
+					assert.NotNil(t, item.Cancelacion, "listed venta should be flagged canceled")
+					break
+				}
+			}
+			if listPage.NextCursor == "" {
+				break
+			}
+			listCursor = listPage.NextCursor
 		}
-		assert.True(t, found, "the venta created in this tx should be in the list")
+		assert.True(t, foundCanceled, "the venta created in this tx should appear in the paginated list")
 	})
 
 	// fbtestutil rolls back when the closure returns — no rows persist.
