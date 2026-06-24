@@ -63,6 +63,15 @@ type ClienteExistenceChecker interface {
 	Exists(ctx context.Context, clienteID int) (bool, error)
 }
 
+// ClienteZonaReader reads the ZONA_CLIENTE_ID of a Microsip cliente. Used by
+// AplicarVenta to verify the venta's zona matches the pre-existing cliente's
+// zona before materializing into DOCTOS_PV.
+type ClienteZonaReader interface {
+	// ZonaDeCliente returns the ZONA_CLIENTE_ID for the given clienteID.
+	// Returns ErrClienteNotFoundInMicrosip when no row exists.
+	ZonaDeCliente(ctx context.Context, clienteID int) (int, error)
+}
+
 // VendedorUsuarioExistenceChecker is consulted by the ventas service to
 // validate that every vendedor on a CrearVenta request has a corresponding
 // row in MSP_USUARIOS before any INSERT is attempted. Without this check,

@@ -700,6 +700,69 @@ func TestCheckPreconditions_PuedeAutoCrear_TableDriven(t *testing.T) {
 	})
 }
 
+// ─── Zona validation tests ────────────────────────────────────────────────────
+
+// TestAplicarVenta_ZonaCoincide_Procede verifies that when the zona on the venta
+// matches the Microsip cliente's ZONA_CLIENTE_ID, aplicar proceeds normally.
+func TestAplicarVenta_ZonaCoincide_Procede(t *testing.T) {
+	t.Parallel()
+	h, _, writer, _ := newAplicarHarness(t)
+	// seedAprobadaContado seeds zona=21563. Supply matching zona reader.
+	zonaReader := newFakeClienteZonaReader(21563)
+	h.svc = h.svc.WithZonaReader(zonaReader)
+
+	id := seedAprobadaContado(t, h)
+
+	v, err := h.svc.AplicarVenta(t.Context(), id, uuid.New())
+
+	require.NoError(t, err)
+	assert.Equal(t, domain.SincronizacionAplicada, v.Sincronizacion())
+	assert.Equal(t, 1, writer.callsCount(), "writer must be called when zonas match")
+	assert.Equal(t, 1, zonaReader.callsCount(), "zona reader must be consulted once")
+}
+
+// TestAplicarVenta_ZonaNoConcide_Rechazado verifies ErrVentaZonaNoCoincideCliente
+// is returned when the venta's zona does not match the Microsip cliente's zona.
+// The writer must NOT be called and the venta must stay pendiente.
+func TestAplicarVenta_ZonaNoConcide_Rechazado(t *testing.T) {
+	t.Parallel()
+	h, _, writer, _ := newAplicarHarness(t)
+	// seedAprobadaContado seeds zona=21563. Mismatch: reader returns a different zona.
+	zonaReader := newFakeClienteZonaReader(99999)
+	h.svc = h.svc.WithZonaReader(zonaReader)
+
+	id := seedAprobadaContado(t, h)
+
+	_, err := h.svc.AplicarVenta(t.Context(), id, uuid.New())
+
+	require.ErrorIs(t, err, domain.ErrVentaZonaNoCoincideCliente)
+	assert.Equal(t, 0, writer.callsCount(), "writer must NOT be called on zona mismatch")
+	// Venta must remain pendiente.
+	v, findErr := h.svc.ObtenerVenta(t.Context(), id)
+	require.NoError(t, findErr)
+	assert.Equal(t, domain.SincronizacionPendiente, v.Sincronizacion(), "venta must NOT be aplicada on zona mismatch")
+}
+
+// TestAplicarVenta_AutoCrea_ZonaReaderSkipped verifies that when the venta has
+// no ClienteID (auto-create branch), the zona reader is NOT consulted — the
+// auto-created cliente inherits the venta's zona, so no mismatch is possible.
+func TestAplicarVenta_AutoCrea_ZonaReaderSkipped(t *testing.T) {
+	t.Parallel()
+	h, _, writer, _ := newAplicarHarness(t)
+	// Mismatch zona, but auto-create should skip the check entirely.
+	zonaReader := newFakeClienteZonaReader(99999)
+	h.svc = h.svc.WithZonaReader(zonaReader)
+
+	id := seedAprobadaSinCliente(t, h)
+
+	v, err := h.svc.AplicarVenta(t.Context(), id, uuid.New())
+
+	require.NoError(t, err)
+	assert.Equal(t, domain.SincronizacionAplicada, v.Sincronizacion())
+	assert.Equal(t, 1, writer.callsCount(), "writer must be called for auto-create branch")
+	assert.Equal(t, 0, zonaReader.callsCount(), "zona reader must NOT be consulted for auto-create branch")
+}
+
 // ─── TestCrearVentaInput extensions (for ZonaClienteID) ─────────────────────
 
 // Extend the in-package validContadoInput to include ZonaClienteID for

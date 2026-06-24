@@ -7,6 +7,7 @@ import (
 	"errors"
 
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
+	"github.com/abdimuy/msp-api/internal/ventas/domain"
 	"github.com/abdimuy/msp-api/internal/ventas/ports/outbound"
 )
 
@@ -21,8 +22,11 @@ func NewClienteRepo(pool *firebird.Pool) *ClienteRepo {
 	return &ClienteRepo{pool: pool}
 }
 
-// Compile-time check: ClienteRepo satisfies the outbound port.
+// Compile-time check: ClienteRepo satisfies the outbound ports.
 var _ outbound.ClienteExistenceChecker = (*ClienteRepo)(nil)
+
+// Compile-time: ClienteRepo also satisfies ClienteZonaReader.
+var _ outbound.ClienteZonaReader = (*ClienteRepo)(nil)
 
 // Exists reports whether a row with the supplied CLIENTE_ID exists in
 // CLIENTES. Non-positive ids short-circuit to (false, nil) — they cannot
@@ -41,4 +45,19 @@ func (r *ClienteRepo) Exists(ctx context.Context, clienteID int) (bool, error) {
 		return false, firebird.MapError(err)
 	}
 	return true, nil
+}
+
+// ZonaDeCliente reads the ZONA_CLIENTE_ID from CLIENTES for the given
+// clienteID. Returns domain.ErrClienteNotFoundInMicrosip on sql.ErrNoRows.
+func (r *ClienteRepo) ZonaDeCliente(ctx context.Context, clienteID int) (int, error) {
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	var zona int
+	err := q.QueryRowContext(ctx, selectClienteZona, clienteID).Scan(&zona)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, domain.ErrClienteNotFoundInMicrosip
+	}
+	if err != nil {
+		return 0, firebird.MapError(err)
+	}
+	return zona, nil
 }

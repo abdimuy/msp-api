@@ -12,6 +12,7 @@ import (
 
 	"github.com/abdimuy/msp-api/internal/platform/fbtestutil"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
+	"github.com/abdimuy/msp-api/internal/ventas/domain"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/ventfb"
 )
 
@@ -87,5 +88,36 @@ func TestClienteRepo_Exists_PropagatesContextCancel(t *testing.T) {
 		cancel()
 		_, err := repo.Exists(canceledCtx, 1)
 		require.Error(t, err)
+	})
+}
+
+func TestClienteRepo_ZonaDeCliente_HitsRealRow(t *testing.T) {
+	requireFBEnv(t)
+	t.Parallel()
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := ventfb.NewClienteRepo(pool)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		q := firebird.GetQuerier(ctx, pool.DB)
+		var id int
+		var zona int
+		err := q.QueryRowContext(ctx, `SELECT FIRST 1 CLIENTE_ID, ZONA_CLIENTE_ID FROM CLIENTES WHERE ZONA_CLIENTE_ID IS NOT NULL`).Scan(&id, &zona)
+		if errors.Is(err, sql.ErrNoRows) {
+			t.Skip("no cliente with ZONA_CLIENTE_ID in dev DB")
+		}
+		require.NoError(t, err)
+		got, err := repo.ZonaDeCliente(ctx, id)
+		require.NoError(t, err)
+		assert.Equal(t, zona, got)
+	})
+}
+
+func TestClienteRepo_ZonaDeCliente_NotFound(t *testing.T) {
+	requireFBEnv(t)
+	t.Parallel()
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := ventfb.NewClienteRepo(pool)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		_, err := repo.ZonaDeCliente(ctx, 999_999_999)
+		require.ErrorIs(t, err, domain.ErrClienteNotFoundInMicrosip)
 	})
 }

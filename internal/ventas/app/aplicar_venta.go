@@ -45,10 +45,20 @@ func (s *Service) AplicarVenta(ctx context.Context, ventaID, by uuid.UUID) (*dom
 			return nil
 		}
 
+		// Snapshot whether the venta already had a ClienteID before the
+		// auto-create step. Auto-created clientes inherit the venta's zona
+		// by construction, so the zona mismatch check only applies when a
+		// pre-existing Microsip cliente was linked at create time.
+		clienteIDPreExistente := v.ClienteID()
+
 		// Auto-create cliente in Microsip when the venta has no ClienteID yet
 		// but carries enough snapshot data (nombre + dirección postal). The
 		// new CLIENTE_ID is linked back to the venta within the same tx.
 		if err := s.autoCrearClienteSiNecesario(ctx, v, by); err != nil {
+			return err
+		}
+
+		if err := s.validarZonaClienteMicrosipPreExistente(ctx, v, clienteIDPreExistente); err != nil {
 			return err
 		}
 
@@ -242,6 +252,22 @@ func (s *Service) autoCrearClienteSiNecesario(ctx context.Context, v *domain.Ven
 		return err
 	}
 	return s.ventas.UpdateCliente(ctx, v)
+}
+
+// validarZonaClienteMicrosipPreExistente checks that the venta's zona matches
+// the ZONA_CLIENTE_ID of a pre-existing Microsip cliente. clienteIDPreExistente
+// is the ClienteID value captured BEFORE autoCrearClienteSiNecesario runs: when
+// nil, the auto-create branch ran and the new cliente inherits the venta's zona
+// — so the check is skipped. Returns nil when zonaReader is not wired.
+func (s *Service) validarZonaClienteMicrosipPreExistente(ctx context.Context, v *domain.Venta, clienteIDPreExistente *int) error {
+	if clienteIDPreExistente == nil || s.zonaReader == nil {
+		return nil
+	}
+	zona, err := s.zonaReader.ZonaDeCliente(ctx, *clienteIDPreExistente)
+	if err != nil {
+		return err
+	}
+	return v.ValidarZonaCoincideMicrosip(zona)
 }
 
 // buildAutoCreateClienteInput materializes a MicrosipClienteInput from the venta's

@@ -413,6 +413,35 @@ func (f *fakeClienteChecker) Exists(_ context.Context, id int) (bool, error) {
 	return f.exists, nil
 }
 
+// fakeClienteZonaReader is an in-memory outbound.ClienteZonaReader.
+// ZonaID is the zona returned for any clienteID. Err overrides success.
+type fakeClienteZonaReader struct {
+	mu     sync.Mutex
+	calls  int
+	ZonaID int
+	Err    error
+}
+
+func newFakeClienteZonaReader(zonaID int) *fakeClienteZonaReader {
+	return &fakeClienteZonaReader{ZonaID: zonaID}
+}
+
+func (f *fakeClienteZonaReader) ZonaDeCliente(_ context.Context, _ int) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.Err != nil {
+		return 0, f.Err
+	}
+	return f.ZonaID, nil
+}
+
+func (f *fakeClienteZonaReader) callsCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
 // fakeUsuarioChecker is an in-memory outbound.VendedorUsuarioExistenceChecker.
 // The known set decides which uuids are present in MSP_USUARIOS; anything
 // outside it is returned as missing. Calls counts invocations so tests can

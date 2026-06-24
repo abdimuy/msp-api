@@ -142,5 +142,6 @@ func provideVentasService(
 		WithEventReader(eventReader).
 		WithUsuarioResolver(usuarioResolver).
 		WithAlmacenResolver(almacenResolver).
-		WithJuegos(provideVentasMicrosipJuegoResolver(p), cfg.MicrosipVenta.JuegosEnabled, cfg.MicrosipVenta.JuegosLineaArticuloID)
+		WithJuegos(provideVentasMicrosipJuegoResolver(p), cfg.MicrosipVenta.JuegosEnabled, cfg.MicrosipVenta.JuegosLineaArticuloID).
+		WithZonaReader(ventfb.NewClienteRepo(p))
 }

@@ -386,6 +386,19 @@ func (v *Venta) ID() uuid.UUID { return v.id }
 // ClienteID returns the optional Microsip cliente identifier.
 func (v *Venta) ClienteID() *int { return v.clienteID }
 
+// ValidarZonaCoincideMicrosip returns ErrVentaZonaNoCoincideCliente when the
+// venta's zona_cliente_id differs from the given Microsip zona. Returns nil if
+// zona is not set on the venta (defensive; apply path guards this earlier).
+func (v *Venta) ValidarZonaCoincideMicrosip(zonaMicrosip int) error {
+	if v.direccion.ZonaClienteID() == nil {
+		return nil
+	}
+	if *v.direccion.ZonaClienteID() != zonaMicrosip {
+		return ErrVentaZonaNoCoincideCliente
+	}
+	return nil
+}
+
 // Cliente returns the cliente snapshot.
 func (v *Venta) Cliente() ClienteSnapshot { return v.cliente }
 

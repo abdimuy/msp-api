@@ -479,6 +479,21 @@ var (
 		"no se pudo procesar la imagen",
 	)
 
+	// ErrVentaZonaNoCoincideCliente is returned when applying a venta whose
+	// zona_cliente_id does not match the ZONA_CLIENTE_ID of the pre-existing
+	// cliente in Microsip's CLIENTES table. Auto-created clientes are exempt —
+	// they are created with the venta's zona.
+	ErrVentaZonaNoCoincideCliente = apperror.NewValidation(
+		"venta_zona_no_coincide_cliente",
+		"la zona de la venta no coincide con la del cliente en microsip",
+	)
+	// ErrClienteNotFoundInMicrosip is returned when ZonaDeCliente is called with
+	// a clienteID that has no matching row in Microsip's CLIENTES table.
+	ErrClienteNotFoundInMicrosip = apperror.NewNotFound(
+		"cliente_not_found_in_microsip",
+		"el cliente no existe en microsip",
+	)
+
 	// ErrVentaEvidenciaRequerida is returned when CrearVentaConImagenes or
 	// AplicarVenta receives a venta without at least one comprobante. Every
 	// venta del showroom debe llevar firma o ID del cliente; no hay excepción.
