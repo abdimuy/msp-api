@@ -132,7 +132,10 @@ VALUES (?, ?, 'V', ?, ?,
         'N', 'N',
         'S', 'N')`
 
-// insertDoctoPVDet inserts one DOCTOS_PV_DET line (POSICION = -1 → trigger assigns).
+// insertDoctoPVDet inserts one priced DOCTOS_PV_DET line. ROL is bound as a
+// parameter so the same statement serves standalone productos (ROL='N') and
+// combo parents (ROL='J'). POSICION = -1 → the Microsip trigger assigns the
+// next position. Component lines (ROL='C') use insertDoctoPVDetComponente.
 //
 //nolint:gosec // SQL constant, not user input.
 const insertDoctoPVDet = `INSERT INTO DOCTOS_PV_DET
@@ -152,8 +155,33 @@ VALUES (?, ?,
         0, 0,
         'N',
         0,
-        'N', -1,
+        ?, -1,
         '0', 'N', 0)`
+
+// insertDoctoPVDetComponente inserts a ROL='C' component line for a juego
+// parent. It mirrors EXACTLY the column list that Microsip's ALTA_COMPONENTES_PV
+// stored procedure writes when the desktop client explodes a juego at capture
+// time (verified by reading RDB$PROCEDURE_SOURCE for ALTA_COMPONENTES_PV in
+// MUEBLERA.FDB): only DOCTO_PV_DET_ID, DOCTO_PV_ID, CLAVE_ARTICULO, ARTICULO_ID,
+// UNIDADES and ROL='C' are set; every other column takes its DB default. The
+// component carries no price (PRECIO_* default to 0). GENERA_DOCTO_IN_PV later
+// iterates SUB_MOVTOS_PV to discharge these components' inventory.
+//
+//nolint:gosec // SQL constant, not user input.
+const insertDoctoPVDetComponente = `INSERT INTO DOCTOS_PV_DET
+  (DOCTO_PV_DET_ID, DOCTO_PV_ID,
+   CLAVE_ARTICULO, ARTICULO_ID, UNIDADES, ROL)
+VALUES (?, ?, ?, ?, ?, 'C')`
+
+// insertSubMovtoPV links a ROL='C' component line (child) to its ROL='J' juego
+// line (parent). Mirrors ALTA_COMPONENTES_PV's SUB_MOVTOS_PV insert: the table
+// has exactly two NOT NULL columns and DOCTO_PV_DET_ID holds the PARENT id while
+// SUB_MOVTO_PV_ID holds the CHILD id (verified via RDB$RELATION_FIELDS).
+//
+//nolint:gosec // SQL constant, not user input.
+const insertSubMovtoPV = `INSERT INTO SUB_MOVTOS_PV
+  (DOCTO_PV_DET_ID, SUB_MOVTO_PV_ID)
+VALUES (?, ?)`
 
 // insertDoctoPVCobros inserts the DOCTOS_PV_COBROS row.
 //
@@ -375,7 +403,7 @@ func (w *VentaWriter) Aplicar(ctx context.Context, in outbound.MicrosipVentaInpu
 	}
 
 	// ── Phase 2: INSERT DOCTOS_PV_DET (one per producto) ─────────────────
-	totals, err := w.insertDetalles(ctx, q, v, doctoPVID)
+	totals, err := w.insertDetalles(ctx, q, in, doctoPVID)
 	if err != nil {
 		return outbound.MicrosipVentaResult{}, fmt.Errorf("microsip aplicar: insert detalles: %w", err)
 	}
@@ -427,50 +455,196 @@ type detalleTotals struct {
 	impuestos decimal.Decimal
 }
 
-// insertDetalles iterates the venta's productos and inserts one
-// DOCTOS_PV_DET row per producto. Returns the aggregated IMPORTE_NETO and
-// TOTAL_IMPUESTOS for the header UPDATE in phase 6.
+// insertDetalles writes the DOCTOS_PV_DET lines for the venta and returns the
+// aggregated IMPORTE_NETO / TOTAL_IMPUESTOS for the header UPDATE in phase 6.
+//
+// Three line kinds are emitted depending on in.JuegosPorCombo:
+//
+//   - Standalone productos (ComboID()==nil) → a priced ROL='N' line, exactly as
+//     before.
+//   - A combo present in JuegosPorCombo → a priced ROL='J' parent line for the
+//     resolved juego ARTICULO_ID, followed by one ROL='C' component line per
+//     recipe entry (precio 0, UNIDADES = combo.Cantidad() × receta.unidades),
+//     each linked to the parent via SUB_MOVTOS_PV. The combo's child productos
+//     are NOT emitted as priced lines — their value lives in the ROL='J' parent
+//     and their stock discharges through the ROL='C' components.
+//   - A combo absent from JuegosPorCombo (feature off → nil/empty map) → its
+//     child productos fall through to the standalone ROL='N' path, preserving
+//     the legacy flattened behavior.
+//
+// Only standalone ROL='N' and combo ROL='J' lines contribute to the header
+// montos; ROL='C' lines carry no price. This mirrors domain.recomputarMontos.
 func (w *VentaWriter) insertDetalles(
+	ctx context.Context,
+	q firebird.Querier,
+	in outbound.MicrosipVentaInput,
+	doctoPVID int,
+) (detalleTotals, error) {
+	v := in.Venta
+	var totalNeto, totalImpuestos decimal.Decimal
+
+	// Standalone productos and combo-children of combos NOT in JuegosPorCombo
+	// both take the priced ROL='N' path.
+	for _, p := range v.ProductosForRepo() {
+		if comboID := p.ComboID(); comboID != nil {
+			if _, mapped := in.JuegosPorCombo[*comboID]; mapped {
+				continue // handled below as a ROL='J' + ROL='C' group
+			}
+		}
+		lt, err := w.insertLineaPrecio(ctx, q, doctoPVID, p.ArticuloID(), unitPrice(v.TipoVenta(), p), p.Cantidad(), rolProductoNormal)
+		if err != nil {
+			return detalleTotals{}, err
+		}
+		totalNeto = totalNeto.Add(lt.neto)
+		totalImpuestos = totalImpuestos.Add(lt.impuestos)
+	}
+
+	// Combo lines: one ROL='J' parent + the ROL='C' component cascade each.
+	for _, c := range v.CombosForRepo() {
+		juegoID, mapped := in.JuegosPorCombo[c.ID()]
+		if !mapped {
+			continue // feature off for this combo — children already flattened above
+		}
+		ct, err := w.insertComboJuego(ctx, q, v, doctoPVID, c, juegoID)
+		if err != nil {
+			return detalleTotals{}, err
+		}
+		totalNeto = totalNeto.Add(ct.neto)
+		totalImpuestos = totalImpuestos.Add(ct.impuestos)
+	}
+
+	return detalleTotals{neto: totalNeto, impuestos: totalImpuestos}, nil
+}
+
+// rol values bound into insertDoctoPVDet.
+const (
+	rolProductoNormal = "N" // standalone producto / flattened combo child
+	rolJuegoPadre     = "J" // combo parent (juego)
+)
+
+// insertLineaPrecio inserts one priced DOCTOS_PV_DET line (ROL='N' or ROL='J')
+// and returns the line's neto and impuesto contributions for the header totals.
+func (w *VentaWriter) insertLineaPrecio(
+	ctx context.Context,
+	q firebird.Querier,
+	doctoPVID, articuloID int,
+	precioConImpto, cantidad decimal.Decimal,
+	rol string,
+) (detalleTotals, error) {
+	claveArticulo, err := w.lookupClaveArticulo(ctx, q, articuloID)
+	if err != nil {
+		return detalleTotals{}, fmt.Errorf("clave_articulo articulo_id=%d: %w", articuloID, err)
+	}
+	totals, _, err := w.execLineaPrecio(ctx, q, doctoPVID, articuloID, claveArticulo, precioConImpto, cantidad, rol)
+	return totals, err
+}
+
+// execLineaPrecio computes the neto/impuesto split, claims a DOCTO_PV_DET_ID,
+// inserts the priced line, and returns its totals plus the assigned id. The id
+// is used by combo parents to link ROL='C' children via SUB_MOVTOS_PV.
+func (w *VentaWriter) execLineaPrecio(
+	ctx context.Context,
+	q firebird.Querier,
+	doctoPVID, articuloID int,
+	claveArticulo any,
+	precioConImpto, cantidad decimal.Decimal,
+	rol string,
+) (detalleTotals, int, error) {
+	ivaPct, err := w.lookupIVAPct(ctx, q, articuloID)
+	if err != nil {
+		return detalleTotals{}, 0, fmt.Errorf("iva_pct articulo_id=%d: %w", articuloID, err)
+	}
+	// neto = precio_con_impto / (1 + pctje/100). pctje=0 → neto = precio.
+	divisor := decimal.NewFromInt(1).Add(ivaPct.Div(hundred))
+	precioNeto := precioConImpto.Div(divisor).Round(6)
+	impuestoPorUnidad := precioConImpto.Sub(precioNeto)
+
+	detID, err := nextID(ctx, q)
+	if err != nil {
+		return detalleTotals{}, 0, fmt.Errorf("claim det_id: %w", err)
+	}
+	if _, err := q.ExecContext(ctx, insertDoctoPVDet,
+		detID, doctoPVID,
+		articuloID, claveArticulo,
+		cantidad.StringFixed(6),
+		precioNeto.StringFixed(6),
+		precioConImpto.StringFixed(6),
+		rol,
+	); err != nil {
+		return detalleTotals{}, 0, fmt.Errorf("insert det articulo_id=%d rol=%s: %w", articuloID, rol, firebird.MapError(err))
+	}
+	return detalleTotals{neto: precioNeto.Mul(cantidad), impuestos: impuestoPorUnidad.Mul(cantidad)}, detID, nil
+}
+
+// insertComboJuego inserts the ROL='J' parent line for a combo and, replicating
+// Microsip's ALTA_COMPONENTES_PV capture step, one ROL='C' component line per
+// recipe entry (precio 0, UNIDADES = combo.Cantidad() × receta.unidades) linked
+// to the parent via SUB_MOVTOS_PV. Returns the parent line's neto + impuesto
+// contributions; the ROL='C' lines contribute nothing to the header montos.
+func (w *VentaWriter) insertComboJuego(
 	ctx context.Context,
 	q firebird.Querier,
 	v *domain.Venta,
 	doctoPVID int,
+	c *domain.Combo,
+	juegoID int,
 ) (detalleTotals, error) {
-	var totalNeto, totalImpuestos decimal.Decimal
-	for _, p := range v.ProductosForRepo() {
-		claveArticulo, err := w.lookupClaveArticulo(ctx, q, p.ArticuloID())
-		if err != nil {
-			return detalleTotals{}, fmt.Errorf("clave_articulo articulo_id=%d: %w", p.ArticuloID(), err)
-		}
-		ivaPct, err := w.lookupIVAPct(ctx, q, p.ArticuloID())
-		if err != nil {
-			return detalleTotals{}, fmt.Errorf("iva_pct articulo_id=%d: %w", p.ArticuloID(), err)
-		}
-		precioConImpto := unitPrice(v.TipoVenta(), p)
-		// neto = precio_con_impto / (1 + pctje/100). pctje=0 → neto = precio.
-		divisor := decimal.NewFromInt(1).Add(ivaPct.Div(hundred))
-		precioNeto := precioConImpto.Div(divisor).Round(6)
-		impuestoPorUnidad := precioConImpto.Sub(precioNeto)
+	// Parent ROL='J' line: priced for the tipo de venta, against the juego.
+	// A juego (kit) carries a CLAVE_ARTICULO only when one was assigned at
+	// creation — it is optional by schema (see docs/microsip-crear-kit-paso-a-paso.md).
+	// DOCTOS_PV_DET.CLAVE_ARTICULO is nullable, so a clave-less juego writes NULL
+	// rather than failing the way a standalone producto (which always has a
+	// clave) would.
+	claveJuego, err := w.lookupClaveArticuloOpt(ctx, q, juegoID)
+	if err != nil {
+		return detalleTotals{}, fmt.Errorf("clave_articulo juego_id=%d: %w", juegoID, err)
+	}
+	totals, parentDetID, err := w.execLineaPrecio(ctx, q, doctoPVID, juegoID, claveJuego, comboUnitPrice(v.TipoVenta(), c), c.Cantidad(), rolJuegoPadre)
+	if err != nil {
+		return detalleTotals{}, err
+	}
 
-		cantidad := p.Cantidad()
-		totalNeto = totalNeto.Add(precioNeto.Mul(cantidad))
-		totalImpuestos = totalImpuestos.Add(impuestoPorUnidad.Mul(cantidad))
-
-		detID, err := nextID(ctx, q)
-		if err != nil {
-			return detalleTotals{}, fmt.Errorf("claim det_id: %w", err)
-		}
-		if _, err := q.ExecContext(ctx, insertDoctoPVDet,
-			detID, doctoPVID,
-			p.ArticuloID(), claveArticulo,
-			cantidad.StringFixed(6),
-			precioNeto.StringFixed(6),
-			precioConImpto.StringFixed(6),
-		); err != nil {
-			return detalleTotals{}, fmt.Errorf("insert det articulo_id=%d: %w", p.ArticuloID(), firebird.MapError(err))
+	// Component ROL='C' lines from the combo's recipe.
+	receta, err := v.RecetaDeCombo(c.ID())
+	if err != nil {
+		return detalleTotals{}, fmt.Errorf("receta combo_id=%s: %w", c.ID(), err)
+	}
+	for _, comp := range receta.Componentes() {
+		unidades := c.Cantidad().Mul(comp.Unidades())
+		if err := w.insertComponente(ctx, q, doctoPVID, parentDetID, comp.ArticuloID(), unidades); err != nil {
+			return detalleTotals{}, err
 		}
 	}
-	return detalleTotals{neto: totalNeto, impuestos: totalImpuestos}, nil
+	return totals, nil
+}
+
+// insertComponente inserts one ROL='C' component line and its SUB_MOVTOS_PV
+// link to the parent juego line. Precio is 0 (defaulted by the SQL constant).
+func (w *VentaWriter) insertComponente(
+	ctx context.Context,
+	q firebird.Querier,
+	doctoPVID, parentDetID, componenteID int,
+	unidades decimal.Decimal,
+) error {
+	claveComponente, err := w.lookupClaveArticulo(ctx, q, componenteID)
+	if err != nil {
+		return fmt.Errorf("clave_articulo componente_id=%d: %w", componenteID, err)
+	}
+	childDetID, err := nextID(ctx, q)
+	if err != nil {
+		return fmt.Errorf("claim componente det_id: %w", err)
+	}
+	if _, err := q.ExecContext(ctx, insertDoctoPVDetComponente,
+		childDetID, doctoPVID,
+		claveComponente, componenteID,
+		unidades.StringFixed(6),
+	); err != nil {
+		return fmt.Errorf("insert det componente_id=%d rol=C: %w", componenteID, firebird.MapError(err))
+	}
+	if _, err := q.ExecContext(ctx, insertSubMovtoPV, parentDetID, childDetID); err != nil {
+		return fmt.Errorf("insert sub_movtos_pv padre=%d hijo=%d: %w", parentDetID, childDetID, firebird.MapError(err))
+	}
+	return nil
 }
 
 // insertDatosCredito handles Phase 7 (LIBRES_CARGOS_CC + optional enganche).
@@ -638,6 +812,21 @@ func (w *VentaWriter) lookupClaveArticulo(ctx context.Context, q firebird.Querie
 	return clave, nil
 }
 
+// lookupClaveArticuloOpt is like lookupClaveArticulo but returns an invalid
+// sql.NullString (→ NULL on bind) when no clave exists, instead of erroring.
+// Used for juego (ROL='J') lines because a kit's CLAVE_ARTICULO is optional.
+func (w *VentaWriter) lookupClaveArticuloOpt(ctx context.Context, q firebird.Querier, articuloID int) (sql.NullString, error) {
+	var clave string
+	err := q.QueryRowContext(ctx, selectClavesArticulo, articuloID).Scan(&clave)
+	if errors.Is(err, sql.ErrNoRows) {
+		return sql.NullString{}, nil
+	}
+	if err != nil {
+		return sql.NullString{}, firebird.MapError(err)
+	}
+	return sql.NullString{String: clave, Valid: true}, nil
+}
+
 // lookupIVAPct returns the article's own IVA percentage (e.g. 16 or 0) from its
 // Microsip tax configuration. An article with no configured tax row is treated
 // as 0% (tax-exempt) rather than an error — many articles legitimately carry
@@ -720,6 +909,15 @@ func unitPrice(tipo domain.TipoVenta, p *domain.Producto) decimal.Decimal {
 	}
 	// CREDITO → use the annual (financed) price tier.
 	return p.Precios().Anual()
+}
+
+// comboUnitPrice returns the per-combo unit price (con IVA) for the ROL='J'
+// parent line based on tipo_venta, mirroring unitPrice for standalone productos.
+func comboUnitPrice(tipo domain.TipoVenta, c *domain.Combo) decimal.Decimal {
+	if tipo == domain.TipoVentaContado {
+		return c.Precios().Contado()
+	}
+	return c.Precios().Anual()
 }
 
 // readCargoCCID reads the DOCTO_CC_ID of the cargo document generated by the
