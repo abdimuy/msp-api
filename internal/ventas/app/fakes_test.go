@@ -414,26 +414,34 @@ func (f *fakeClienteChecker) Exists(_ context.Context, id int) (bool, error) {
 }
 
 // fakeClienteZonaReader is an in-memory outbound.ClienteZonaReader.
-// ZonaID is the zona returned for any clienteID. Err overrides success.
+// ZonaID is the zona returned for any clienteID when ZonaNil is false.
+// When ZonaNil is true, ZonaDeCliente returns (nil, nil) — simulating a
+// Microsip cliente with a NULL ZONA_CLIENTE_ID (no zona constraint).
+// Err overrides both paths with an error.
 type fakeClienteZonaReader struct {
-	mu     sync.Mutex
-	calls  int
-	ZonaID int
-	Err    error
+	mu      sync.Mutex
+	calls   int
+	ZonaID  int
+	ZonaNil bool
+	Err     error
 }
 
 func newFakeClienteZonaReader(zonaID int) *fakeClienteZonaReader {
 	return &fakeClienteZonaReader{ZonaID: zonaID}
 }
 
-func (f *fakeClienteZonaReader) ZonaDeCliente(_ context.Context, _ int) (int, error) {
+func (f *fakeClienteZonaReader) ZonaDeCliente(_ context.Context, _ int) (*int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
 	if f.Err != nil {
-		return 0, f.Err
+		return nil, f.Err
 	}
-	return f.ZonaID, nil
+	if f.ZonaNil {
+		return nil, nil
+	}
+	z := f.ZonaID
+	return &z, nil
 }
 
 func (f *fakeClienteZonaReader) callsCount() int {

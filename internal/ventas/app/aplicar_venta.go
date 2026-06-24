@@ -259,15 +259,21 @@ func (s *Service) autoCrearClienteSiNecesario(ctx context.Context, v *domain.Ven
 // is the ClienteID value captured BEFORE autoCrearClienteSiNecesario runs: when
 // nil, the auto-create branch ran and the new cliente inherits the venta's zona
 // — so the check is skipped. Returns nil when zonaReader is not wired.
+// When the repo returns nil (cliente exists but ZONA_CLIENTE_ID is NULL), the
+// check is also skipped — a NULL zona means "no zona constraint" on the cliente.
 func (s *Service) validarZonaClienteMicrosipPreExistente(ctx context.Context, v *domain.Venta, clienteIDPreExistente *int) error {
 	if clienteIDPreExistente == nil || s.zonaReader == nil {
 		return nil
 	}
-	zona, err := s.zonaReader.ZonaDeCliente(ctx, *clienteIDPreExistente)
+	zonaPtr, err := s.zonaReader.ZonaDeCliente(ctx, *clienteIDPreExistente)
 	if err != nil {
 		return err
 	}
-	return v.ValidarZonaCoincideMicrosip(zona)
+	if zonaPtr == nil {
+		// NULL zona in Microsip: no zona constraint on this cliente — skip check.
+		return nil
+	}
+	return v.ValidarZonaCoincideMicrosip(*zonaPtr)
 }
 
 // buildAutoCreateClienteInput materializes a MicrosipClienteInput from the venta's

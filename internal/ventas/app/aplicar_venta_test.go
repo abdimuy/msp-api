@@ -721,10 +721,10 @@ func TestAplicarVenta_ZonaCoincide_Procede(t *testing.T) {
 	assert.Equal(t, 1, zonaReader.callsCount(), "zona reader must be consulted once")
 }
 
-// TestAplicarVenta_ZonaNoConcide_Rechazado verifies ErrVentaZonaNoCoincideCliente
+// TestAplicarVenta_ZonaNoCoincide_Rechazado verifies ErrVentaZonaNoCoincideCliente
 // is returned when the venta's zona does not match the Microsip cliente's zona.
 // The writer must NOT be called and the venta must stay pendiente.
-func TestAplicarVenta_ZonaNoConcide_Rechazado(t *testing.T) {
+func TestAplicarVenta_ZonaNoCoincide_Rechazado(t *testing.T) {
 	t.Parallel()
 	h, _, writer, _ := newAplicarHarness(t)
 	// seedAprobadaContado seeds zona=21563. Mismatch: reader returns a different zona.
@@ -741,6 +741,26 @@ func TestAplicarVenta_ZonaNoConcide_Rechazado(t *testing.T) {
 	v, findErr := h.svc.ObtenerVenta(t.Context(), id)
 	require.NoError(t, findErr)
 	assert.Equal(t, domain.SincronizacionPendiente, v.Sincronizacion(), "venta must NOT be aplicada on zona mismatch")
+}
+
+// TestAplicarVenta_ZonaNula_Procede verifies that when the Microsip cliente has
+// a NULL ZONA_CLIENTE_ID (zona reader returns nil, nil), AplicarVenta proceeds
+// normally — no zona constraint on the cliente means no check is performed.
+func TestAplicarVenta_ZonaNula_Procede(t *testing.T) {
+	t.Parallel()
+	h, _, writer, _ := newAplicarHarness(t)
+	// ZonaNil=true simulates a Microsip cliente with NULL ZONA_CLIENTE_ID.
+	zonaReader := &fakeClienteZonaReader{ZonaNil: true}
+	h.svc = h.svc.WithZonaReader(zonaReader)
+
+	id := seedAprobadaContado(t, h)
+
+	v, err := h.svc.AplicarVenta(t.Context(), id, uuid.New())
+
+	require.NoError(t, err)
+	assert.Equal(t, domain.SincronizacionAplicada, v.Sincronizacion())
+	assert.Equal(t, 1, writer.callsCount(), "writer must be called when cliente zona is NULL")
+	assert.Equal(t, 1, zonaReader.callsCount(), "zona reader must be consulted once")
 }
 
 // TestAplicarVenta_AutoCrea_ZonaReaderSkipped verifies that when the venta has

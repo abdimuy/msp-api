@@ -48,16 +48,22 @@ func (r *ClienteRepo) Exists(ctx context.Context, clienteID int) (bool, error) {
 }
 
 // ZonaDeCliente reads the ZONA_CLIENTE_ID from CLIENTES for the given
-// clienteID. Returns domain.ErrClienteNotFoundInMicrosip on sql.ErrNoRows.
-func (r *ClienteRepo) ZonaDeCliente(ctx context.Context, clienteID int) (int, error) {
+// clienteID. Returns (nil, nil) when the row exists but ZONA_CLIENTE_ID is
+// NULL — the caller treats nil as "no zona constraint". Returns
+// (nil, domain.ErrClienteNotFoundInMicrosip) when no row exists.
+func (r *ClienteRepo) ZonaDeCliente(ctx context.Context, clienteID int) (*int, error) {
 	q := firebird.GetQuerier(ctx, r.pool.DB)
-	var zona int
+	var zona sql.NullInt32
 	err := q.QueryRowContext(ctx, selectClienteZona, clienteID).Scan(&zona)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, domain.ErrClienteNotFoundInMicrosip
+		return nil, domain.ErrClienteNotFoundInMicrosip
 	}
 	if err != nil {
-		return 0, firebird.MapError(err)
+		return nil, firebird.MapError(err)
 	}
-	return zona, nil
+	if !zona.Valid {
+		return nil, nil //nolint:nilnil // NULL zona means "no constraint" — both nil is the intended sentinel.
+	}
+	z := int(zona.Int32)
+	return &z, nil
 }

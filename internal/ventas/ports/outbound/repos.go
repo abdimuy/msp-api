@@ -68,8 +68,10 @@ type ClienteExistenceChecker interface {
 // zona before materializing into DOCTOS_PV.
 type ClienteZonaReader interface {
 	// ZonaDeCliente returns the ZONA_CLIENTE_ID for the given clienteID.
-	// Returns ErrClienteNotFoundInMicrosip when no row exists.
-	ZonaDeCliente(ctx context.Context, clienteID int) (int, error)
+	// Returns (nil, nil) when the cliente exists but ZONA_CLIENTE_ID is NULL —
+	// the caller treats a nil zona as "no constraint" and skips the check.
+	// Returns (nil, ErrClienteNotFoundInMicrosip) when no row exists.
+	ZonaDeCliente(ctx context.Context, clienteID int) (*int, error)
 }
 
 // VendedorUsuarioExistenceChecker is consulted by the ventas service to

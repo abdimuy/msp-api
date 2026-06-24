@@ -107,7 +107,28 @@ func TestClienteRepo_ZonaDeCliente_HitsRealRow(t *testing.T) {
 		require.NoError(t, err)
 		got, err := repo.ZonaDeCliente(ctx, id)
 		require.NoError(t, err)
-		assert.Equal(t, zona, got)
+		require.NotNil(t, got)
+		assert.Equal(t, zona, *got)
+	})
+}
+
+func TestClienteRepo_ZonaDeCliente_NullZona(t *testing.T) {
+	requireFBEnv(t)
+	t.Parallel()
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := ventfb.NewClienteRepo(pool)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		// Pick any existing cliente and temporarily NULL out its ZONA_CLIENTE_ID.
+		// The transaction rolls back at the end of the test so the dev DB is
+		// left unchanged.
+		id := pickExistingClienteID(ctx, t, pool)
+		q := firebird.GetQuerier(ctx, pool.DB)
+		_, err := q.ExecContext(ctx, `UPDATE CLIENTES SET ZONA_CLIENTE_ID = NULL WHERE CLIENTE_ID = ?`, id)
+		require.NoError(t, err)
+
+		got, err := repo.ZonaDeCliente(ctx, id)
+		require.NoError(t, err, "NULL zona must not error")
+		assert.Nil(t, got, "NULL zona must return nil pointer")
 	})
 }
 
@@ -117,7 +138,8 @@ func TestClienteRepo_ZonaDeCliente_NotFound(t *testing.T) {
 	pool := fbtestutil.NewTestFirebirdPool(t)
 	repo := ventfb.NewClienteRepo(pool)
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
-		_, err := repo.ZonaDeCliente(ctx, 999_999_999)
+		got, err := repo.ZonaDeCliente(ctx, 999_999_999)
 		require.ErrorIs(t, err, domain.ErrClienteNotFoundInMicrosip)
+		assert.Nil(t, got)
 	})
 }
