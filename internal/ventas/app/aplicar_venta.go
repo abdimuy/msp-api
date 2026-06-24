@@ -158,6 +158,11 @@ func (s *Service) buildWriterInput(ctx context.Context, v *domain.Venta) (outbou
 		return outbound.MicrosipVentaInput{}, err
 	}
 
+	juegosPorCombo, err := s.resolveJuegosPorCombo(ctx, v)
+	if err != nil {
+		return outbound.MicrosipVentaInput{}, err
+	}
+
 	return outbound.MicrosipVentaInput{
 		Venta:                v,
 		CajaID:               cc.CajaID,
@@ -169,6 +174,7 @@ func (s *Service) buildWriterInput(ctx context.Context, v *domain.Venta) (outbou
 		FormaDePagoID:        formaDePagoID,
 		CreditoEnMesesID:     creditoEnMesesID,
 		NumeroDeVendedoresID: numVendedoresID,
+		JuegosPorCombo:       juegosPorCombo,
 	}, nil
 }
 
@@ -287,4 +293,35 @@ func buildAutoCreateClienteInput(v *domain.Venta, cc outbound.CajaCajero) outbou
 	}
 
 	return in
+}
+
+// resolveJuegosPorCombo iterates the venta's combos and calls the juego
+// resolver once per combo to obtain the ARTICULOS.ARTICULO_ID for the
+// matching (or newly created) juego. The call executes within the caller's
+// ambient transaction so juego creation and the DOCTOS_PV write are atomic.
+//
+// Returns nil (no error) when the feature is off (resolver nil or
+// juegosEnabled false), or when the venta has no combos.
+// Any resolver error propagates immediately so AplicarVenta rolls back.
+func (s *Service) resolveJuegosPorCombo(ctx context.Context, v *domain.Venta) (map[uuid.UUID]int, error) {
+	if s.juegoResolver == nil || !s.juegosEnabled {
+		return nil, nil //nolint:nilnil // both nil means "feature off"; the caller treats nil map as empty.
+	}
+	result := make(map[uuid.UUID]int)
+	for combo := range v.Combos() {
+		receta, err := v.RecetaDeCombo(combo.ID())
+		if err != nil {
+			return nil, err
+		}
+		res, err := s.juegoResolver.Resolve(ctx, outbound.MicrosipJuegoInput{
+			Receta:          receta,
+			NombrePropuesto: combo.Nombre(),
+			LineaArticuloID: s.juegosLineaArticuloID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		result[combo.ID()] = res.ArticuloID
+	}
+	return result, nil
 }

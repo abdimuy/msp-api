@@ -115,10 +115,11 @@ func (f *fakeAplicarConfig) Defaults(_ context.Context) (outbound.AplicarDefault
 
 // fakeMicrosipVentaWriter records calls to Aplicar.
 type fakeMicrosipVentaWriter struct {
-	mu    sync.Mutex
-	calls int
-	Err   error
-	res   outbound.MicrosipVentaResult
+	mu     sync.Mutex
+	calls  int
+	Err    error
+	res    outbound.MicrosipVentaResult
+	LastIn outbound.MicrosipVentaInput
 }
 
 func newFakeWriter(doctoPVID int, folio string) *fakeMicrosipVentaWriter {
@@ -127,10 +128,11 @@ func newFakeWriter(doctoPVID int, folio string) *fakeMicrosipVentaWriter {
 	}
 }
 
-func (f *fakeMicrosipVentaWriter) Aplicar(_ context.Context, _ outbound.MicrosipVentaInput) (outbound.MicrosipVentaResult, error) {
+func (f *fakeMicrosipVentaWriter) Aplicar(_ context.Context, in outbound.MicrosipVentaInput) (outbound.MicrosipVentaResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
+	f.LastIn = in
 	if f.Err != nil {
 		return outbound.MicrosipVentaResult{}, f.Err
 	}
@@ -141,6 +143,13 @@ func (f *fakeMicrosipVentaWriter) callsCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.calls
+}
+
+// lastInput returns a copy of the last MicrosipVentaInput received.
+func (f *fakeMicrosipVentaWriter) lastInput() outbound.MicrosipVentaInput {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.LastIn
 }
 
 // fakeMicrosipClienteWriter records calls to Crear.

@@ -4,6 +4,8 @@ package outbound
 import (
 	"context"
 
+	"github.com/google/uuid"
+
 	"github.com/abdimuy/msp-api/internal/ventas/domain"
 )
 
@@ -41,6 +43,14 @@ type MicrosipVentaInput struct {
 	CreditoEnMesesID *int
 	// NumeroDeVendedoresID is the LISTAS_ATRIBUTOS id for NUMERO_DE_VENDEDORES.
 	NumeroDeVendedoresID int
+
+	// JuegosPorCombo maps each combo's UUID to the resolved Microsip
+	// ARTICULOS.ARTICULO_ID for the juego that represents it. Populated by
+	// AplicarVenta when the juego-resolver feature is enabled; nil/empty when
+	// the feature is off (writer falls back to today's behavior). The writer
+	// uses this map in Task 4 to emit ROL='J' / ROL='C' detail lines for
+	// combo productos instead of the default ROL='N' path.
+	JuegosPorCombo map[uuid.UUID]int
 }
 
 // MicrosipVentaResult is returned by MicrosipVentaWriter.Aplicar after the

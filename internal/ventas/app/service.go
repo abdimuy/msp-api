@@ -56,6 +56,13 @@ type Service struct {
 	// almacén names unresolved — the route labels are best-effort and their
 	// absence must not break the timeline.
 	almacenResolver outbound.AlmacenNombreResolver
+	// juegoResolver is optional. Tests omit it; production wires it via
+	// WithJuegos. When nil or juegosEnabled is false, AplicarVenta skips the
+	// combo→juego resolution step and passes an empty JuegosPorCombo map to
+	// the writer (pre-juego behavior is preserved).
+	juegoResolver         outbound.MicrosipJuegoResolver
+	juegosEnabled         bool
+	juegosLineaArticuloID int
 }
 
 // WithInventario attaches an InventarioService so CrearVenta validates stock
@@ -87,6 +94,18 @@ func (s *Service) WithUsuarioResolver(r outbound.UsuarioNombreResolver) *Service
 // Returns s for fluent wiring at the composition root.
 func (s *Service) WithAlmacenResolver(r outbound.AlmacenNombreResolver) *Service {
 	s.almacenResolver = r
+	return s
+}
+
+// WithJuegos attaches the MicrosipJuegoResolver and enables the combo→juego
+// resolution step inside AplicarVenta. When enabled is false the resolver is
+// stored but never called — the feature can be toggled without rewiring.
+// When r is nil the feature is always off regardless of enabled.
+// Returns s for fluent wiring at the composition root.
+func (s *Service) WithJuegos(r outbound.MicrosipJuegoResolver, enabled bool, lineaArticuloID int) *Service {
+	s.juegoResolver = r
+	s.juegosEnabled = enabled
+	s.juegosLineaArticuloID = lineaArticuloID
 	return s
 }
 
