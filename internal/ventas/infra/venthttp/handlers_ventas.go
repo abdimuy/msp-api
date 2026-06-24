@@ -125,10 +125,7 @@ func (h *Handlers) ObtenerVenta(ctx context.Context, in *ObtenerVentaInput) (*Ob
 	// cancelada_by) to display names so the detail panel shows people, not
 	// UUIDs. Best-effort: an unresolved id leaves its *_nombre field empty.
 	nombres := h.svc.NombresDeUsuarios(ctx, ventaActorIDs(v))
-	zm, mismatch, err := h.svc.ZonaMicrosipDeVenta(ctx, v)
-	if err != nil {
-		return nil, mapAppError(err)
-	}
+	zm, mismatch := h.svc.ZonaMicrosipDeVenta(ctx, v)
 	dto := toVentaDTO(v, nombres)
 	dto.ZonaMismatch = mismatch
 	dto.ZonaClienteMicrosipID = zm

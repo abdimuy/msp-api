@@ -75,8 +75,7 @@ func TestZonaMicrosipDeVenta(t *testing.T) {
 		// no WithZonaReader — reader is nil
 		v := seedVentaConCliente(t, h)
 
-		zm, mismatch, err := h.svc.ZonaMicrosipDeVenta(t.Context(), v)
-		require.NoError(t, err)
+		zm, mismatch := h.svc.ZonaMicrosipDeVenta(t.Context(), v)
 		assert.Nil(t, zm)
 		assert.False(t, mismatch)
 	})
@@ -90,8 +89,7 @@ func TestZonaMicrosipDeVenta(t *testing.T) {
 		v, err := h.svc.ObtenerVenta(t.Context(), *ventaID)
 		require.NoError(t, err)
 
-		zm, mismatch, err := h.svc.ZonaMicrosipDeVenta(t.Context(), v)
-		require.NoError(t, err)
+		zm, mismatch := h.svc.ZonaMicrosipDeVenta(t.Context(), v)
 		assert.Nil(t, zm)
 		assert.False(t, mismatch)
 	})
@@ -104,8 +102,7 @@ func TestZonaMicrosipDeVenta(t *testing.T) {
 		h.svc = h.svc.WithZonaReader(r)
 		v := seedVentaConCliente(t, h)
 
-		zm, mismatch, err := h.svc.ZonaMicrosipDeVenta(t.Context(), v)
-		require.NoError(t, err)
+		zm, mismatch := h.svc.ZonaMicrosipDeVenta(t.Context(), v)
 		assert.Nil(t, zm)
 		assert.False(t, mismatch)
 	})
@@ -118,13 +115,12 @@ func TestZonaMicrosipDeVenta(t *testing.T) {
 		h.svc = h.svc.WithZonaReader(r)
 		v := seedVentaConCliente(t, h)
 
-		zm, mismatch, err := h.svc.ZonaMicrosipDeVenta(t.Context(), v)
-		require.NoError(t, err, "ErrClienteNotFoundInMicrosip must NOT propagate — degrade gracefully")
-		assert.Nil(t, zm)
+		zm, mismatch := h.svc.ZonaMicrosipDeVenta(t.Context(), v)
+		assert.Nil(t, zm, "ErrClienteNotFoundInMicrosip must degrade — no zona info")
 		assert.False(t, mismatch)
 	})
 
-	t.Run("reader_error_propagates", func(t *testing.T) {
+	t.Run("reader_error_degrades_to_nil_false", func(t *testing.T) {
 		t.Parallel()
 		h := newHarness(t)
 		boom := errors.New("microsip unavailable")
@@ -133,8 +129,11 @@ func TestZonaMicrosipDeVenta(t *testing.T) {
 		h.svc = h.svc.WithZonaReader(r)
 		v := seedVentaConCliente(t, h)
 
-		_, _, err := h.svc.ZonaMicrosipDeVenta(t.Context(), v)
-		require.ErrorIs(t, err, boom)
+		// A transient reader error must NEVER fail the venta detail read; it
+		// degrades to "no mismatch info" (nil, false).
+		zm, mismatch := h.svc.ZonaMicrosipDeVenta(t.Context(), v)
+		assert.Nil(t, zm, "transient reader error must degrade, not propagate")
+		assert.False(t, mismatch)
 	})
 
 	t.Run("match_returns_zonaID_false", func(t *testing.T) {
@@ -144,8 +143,7 @@ func TestZonaMicrosipDeVenta(t *testing.T) {
 		h.svc = h.svc.WithZonaReader(newFakeClienteZonaReader(ventaZona))
 		v := seedVentaConCliente(t, h)
 
-		zm, mismatch, err := h.svc.ZonaMicrosipDeVenta(t.Context(), v)
-		require.NoError(t, err)
+		zm, mismatch := h.svc.ZonaMicrosipDeVenta(t.Context(), v)
 		require.NotNil(t, zm)
 		assert.Equal(t, ventaZona, *zm)
 		assert.False(t, mismatch)
@@ -158,8 +156,7 @@ func TestZonaMicrosipDeVenta(t *testing.T) {
 		h.svc = h.svc.WithZonaReader(newFakeClienteZonaReader(otherZona))
 		v := seedVentaConCliente(t, h)
 
-		zm, mismatch, err := h.svc.ZonaMicrosipDeVenta(t.Context(), v)
-		require.NoError(t, err)
+		zm, mismatch := h.svc.ZonaMicrosipDeVenta(t.Context(), v)
 		require.NotNil(t, zm)
 		assert.Equal(t, otherZona, *zm)
 		assert.True(t, mismatch)
@@ -179,8 +176,7 @@ func TestZonaMicrosipDeVenta(t *testing.T) {
 		v, err := h.svc.CrearVenta(t.Context(), in, by)
 		require.NoError(t, err)
 
-		zm, mismatch, err := h.svc.ZonaMicrosipDeVenta(t.Context(), v)
-		require.NoError(t, err)
+		zm, mismatch := h.svc.ZonaMicrosipDeVenta(t.Context(), v)
 		require.NotNil(t, zm)
 		assert.Equal(t, ventaZona, *zm)
 		assert.False(t, mismatch, "venta zona nil must never trigger mismatch")

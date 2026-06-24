@@ -947,17 +947,34 @@ func TestE2E_Firebird_IdempotencyKey_POST_Replays(t *testing.T) {
 			"replay must not duplicate outbox enqueue: after_first=%d after_second=%d",
 			afterFirst, afterSecond)
 
-		listReq := httptest.NewRequest(http.MethodGet, "/ventas?limit=10", nil)
-		listRec := httptest.NewRecorder()
-		r.ServeHTTP(listRec, listReq)
-		require.Equal(t, http.StatusOK, listRec.Code)
-		var list venthttp.ListResponse[venthttp.VentaDTO]
-		require.NoError(t, json.Unmarshal(listRec.Body.Bytes(), &list))
+		// Page through the cursor-paginated list counting rows for this venta.
+		// The shared dev DB may have many ventas dated after the test fixture,
+		// so a first-page check is not robust — follow next_cursor until the
+		// pages run out. Exactly one row must exist (the replay must NOT have
+		// created a duplicate).
 		count := 0
-		for _, v := range list.Items {
-			if v.ID == body.ID {
-				count++
+		listCursor := ""
+		for pageNum := 0; ; pageNum++ {
+			listURL := "/ventas?limit=50"
+			if listCursor != "" {
+				listURL += "&cursor=" + listCursor
 			}
+			listReq := httptest.NewRequest(http.MethodGet, listURL, nil)
+			listRec := httptest.NewRecorder()
+			r.ServeHTTP(listRec, listReq)
+			require.Equal(t, http.StatusOK, listRec.Code, "list page=%d body=%s", pageNum, listRec.Body.String())
+
+			var listPage venthttp.ListResponse[venthttp.VentaDTO]
+			require.NoError(t, json.Unmarshal(listRec.Body.Bytes(), &listPage))
+			for _, v := range listPage.Items {
+				if v.ID == body.ID {
+					count++
+				}
+			}
+			if listPage.NextCursor == "" {
+				break
+			}
+			listCursor = listPage.NextCursor
 		}
 		assert.Equal(t, 1, count, "exactly one MSP_VENTAS row must exist for the idempotency key")
 	})

@@ -125,7 +125,7 @@ func TestObtenerVenta_ZonaMismatch(t *testing.T) {
 	t.Run("mismatch_true_when_zonas_differ", func(t *testing.T) {
 		t.Parallel()
 		svc, repo, _ := testService()
-		svc.WithZonaReader(&fakeZonaReader{ZonaID: microsipZona})
+		svc = svc.WithZonaReader(&fakeZonaReader{ZonaID: microsipZona})
 		r := buildRouter(t, svc, fullPerms(uuid.New()))
 		id := buildHydratedVentaWithCliente(t, repo, 47913, ventaZonaPtr)
 
@@ -144,7 +144,7 @@ func TestObtenerVenta_ZonaMismatch(t *testing.T) {
 	t.Run("mismatch_false_when_zonas_match", func(t *testing.T) {
 		t.Parallel()
 		svc, repo, _ := testService()
-		svc.WithZonaReader(&fakeZonaReader{ZonaID: ventaZona})
+		svc = svc.WithZonaReader(&fakeZonaReader{ZonaID: ventaZona})
 		r := buildRouter(t, svc, fullPerms(uuid.New()))
 		id := buildHydratedVentaWithCliente(t, repo, 47913, ventaZonaPtr)
 
@@ -182,7 +182,7 @@ func TestObtenerVenta_ZonaMismatch(t *testing.T) {
 	t.Run("mismatch_false_when_cliente_not_found", func(t *testing.T) {
 		t.Parallel()
 		svc, repo, _ := testService()
-		svc.WithZonaReader(&fakeZonaReader{NotFound: true})
+		svc = svc.WithZonaReader(&fakeZonaReader{NotFound: true})
 		r := buildRouter(t, svc, fullPerms(uuid.New()))
 		id := buildHydratedVentaWithCliente(t, repo, 47913, ventaZonaPtr)
 
