@@ -18,13 +18,36 @@ type CobranzaRepo interface {
 	VentasPorZona(ctx context.Context, zonaID int, desde, hasta time.Time) ([]rutasdomain.VentaCobranza, error)
 }
 
-// CalendarioCobradorClient is the read port for the Firestore-backed
-// cobrador calendar. Returns a map from COBRADOR_ID to the week-start
-// FECHA_CARGA_INICIAL. Missing cobradores in the map → nil FechaInicioSemana
-// (the service treats them as "no calendar entry").
+// UsuarioCobrador is one Firestore `users` document projected to the fields the
+// per-user cobranza report needs. Each user carries its OWN window
+// (FechaInicio = FECHA_CARGA_INICIAL), so two users sharing a COBRADOR_ID/zona
+// are reported independently — no arbitrary collision.
+type UsuarioCobrador struct {
+	// UID is the Firestore document id.
+	UID string
+	// Nombre is NOMBRE.
+	Nombre string
+	// Email is EMAIL.
+	Email string
+	// CobradorID is COBRADOR_ID (> 0 for real cobradores).
+	CobradorID int
+	// ZonaID is ZONA_CLIENTE_ID (the ruta the user covers).
+	ZonaID int
+	// FechaInicio is FECHA_CARGA_INICIAL (UTC). Zero when the field is absent.
+	FechaInicio time.Time
+}
+
+// CalendarioCobradorClient is the read port for the Firestore-backed cobrador
+// calendar (the `users` collection).
 //
 // Implementations must be safe for concurrent use. A Firestore-unavailable
-// environment (dev mode, unconfigured) should return an empty map without error.
+// environment (dev mode, unconfigured) should return empty results without error.
 type CalendarioCobradorClient interface {
+	// FechaInicioPorCobrador returns a map from COBRADOR_ID to the week-start
+	// FECHA_CARGA_INICIAL. NOTE: when several users share a COBRADOR_ID the map
+	// keeps an arbitrary one — use ListarCobradores for the per-user report.
 	FechaInicioPorCobrador(ctx context.Context) (map[int]time.Time, error)
+	// ListarCobradores returns one entry per user document that has a COBRADOR_ID,
+	// each with its own FECHA_CARGA_INICIAL window.
+	ListarCobradores(ctx context.Context) ([]UsuarioCobrador, error)
 }

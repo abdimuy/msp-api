@@ -40,6 +40,56 @@ func (h *Handlers) ListarRutas(ctx context.Context, _ *ListRutasInput) (*ListRut
 	return out, nil
 }
 
+// ListarReporteUsuarios handles GET /rutas/reporte-usuarios. Requires auth.PermRutasLeer.
+// One row per active cobrador (user), each evaluated over its own window.
+func (h *Handlers) ListarReporteUsuarios(ctx context.Context, _ *ListReporteUsuariosInput) (*ListReporteUsuariosOutput, error) {
+	cu, err := currentUserOrError(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := requirePerm(cu, auth.PermRutasLeer); err != nil {
+		return nil, err
+	}
+
+	usuarios, err := h.svc.ListarReporteUsuarios(ctx)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+
+	out := &ListReporteUsuariosOutput{}
+	out.Body.Items = toReporteUsuarioDTOs(usuarios)
+	return out, nil
+}
+
+func toReporteUsuarioDTOs(usuarios []rutasdomain.ReporteUsuario) []ReporteUsuarioDTO {
+	if usuarios == nil {
+		return []ReporteUsuarioDTO{}
+	}
+	dtos := make([]ReporteUsuarioDTO, len(usuarios))
+	for i, u := range usuarios {
+		dtos[i] = ReporteUsuarioDTO{
+			UID:               u.UID,
+			Nombre:            u.Nombre,
+			Email:             u.Email,
+			CobradorID:        u.CobradorID,
+			ZonaID:            u.ZonaID,
+			ZonaNombre:        u.ZonaNombre,
+			NumClientes:       u.NumClientes,
+			SaldoTotal:        u.SaldoTotal.StringFixed(2),
+			FechaInicioSemana: u.FechaInicio.UTC().Format(time.RFC3339),
+		}
+		if u.PctCoberturaSemanal != nil {
+			s := u.PctCoberturaSemanal.StringFixed(2)
+			dtos[i].PctCoberturaSemanal = &s
+		}
+		if u.PctPonderadoSemanal != nil {
+			s := u.PctPonderadoSemanal.StringFixed(2)
+			dtos[i].PctPonderadoSemanal = &s
+		}
+	}
+	return dtos
+}
+
 func toRutaResumenDTOs(rutas []rutasdomain.RutaResumen) []RutaResumenDTO {
 	if rutas == nil {
 		return []RutaResumenDTO{}

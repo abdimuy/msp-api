@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	rutasdomain "github.com/abdimuy/msp-api/internal/rutas/domain"
+	"github.com/abdimuy/msp-api/internal/rutas/ports/outbound"
 )
 
 // fakeRutasRepo is a test double for outbound.RutasRepo.
@@ -38,12 +39,18 @@ func (f *fakeCobranzaRepo) VentasPorZona(_ context.Context, zonaID int, _, _ tim
 
 // fakeCalendario is a test double for outbound.CalendarioCobradorClient.
 type fakeCalendario struct {
-	m   map[int]time.Time
-	err error
+	m         map[int]time.Time
+	usuarios  []outbound.UsuarioCobrador
+	err       error
+	usuariosE error
 }
 
 func (f *fakeCalendario) FechaInicioPorCobrador(_ context.Context) (map[int]time.Time, error) {
 	return f.m, f.err
+}
+
+func (f *fakeCalendario) ListarCobradores(_ context.Context) ([]outbound.UsuarioCobrador, error) {
+	return f.usuarios, f.usuariosE
 }
 
 func intPtr(v int) *int { return &v }

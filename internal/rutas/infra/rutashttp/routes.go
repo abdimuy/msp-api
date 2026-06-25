@@ -65,6 +65,17 @@ func registerOperations(api huma.API, h *Handlers) {
 	}, h.ListarRutas)
 
 	huma.Register(api, huma.Operation{
+		OperationID:   "listar-reporte-usuarios",
+		Method:        http.MethodGet,
+		Path:          "/rutas/reporte-usuarios",
+		Summary:       "Reporte de cobranza por usuario (cobrador)",
+		Description:   "Devuelve una fila por cobrador activo (usuario de Firestore con COBRADOR_ID y FECHA_CARGA_INICIAL), con la cartera de su ruta y la cobertura/ponderado calculados sobre la ventana propia de cada usuario.",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+	}, h.ListarReporteUsuarios)
+
+	huma.Register(api, huma.Operation{
 		OperationID:   "desglose-cobranza-por-zona",
 		Method:        http.MethodGet,
 		Path:          "/rutas/{zona_id}/cobranza",
