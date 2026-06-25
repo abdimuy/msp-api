@@ -101,7 +101,12 @@ func calcReporteZona(
 	// Ponderado: delegate to the shared aggregate so listing and modal agree.
 	resumen := rutasdomain.CalcularResumenPonderado(ventas)
 
-	reporte := rutasdomain.ReporteZona{ZonaID: zonaID}
+	reporte := rutasdomain.ReporteZona{
+		ZonaID:       zonaID,
+		CoberturaNum: coberturaNum,
+		CoberturaDen: coberturaDen,
+		PonderadoDen: resumen.Denominador,
+	}
 	if coberturaDen > 0 {
 		pct := decimal.NewFromInt(int64(coberturaNum)).
 			Div(decimal.NewFromInt(int64(coberturaDen))).

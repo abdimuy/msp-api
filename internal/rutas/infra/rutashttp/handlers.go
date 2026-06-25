@@ -76,6 +76,9 @@ func toReporteUsuarioDTOs(usuarios []rutasdomain.ReporteUsuario) []ReporteUsuari
 			ZonaNombre:        u.ZonaNombre,
 			NumClientes:       u.NumClientes,
 			SaldoTotal:        u.SaldoTotal.StringFixed(2),
+			CoberturaNum:      u.CoberturaNum,
+			CoberturaDen:      u.CoberturaDen,
+			PonderadoDen:      u.PonderadoDen,
 			FechaInicioSemana: u.FechaInicio.UTC().Format(time.RFC3339),
 		}
 		if u.PctCoberturaSemanal != nil {

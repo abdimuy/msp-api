@@ -61,6 +61,15 @@ type ReporteZona struct {
 	// PctPonderadoSemanal is SUM(aporte)/denominadorPonderado×100.
 	// Nil when FechaInicioSemana is unknown.
 	PctPonderadoSemanal *decimal.Decimal
+	// CoberturaNum is the number of (non-contado) ventas that paid something in
+	// the window — the cobertura numerator.
+	CoberturaNum int
+	// CoberturaDen is the number of (non-contado) active-cartera ventas — the
+	// cobertura denominator (the "total de ventas" that divides).
+	CoberturaDen int
+	// PonderadoDen is the number of ventas that apply this week (AplicaPonderado)
+	// — the ponderado denominator.
+	PonderadoDen int
 	// FechaInicioSemana is the cobrador's week-start timestamp from Firestore.
 	// Nil when not available.
 	FechaInicioSemana *time.Time

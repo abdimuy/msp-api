@@ -82,6 +82,8 @@ func TestService_ListarReporteUsuarios(t *testing.T) {
 		require.NotNil(t, r.PctCoberturaSemanal, "cobertura calculada por usuario")
 		assert.True(t, decimal.NewFromInt(100).Equal(*r.PctCoberturaSemanal),
 			"cobertura %s (1 de 1 pagó)", r.PctCoberturaSemanal)
+		assert.Equal(t, 1, r.CoberturaNum, "1 venta pagó")
+		assert.Equal(t, 1, r.CoberturaDen, "1 venta en cartera (divisor)")
 		assert.False(t, r.FechaInicio.IsZero(), "ventana propia del usuario")
 	}
 	// Cada usuario conserva SU ventana.

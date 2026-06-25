@@ -37,6 +37,12 @@ type ReporteUsuario struct {
 	PctCoberturaSemanal *decimal.Decimal
 	// PctPonderadoSemanal is the weighted percentage over THIS user's window.
 	PctPonderadoSemanal *decimal.Decimal
+	// CoberturaNum / CoberturaDen are the cobertura fraction (ventas que pagaron /
+	// total de ventas en cartera activa) over this user's window.
+	CoberturaNum int
+	CoberturaDen int
+	// PonderadoDen is the ponderado denominator (ventas que aplican esta semana).
+	PonderadoDen int
 	// FechaInicio is the user's FECHA_CARGA_INICIAL (window start, UTC).
 	FechaInicio time.Time
 }

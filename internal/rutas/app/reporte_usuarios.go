@@ -71,6 +71,9 @@ func (s *Service) ListarReporteUsuarios(ctx context.Context) ([]rutasdomain.Repo
 		reporte := calcReporteZona(u.ZonaID, ventas)
 		row.PctCoberturaSemanal = reporte.PctCoberturaSemanal
 		row.PctPonderadoSemanal = reporte.PctPonderadoSemanal
+		row.CoberturaNum = reporte.CoberturaNum
+		row.CoberturaDen = reporte.CoberturaDen
+		row.PonderadoDen = reporte.PonderadoDen
 		out = append(out, row)
 	}
 

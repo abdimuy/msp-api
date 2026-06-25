@@ -38,6 +38,9 @@ type ReporteUsuarioDTO struct {
 	SaldoTotal          string  `json:"saldo_total"           doc:"Saldo pendiente total de la ruta en pesos (2 decimales)"`
 	PctCoberturaSemanal *string `json:"pct_cobertura_semanal" doc:"Cobertura sobre la ventana de ESTE usuario. Nulo si no se pudo calcular."`
 	PctPonderadoSemanal *string `json:"pct_ponderado_semanal" doc:"Ponderado sobre la ventana de ESTE usuario. Nulo si no se pudo calcular."`
+	CoberturaNum        int     `json:"cobertura_num"         doc:"Ventas que pagaron en la ventana (numerador de cobertura)"`
+	CoberturaDen        int     `json:"cobertura_den"         doc:"Total de ventas en cartera activa (divisor de cobertura)"`
+	PonderadoDen        int     `json:"ponderado_den"         doc:"Ventas que aplican esta semana (divisor del ponderado)"`
 	FechaInicioSemana   string  `json:"fecha_inicio_semana"   doc:"Inicio de ventana del usuario (FECHA_CARGA_INICIAL, RFC3339 UTC)"`
 }
 
