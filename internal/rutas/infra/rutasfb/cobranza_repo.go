@@ -39,6 +39,14 @@ func NewCobranzaRepo(pool *firebird.Pool) *CobranzaRepo {
 // the firebirdsql v0.9.19 parameter-binding bug that rejects ? inside FROM-clause
 // derived tables.
 //
+// The credit total is PRECIO_TOTAL, NOT TOTAL_IMPORTE. Per migration 000010,
+// MSP_SALDOS_VENTAS.TOTAL_IMPORTE is the sum of active PAYMENTS (conceptos
+// 87327/155/11) and SALDO = PRECIO_TOTAL − TOTAL_IMPORTE − IMPTE_REST. Using
+// TOTAL_IMPORTE as the credit total made pagadoAntes go negative whenever a
+// client had paid little (SALDO > TOTAL_IMPORTE, ~6% of the cartera), inflating
+// "atraso" to the full balance. CalcAporte/enrichVentas consume this as the
+// credit total via VentaCobranza.TotalImporte.
+//
 // ABONO_SEMANA sums only CONCEPTO_CC_ID IN (87327, 27969) — cobranza en ruta y
 // abono mostrador — matching the mobile sync's definition of "cobranza activa"
 // (see cobranza/infra/ventfb/pagos_repo.go `pagoConceptoFilter`). MSP_PAGOS_VENTAS
@@ -57,7 +65,7 @@ SELECT
   COALESCE(UPPER(lfp.VALOR_DESPLEGADO), 'SEMANAL')         AS FRECUENCIA,
   CAST(COALESCE(p.ABONO_SEMANA, 0) AS NUMERIC(18,2))       AS ABONO_SEMANA,
   CAST(s.SALDO        AS NUMERIC(18,2))                    AS SALDO,
-  CAST(s.TOTAL_IMPORTE AS NUMERIC(18,2))                   AS TOTAL_IMPORTE,
+  CAST(s.PRECIO_TOTAL AS NUMERIC(18,2))                    AS PRECIO_TOTAL,
   s.FECHA_CARGO,
   s.FECHA_ULT_PAGO,
   c.NOMBRE                                                  AS CLIENTE_NOMBRE,

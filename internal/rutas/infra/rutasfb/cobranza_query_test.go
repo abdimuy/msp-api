@@ -20,3 +20,17 @@ func TestQueryVentasPorZona_FiltraConceptosDeCobranza(t *testing.T) {
 			queryVentasPorZona)
 	}
 }
+
+// TestQueryVentasPorZona_UsaPrecioTotal guards that the credit total comes from
+// PRECIO_TOTAL, not the misleadingly-named TOTAL_IMPORTE column (which is the sum
+// of payments — using it inflated "atraso" to the full balance, ~6% of cartera).
+func TestQueryVentasPorZona_UsaPrecioTotal(t *testing.T) {
+	t.Parallel()
+
+	if !strings.Contains(queryVentasPorZona, "s.PRECIO_TOTAL") {
+		t.Errorf("el total del crédito debe leerse de s.PRECIO_TOTAL; query:\n%s", queryVentasPorZona)
+	}
+	if strings.Contains(queryVentasPorZona, "s.TOTAL_IMPORTE") {
+		t.Error("no debe usar s.TOTAL_IMPORTE (son pagos, no el total del crédito)")
+	}
+}

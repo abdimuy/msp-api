@@ -49,7 +49,9 @@ type AporteInput struct {
 	Parcialidad decimal.Decimal
 	// Plazos is (fechaInicioSemana − fechaCargo) / cadenciaDias, may be fractional.
 	Plazos decimal.Decimal
-	// TotalImporte is the original credit total (MSP_SALDOS_VENTAS.TOTAL_IMPORTE).
+	// TotalImporte is the original credit total (MSP_SALDOS_VENTAS.PRECIO_TOTAL).
+	// NOTE: it is PRECIO_TOTAL, not the misleadingly-named TOTAL_IMPORTE column
+	// (which is the sum of payments). See cobranza_repo queryVentasPorZona.
 	TotalImporte decimal.Decimal
 	// AbonoSemana is the sum of all valid payments in the reporting window.
 	AbonoSemana decimal.Decimal

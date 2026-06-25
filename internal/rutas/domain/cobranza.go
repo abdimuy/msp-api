@@ -44,7 +44,8 @@ type VentaCobranza struct {
 	// denominator (there is a calendar due-date within the reporting window).
 	// Populated by enrichVentas after the repo returns raw rows.
 	AplicaPonderado bool
-	// TotalImporte from MSP_SALDOS_VENTAS.
+	// TotalImporte is the credit total from MSP_SALDOS_VENTAS.PRECIO_TOTAL
+	// (NOT the TOTAL_IMPORTE column, which is the sum of payments).
 	TotalImporte decimal.Decimal
 }
 
