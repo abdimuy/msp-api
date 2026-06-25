@@ -73,3 +73,21 @@ func TestCadenciaDias(t *testing.T) {
 	assert.Equal(t, 30, rutasdomain.CadenciaDias(rutasdomain.Mensual))
 	assert.Equal(t, 7, rutasdomain.CadenciaDias("UNKNOWN")) // default Semanal
 }
+
+func TestFrecuencia_EsContado(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		frec rutasdomain.Frecuencia
+		want bool
+	}{
+		{rutasdomain.Contado, true},
+		{rutasdomain.Semanal, false},
+		{rutasdomain.Quincenal, false},
+		{rutasdomain.Mensual, false},
+		{"", false},
+		{"OTRO", false},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, tc.frec.EsContado(), "EsContado(%q)", tc.frec)
+	}
+}

@@ -244,3 +244,60 @@ func TestService_ListarRutas_PonderadoDenominador(t *testing.T) {
 		"ponderado %s (expected 50%%)", reporte.PctPonderadoSemanal,
 	)
 }
+
+// TestService_ContadoExcluido verifies that a cash sale (de contado) never
+// pollutes the cobertura or ponderado metrics, even when its parcialidad is
+// tiny and its abono is large (which would otherwise yield an enormous aporte).
+// Reproduces the bug where contado sales inflated % ponderado to thousands.
+func TestService_ContadoExcluido(t *testing.T) {
+	t.Parallel()
+
+	zonaID := 7
+	fechaInicio := time.Date(2026, 6, 16, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 6, 22, 0, 0, 0, 0, time.UTC)
+
+	ventas := []rutasdomain.VentaCobranza{
+		{ // crédito SEMANAL, pagó su cuota → aplica, aporte 1
+			VentaID:      1,
+			ZonaID:       zonaID,
+			Parcialidad:  decimal.NewFromInt(100),
+			Frecuencia:   rutasdomain.Semanal,
+			AbonoSemana:  decimal.NewFromInt(100),
+			Saldo:        decimal.NewFromInt(900),
+			TotalImporte: decimal.NewFromInt(4000),
+			FechaCargo:   time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		},
+		{ // CONTADO: parcialidad 1, abono 9600 → aporte gigante si se contara
+			VentaID:      2,
+			ZonaID:       zonaID,
+			Parcialidad:  decimal.NewFromInt(1),
+			Frecuencia:   rutasdomain.Contado,
+			AbonoSemana:  decimal.NewFromInt(9600),
+			Saldo:        decimal.Zero,
+			TotalImporte: decimal.NewFromInt(9600),
+			FechaCargo:   time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	enrichVentas(ventas, fechaInicio, now)
+
+	// El contado no aplica y su aporte queda en cero.
+	assert.False(t, ventas[1].AplicaPonderado, "contado no debe aplicar")
+	assert.True(t, ventas[1].Aporte.IsZero(), "contado aporte debe ser 0, got %s", ventas[1].Aporte)
+
+	reporte := calcReporteZona(zonaID, ventas)
+
+	// Cobertura: solo el crédito cuenta (1/1 pagó) → 100%.
+	require.NotNil(t, reporte.PctCoberturaSemanal)
+	assert.True(t,
+		decimal.NewFromInt(100).Equal(*reporte.PctCoberturaSemanal),
+		"cobertura %s (expected 100%%, contado excluido)", reporte.PctCoberturaSemanal,
+	)
+
+	// Ponderado: solo el crédito (aporte 1, den 1) → 100%, NO miles por ciento.
+	require.NotNil(t, reporte.PctPonderadoSemanal)
+	assert.True(t,
+		decimal.NewFromInt(100).Equal(*reporte.PctPonderadoSemanal),
+		"ponderado %s (expected 100%%, contado excluido)", reporte.PctPonderadoSemanal,
+	)
+}

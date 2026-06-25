@@ -56,6 +56,9 @@ func VencimientosVencidos(frec Frecuencia, fechaCargo, fechaInicio time.Time, gr
 		return contarVencidosMensual(cargo, inicio, graceDias)
 	case Semanal:
 		return weeklyVencidos()
+	case Contado:
+		// Cash sales have no due dates; excluded from cobranza upstream.
+		return 0
 	default:
 		return weeklyVencidos()
 	}
@@ -150,6 +153,9 @@ func AplicaEnVentana(frec Frecuencia, fechaCargo, desde, hasta time.Time) bool {
 		return aplicaMensualEnVentana(cargo, lo, hi)
 	case Semanal:
 		return aplicaSemanalEnVentana(cargo, lo, hi)
+	case Contado:
+		// Cash sales never have a due date in the window.
+		return false
 	default:
 		return aplicaSemanalEnVentana(cargo, lo, hi)
 	}

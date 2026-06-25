@@ -67,6 +67,17 @@ func enrichVentas(ventas []rutasdomain.VentaCobranza, fechaInicio, now time.Time
 	for i := range ventas {
 		v := &ventas[i]
 
+		// Cash sales (de contado) are not credit collection: they contribute
+		// zero aporte and never count in the cobertura/ponderado denominators.
+		// The repo already filters them out; this is defence in depth so a
+		// stray contado row can never inflate a financial metric.
+		if v.Frecuencia.EsContado() {
+			v.AplicaPonderado = false
+			v.Aporte = decimal.Zero
+			v.Vencidas = decimal.Zero
+			continue
+		}
+
 		grace := 0
 		if v.Frecuencia == rutasdomain.Quincenal || v.Frecuencia == rutasdomain.Mensual {
 			grace = 2

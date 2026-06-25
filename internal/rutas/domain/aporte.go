@@ -12,7 +12,16 @@ const (
 	Semanal   Frecuencia = "SEMANAL"
 	Quincenal Frecuencia = "QUINCENAL"
 	Mensual   Frecuencia = "MENSUAL"
+	// Contado is the forma-de-pago for cash sales. These are NOT credit
+	// collection: they have no real parcialidad/plazos, so they must be
+	// excluded from every weekly cobranza metric (cobertura, ponderado) and
+	// from the breakdown. VALOR_DESPLEGADO arrives uppercased from the query.
+	Contado Frecuencia = "CONTADO"
 )
+
+// EsContado reports whether this cadence is a cash sale (de contado). Cash
+// sales never participate in weekly credit-collection metrics.
+func (f Frecuencia) EsContado() bool { return f == Contado }
 
 // CadenciaDias returns the number of days between expected payments for a
 // given cadence. Defaults to 7 (semanal) for any unrecognized value.
@@ -24,6 +33,9 @@ func CadenciaDias(f Frecuencia) int {
 		return 15
 	case Mensual:
 		return 30
+	case Contado:
+		// Cash sales are not periodic; they are excluded from cobranza upstream.
+		return 7
 	default:
 		return 7
 	}

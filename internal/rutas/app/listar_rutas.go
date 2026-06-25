@@ -86,8 +86,12 @@ func calcReporteZona(
 		coberturaDen int
 	)
 
-	// Cobertura: count ventas and those that paid something in the window.
+	// Cobertura: count credit ventas and those that paid something in the
+	// window. Cash sales (de contado) are excluded — they are not collection.
 	for _, v := range ventas {
+		if v.Frecuencia.EsContado() {
+			continue
+		}
 		coberturaDen++
 		if v.AbonoSemana.IsPositive() {
 			coberturaNum++

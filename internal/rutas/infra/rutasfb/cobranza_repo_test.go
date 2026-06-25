@@ -34,6 +34,10 @@ func TestCobranzaRepo_VentasPorZona(t *testing.T) { //nolint:paralleltest // ser
 			assert.NotZero(t, v.ClienteID)
 			// Parcialidad may be 0 for unregistered credits — just check scan.
 			assert.False(t, v.Saldo.IsNegative(), "saldo must not be negative")
+			// Cash sales (de contado) must never appear in the cobranza set;
+			// they are not credit collection and would inflate % ponderado.
+			assert.False(t, v.Frecuencia.EsContado(),
+				"venta %d de contado no debe aparecer en cobranza", v.VentaID)
 		}
 	})
 }
