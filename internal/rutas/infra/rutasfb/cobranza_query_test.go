@@ -7,17 +7,20 @@ import (
 )
 
 // TestQueryVentasPorZona_FiltraConceptosDeCobranza guards the ABONO_SEMANA sum
-// against counting non-collection payments. MSP_PAGOS_VENTAS caches many concepts
-// beyond route collection — cobro en mostrador (155), enganche (24533),
-// devoluciones (12/13), ajustes (15), condonación por pronto pago (25116) — which
-// would inflate cobertura/ponderado. Only 87327 (cobranza en ruta) and 27969
-// (abono mostrador) count, matching the mobile sync's "cobranza activa" filter.
+// against counting non-collection concepts. Only 87327 (Cobranza en ruta) is the
+// cobrador's actual route collection. Every other concept must be excluded —
+// notably 27969 (Condonaciones, debt forgiveness, NOT a payment), plus cobro en
+// mostrador (155), cobro (11), enganche (24533), cancelaciones/fugas/mal-cliente
+// (27966/27967/27968), devoluciones (12/13) and ajustes (15).
 func TestQueryVentasPorZona_FiltraConceptosDeCobranza(t *testing.T) {
 	t.Parallel()
 
-	if !strings.Contains(queryVentasPorZona, "CONCEPTO_CC_ID IN (87327, 27969)") {
-		t.Errorf("ABONO_SEMANA debe filtrar CONCEPTO_CC_ID IN (87327, 27969); query:\n%s",
+	if !strings.Contains(queryVentasPorZona, "CONCEPTO_CC_ID = 87327") {
+		t.Errorf("ABONO_SEMANA debe filtrar solo CONCEPTO_CC_ID = 87327 (cobranza en ruta); query:\n%s",
 			queryVentasPorZona)
+	}
+	if strings.Contains(queryVentasPorZona, "27969") {
+		t.Error("no debe contar 27969 (Condonaciones) como pago")
 	}
 }
 

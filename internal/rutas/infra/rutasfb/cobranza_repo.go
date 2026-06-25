@@ -47,13 +47,19 @@ func NewCobranzaRepo(pool *firebird.Pool) *CobranzaRepo {
 // "atraso" to the full balance. CalcAporte/enrichVentas consume this as the
 // credit total via VentaCobranza.TotalImporte.
 //
-// ABONO_SEMANA sums only CONCEPTO_CC_ID IN (87327, 27969) — cobranza en ruta y
-// abono mostrador — matching the mobile sync's definition of "cobranza activa"
-// (see cobranza/infra/ventfb/pagos_repo.go `pagoConceptoFilter`). MSP_PAGOS_VENTAS
-// also caches other concepts that are NOT route collection — cobro en mostrador
-// (155), enganche (24533), devoluciones (12/13), ajustes (15), condonación por
-// pronto pago (25116) — which would inflate cobertura/ponderado if counted. So the
-// office % stays consistent with what the cobrador sees in the app.
+// ABONO_SEMANA sums ONLY CONCEPTO_CC_ID = 87327 (Cobranza en ruta) — the actual
+// money the cobrador collected on the route. Every other concept in
+// MSP_PAGOS_VENTAS is NOT route collection and must not count toward the
+// cobrador's cobertura/ponderado. Per CONCEPTOS_CC.NOMBRE in Microsip:
+// 87327 = Cobranza en ruta, 27969 = Condonaciones (debt forgiveness, NOT a
+// payment), 155 = Cobro en mostrador, 11 = Cobro, 24533 = Enganche,
+// 27966 = Cancelaciones, 27967 = Fugas, 27968 = Mal Cliente, 25116 = Condonación
+// por pronto pago, 12/13 = Devoluciones, 15 = Ajuste de saldo.
+//
+// NOTE: cobranza/infra/ventfb/pagos_repo.go `pagoConceptoFilter` uses
+// IN (87327, 27969) with a comment calling 27969 "abono mostrador" — that label
+// is WRONG (27969 is Condonaciones). That filter drives the Android sync; do not
+// assume it is correct.
 //
 // Parameters: $1=zonaID, $2=desde, $3=hasta, $4=zonaID (outer filter).
 const queryVentasPorZona = `
@@ -100,7 +106,7 @@ LEFT JOIN (
   FROM MSP_PAGOS_VENTAS
   WHERE ZONA_CLIENTE_ID = ?
     AND CANCELADO = 'N'
-    AND CONCEPTO_CC_ID IN (87327, 27969)
+    AND CONCEPTO_CC_ID = 87327
     AND FECHA >= ?
     AND FECHA <= ?
   GROUP BY DOCTO_CC_ACR_ID
