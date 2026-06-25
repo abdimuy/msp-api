@@ -183,7 +183,7 @@ type ClientesRepo interface {
 	ObtenerCliente(ctx context.Context, clienteID int) (*domain.Cliente, error)
 
 	// ListarDirectorioCompleto returns ALL clients matching the native filters
-	// (ESTATUS IN ('A','B') plus ZonaClienteID / CobradorID / ConSaldo / ClienteIDs),
+	// (ESTATUS IN ('A','B','V') plus ZonaClienteID / CobradorID / ConSaldo / ClienteIDs),
 	// each with identity + SaldoTotal, with NO pagination, ordered by NOMBRE.
 	//
 	// It is the unbounded fetch used by the app's global sort / global pulse-filter

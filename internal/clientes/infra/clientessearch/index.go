@@ -28,7 +28,7 @@ const moneyScale int32 = 2
 // bulk-upserts in batches of upsertBatchSize.
 //
 // Deletion is out of scope: this reconcile is additive only. Clients that leave
-// ESTATUS A+B are near-zero in practice; a future sweep job can handle them.
+// ESTATUS A+B+V are near-zero in practice; a future sweep job can handle them.
 type MeilisearchDirectoryIndex struct {
 	client    platformmeili.Client
 	indexName string

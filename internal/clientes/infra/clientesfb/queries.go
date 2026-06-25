@@ -102,11 +102,13 @@ LEFT JOIN (
 // join) for the unbounded directory listing. No FIRST clause — every matching row
 // is returned.
 //
-// ESTATUS IN ('A','B') keeps both ALTA (A = active) and BAJA (B = dado de baja)
-// clients, excluding only vendor-route pseudo-clients (V) and cancelled (C).
-// Clients dados de baja (B) are intentionally retained: a large share of clients
-// that still carry outstanding saldo are ESTATUS='B', and cobradores must be able
-// to find them in the directory to collect. (B is "baja", not "bloqueado".)
+// ESTATUS IN ('A','B','V') keeps every real client, excluding only cancelled (C).
+// A = active, B = baja (retained: many B clients still carry outstanding saldo and
+// cobradores must find them to collect). V was previously assumed to be
+// "vendor-route pseudo-clients" and excluded, but live data refutes that: 96.6% of
+// ESTATUS='V' clients have real DOCTOS_PV sales, and a handful carry active cobranza
+// saldo (e.g. cliente 121278). They are real clients that simply rarely have a
+// current balance, so they must be searchable too. Only 'C' (cancelled) is dropped.
 //
 // PERFORMANCE (measured live 2026-06-16, FB 5.0):
 //   - Unfiltered (whole padrón, ~38k rows): sub-second now that the grouped saldo
@@ -119,7 +121,7 @@ LEFT JOIN (
 // ORDER BY at the DB level.
 const queryListarDirectorioCompletoBase = `
 SELECT ` + selectDirectorioColsGrouped + clienteFromClause + directorioGroupedSaldoJoin + `
-WHERE c.ESTATUS IN ('A', 'B')`
+WHERE c.ESTATUS IN ('A', 'B', 'V')`
 
 // ─── ResumenFicha ─────────────────────────────────────────────────────────────
 

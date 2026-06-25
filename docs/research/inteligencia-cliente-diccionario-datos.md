@@ -312,15 +312,21 @@ SELECT ESTATUS, COUNT(*) AS CNT FROM CLIENTES GROUP BY ESTATUS ORDER BY CNT DESC
 
 | ESTATUS | Significado | Cantidad | % |
 |---|---|---|---|
-| `B` | Bloqueado | 28,463 | 63.0% |
-| `A` | Activo | 10,207 | 22.6% |
-| `V` | Vendedor-ruta (Microsip) | 6,445 | 14.3% |
+| `B` | Baja / bloqueado | 28,463 | 63.0% |
+| `A` | Activo (con saldo vigente) | 10,207 | 22.6% |
+| `V` | Cliente real sin saldo vigente | 6,445 | 14.3% |
 | `C` | Cancelado | 101 | 0.2% |
 
-> Los 6,445 registros con `ESTATUS='V'` son registros internos de Microsip
-> que representan rutas/vendedores, no clientes reales. Los clientes activos
-> reales son 10,207. Los "bloqueados" (28,463) incluyen clientes con saldo
-> en mora o dados de baja sin eliminar.
+> **CORRECCIÓN (2026-06-24):** La nota anterior afirmaba que los `ESTATUS='V'`
+> eran "registros internos de Microsip que representan rutas/vendedores, no
+> clientes reales". **Es falso.** Verificado contra datos reales del server:
+> **96.6% de los `V` (6,240 de 6,457) tienen ventas reales en `DOCTOS_PV`** — son
+> personas reales que compraron. La diferencia con `A` es el saldo vigente: `A`
+> casi siempre lo tiene (9,610/10,232), `V` casi nunca (6/6,457). Es decir `V` se
+> comporta como "cliente real, sin deuda vigente" (liquidado/inactivo), no como
+> pseudo-registro de ruta. El campo `CLIENTES.ESTATUS` no tiene constraint ni
+> dominio en la base; su significado es lógica de la app Microsip. Por esto el
+> directorio ahora indexa `ESTATUS IN ('A','B','V')` (solo excluye `C`).
 
 ### Distribución TIPO_CLIENTE_ID
 
