@@ -105,6 +105,46 @@ func TestService_ListarReporteUsuarios_CalendarioError(t *testing.T) {
 	assert.Empty(t, got)
 }
 
+// TestService_DesglosePorUsuario uses the user's own window and returns the
+// user's zona; an unknown/inactive uid yields an empty breakdown (no error).
+func TestService_DesglosePorUsuario(t *testing.T) {
+	t.Parallel()
+
+	zonaID := 21563
+	ventas := []rutasdomain.VentaCobranza{{
+		VentaID:      1,
+		ZonaID:       zonaID,
+		Parcialidad:  decimal.NewFromInt(100),
+		Frecuencia:   rutasdomain.Semanal,
+		AbonoSemana:  decimal.NewFromInt(100),
+		Saldo:        decimal.NewFromInt(900),
+		TotalImporte: decimal.NewFromInt(4000),
+		FechaCargo:   time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	}}
+	fecha := time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC)
+	svc := NewService(
+		&fakeRutasRepo{rows: []rutasdomain.RutaResumen{{ZonaID: zonaID, ZonaNombre: "R/25"}}},
+		&fakeCobranzaRepo{rows: map[int][]rutasdomain.VentaCobranza{zonaID: ventas}},
+		&fakeCalendario{usuarios: []outbound.UsuarioCobrador{
+			{UID: "noe", Nombre: "NOE CORTERO", CobradorID: 11502, ZonaID: zonaID, FechaInicio: fecha},
+		}},
+	)
+
+	got, fi, zona, err := svc.DesglosePorUsuario(context.Background(), "noe")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, zonaID, zona)
+	require.NotNil(t, fi)
+	assert.Equal(t, fecha, *fi)
+
+	// Unknown uid → empty, no error.
+	empty, fi2, zona2, err2 := svc.DesglosePorUsuario(context.Background(), "desconocido")
+	require.NoError(t, err2)
+	assert.Empty(t, empty)
+	assert.Nil(t, fi2)
+	assert.Zero(t, zona2)
+}
+
 // TestService_ListarReporteUsuarios_VentasError keeps the row but leaves its
 // percentages nil when the per-user venta fetch fails.
 func TestService_ListarReporteUsuarios_VentasError(t *testing.T) {

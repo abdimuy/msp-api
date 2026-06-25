@@ -8,6 +8,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	rutasdomain "github.com/abdimuy/msp-api/internal/rutas/domain"
+	"github.com/abdimuy/msp-api/internal/rutas/ports/outbound"
 )
 
 // DesglosePorZona returns the per-sale breakdown for the given zona's
@@ -57,6 +58,44 @@ func (s *Service) DesglosePorZona(
 
 	fi := fechaInicio
 	return ventas, &fi, nil
+}
+
+// DesglosePorUsuario returns the per-sale breakdown for a single USER (cobrador),
+// computed over THAT user's own window (FECHA_CARGA_INICIAL) — consistent with the
+// per-user report. This avoids the duplicated-COBRADOR_ID ambiguity of
+// DesglosePorZona (which resolves the window via the COBRADOR_ID→fecha map and can
+// pick an arbitrary one when several users share a COBRADOR_ID).
+//
+// Returns the enriched ventas, the user's window start, and the user's zona id.
+// An unknown/inactive uid yields an empty breakdown (not an error).
+func (s *Service) DesglosePorUsuario(
+	ctx context.Context, uid string,
+) ([]rutasdomain.VentaCobranza, *time.Time, int, error) {
+	usuarios, err := s.calendario.ListarCobradores(ctx)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+
+	var u *outbound.UsuarioCobrador
+	for i := range usuarios {
+		if usuarios[i].UID == uid {
+			u = &usuarios[i]
+			break
+		}
+	}
+	if u == nil || u.CobradorID <= 0 || u.FechaInicio.IsZero() {
+		return []rutasdomain.VentaCobranza{}, nil, 0, nil
+	}
+
+	now := time.Now().UTC()
+	ventas, err := s.cobranza.VentasPorZona(ctx, u.ZonaID, u.FechaInicio, now)
+	if err != nil {
+		return nil, nil, u.ZonaID, err
+	}
+	enrichVentas(ventas, u.FechaInicio, now)
+
+	fi := u.FechaInicio
+	return ventas, &fi, u.ZonaID, nil
 }
 
 // enrichVentas populates Aporte, Vencidas, and AplicaPonderado on each venta

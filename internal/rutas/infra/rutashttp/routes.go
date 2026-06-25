@@ -85,4 +85,15 @@ func registerOperations(api huma.API, h *Handlers) {
 		Security:      security,
 		DefaultStatus: http.StatusOK,
 	}, h.DesglosePorZona)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "desglose-cobranza-por-usuario",
+		Method:        http.MethodGet,
+		Path:          "/rutas/usuarios/{uid}/cobranza",
+		Summary:       "Desglose de cobranza por usuario (cobrador)",
+		Description:   "Igual que el desglose por zona, pero calculado sobre la ventana propia del usuario (FECHA_CARGA_INICIAL), consistente con su fila en el reporte por usuario.",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+	}, h.DesglosePorUsuario)
 }

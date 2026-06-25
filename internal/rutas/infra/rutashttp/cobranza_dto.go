@@ -6,6 +6,12 @@ type DesglosePorZonaInput struct {
 	ZonaID int `path:"zona_id" doc:"ID de la zona de ventas"`
 }
 
+// DesglosePorUsuarioInput holds the path parameter for
+// GET /rutas/usuarios/{uid}/cobranza.
+type DesglosePorUsuarioInput struct {
+	UID string `path:"uid" doc:"UID del usuario (cobrador) en Firestore"`
+}
+
 // DesglosePorZonaOutput wraps the response body for the cobranza breakdown.
 type DesglosePorZonaOutput struct {
 	Body struct {

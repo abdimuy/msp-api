@@ -44,6 +44,42 @@ func (h *Handlers) DesglosePorZona(ctx context.Context, in *DesglosePorZonaInput
 	return out, nil
 }
 
+// DesglosePorUsuario handles GET /rutas/usuarios/{uid}/cobranza.
+// Requires auth.PermRutasLeer. Uses the user's own FECHA_CARGA_INICIAL window so
+// the breakdown matches that user's row in the per-user report.
+func (h *Handlers) DesglosePorUsuario(ctx context.Context, in *DesglosePorUsuarioInput) (*DesglosePorZonaOutput, error) {
+	cu, err := currentUserOrError(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := requirePerm(cu, auth.PermRutasLeer); err != nil {
+		return nil, err
+	}
+
+	ventas, fechaInicio, zonaID, err := h.svc.DesglosePorUsuario(ctx, in.UID)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+
+	res := rutasdomain.CalcularResumenPonderado(ventas)
+	out := &DesglosePorZonaOutput{}
+	out.Body.ZonaID = zonaID
+	if fechaInicio != nil {
+		s := fechaInicio.UTC().Format(time.RFC3339)
+		out.Body.FechaInicioSemana = &s
+	}
+	out.Body.Items = toVentaCobranzaDTOs(ventas)
+	out.Body.Resumen = ResumenPonderadoDTO{
+		Numerador:   res.Numerador.StringFixed(4),
+		Denominador: res.Denominador,
+	}
+	if res.Pct != nil {
+		s := res.Pct.StringFixed(2)
+		out.Body.Resumen.PctPonderado = &s
+	}
+	return out, nil
+}
+
 func toVentaCobranzaDTOs(ventas []rutasdomain.VentaCobranza) []VentaCobranzaDTO {
 	if ventas == nil {
 		return []VentaCobranzaDTO{}
