@@ -71,6 +71,7 @@ func TestCombo_ViaCrearVenta_Validation(t *testing.T) {
 	require.Error(t, mk(func(c *domain.CrearVentaComboInput) { c.AlmacenOrigen = 0 }))
 	// Almacen destino missing.
 	require.Error(t, mk(func(c *domain.CrearVentaComboInput) { c.AlmacenDestino = 0 }))
-	// Almacenes iguales.
-	require.Error(t, mk(func(c *domain.CrearVentaComboInput) { c.AlmacenOrigen = 5; c.AlmacenDestino = 5 }))
+	// Almacenes iguales: ahora es VÁLIDO — el almacen_destino del cliente es
+	// vestigial; el destino real del traspaso es la config de exhibición.
+	require.NoError(t, mk(func(c *domain.CrearVentaComboInput) { c.AlmacenOrigen = 5; c.AlmacenDestino = 5 }))
 }

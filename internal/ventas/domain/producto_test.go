@@ -122,6 +122,20 @@ func TestProducto_EnCombo_HeredaAlmacenes(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestProducto_AlmacenesIgualesEsValido verifica que un producto con
+// almacen_origen == almacen_destino YA NO se rechaza: el destino del cliente es
+// vestigial (el destino real del traspaso es la config de exhibición). Reproduce
+// el caso de la app que manda ambos = la camioneta del cobrador (p.ej. 19).
+func TestProducto_AlmacenesIgualesEsValido(t *testing.T) {
+	t.Parallel()
+	mismo := 19
+	params := validCrearVentaParams(t)
+	params.Productos[0].AlmacenOrigen = &mismo
+	params.Productos[0].AlmacenDestino = &mismo
+	_, err := domain.CrearVenta(params)
+	require.NoError(t, err)
+}
+
 func TestProducto_ReferenciaComboInvalida(t *testing.T) {
 	t.Parallel()
 	montos, _ := domain.NewMontoSnapshot(decimal.NewFromInt(10), decimal.NewFromInt(8), decimal.NewFromInt(5))

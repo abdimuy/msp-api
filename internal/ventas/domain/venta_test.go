@@ -129,11 +129,6 @@ func TestCrearVenta_RejectsBadHeader(t *testing.T) {
 	}{
 		{"tipo invalido", func(p *domain.CrearVentaParams) { p.TipoVenta = "OTRO" }, "tipo_venta_invalido"},
 		{"fecha zero", func(p *domain.CrearVentaParams) { p.FechaVenta = time.Time{} }, "fecha_venta_zero"},
-		{"almacenes iguales en producto", func(p *domain.CrearVentaParams) {
-			eq := 7
-			p.Productos[0].AlmacenOrigen = &eq
-			p.Productos[0].AlmacenDestino = &eq
-		}, "venta_almacenes_iguales"},
 		{"producto sin almacen origen", func(p *domain.CrearVentaParams) {
 			p.Productos[0].AlmacenOrigen = nil
 		}, "producto_almacen_origen_required"},

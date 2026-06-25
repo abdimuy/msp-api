@@ -71,9 +71,9 @@ func newCombo(p NewComboParams) (*Combo, error) {
 	if p.AlmacenDestino <= 0 {
 		return nil, ErrComboAlmacenDestinoRequerido
 	}
-	if p.AlmacenOrigen == p.AlmacenDestino {
-		return nil, ErrVentaAlmacenesIguales
-	}
+	// NOTE: origen == destino is intentionally allowed — the client's
+	// almacen_destino is vestigial; the real traspaso destination is the
+	// configured almacén de exhibición at apply time. See validateProductoAlmacenes.
 	return &Combo{
 		id:             p.ID,
 		nombre:         nombre,

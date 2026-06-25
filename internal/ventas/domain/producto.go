@@ -89,9 +89,15 @@ func validateProductoAlmacenes(comboID *uuid.UUID, origen, destino *int) error {
 		if destino == nil || *destino <= 0 {
 			return ErrProductoAlmacenDestinoRequerido
 		}
-		if *origen == *destino {
-			return ErrVentaAlmacenesIguales
-		}
+		// NOTE: we intentionally do NOT reject origen == destino here. The
+		// almacen_destino sent by the client is vestigial — at apply time the
+		// real traspaso destination is the configured almacén de exhibición
+		// (INVENTARIO_ALMACEN_DESTINO_VENTAS_ID), not this field. The genuine
+		// "no se puede traspasar al mismo almacén" safety lives in the inventario
+		// module, which compares the producto's origen against that config
+		// destino. Validating the client's destino here rejected valid sales
+		// where the app sends almacen_origen == almacen_destino (both = the
+		// cobrador's camioneta).
 		return nil
 	}
 	if origen != nil || destino != nil {
