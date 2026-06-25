@@ -75,12 +75,29 @@ REM Restaurar como la DB de test:
 C:\PROGRA~1\Firebird\Firebird_5_0\gbak.exe -c -user SYSDBA -password masterkey C:\mueblera.fbk "C:\Microsip datos\MUEBLERA_TEST.FDB"
 ```
 
-### Colisión de tablas MSP_* (al migrar sobre un clon de prod)
-El clon de prod ya trae tablas legacy `MSP_USUARIOS`, `MSP_ROLES`, `MSP_PERMISOS`,
-`MSP_ROLES_PERMISOS`, `MSP_USUARIOS_ROLES` (del sistema viejo). La migración 000001
-choca con esas 5. Solución: **dropear esas 5 + `MSP_MIGRATIONS`** antes de migrar
-(MSP_USUARIOS tiene self-FKs `FK_MSP_USUARIOS_CREATED_BY/UPDATED_BY` → dropear las
-constraints primero). El resto de tablas `MSP_*` de nuestra API son nuevas, no chocan.
+### Colisión de tablas MSP_* (al migrar sobre un clon de prod) — VERIFICAR ANTES
+**El set de tablas `MSP_*` en prod CAMBIA con el tiempo; no asumas.** Antes de migrar,
+inspecciona el clon y compara contra lo que crean nuestras 41 migraciones:
+```sql
+-- en el clon (MUEBLERA_TEST.FDB):
+SELECT TRIM(RDB$RELATION_NAME) FROM RDB$RELATIONS
+WHERE RDB$RELATION_NAME LIKE 'MSP\_%' ESCAPE '\' AND RDB$VIEW_BLR IS NULL ORDER BY 1;
+```
+```bash
+# nombres que crean nuestras migraciones:
+grep -rhoiE "CREATE TABLE +MSP_[A-Z_]+" migrations-firebird/ | sed -E 's/CREATE TABLE +//I' | sort -u
+```
+- **Histórico (runbook viejo):** el clon traía `MSP_USUARIOS/ROLES/PERMISOS/ROLES_PERMISOS/USUARIOS_ROLES`
+  (sistema auth viejo) → chocaban con la migración 000001 → había que dropear esas 5 +
+  `MSP_MIGRATIONS` primero (MSP_USUARIOS con self-FKs `FK_MSP_USUARIOS_CREATED_BY/UPDATED_BY`).
+- **Jun 2026 (verificado):** prod YA NO tiene esas; trae otro set de un sistema viejo
+  (`MSP_LOCAL_SALE*`, `MSP_GARANTIA*`, `MSP_VISITAS`, `MSP_PAGOS_RECIBIDOS`, `MSP_CHANGE_LOG`)
+  que es **disjunto** de nuestras migraciones (`MSP_VENTAS*`, `MSP_USUARIOS/ROLES`,
+  `MSP_OUTBOX_EVENTS`…). → **se aplicó el bundle directo, SIN dropear nada.** `MSP_MIGRATIONS`
+  no existe en prod → la crea la 000001.
+- Las migraciones con **backfill** (013-023: `MSP_SALDOS_VENTAS`/`MSP_PAGOS_VENTAS` desde
+  `DOCTOS_CC`) son LENTAS sobre el clon (cientos de miles de docs) — el bundle entero tarda
+  varios minutos. Verificar fin con `SELECT COUNT(*) FROM MSP_MIGRATIONS;` (debe dar 41).
 
 ---
 
@@ -135,7 +152,14 @@ set LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
 set LLM_MODEL=gemini-2.5-flash-lite
 set LLM_API_KEY=<SECRETO — key de Google AI Studio, NO commitear>
 set LLM_TIMEOUT=30s
+REM --- Kits de venta → juegos Microsip (feature combo→juego al aplicar) ---
+set MICROSIP_VENTA_JUEGOS_ENABLED=true
+set MICROSIP_VENTA_JUEGOS_LINEA_ARTICULO_ID=11774
 ```
+> ⚠️ **Sin espacios al final de los `set`** (rompe el config, boot silencioso — ver §11).
+> `11774` = línea `KIT CAMAS COMPLETAS` en prod (también 22580 KIT COMEDORES, 23522 KIT MESA
+> INFANTIL). Validar que la línea exista en el clon: `SELECT NOMBRE FROM LINEAS_ARTICULOS
+> WHERE LINEA_ARTICULO_ID = 11774;`
 
 ---
 
@@ -264,6 +288,30 @@ curl -s -o /dev/null -w "%{http_code}\n" https://apidev.loclx.io/v2/analytics/wi
 - **firebirdsql driver:** SUM/agregados NUMERIC vienen sin escalar (castear
   `CAST(SUM(..) AS NUMERIC(18,s))`); no soporta `?` dentro de `MERGE USING (SELECT ?)`
   (usar UPDATE-luego-INSERT / EXECUTE BLOCK).
+- **`fx.NopLogger` OCULTA los errores de arranque** (`cmd/api/main.go`). Si un provider o
+  lifecycle falla al boot (config.Load, firebird.New, un OnStart), fx **se traga el error**
+  → `api.log` queda **vacío** y el proceso sale (exit 1) sin loguear nada. Síntoma:
+  `msp-api.exe` arranca a ~4-6MB, corre unos segundos y muere, log vacío. El error NO está
+  en el log → revisar config/env. `msp-api.exe version` confirma que el binario está sano.
+- **Trailing space en `run.bat` rompe el config (boot silencioso).** Una línea
+  `set X=true ` (espacio final) → el env vale `"true "` → `strconv.ParseBool` falla →
+  `config.Load` error → boot muere callado (ver arriba). El `echo X>>file` de cmd y el
+  display con `more` engañan con espacios. Construir las líneas `set` con CERO espacios:
+  archivo exacto local (`printf 'set X=Y\r\n'`, verificar con `od -c`) + scp +
+  `copy /b part1.bat + vars.txt + serveline.bat run.bat` (concatenación binaria).
+- **Cuál DB es producción: por DATO, no por fecha del archivo.** El mtime de `dir` en
+  Firebird ENGAÑA (escrituras en sitio no actualizan la fecha; `MUEBLERA_SNP.fdb` salía con
+  9 días pero ES prod). Verificar con `SELECT MAX(FECHA) FROM DOCTOS_PV` en cada DB. El
+  server aloja prod VIVA de varias empresas — escribir SOLO a `MUEBLERA_TEST.FDB`. Restaurar
+  el clon a archivo NUEVO con `gbak -c` (create-only, falla si existe → imposible pisar prod
+  por typo) y luego swap; liberar el lock del TEST viejo con `gfix -shut full -force 0` antes
+  del `ren`.
+- **Operaciones largas sobre el túnel pinggy (expira ~60min) → DESACOPLAR.** gbak/migraciones
+  largas mueren si el túnel se cae (el proceso es hijo de la sesión SSH). Correr vía
+  `schtasks /Create … /RU SYSTEM /F` + `/Run` (sobrevive caídas) + polling del log/conteo.
+- **Quoting SSH→cmd:** `findstr /c:"frase con espacios"` SE ROMPE (cmd no entiende `\"`);
+  usar `findstr /b TOKEN` (sin comillas) o scp del `.sql` + `isql -i C:\file.sql`.
+  `powershell -ExecutionPolicy Bypass` lo bloquea el clasificador → usar cmd puro.
 
 ---
 
