@@ -39,6 +39,14 @@ func NewCobranzaRepo(pool *firebird.Pool) *CobranzaRepo {
 // the firebirdsql v0.9.19 parameter-binding bug that rejects ? inside FROM-clause
 // derived tables.
 //
+// ABONO_SEMANA sums only CONCEPTO_CC_ID IN (87327, 27969) — cobranza en ruta y
+// abono mostrador — matching the mobile sync's definition of "cobranza activa"
+// (see cobranza/infra/ventfb/pagos_repo.go `pagoConceptoFilter`). MSP_PAGOS_VENTAS
+// also caches other concepts that are NOT route collection — cobro en mostrador
+// (155), enganche (24533), devoluciones (12/13), ajustes (15), condonación por
+// pronto pago (25116) — which would inflate cobertura/ponderado if counted. So the
+// office % stays consistent with what the cobrador sees in the app.
+//
 // Parameters: $1=zonaID, $2=desde, $3=hasta, $4=zonaID (outer filter).
 const queryVentasPorZona = `
 SELECT
@@ -84,6 +92,7 @@ LEFT JOIN (
   FROM MSP_PAGOS_VENTAS
   WHERE ZONA_CLIENTE_ID = ?
     AND CANCELADO = 'N'
+    AND CONCEPTO_CC_ID IN (87327, 27969)
     AND FECHA >= ?
     AND FECHA <= ?
   GROUP BY DOCTO_CC_ACR_ID
