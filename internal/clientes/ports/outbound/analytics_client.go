@@ -20,4 +20,9 @@ type AnalyticsClient interface {
 	// Clients with no materialized row are absent from the map (no error).
 	// An empty input returns an empty map.
 	ObtenerPulsos(ctx context.Context, clienteIDs []int) (map[int]analytics.ClientePulsoContract, error)
+
+	// ObtenerPredicciones returns the Bayesian credible-interval predictions for a
+	// single client. Returns PrediccionesContract{Disponible: false} (nil error)
+	// when the client has no materialized analytics row or insufficient history.
+	ObtenerPredicciones(ctx context.Context, clienteID int) (analytics.PrediccionesContract, error)
 }

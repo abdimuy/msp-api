@@ -3,7 +3,7 @@ package app
 
 import (
 	"math"
-	"math/rand" //nolint:gosec // test-only RNG, not cryptography
+	"math/rand" //nolint:gosec // test helper, not cryptography
 	"testing"
 
 	"pgregory.net/rapid"
@@ -430,9 +430,4 @@ func TestIntervalFromDrawsEdge(t *testing.T) {
 	if iv.Lo != 3.14 || iv.Punto != 3.14 || iv.Hi != 3.14 {
 		t.Errorf("intervalFromDraws([3.14]) = %+v, want all 3.14", iv)
 	}
-}
-
-// newTestRNG constructs a seeded *rand.Rand for use in test helpers.
-func newTestRNG(seed int64) *rand.Rand {
-	return rand.New(rand.NewSource(seed)) //nolint:gosec // test-only, not cryptography
 }

@@ -137,4 +137,15 @@ func registerOperations(api huma.API, h *Handlers) {
 		Security:      security,
 		DefaultStatus: http.StatusOK,
 	}, h.ObtenerPagoDetalle)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "obtener-predicciones",
+		Method:        http.MethodGet,
+		Path:          "/clientes/{id}/predicciones",
+		Summary:       "Obtener predicciones del cliente",
+		Description:   "Predicciones bayesianas (probabilidad de actividad, compras esperadas, CLV y próxima compra) con intervalos creíbles.",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+	}, h.ObtenerPredicciones)
 }

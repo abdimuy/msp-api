@@ -134,6 +134,10 @@ func (f *fakeAnalytics) ObtenerPulsos(_ context.Context, ids []int) (map[int]ana
 	return result, nil
 }
 
+func (f *fakeAnalytics) ObtenerPredicciones(_ context.Context, _ int) (analytics.PrediccionesContract, error) {
+	return analytics.PrediccionesContract{}, nil
+}
+
 // ─── Fake directory index ─────────────────────────────────────────────────────
 
 // noopDirectoryIndex is a test stub that satisfies outbound.DirectoryIndex.
@@ -1259,4 +1263,127 @@ func TestObtenerFicha_Narrativa_RasgosIA_Empty(t *testing.T) {
 	require.NotNil(t, resp.Pulso, "pulso debe estar presente")
 	assert.Empty(t, resp.Pulso.Narrativa, "narrativa debe estar vacío cuando el contrato no la tiene")
 	assert.Empty(t, resp.Pulso.RasgosIA, "rasgos_ia debe estar vacío cuando el contrato no los tiene")
+}
+
+// ─── ObtenerPredicciones handler tests ───────────────────────────────────────
+
+// fakeAnalyticsWithPredicciones extends fakeAnalytics to return configurable
+// predicciones from ObtenerPredicciones.
+type fakeAnalyticsWithPredicciones struct {
+	fakeAnalytics
+	predicciones    analytics.PrediccionesContract
+	prediccionesErr error
+}
+
+func (f *fakeAnalyticsWithPredicciones) ObtenerPredicciones(_ context.Context, _ int) (analytics.PrediccionesContract, error) {
+	return f.predicciones, f.prediccionesErr
+}
+
+// TestObtenerPredicciones_HappyPath_200 verifies a valid request returns 200
+// with correct DTO fields — CLV as 2-decimal strings and intervals serialized.
+func TestObtenerPredicciones_HappyPath_200(t *testing.T) {
+	t.Parallel()
+
+	pred := analytics.PrediccionesContract{
+		Disponible:          true,
+		PAlive:              analytics.IntervaloContract{Punto: 0.80, Lo: 0.60, Hi: 0.95},
+		ComprasEsperadas12m: analytics.IntervaloContract{Punto: 1.5, Lo: 0.5, Hi: 3.0},
+		CLV:                 analytics.IntervaloContract{Punto: 12345.678, Lo: 5000.0, Hi: 25000.0},
+		ProximaCompraDias:   analytics.IntervaloContract{Punto: 30.0, Lo: 15.0, Hi: 60.0},
+		Draws:               2000,
+	}
+	ac := &fakeAnalyticsWithPredicciones{predicciones: pred}
+	svc := buildService(&fakeRepo{}, ac)
+	cu := userWith(auth.PermClientesLeer)
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/42/predicciones", nil)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	var resp struct {
+		Disponible          bool                            `json:"disponible"`
+		Draws               int                             `json:"draws"`
+		PAlive              struct{ Punto, Lo, Hi float64 } `json:"p_alive"`
+		ComprasEsperadas12m struct{ Punto, Lo, Hi float64 } `json:"compras_esperadas_12m"`
+		CLV                 struct{ Punto, Lo, Hi string }  `json:"clv"`
+		ProximaCompraDias   struct{ Punto, Lo, Hi float64 } `json:"proxima_compra_dias"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+
+	assert.True(t, resp.Disponible)
+	assert.Equal(t, 2000, resp.Draws)
+	assert.InDelta(t, 0.80, resp.PAlive.Punto, 1e-9)
+	assert.InDelta(t, 0.60, resp.PAlive.Lo, 1e-9)
+	assert.InDelta(t, 0.95, resp.PAlive.Hi, 1e-9)
+	// CLV serialized as 2-decimal peso strings.
+	assert.Equal(t, "12345.68", resp.CLV.Punto)
+	assert.Equal(t, "5000.00", resp.CLV.Lo)
+	assert.Equal(t, "25000.00", resp.CLV.Hi)
+	// Intervals pass through as float64.
+	assert.InDelta(t, 1.5, resp.ComprasEsperadas12m.Punto, 1e-9)
+	assert.InDelta(t, 30.0, resp.ProximaCompraDias.Punto, 1e-9)
+}
+
+// TestObtenerPredicciones_Unauthenticated_401 verifies unauthenticated access
+// is rejected.
+func TestObtenerPredicciones_Unauthenticated_401(t *testing.T) {
+	t.Parallel()
+
+	svc := buildService(&fakeRepo{}, &fakeAnalytics{})
+	h := buildRouterNoAuth(svc)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/42/predicciones", nil)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+// TestObtenerPredicciones_NoPermission_403 verifies a user without
+// clientes:leer is rejected with 403.
+func TestObtenerPredicciones_NoPermission_403(t *testing.T) {
+	t.Parallel()
+
+	svc := buildService(&fakeRepo{}, &fakeAnalytics{})
+	cu := userWith() // no perms
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/42/predicciones", nil)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
+
+// TestE2E_ObtenerPredicciones_FullChain exercises the full chain from the
+// analytics.PrediccionesContract through the clientes HTTP handler without a
+// real DB. The wiring adapter (cmd/api.clientesAnalyticsAdapter) is in
+// package main and cannot be imported here; it is covered by the compile-time
+// interface assertion in clientes_wiring.go. This test covers the remaining
+// chain: fakeAnalyticsClient → clientesapp.Service → handler → DTO.
+func TestE2E_ObtenerPredicciones_FullChain(t *testing.T) {
+	t.Parallel()
+
+	contract := analytics.PrediccionesContract{
+		Disponible:          true,
+		PAlive:              analytics.IntervaloContract{Punto: 0.75, Lo: 0.50, Hi: 0.92},
+		ComprasEsperadas12m: analytics.IntervaloContract{Punto: 2.1, Lo: 0.8, Hi: 4.5},
+		CLV:                 analytics.IntervaloContract{Punto: 8500.00, Lo: 2000.00, Hi: 20000.00},
+		ProximaCompraDias:   analytics.IntervaloContract{Punto: 45.0, Lo: 20.0, Hi: 90.0},
+		Draws:               2000,
+	}
+	ac := &fakeAnalyticsWithPredicciones{predicciones: contract}
+	svc := buildService(&fakeRepo{}, ac)
+	cu := userWith(auth.PermClientesLeer)
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/99/predicciones", nil)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	var resp struct {
+		Disponible bool                           `json:"disponible"`
+		Draws      int                            `json:"draws"`
+		CLV        struct{ Punto, Lo, Hi string } `json:"clv"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+
+	assert.True(t, resp.Disponible)
+	assert.Equal(t, 2000, resp.Draws)
+	assert.Equal(t, "8500.00", resp.CLV.Punto)
+	assert.Equal(t, "2000.00", resp.CLV.Lo)
+	assert.Equal(t, "20000.00", resp.CLV.Hi)
 }

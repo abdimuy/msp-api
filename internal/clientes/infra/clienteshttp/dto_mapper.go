@@ -6,6 +6,8 @@ package clienteshttp
 import (
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/abdimuy/msp-api/internal/analytics"
 	clientesapp "github.com/abdimuy/msp-api/internal/clientes/app"
 	"github.com/abdimuy/msp-api/internal/clientes/domain"
@@ -342,6 +344,40 @@ func toVentaListItemDTO(v *domain.VentaCliente) VentaListItemDTO {
 		Almacen:        v.Almacen(),
 		PrimerArticulo: v.PrimerArticulo(),
 		NumArticulos:   v.NumArticulos(),
+	}
+}
+
+// ─── Endpoint 4: venta detalle ───────────────────────────────────────────────
+
+// ─── Endpoint: predicciones ───────────────────────────────────────────────────
+
+// prediccionesToDTO maps a PrediccionesContract to its wire representation.
+// CLV intervals are formatted as 2-decimal peso strings; all other intervals
+// pass float64 values directly.
+func prediccionesToDTO(c analytics.PrediccionesContract) PrediccionesDTO {
+	return PrediccionesDTO{
+		Disponible: c.Disponible,
+		PAlive: IntervaloDTO{
+			Punto: c.PAlive.Punto,
+			Lo:    c.PAlive.Lo,
+			Hi:    c.PAlive.Hi,
+		},
+		ComprasEsperadas12m: IntervaloDTO{
+			Punto: c.ComprasEsperadas12m.Punto,
+			Lo:    c.ComprasEsperadas12m.Lo,
+			Hi:    c.ComprasEsperadas12m.Hi,
+		},
+		CLV: IntervaloMoneyDTO{
+			Punto: decimal.NewFromFloat(c.CLV.Punto).StringFixed(moneyScale),
+			Lo:    decimal.NewFromFloat(c.CLV.Lo).StringFixed(moneyScale),
+			Hi:    decimal.NewFromFloat(c.CLV.Hi).StringFixed(moneyScale),
+		},
+		ProximaCompraDias: IntervaloDTO{
+			Punto: c.ProximaCompraDias.Punto,
+			Lo:    c.ProximaCompraDias.Lo,
+			Hi:    c.ProximaCompraDias.Hi,
+		},
+		Draws: c.Draws,
 	}
 }
 

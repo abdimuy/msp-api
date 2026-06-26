@@ -103,3 +103,21 @@ type ClientePulsoContract struct {
 	// cobrador's note (Fase 2.1). Empty when none / LLM off.
 	ContextoOperativo string
 }
+
+// IntervaloContract is a point estimate with its credible interval [Lo, Hi].
+type IntervaloContract struct {
+	Punto float64
+	Lo    float64
+	Hi    float64
+}
+
+// PrediccionesContract is the cross-module view of a client's Bayesian predictions.
+// CLV values are pesos (the HTTP layer formats them as money strings).
+type PrediccionesContract struct {
+	Disponible          bool
+	PAlive              IntervaloContract // probability in [0,1]
+	ComprasEsperadas12m IntervaloContract // expected repeat purchases next 12 months
+	CLV                 IntervaloContract // pesos
+	ProximaCompraDias   IntervaloContract // days until next purchase
+	Draws               int
+}

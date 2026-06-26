@@ -274,6 +274,24 @@ func (h *Handlers) ObtenerPagoDetalle(ctx context.Context, input *ObtenerPagoDet
 	return out, nil
 }
 
+// ObtenerPredicciones handles GET /clientes/{id}/predicciones.
+func (h *Handlers) ObtenerPredicciones(ctx context.Context, input *ObtenerPrediccionesInput) (*ObtenerPrediccionesOutput, error) {
+	cu, err := currentUserOrError(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := requirePerm(cu, auth.PermClientesLeer); err != nil {
+		return nil, err
+	}
+	pred, err := h.svc.ObtenerPredicciones(ctx, input.ID)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+	out := &ObtenerPrediccionesOutput{}
+	out.Body = prediccionesToDTO(pred)
+	return out, nil
+}
+
 // ─── Compile-time signature assertions ───────────────────────────────────────
 // These blank assignments will fail at compile time if any handler signature
 // diverges from the huma.HandlerFunc[I, O] constraint.
@@ -286,4 +304,5 @@ var (
 	_ func(context.Context, *RefrescarBusquedaInput) (*RefrescarBusquedaOutput, error)     = (*Handlers)(nil).RefrescarBusqueda
 	_ func(context.Context, *ObtenerRitmoPagoInput) (*ObtenerRitmoPagoOutput, error)       = (*Handlers)(nil).ObtenerRitmoPago
 	_ func(context.Context, *ObtenerPagoDetalleInput) (*ObtenerPagoDetalleOutput, error)   = (*Handlers)(nil).ObtenerPagoDetalle
+	_ func(context.Context, *ObtenerPrediccionesInput) (*ObtenerPrediccionesOutput, error) = (*Handlers)(nil).ObtenerPredicciones
 )

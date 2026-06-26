@@ -181,6 +181,10 @@ func (f *fakeAnalyticsClient) ObtenerPulsos(_ context.Context, clienteIDs []int)
 	return result, nil
 }
 
+func (f *fakeAnalyticsClient) ObtenerPredicciones(_ context.Context, _ int) (analytics.PrediccionesContract, error) {
+	return analytics.PrediccionesContract{}, nil
+}
+
 // ─── fakeDirectoryIndex ──────────────────────────────────────────────────────
 
 // fakeDirectoryIndex is a test double for outbound.DirectoryIndex that records

@@ -429,3 +429,38 @@ type RefrescarBusquedaOutput struct {
 		Documentos int  `json:"documentos"  doc:"Número de documentos indexados en esta ejecución"`
 	}
 }
+
+// ─── Endpoint: GET /clientes/{id}/predicciones ───────────────────────────────
+
+// ObtenerPrediccionesInput collects the path parameter for GET /clientes/{id}/predicciones.
+type ObtenerPrediccionesInput struct {
+	ID int `path:"id" doc:"ID de Microsip del cliente"`
+}
+
+// ObtenerPrediccionesOutput is the response for GET /clientes/{id}/predicciones.
+type ObtenerPrediccionesOutput struct{ Body PrediccionesDTO }
+
+// IntervaloDTO is a point estimate with its 90% credible interval.
+type IntervaloDTO struct {
+	Punto float64 `json:"punto"`
+	Lo    float64 `json:"lo"`
+	Hi    float64 `json:"hi"`
+}
+
+// IntervaloMoneyDTO is a monetary point estimate with its 90% credible interval
+// serialized as 2-decimal peso strings.
+type IntervaloMoneyDTO struct {
+	Punto string `json:"punto"`
+	Lo    string `json:"lo"`
+	Hi    string `json:"hi"`
+}
+
+// PrediccionesDTO is the wire representation of the Bayesian predictions for a client.
+type PrediccionesDTO struct {
+	Disponible          bool              `json:"disponible"            doc:"true si hay historial suficiente para predecir"`
+	PAlive              IntervaloDTO      `json:"p_alive"               doc:"Probabilidad de seguir activo [0,1] con intervalo creíble"`
+	ComprasEsperadas12m IntervaloDTO      `json:"compras_esperadas_12m" doc:"Compras repetidas esperadas próximos 12 meses"`
+	CLV                 IntervaloMoneyDTO `json:"clv"                   doc:"Valor de vida en pesos (string, 2 decimales) con intervalo"`
+	ProximaCompraDias   IntervaloDTO      `json:"proxima_compra_dias"   doc:"Días estimados hasta la próxima compra"`
+	Draws               int               `json:"draws"                 doc:"Número de muestras Monte Carlo"`
+}

@@ -61,6 +61,14 @@ func (a *clientesAnalyticsAdapter) ObtenerPulsos(
 	return a.svc.ObtenerPulsosClientes(ctx, clienteIDs)
 }
 
+// ObtenerPredicciones delegates Bayesian predictions to the analytics service.
+func (a *clientesAnalyticsAdapter) ObtenerPredicciones(
+	ctx context.Context,
+	clienteID int,
+) (analytics.PrediccionesContract, error) {
+	return a.svc.ObtenerPredicciones(ctx, clienteID)
+}
+
 // provideClientesAnalyticsClient wires the cross-module adapter so fx can
 // inject it as the clientesoutbound.AnalyticsClient port.
 func provideClientesAnalyticsClient(analyticsSvc *analyticsapp.Service) clientesoutbound.AnalyticsClient {
