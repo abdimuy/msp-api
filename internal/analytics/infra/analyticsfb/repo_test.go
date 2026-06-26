@@ -912,6 +912,7 @@ func TestRepo_ListCandidatosByZona(t *testing.T) {
 
 		resultA, err := repo.ListCandidatosByZona(ctx, zonaA)
 		require.NoError(t, err)
+		require.Len(t, resultA, 2, "zonaA must return exactly 2 candidatos")
 
 		idSet := make(map[int]bool)
 		for _, c := range resultA {

@@ -106,6 +106,9 @@ func TestObtenerBenchmark_MuestraPequena(t *testing.T) {
 	assert.True(t, result.Puntualidad.Aplica)
 	assert.True(t, result.Puntualidad.MuestraPequena, "N=9 < 30 → MuestraPequena")
 	assert.InDelta(t, 0.0, result.Puntualidad.Percentil, 1e-9, "percentil must be 0 when muestra pequeña")
+	assert.InDelta(t, 0.0, result.Puntualidad.Mediana, 1e-9, "mediana must be 0 when muestra pequeña")
+	assert.InDelta(t, 0.0, result.Puntualidad.P25, 1e-9, "p25 must be 0 when muestra pequeña")
+	assert.InDelta(t, 0.0, result.Puntualidad.P75, 1e-9, "p75 must be 0 when muestra pequeña")
 }
 
 // TestObtenerBenchmark_SegmentoSubFiltro verifies that cohort_by=segmento reduces N.

@@ -201,8 +201,9 @@ func benchmarkSubFiltro(pares []*domain.WinbackCandidato, target *domain.Winback
 
 // buildMetricaBenchmark assembles a MetricaBenchmark from the target value and
 // peer distribution. When the target does not apply, Aplica=false is returned.
-// When N < benchmarkMuestraMinima, MuestraPequena=true and percentil/cuantiles
-// are left at zero (not meaningful with too few peers).
+// When N < benchmarkMuestraMinima, MuestraPequena=true and all quantile fields
+// (Percentil, Mediana, P25, P75) are left at zero — they are not meaningful
+// with too few peers.
 func buildMetricaBenchmark(aplica bool, valorTarget float64, valoresPares []float64) analytics.MetricaBenchmark {
 	if !aplica {
 		return analytics.MetricaBenchmark{Aplica: false}
@@ -213,13 +214,13 @@ func buildMetricaBenchmark(aplica bool, valorTarget float64, valoresPares []floa
 		Aplica:         true,
 		Valor:          valorTarget,
 		N:              n,
-		Mediana:        mediana,
-		P25:            p25,
-		P75:            p75,
 		MuestraPequena: muestraPequena,
 	}
 	if !muestraPequena {
 		mb.Percentil = percentil
+		mb.Mediana = mediana
+		mb.P25 = p25
+		mb.P75 = p75
 	}
 	return mb
 }

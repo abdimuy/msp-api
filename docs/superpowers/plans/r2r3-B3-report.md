@@ -54,3 +54,44 @@ go test ./internal/analytics/...       ✓ todos los paquetes verdes
 go test ./internal/clientes/...        ✓ todos los paquetes verdes
 golangci-lint run ...                  0 issues
 ```
+
+## Fix pass (review findings #1/#2/#4)
+
+### Finding #1 — Cuantiles en muestra pequeña no se zeroeaban
+
+**Archivo:** `internal/analytics/app/benchmark_query.go`, `buildMetricaBenchmark`
+
+El bloque anterior fijaba `Mediana`, `P25`, `P75` incondicionalmente (antes de verificar `muestraPequena`) y luego solo condicionaba `Percentil`. Ahora los cuatro campos (`Percentil`, `Mediana`, `P25`, `P75`) se asignan únicamente en el bloque `if !muestraPequena`. El struct se inicializa solo con `Aplica`, `Valor`, `N` y `MuestraPequena`.
+
+**Test actualizado:** `internal/analytics/app/benchmark_query_test.go`, `TestObtenerBenchmark_MuestraPequena` — se agregaron tres aserciones `InDelta(0.0, ...)` para `Mediana`, `P25` y `P75`.
+
+### Finding #2 — Sin test del cohort_by por defecto en el handler
+
+**Archivo:** `internal/clientes/infra/clienteshttp/handlers_test.go`
+
+Se añadió `TestObtenerBenchmark_DefaultCohortBy_200`: envía `GET /clientes/42/benchmark` sin parámetro `cohort_by`, usa `fakeAnalyticsWithBenchmark` con `BenchmarkContract{CohortBy: "zona"}` y afirma que la respuesta serializa `"cohort_by": "zona"`. Consistente con la estructura de los demás tests del handler.
+
+### Finding #4 — Sin aserción de conteo exacto para zonaA en el test de integración FB
+
+**Archivo:** `internal/analytics/infra/analyticsfb/repo_test.go`, `TestRepo_ListCandidatosByZona`
+
+Se agregó `require.Len(t, resultA, 2, "zonaA must return exactly 2 candidatos")` justo después de `ListCandidatosByZona`. El test de zonaB ya tenía `require.Len(t, resultB, 1, ...)`.
+
+### Salida de verificación
+
+```
+go test ./internal/analytics/app/ -run 'TestObtenerBenchmark|TestPercentil' -count=1
+ok      github.com/abdimuy/msp-api/internal/analytics/app       0.443s
+
+go test ./internal/clientes/infra/clienteshttp/ -run 'Benchmark' -count=1
+ok      github.com/abdimuy/msp-api/internal/clientes/infra/clienteshttp 0.293s
+
+go vet ./internal/analytics/infra/analyticsfb/
+(sin salida — compila; FB_DATABASE requerido para correr el test de integración)
+
+go build ./...
+(sin salida — ok)
+
+golangci-lint run ./internal/analytics/... ./internal/clientes/...
+0 issues.
+```

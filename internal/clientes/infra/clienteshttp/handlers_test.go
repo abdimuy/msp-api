@@ -1514,3 +1514,33 @@ func TestObtenerBenchmark_Indisponible_200(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
 	assert.False(t, resp.Disponible)
 }
+
+// TestObtenerBenchmark_DefaultCohortBy_200 verifies that a request WITHOUT the
+// cohort_by query param returns cohort_by="zona" in the response body. The
+// analytics layer normalises an empty string to "zona"; the handler test
+// asserts the DTO carries it through correctly.
+func TestObtenerBenchmark_DefaultCohortBy_200(t *testing.T) {
+	t.Parallel()
+
+	ac := &fakeAnalyticsWithBenchmark{
+		benchmark: analytics.BenchmarkContract{
+			Disponible: true,
+			CohortBy:   "zona",
+			Zona:       "NORTE",
+			N:          5,
+		},
+	}
+	svc := buildService(&fakeRepo{}, ac)
+	cu := userWith(auth.PermClientesLeer)
+	h := buildRouter(svc, cu)
+
+	// no ?cohort_by= param
+	rec := doJSON(h, http.MethodGet, "/clientes/42/benchmark", nil)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	var resp struct {
+		CohortBy string `json:"cohort_by"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	assert.Equal(t, "zona", resp.CohortBy, "default cohort_by must be zona")
+}
