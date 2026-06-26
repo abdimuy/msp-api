@@ -115,6 +115,10 @@ func (r *controlledRepo) ListCandidatosByClienteIDs(_ context.Context, _ []int) 
 	return []*domain.WinbackCandidato{}, nil
 }
 
+func (r *controlledRepo) ListCandidatosByZona(_ context.Context, _ string) ([]*domain.WinbackCandidato, error) {
+	return []*domain.WinbackCandidato{}, nil
+}
+
 func (r *controlledRepo) ContarPagosRecientes(_ context.Context, _ []int, _, _ time.Time) (map[int]int, error) {
 	return map[int]int{}, nil
 }

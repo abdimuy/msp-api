@@ -134,6 +134,18 @@ func (r *fakeWinbackRepo) ListCandidatosByClienteIDs(_ context.Context, clienteI
 	return result, nil
 }
 
+func (r *fakeWinbackRepo) ListCandidatosByZona(_ context.Context, zona string) ([]*domain.WinbackCandidato, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var result []*domain.WinbackCandidato
+	for _, c := range r.candidates {
+		if c.Zona() == zona {
+			result = append(result, c)
+		}
+	}
+	return result, nil
+}
+
 // ContarPagosRecientes simulates the live count by echoing each requested
 // candidate's materialized Pagos90D, so the live read path is exercised while
 // preserving the candidates' configured credit-scoring behavior.

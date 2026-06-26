@@ -292,6 +292,26 @@ func (h *Handlers) ObtenerPredicciones(ctx context.Context, input *ObtenerPredic
 	return out, nil
 }
 
+// ObtenerBenchmark handles GET /clientes/{id}/benchmark.
+func (h *Handlers) ObtenerBenchmark(ctx context.Context, input *ObtenerBenchmarkInput) (*ObtenerBenchmarkOutput, error) {
+	cu, err := currentUserOrError(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := requirePerm(cu, auth.PermClientesLeer); err != nil {
+		return nil, err
+	}
+
+	benchmark, err := h.svc.ObtenerBenchmark(ctx, input.ID, input.CohortBy)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+
+	out := &ObtenerBenchmarkOutput{}
+	out.Body = benchmarkToDTO(benchmark)
+	return out, nil
+}
+
 // ─── Compile-time signature assertions ───────────────────────────────────────
 // These blank assignments will fail at compile time if any handler signature
 // diverges from the huma.HandlerFunc[I, O] constraint.
@@ -305,4 +325,5 @@ var (
 	_ func(context.Context, *ObtenerRitmoPagoInput) (*ObtenerRitmoPagoOutput, error)       = (*Handlers)(nil).ObtenerRitmoPago
 	_ func(context.Context, *ObtenerPagoDetalleInput) (*ObtenerPagoDetalleOutput, error)   = (*Handlers)(nil).ObtenerPagoDetalle
 	_ func(context.Context, *ObtenerPrediccionesInput) (*ObtenerPrediccionesOutput, error) = (*Handlers)(nil).ObtenerPredicciones
+	_ func(context.Context, *ObtenerBenchmarkInput) (*ObtenerBenchmarkOutput, error)       = (*Handlers)(nil).ObtenerBenchmark
 )

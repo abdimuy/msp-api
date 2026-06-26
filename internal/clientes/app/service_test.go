@@ -185,6 +185,10 @@ func (f *fakeAnalyticsClient) ObtenerPredicciones(_ context.Context, _ int) (ana
 	return analytics.PrediccionesContract{}, nil
 }
 
+func (f *fakeAnalyticsClient) ObtenerBenchmark(_ context.Context, _ int, _ string) (analytics.BenchmarkContract, error) {
+	return analytics.BenchmarkContract{}, nil
+}
+
 // ─── fakeDirectoryIndex ──────────────────────────────────────────────────────
 
 // fakeDirectoryIndex is a test double for outbound.DirectoryIndex that records

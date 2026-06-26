@@ -464,3 +464,51 @@ type PrediccionesDTO struct {
 	ProximaCompraDias   IntervaloDTO      `json:"proxima_compra_dias"   doc:"Días estimados hasta la próxima compra"`
 	Draws               int               `json:"draws"                 doc:"Número de muestras Monte Carlo"`
 }
+
+// ─── Endpoint: GET /clientes/{id}/benchmark ──────────────────────────────────
+
+// ObtenerBenchmarkInput collects path and query params for GET /clientes/{id}/benchmark.
+type ObtenerBenchmarkInput struct {
+	ID       int    `path:"id"         doc:"ID de Microsip del cliente"`
+	CohortBy string `query:"cohort_by" doc:"Grupo de pares: zona (default), segmento, antiguedad"`
+}
+
+// ObtenerBenchmarkOutput is the response for GET /clientes/{id}/benchmark.
+type ObtenerBenchmarkOutput struct{ Body BenchmarkDTO }
+
+// MetricaDTO holds the benchmark stats for a numeric scoring metric.
+type MetricaDTO struct {
+	Aplica         bool    `json:"aplica"          doc:"true si el cliente tiene valor para esta métrica"`
+	Valor          float64 `json:"valor"           doc:"valor del cliente en la métrica"`
+	Percentil      float64 `json:"percentil"       doc:"posición relativa 0–100 vs el grupo de pares (0 cuando muestra_pequena)"`
+	Mediana        float64 `json:"mediana"         doc:"mediana del grupo de pares con valor aplicable"`
+	P25            float64 `json:"p25"             doc:"percentil 25 del grupo de pares"`
+	P75            float64 `json:"p75"             doc:"percentil 75 del grupo de pares"`
+	N              int     `json:"n"               doc:"número de pares con valor aplicable para esta métrica"`
+	MuestraPequena bool    `json:"muestra_pequena" doc:"true cuando N < 30 (estadística poco confiable)"`
+}
+
+// MetricaMoneyDTO holds the benchmark stats for a monetary metric (CLV).
+// Monetary values (valor, mediana, p25, p75) are serialized as 2-decimal peso strings.
+type MetricaMoneyDTO struct {
+	Aplica         bool    `json:"aplica"          doc:"true si el cliente tiene valor para esta métrica"`
+	Valor          string  `json:"valor"           doc:"CLV del cliente en pesos (2 decimales)"`
+	Percentil      float64 `json:"percentil"       doc:"posición relativa 0–100 vs el grupo de pares (0 cuando muestra_pequena)"`
+	Mediana        string  `json:"mediana"         doc:"mediana de CLV del grupo de pares (2 decimales)"`
+	P25            string  `json:"p25"             doc:"percentil 25 de CLV del grupo de pares (2 decimales)"`
+	P75            string  `json:"p75"             doc:"percentil 75 de CLV del grupo de pares (2 decimales)"`
+	N              int     `json:"n"               doc:"número de pares con valor aplicable para esta métrica"`
+	MuestraPequena bool    `json:"muestra_pequena" doc:"true cuando N < 30 (estadística poco confiable)"`
+}
+
+// BenchmarkDTO is the wire representation of the peer-benchmark for a client.
+type BenchmarkDTO struct {
+	Disponible  bool            `json:"disponible"   doc:"true si el cliente tiene datos para comparar"`
+	CohortBy    string          `json:"cohort_by"    doc:"grupo de comparación: zona, segmento o antiguedad"`
+	Zona        string          `json:"zona"         doc:"zona del cliente"`
+	N           int             `json:"n"            doc:"número de pares en el grupo (tras sub-filtro, sin el target)"`
+	Puntualidad MetricaDTO      `json:"puntualidad"  doc:"porcentaje de pagos a tiempo vs pares"`
+	CLV         MetricaMoneyDTO `json:"clv"          doc:"CLV estimado en pesos vs pares"`
+	Credito     MetricaDTO      `json:"credito"      doc:"score de riesgo crediticio vs pares"`
+	Recompra    MetricaDTO      `json:"recompra"     doc:"score de propensión de recompra vs pares"`
+}

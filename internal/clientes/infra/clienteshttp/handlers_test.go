@@ -138,6 +138,10 @@ func (f *fakeAnalytics) ObtenerPredicciones(_ context.Context, _ int) (analytics
 	return analytics.PrediccionesContract{}, nil
 }
 
+func (f *fakeAnalytics) ObtenerBenchmark(_ context.Context, _ int, _ string) (analytics.BenchmarkContract, error) {
+	return analytics.BenchmarkContract{}, nil
+}
+
 // ─── Fake directory index ─────────────────────────────────────────────────────
 
 // noopDirectoryIndex is a test stub that satisfies outbound.DirectoryIndex.
@@ -1386,4 +1390,127 @@ func TestE2E_ObtenerPredicciones_FullChain(t *testing.T) {
 	assert.Equal(t, "8500.00", resp.CLV.Punto)
 	assert.Equal(t, "2000.00", resp.CLV.Lo)
 	assert.Equal(t, "20000.00", resp.CLV.Hi)
+}
+
+// ─── ObtenerBenchmark handler tests ──────────────────────────────────────────
+
+// fakeAnalyticsWithBenchmark extends fakeAnalytics to return configurable
+// benchmark results from ObtenerBenchmark.
+type fakeAnalyticsWithBenchmark struct {
+	fakeAnalytics
+	benchmark    analytics.BenchmarkContract
+	benchmarkErr error
+}
+
+func (f *fakeAnalyticsWithBenchmark) ObtenerBenchmark(_ context.Context, _ int, _ string) (analytics.BenchmarkContract, error) {
+	return f.benchmark, f.benchmarkErr
+}
+
+// TestObtenerBenchmark_HappyPath_200 verifies a valid request returns 200 with
+// correct DTO fields — puntualidad as float64, CLV mediana as 2-decimal string.
+func TestObtenerBenchmark_HappyPath_200(t *testing.T) {
+	t.Parallel()
+
+	contract := analytics.BenchmarkContract{
+		Disponible: true,
+		CohortBy:   "zona",
+		Zona:       "NORTE",
+		N:          40,
+		Puntualidad: analytics.MetricaBenchmark{
+			Aplica:    true,
+			Valor:     85.0,
+			Percentil: 72.0,
+			Mediana:   70.0,
+			P25:       55.0,
+			P75:       88.0,
+			N:         40,
+		},
+		CLV: analytics.MetricaBenchmark{
+			Aplica:    true,
+			Valor:     12000.50,
+			Percentil: 60.0,
+			Mediana:   9500.0,
+			P25:       5000.0,
+			P75:       18000.0,
+			N:         38,
+		},
+	}
+	ac := &fakeAnalyticsWithBenchmark{benchmark: contract}
+	svc := buildService(&fakeRepo{}, ac)
+	cu := userWith(auth.PermClientesLeer)
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/42/benchmark?cohort_by=zona", nil)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	var resp struct {
+		Disponible  bool   `json:"disponible"`
+		CohortBy    string `json:"cohort_by"`
+		Zona        string `json:"zona"`
+		N           int    `json:"n"`
+		Puntualidad struct {
+			Aplica    bool    `json:"aplica"`
+			Valor     float64 `json:"valor"`
+			Percentil float64 `json:"percentil"`
+		} `json:"puntualidad"`
+		CLV struct {
+			Mediana string `json:"mediana"`
+			P25     string `json:"p25"`
+		} `json:"clv"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+
+	assert.True(t, resp.Disponible)
+	assert.Equal(t, "zona", resp.CohortBy)
+	assert.Equal(t, "NORTE", resp.Zona)
+	assert.Equal(t, 40, resp.N)
+	assert.True(t, resp.Puntualidad.Aplica)
+	assert.InDelta(t, 85.0, resp.Puntualidad.Valor, 0.001)
+	assert.InDelta(t, 72.0, resp.Puntualidad.Percentil, 0.001)
+	assert.Equal(t, "9500.00", resp.CLV.Mediana)
+	assert.Equal(t, "5000.00", resp.CLV.P25)
+}
+
+// TestObtenerBenchmark_NoAuth_401 verifies that missing auth returns 401.
+func TestObtenerBenchmark_NoAuth_401(t *testing.T) {
+	t.Parallel()
+
+	svc := buildService(&fakeRepo{}, &fakeAnalytics{})
+	h := buildRouterNoAuth(svc)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/42/benchmark", nil)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+// TestObtenerBenchmark_NoPerm_403 verifies that a user without clientes:leer
+// receives 403.
+func TestObtenerBenchmark_NoPerm_403(t *testing.T) {
+	t.Parallel()
+
+	svc := buildService(&fakeRepo{}, &fakeAnalytics{})
+	cu := userWith() // no permissions
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/42/benchmark", nil)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
+
+// TestObtenerBenchmark_Indisponible_200 verifies that Disponible=false is
+// serialized correctly (graceful degradation when no peer data).
+func TestObtenerBenchmark_Indisponible_200(t *testing.T) {
+	t.Parallel()
+
+	ac := &fakeAnalyticsWithBenchmark{benchmark: analytics.BenchmarkContract{Disponible: false}}
+	svc := buildService(&fakeRepo{}, ac)
+	cu := userWith(auth.PermClientesLeer)
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/99/benchmark", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp struct {
+		Disponible bool `json:"disponible"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	assert.False(t, resp.Disponible)
 }

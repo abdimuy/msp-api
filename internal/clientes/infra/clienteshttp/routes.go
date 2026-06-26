@@ -56,7 +56,7 @@ func MountRouter(r chi.Router, svc *clientesapp.Service) huma.API {
 
 // registerOperations declares every Huma operation the clientes module exposes.
 //
-//nolint:funlen // five endpoints — keep together for reviewability.
+//nolint:funlen // nine endpoints — keep together for reviewability.
 func registerOperations(api huma.API, h *Handlers) {
 	security := []map[string][]string{{securitySchemeName: {}}}
 	tags := []string{"clientes"}
@@ -148,4 +148,15 @@ func registerOperations(api huma.API, h *Handlers) {
 		Security:      security,
 		DefaultStatus: http.StatusOK,
 	}, h.ObtenerPredicciones)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "obtener-benchmark",
+		Method:        http.MethodGet,
+		Path:          "/clientes/{id}/benchmark",
+		Summary:       "Benchmark de pares del cliente",
+		Description:   "Percentiles de puntualidad, CLV, riesgo crediticio y propensión de recompra vs el grupo de pares (zona, segmento o antigüedad).",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+	}, h.ObtenerBenchmark)
 }

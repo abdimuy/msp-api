@@ -102,6 +102,10 @@ func (r *internalFakeRepo) ListCandidatosByClienteIDs(_ context.Context, _ []int
 	return []*domain.WinbackCandidato{}, nil
 }
 
+func (r *internalFakeRepo) ListCandidatosByZona(_ context.Context, _ string) ([]*domain.WinbackCandidato, error) {
+	return []*domain.WinbackCandidato{}, nil
+}
+
 func (r *internalFakeRepo) ContarPagosRecientes(_ context.Context, _ []int, _, _ time.Time) (map[int]int, error) {
 	return map[int]int{}, nil
 }
@@ -173,6 +177,10 @@ func (r *errorInternalFakeRepo) GetCandidato(_ context.Context, _ int) (*domain.
 }
 
 func (r *errorInternalFakeRepo) ListCandidatosByClienteIDs(_ context.Context, _ []int) ([]*domain.WinbackCandidato, error) {
+	return []*domain.WinbackCandidato{}, nil
+}
+
+func (r *errorInternalFakeRepo) ListCandidatosByZona(_ context.Context, _ string) ([]*domain.WinbackCandidato, error) {
 	return []*domain.WinbackCandidato{}, nil
 }
 

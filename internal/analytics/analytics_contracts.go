@@ -104,6 +104,32 @@ type ClientePulsoContract struct {
 	ContextoOperativo string
 }
 
+// MetricaBenchmark holds the benchmark stats for one scoring metric.
+// Aplica indicates whether the target has a valid value for this metric.
+type MetricaBenchmark struct {
+	Aplica         bool    // el target tiene valor para esta métrica
+	Valor          float64 // valor del target
+	Percentil      float64 // 0..100 (solo si Aplica && !MuestraPequena)
+	Mediana        float64
+	P25            float64
+	P75            float64
+	N              int  // pares con valor aplicable para esta métrica
+	MuestraPequena bool // N < benchmarkMuestraMinima
+}
+
+// BenchmarkContract is the cross-module view of a client's peer benchmark.
+// It is produced by the analytics app layer and consumed by the clientes hub.
+type BenchmarkContract struct {
+	Disponible  bool   // target encontrado y con zona
+	CohortBy    string // "zona" | "segmento" | "antiguedad"
+	Zona        string
+	N           int // tamaño de la cohorte base (tras sub-filtro, sin el target)
+	Puntualidad MetricaBenchmark
+	CLV         MetricaBenchmark // Valor/Mediana/P25/P75 en pesos
+	Credito     MetricaBenchmark
+	Recompra    MetricaBenchmark
+}
+
 // IntervaloContract is a point estimate with its credible interval [Lo, Hi].
 type IntervaloContract struct {
 	Punto float64

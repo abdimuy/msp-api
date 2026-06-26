@@ -53,7 +53,7 @@ type RefreshState struct {
 
 // WinbackRepo persists and retrieves WinbackCandidato projection rows.
 //
-//nolint:interfacebloat // seven methods mandated by the R1 spec; each maps to a distinct operation.
+//nolint:interfacebloat // eight methods; each maps to a distinct operation.
 type WinbackRepo interface {
 	// UpsertCandidatos inserts or replaces the given candidatos in bulk.
 	// The repo matches rows by CLIENTE_ID and updates all mutable fields.
@@ -95,6 +95,11 @@ type WinbackRepo interface {
 	// clienteIDs. Clients not materialized are simply absent from the result
 	// (no error). An empty input returns an empty slice.
 	ListCandidatosByClienteIDs(ctx context.Context, clienteIDs []int) ([]*domain.WinbackCandidato, error)
+
+	// ListCandidatosByZona returns ALL materialized candidatos in the given zona
+	// (unpaginated; used to build the peer-benchmark cohort). The target client
+	// is included in the result; the app layer filters them out.
+	ListCandidatosByZona(ctx context.Context, zona string) ([]*domain.WinbackCandidato, error)
 
 	// ContarPagosRecientes returns, per clienteID, the count of real customer
 	// payments (abono concepts 87327/155/11, CANCELADO='N' AND APLICADO='S')

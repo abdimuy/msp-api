@@ -144,6 +144,11 @@ func ExportAplicarNarrativa(ctx context.Context, s *Service, clienteID int, comp
 	s.aplicarNarrativa(ctx, clienteID, comp)
 }
 
+// ExportPercentilEnCohorte exposes the internal percentilEnCohorte function for tests.
+func ExportPercentilEnCohorte(valor float64, cohorte []float64) (float64, float64, float64, float64, int) {
+	return percentilEnCohorte(valor, cohorte)
+}
+
 // FeatureContrib is an exported mirror of featureContrib for test use.
 // It allows tests to build feature contributions without importing internal types.
 type FeatureContrib struct {

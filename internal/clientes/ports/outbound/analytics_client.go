@@ -25,4 +25,10 @@ type AnalyticsClient interface {
 	// single client. Returns PrediccionesContract{Disponible: false} (nil error)
 	// when the client has no materialized analytics row or insufficient history.
 	ObtenerPredicciones(ctx context.Context, clienteID int) (analytics.PrediccionesContract, error)
+
+	// ObtenerBenchmark returns the peer-benchmark for a single client within
+	// their zona cohort. cohortBy controls the sub-filter: "zona" (default),
+	// "segmento", or "antiguedad". Returns BenchmarkContract{Disponible: false}
+	// (nil error) when the client has no materialized analytics row.
+	ObtenerBenchmark(ctx context.Context, clienteID int, cohortBy string) (analytics.BenchmarkContract, error)
 }

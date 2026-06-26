@@ -69,6 +69,15 @@ func (a *clientesAnalyticsAdapter) ObtenerPredicciones(
 	return a.svc.ObtenerPredicciones(ctx, clienteID)
 }
 
+// ObtenerBenchmark delegates peer-benchmark computation to the analytics service.
+func (a *clientesAnalyticsAdapter) ObtenerBenchmark(
+	ctx context.Context,
+	clienteID int,
+	cohortBy string,
+) (analytics.BenchmarkContract, error) {
+	return a.svc.ObtenerBenchmark(ctx, clienteID, cohortBy)
+}
+
 // provideClientesAnalyticsClient wires the cross-module adapter so fx can
 // inject it as the clientesoutbound.AnalyticsClient port.
 func provideClientesAnalyticsClient(analyticsSvc *analyticsapp.Service) clientesoutbound.AnalyticsClient {

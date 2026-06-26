@@ -319,3 +319,11 @@ func (a *b2AnalyticsAdapter) ObtenerPredicciones(
 ) (analytics.PrediccionesContract, error) {
 	return a.svc.ObtenerPredicciones(ctx, clienteID)
 }
+
+func (a *b2AnalyticsAdapter) ObtenerBenchmark(
+	ctx context.Context,
+	clienteID int,
+	cohortBy string,
+) (analytics.BenchmarkContract, error) {
+	return a.svc.ObtenerBenchmark(ctx, clienteID, cohortBy)
+}

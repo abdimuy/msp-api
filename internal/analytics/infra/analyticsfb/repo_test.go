@@ -868,3 +868,64 @@ func TestRepo_VGridRoundTrip(t *testing.T) {
 			got.FechaPrimerVenta(), got.FechaUltimaVenta(), got.VentasMesesDistintos(), got.MonetaryVProm())
 	})
 }
+
+// TestRepo_ListCandidatosByZona verifies that ListCandidatosByZona returns only
+// the candidatos from the requested zona, and excludes those from other zonas.
+//
+//nolint:paralleltest // serial: shares rollback-only tx.
+func TestRepo_ListCandidatosByZona(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		repo := analyticsfb.NewRepo(pool)
+
+		const zonaA = "ZONA_TEST_A"
+		const zonaB = "ZONA_TEST_B"
+
+		cA1, err := domain.CrearWinbackCandidato(domain.CrearWinbackCandidatoParams{
+			ClienteID: -30001, Nombre: "ZA1", Zona: zonaA,
+			Frecuencia: 1, Monetary: decimal.RequireFromString("1000.00"),
+			Saldo: decimal.Zero, PorLiquidarPct: decimal.Zero,
+			CohorteFecha: fixedCohorte, Now: fixedNow,
+		})
+		require.NoError(t, err)
+		cA2, err := domain.CrearWinbackCandidato(domain.CrearWinbackCandidatoParams{
+			ClienteID: -30002, Nombre: "ZA2", Zona: zonaA,
+			Frecuencia: 2, Monetary: decimal.RequireFromString("2000.00"),
+			Saldo: decimal.Zero, PorLiquidarPct: decimal.Zero,
+			CohorteFecha: fixedCohorte, Now: fixedNow,
+		})
+		require.NoError(t, err)
+		cB1, err := domain.CrearWinbackCandidato(domain.CrearWinbackCandidatoParams{
+			ClienteID: -30003, Nombre: "ZB1", Zona: zonaB,
+			Frecuencia: 1, Monetary: decimal.RequireFromString("3000.00"),
+			Saldo: decimal.Zero, PorLiquidarPct: decimal.Zero,
+			CohorteFecha: fixedCohorte, Now: fixedNow,
+		})
+		require.NoError(t, err)
+
+		err = repo.UpsertCandidatos(ctx, []*domain.WinbackCandidato{cA1, cA2, cB1})
+		if err != nil {
+			t.Skipf("UpsertCandidatos failed — migration 000035 may not be applied: %v", err)
+		}
+
+		resultA, err := repo.ListCandidatosByZona(ctx, zonaA)
+		require.NoError(t, err)
+
+		idSet := make(map[int]bool)
+		for _, c := range resultA {
+			idSet[c.ClienteID()] = true
+		}
+		assert.True(t, idSet[-30001], "zonaA result must include clienteID -30001")
+		assert.True(t, idSet[-30002], "zonaA result must include clienteID -30002")
+		assert.False(t, idSet[-30003], "zonaA result must NOT include clienteID -30003 (zonaB)")
+
+		resultB, err := repo.ListCandidatosByZona(ctx, zonaB)
+		require.NoError(t, err)
+		require.Len(t, resultB, 1, "zonaB must return exactly 1 candidato")
+		assert.Equal(t, -30003, resultB[0].ClienteID())
+
+		t.Logf("ListCandidatosByZona ok: zonaA=%d zonaB=%d", len(resultA), len(resultB))
+	})
+}

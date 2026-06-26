@@ -67,6 +67,10 @@ func (stubAnalytics) ObtenerPredicciones(_ context.Context, _ int) (analytics.Pr
 	return analytics.PrediccionesContract{}, nil
 }
 
+func (stubAnalytics) ObtenerBenchmark(_ context.Context, _ int, _ string) (analytics.BenchmarkContract, error) {
+	return analytics.BenchmarkContract{}, nil
+}
+
 type stubDirectoryIndex struct{}
 
 func (stubDirectoryIndex) Buscar(_ context.Context, _ outbound.DirectorioQuery) (outbound.DirectorioResultado, error) {

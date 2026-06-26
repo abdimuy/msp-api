@@ -347,8 +347,6 @@ func toVentaListItemDTO(v *domain.VentaCliente) VentaListItemDTO {
 	}
 }
 
-// ─── Endpoint 4: venta detalle ───────────────────────────────────────────────
-
 // ─── Endpoint: predicciones ───────────────────────────────────────────────────
 
 // prediccionesToDTO maps a PrediccionesContract to its wire representation.
@@ -378,6 +376,51 @@ func prediccionesToDTO(c analytics.PrediccionesContract) PrediccionesDTO {
 			Hi:    c.ProximaCompraDias.Hi,
 		},
 		Draws: c.Draws,
+	}
+}
+
+// ─── Endpoint: benchmark ─────────────────────────────────────────────────────
+
+// benchmarkToDTO maps a BenchmarkContract to its wire representation.
+func benchmarkToDTO(c analytics.BenchmarkContract) BenchmarkDTO {
+	return BenchmarkDTO{
+		Disponible:  c.Disponible,
+		CohortBy:    c.CohortBy,
+		Zona:        c.Zona,
+		N:           c.N,
+		Puntualidad: metricaToDTO(c.Puntualidad),
+		CLV:         metricaMoneyToDTO(c.CLV),
+		Credito:     metricaToDTO(c.Credito),
+		Recompra:    metricaToDTO(c.Recompra),
+	}
+}
+
+// metricaToDTO maps a MetricaBenchmark to its float64-valued wire DTO.
+func metricaToDTO(m analytics.MetricaBenchmark) MetricaDTO {
+	return MetricaDTO{
+		Aplica:         m.Aplica,
+		Valor:          m.Valor,
+		Percentil:      m.Percentil,
+		Mediana:        m.Mediana,
+		P25:            m.P25,
+		P75:            m.P75,
+		N:              m.N,
+		MuestraPequena: m.MuestraPequena,
+	}
+}
+
+// metricaMoneyToDTO maps a MetricaBenchmark to its string-valued monetary wire DTO.
+// Monetary values (valor, mediana, p25, p75) are formatted as 2-decimal peso strings.
+func metricaMoneyToDTO(m analytics.MetricaBenchmark) MetricaMoneyDTO {
+	return MetricaMoneyDTO{
+		Aplica:         m.Aplica,
+		Valor:          decimal.NewFromFloat(m.Valor).StringFixed(moneyScale),
+		Percentil:      m.Percentil,
+		Mediana:        decimal.NewFromFloat(m.Mediana).StringFixed(moneyScale),
+		P25:            decimal.NewFromFloat(m.P25).StringFixed(moneyScale),
+		P75:            decimal.NewFromFloat(m.P75).StringFixed(moneyScale),
+		N:              m.N,
+		MuestraPequena: m.MuestraPequena,
 	}
 }
 

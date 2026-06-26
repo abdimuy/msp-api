@@ -583,6 +583,19 @@ func (r *Repo) listCandidatosByChunk(ctx context.Context, q firebird.Querier, cl
 	return scanCandidatoRows(rows)
 }
 
+// ListCandidatosByZona returns all candidatos in the given zona (unpaginated).
+// Used to build the peer-benchmark cohort; the app layer excludes the target.
+func (r *Repo) ListCandidatosByZona(ctx context.Context, zona string) ([]*domain.WinbackCandidato, error) {
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	query := selectCandidatoBase + " WHERE ZONA = ?"
+	rows, err := q.QueryContext(ctx, query, zona)
+	if err != nil {
+		return nil, firebird.MapError(err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanCandidatoRows(rows)
+}
+
 // contarPagosRecientesBase is the per-chunk count query, sans the CLIENTE_ID IN
 // clause (appended per chunk). The abono concept constants are baked in so the
 // SQL literals stay in sync with the named constants at compile time, matching
