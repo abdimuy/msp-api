@@ -312,3 +312,10 @@ func (a *b2AnalyticsAdapter) ObtenerPulsos(
 ) (map[int]analytics.ClientePulsoContract, error) {
 	return a.svc.ObtenerPulsosClientes(ctx, clienteIDs)
 }
+
+func (a *b2AnalyticsAdapter) ObtenerPredicciones(
+	ctx context.Context,
+	clienteID int,
+) (analytics.PrediccionesContract, error) {
+	return a.svc.ObtenerPredicciones(ctx, clienteID)
+}

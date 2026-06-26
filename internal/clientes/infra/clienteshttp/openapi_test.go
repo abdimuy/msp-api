@@ -63,6 +63,10 @@ func (stubAnalytics) ObtenerPulsos(_ context.Context, _ []int) (map[int]analytic
 	return map[int]analytics.ClientePulsoContract{}, nil
 }
 
+func (stubAnalytics) ObtenerPredicciones(_ context.Context, _ int) (analytics.PrediccionesContract, error) {
+	return analytics.PrediccionesContract{}, nil
+}
+
 type stubDirectoryIndex struct{}
 
 func (stubDirectoryIndex) Buscar(_ context.Context, _ outbound.DirectorioQuery) (outbound.DirectorioResultado, error) {
