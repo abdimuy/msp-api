@@ -1544,3 +1544,183 @@ func TestObtenerBenchmark_DefaultCohortBy_200(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
 	assert.Equal(t, "zona", resp.CohortBy, "default cohort_by must be zona")
 }
+
+// ─── ObtenerTimeline handler tests ───────────────────────────────────────────
+
+// fakeRepoWithTimeline extends fakeRepo and returns configurable RitmoPagoData
+// for the timeline endpoint. Embeds fakeRepo so all other methods compile.
+type fakeRepoWithTimeline struct {
+	fakeRepo
+	data    outbound.RitmoPagoData
+	dataErr error
+}
+
+func (f *fakeRepoWithTimeline) ObtenerRitmoPagoData(_ context.Context, _ int, _ outbound.RangoFechas) (outbound.RitmoPagoData, error) {
+	if f.dataErr != nil {
+		return outbound.RitmoPagoData{}, f.dataErr
+	}
+	return f.data, nil
+}
+
+// TestObtenerTimeline_NoAuth_401 verifies that an unauthenticated request is
+// rejected with 401.
+func TestObtenerTimeline_NoAuth_401(t *testing.T) {
+	t.Parallel()
+
+	svc := buildService(&fakeRepo{}, &fakeAnalytics{})
+	h := buildRouterNoAuth(svc)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/42/timeline", nil)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+// TestObtenerTimeline_NoPerm_403 verifies that a user without clientes:leer
+// receives 403.
+func TestObtenerTimeline_NoPerm_403(t *testing.T) {
+	t.Parallel()
+
+	svc := buildService(&fakeRepo{}, &fakeAnalytics{})
+	cu := userWith() // no permissions
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/42/timeline", nil)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
+
+// TestObtenerTimeline_NotFound_404 verifies that a missing client yields 404.
+func TestObtenerTimeline_NotFound_404(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeRepo{clienteErr: domain.ErrClienteNotFound}
+	svc := buildService(repo, &fakeAnalytics{})
+	cu := userWith(auth.PermClientesLeer)
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/9999/timeline", nil)
+	assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+}
+
+// TestObtenerTimeline_HappyPath_200 verifies that a client with mixed pagos and
+// ventas returns 200 with the correct DTO structure: eventos ordered by fecha
+// descendente, montos as 2-decimal strings, fechas as RFC3339 UTC.
+func TestObtenerTimeline_HappyPath_200(t *testing.T) {
+	t.Parallel()
+
+	tReciente := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	tAntiguo := time.Date(2025, 6, 15, 0, 0, 0, 0, time.UTC)
+
+	repo := &fakeRepoWithTimeline{
+		fakeRepo: fakeRepo{cliente: newCliente(42)},
+		data: outbound.RitmoPagoData{
+			Pagos: []domain.PagoCrudo{
+				{
+					Fecha:     tAntiguo,
+					Importe:   decimal.NewFromInt(1500),
+					DoctoCCID: 10,
+					Concepto:  "cobranza semanal",
+				},
+			},
+			Ventas: []domain.VentaCruda{
+				{
+					Fecha:     tReciente,
+					Total:     decimal.NewFromInt(12000),
+					DoctoPvID: 200,
+					Folio:     "PV-0200",
+					EsCredito: true,
+				},
+			},
+		},
+	}
+	svc := buildService(repo, &fakeAnalytics{})
+	cu := userWith(auth.PermClientesLeer)
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/42/timeline", nil)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	var resp struct {
+		Eventos []struct {
+			Fecha    string `json:"fecha"`
+			Tipo     string `json:"tipo"`
+			Monto    string `json:"monto"`
+			Etiqueta string `json:"etiqueta"`
+			RefID    int    `json:"ref_id"`
+		} `json:"eventos"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(t, resp.Eventos, 2, "must contain both pago and venta")
+
+	// Most recent first: venta (tReciente) then pago (tAntiguo).
+	compra := resp.Eventos[0]
+	pago := resp.Eventos[1]
+
+	assert.Equal(t, "compra_credito", compra.Tipo)
+	assert.Equal(t, "12000.00", compra.Monto)
+	assert.Equal(t, "PV-0200", compra.Etiqueta)
+	assert.Equal(t, 200, compra.RefID)
+
+	// Verify fecha is RFC3339 UTC.
+	parsed, err := time.Parse(time.RFC3339Nano, compra.Fecha)
+	require.NoError(t, err, "fecha must be RFC3339Nano")
+	assert.Equal(t, tReciente.UTC(), parsed.UTC())
+
+	assert.Equal(t, "pago", pago.Tipo)
+	assert.Equal(t, "1500.00", pago.Monto)
+	assert.Equal(t, "cobranza semanal", pago.Etiqueta)
+	assert.Equal(t, 10, pago.RefID)
+}
+
+// TestObtenerTimeline_BundleVacio_EventosVacio verifies that a client with no
+// history returns 200 with an empty (but non-null) eventos array.
+func TestObtenerTimeline_BundleVacio_EventosVacio(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeRepoWithTimeline{
+		fakeRepo: fakeRepo{cliente: newCliente(42)},
+		data:     outbound.RitmoPagoData{},
+	}
+	svc := buildService(repo, &fakeAnalytics{})
+	cu := userWith(auth.PermClientesLeer)
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/42/timeline", nil)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	var resp struct {
+		Eventos []interface{} `json:"eventos"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	assert.NotNil(t, resp.Eventos, "eventos must be [] not null")
+	assert.Empty(t, resp.Eventos)
+}
+
+// TestObtenerTimeline_EtiquetaFallbackFolio verifies that when Concepto is empty
+// the pago's Folio is used as the etiqueta in the DTO.
+func TestObtenerTimeline_EtiquetaFallbackFolio(t *testing.T) {
+	t.Parallel()
+
+	ts := time.Date(2025, 9, 1, 0, 0, 0, 0, time.UTC)
+	repo := &fakeRepoWithTimeline{
+		fakeRepo: fakeRepo{cliente: newCliente(42)},
+		data: outbound.RitmoPagoData{
+			Pagos: []domain.PagoCrudo{
+				{Fecha: ts, Importe: decimal.NewFromInt(500), DoctoCCID: 1, Concepto: "", Folio: "CC-9999"},
+			},
+		},
+	}
+	svc := buildService(repo, &fakeAnalytics{})
+	cu := userWith(auth.PermClientesLeer)
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/42/timeline", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp struct {
+		Eventos []struct {
+			Etiqueta string `json:"etiqueta"`
+		} `json:"eventos"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(t, resp.Eventos, 1)
+	assert.Equal(t, "CC-9999", resp.Eventos[0].Etiqueta, "folio used when concepto is empty")
+}

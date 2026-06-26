@@ -56,7 +56,7 @@ func MountRouter(r chi.Router, svc *clientesapp.Service) huma.API {
 
 // registerOperations declares every Huma operation the clientes module exposes.
 //
-//nolint:funlen // nine endpoints — keep together for reviewability.
+//nolint:funlen // ten endpoints — keep together for reviewability.
 func registerOperations(api huma.API, h *Handlers) {
 	security := []map[string][]string{{securitySchemeName: {}}}
 	tags := []string{"clientes"}
@@ -159,4 +159,15 @@ func registerOperations(api huma.API, h *Handlers) {
 		Security:      security,
 		DefaultStatus: http.StatusOK,
 	}, h.ObtenerBenchmark)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "obtener-timeline",
+		Method:        http.MethodGet,
+		Path:          "/clientes/{id}/timeline",
+		Summary:       "Timeline unificado de compras y pagos",
+		Description:   "Devuelve el feed cronológico unificado de compras y pagos del cliente sobre todo el historial disponible, ordenado por fecha descendente.",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+	}, h.ObtenerTimeline)
 }

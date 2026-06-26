@@ -424,6 +424,25 @@ func metricaMoneyToDTO(m analytics.MetricaBenchmark) MetricaMoneyDTO {
 	}
 }
 
+// ─── Endpoint: timeline ───────────────────────────────────────────────────────
+
+// timelineToDTO maps a slice of domain.EventoTimeline to its wire DTO.
+// A nil or empty input always returns a TimelineDTO with a non-nil Eventos slice
+// so the JSON response renders [] rather than null.
+func timelineToDTO(eventos []domain.EventoTimeline) TimelineDTO {
+	dtos := make([]EventoTimelineDTO, 0, len(eventos))
+	for _, e := range eventos {
+		dtos = append(dtos, EventoTimelineDTO{
+			Fecha:    formatTime(e.Fecha),
+			Tipo:     e.Tipo,
+			Monto:    e.Monto.StringFixed(moneyScale),
+			Etiqueta: e.Etiqueta,
+			RefID:    e.RefID,
+		})
+	}
+	return TimelineDTO{Eventos: dtos}
+}
+
 // ─── Endpoint 4: venta detalle ───────────────────────────────────────────────
 
 // toVentaDetalleDTO maps an outbound.VentaDetalle to its full detail wire DTO.

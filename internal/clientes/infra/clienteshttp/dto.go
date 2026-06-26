@@ -430,6 +430,30 @@ type RefrescarBusquedaOutput struct {
 	}
 }
 
+// ─── Endpoint: GET /clientes/{id}/timeline ────────────────────────────────────
+
+// ObtenerTimelineInput collects the path parameter for GET /clientes/{id}/timeline.
+type ObtenerTimelineInput struct {
+	ID int `path:"id" doc:"ID de Microsip del cliente"`
+}
+
+// ObtenerTimelineOutput is the response for GET /clientes/{id}/timeline.
+type ObtenerTimelineOutput struct{ Body TimelineDTO }
+
+// EventoTimelineDTO is a single event in the unified purchase/payment feed.
+type EventoTimelineDTO struct {
+	Fecha    string `json:"fecha"    format:"date-time" doc:"RFC3339 UTC del evento"`
+	Tipo     string `json:"tipo"     doc:"compra_credito | compra_contado | pago"`
+	Monto    string `json:"monto"    doc:"Importe en pesos (2 decimales)"`
+	Etiqueta string `json:"etiqueta" doc:"Folio o concepto del evento"`
+	RefID    int    `json:"ref_id"   doc:"DOCTO_PV_ID (compras) o DOCTO_CC_ID (pagos)"`
+}
+
+// TimelineDTO is the wire representation of the unified purchase/payment feed.
+type TimelineDTO struct {
+	Eventos []EventoTimelineDTO `json:"eventos" doc:"Feed cronológico (más reciente primero); vacío cuando el cliente no tiene historial"`
+}
+
 // ─── Endpoint: GET /clientes/{id}/predicciones ───────────────────────────────
 
 // ObtenerPrediccionesInput collects the path parameter for GET /clientes/{id}/predicciones.

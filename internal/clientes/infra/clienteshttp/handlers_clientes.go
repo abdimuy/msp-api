@@ -292,6 +292,26 @@ func (h *Handlers) ObtenerPredicciones(ctx context.Context, input *ObtenerPredic
 	return out, nil
 }
 
+// ObtenerTimeline handles GET /clientes/{id}/timeline.
+func (h *Handlers) ObtenerTimeline(ctx context.Context, input *ObtenerTimelineInput) (*ObtenerTimelineOutput, error) {
+	cu, err := currentUserOrError(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := requirePerm(cu, auth.PermClientesLeer); err != nil {
+		return nil, err
+	}
+
+	eventos, err := h.svc.ObtenerTimeline(ctx, input.ID)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+
+	out := &ObtenerTimelineOutput{}
+	out.Body = timelineToDTO(eventos)
+	return out, nil
+}
+
 // ObtenerBenchmark handles GET /clientes/{id}/benchmark.
 func (h *Handlers) ObtenerBenchmark(ctx context.Context, input *ObtenerBenchmarkInput) (*ObtenerBenchmarkOutput, error) {
 	cu, err := currentUserOrError(ctx)
@@ -326,4 +346,5 @@ var (
 	_ func(context.Context, *ObtenerPagoDetalleInput) (*ObtenerPagoDetalleOutput, error)   = (*Handlers)(nil).ObtenerPagoDetalle
 	_ func(context.Context, *ObtenerPrediccionesInput) (*ObtenerPrediccionesOutput, error) = (*Handlers)(nil).ObtenerPredicciones
 	_ func(context.Context, *ObtenerBenchmarkInput) (*ObtenerBenchmarkOutput, error)       = (*Handlers)(nil).ObtenerBenchmark
+	_ func(context.Context, *ObtenerTimelineInput) (*ObtenerTimelineOutput, error)         = (*Handlers)(nil).ObtenerTimeline
 )
