@@ -136,4 +136,37 @@ var (
 		"clv_params_invalido",
 		"los parámetros de clv embebidos no son válidos",
 	)
+
+	// ─── CarteraSnapshot errors ───────────────────────────────────────────────────
+
+	// ErrCarteraSnapshotFechaCorteInvalida is returned when fechaCorte is zero.
+	ErrCarteraSnapshotFechaCorteInvalida = apperror.NewValidation(
+		"cartera_snapshot_fecha_corte_invalida",
+		"la fecha de corte del snapshot de cartera es obligatoria",
+	)
+
+	// ErrCarteraSnapshotZonaInvalida is returned when zonaClienteID <= 0.
+	ErrCarteraSnapshotZonaInvalida = apperror.NewValidation(
+		"cartera_snapshot_zona_invalida",
+		"el id de zona del snapshot de cartera debe ser mayor a cero",
+	)
+
+	// ErrCarteraSnapshotBucketInvalido is returned when bucket is empty or not
+	// one of the canonical BucketAgingDias* values defined in cartera_snapshot.go.
+	ErrCarteraSnapshotBucketInvalido = apperror.NewValidation(
+		"cartera_snapshot_bucket_invalido",
+		"el bucket de aging de cartera no es válido",
+	)
+
+	// ErrCarteraSnapshotSaldoInvalido is returned when saldo < 0.
+	ErrCarteraSnapshotSaldoInvalido = apperror.NewValidation(
+		"cartera_snapshot_saldo_invalido",
+		"el saldo del snapshot de cartera no puede ser negativo",
+	)
+
+	// ErrCarteraSnapshotConteoInvalido is returned when conteo < 0.
+	ErrCarteraSnapshotConteoInvalido = apperror.NewValidation(
+		"cartera_snapshot_conteo_invalido",
+		"el conteo del snapshot de cartera no puede ser negativo",
+	)
 )
