@@ -541,6 +541,6 @@ type BenchmarkDTO struct {
 	N           int             `json:"n"            doc:"número de pares en el grupo (tras sub-filtro, sin el target)"`
 	Puntualidad MetricaDTO      `json:"puntualidad"  doc:"porcentaje de pagos a tiempo vs pares"`
 	CLV         MetricaMoneyDTO `json:"clv"          doc:"CLV estimado en pesos vs pares"`
-	Credito     MetricaDTO      `json:"credito"      doc:"score de riesgo crediticio vs pares"`
+	Credito     MetricaDTO      `json:"credito"      doc:"score de solvencia crediticia vs pares (mayor percentil = más solvente, NO más riesgoso)"`
 	Recompra    MetricaDTO      `json:"recompra"     doc:"score de propensión de recompra vs pares"`
 }

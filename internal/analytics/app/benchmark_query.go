@@ -40,6 +40,10 @@ func (s *Service) computeBenchmarkScores(c *domain.WinbackCandidato, now time.Ti
 	v.puntualidad = pct
 	v.puntualidadAplica = pct > 0
 
+	// Deliberate: c.Pagos90D() is the materialized trailing-90d value, not a live
+	// read. A live query for every member of a zona cohort would be an N+1 DB hit;
+	// using the same materialized field for both target and all peers keeps the
+	// percentile internally apples-to-apples (same staleness model for everyone).
 	clvMonto, _, _, _, clvAplica := computeCLVConRazones(c, now, s.btyd, s.scorecard, s.clvParams, c.Pagos90D())
 	v.clvAplica = clvAplica
 	if v.clvAplica {

@@ -39,8 +39,10 @@ const (
 
 // BuildTimeline merges raw sale and payment events into a single chronological
 // feed. The result is sorted by Fecha DESCENDING (most recent first); ties are
-// broken by RefID DESCENDING so the ordering is deterministic and stable even
-// when multiple events share the same timestamp.
+// broken by RefID DESCENDING, then by Tipo ASCENDING (lexicographic). The
+// three-key ordering is a total order — every pair of distinct events has a
+// deterministic relative position even when RefID spaces overlap (DoctoPvID for
+// ventas vs DoctoCCID for pagos may collide by coincidence).
 //
 // Pure: no time.Now(), no I/O, no side effects. Calling BuildTimeline with nil
 // slices returns an empty (non-nil) slice.
@@ -79,7 +81,10 @@ func BuildTimeline(pagos []PagoCrudo, ventas []VentaCruda) []EventoTimeline {
 		if !eventos[i].Fecha.Equal(eventos[j].Fecha) {
 			return eventos[i].Fecha.After(eventos[j].Fecha)
 		}
-		return eventos[i].RefID > eventos[j].RefID
+		if eventos[i].RefID != eventos[j].RefID {
+			return eventos[i].RefID > eventos[j].RefID
+		}
+		return eventos[i].Tipo < eventos[j].Tipo
 	})
 
 	return eventos

@@ -253,6 +253,73 @@ func TestBuildTimeline_SoloVentas(t *testing.T) {
 	assert.Equal(t, t1, result[2].Fecha)
 }
 
+// ─── BuildTimeline: total ordering tiebreak (Part B.1 + mutation hardening) ──
+
+// TestBuildTimeline_EmpateRefID_DesempatePorTipo kills the CONDITIONALS_BOUNDARY
+// mutant that was at the RefID comparison in the sort comparator. It exercises the
+// THIRD tiebreak (Tipo asc) for the case where Fecha AND RefID are equal — a
+// realistic collision when DoctoPvID and DoctoCCID happen to share the same value.
+// compra_credito ("c...") < pago ("p...") lexicographically → compra_credito first.
+func TestBuildTimeline_EmpateRefID_DesempatePorTipo(t *testing.T) {
+	t.Parallel()
+
+	ts := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	// Same Fecha, same RefID=42 (DoctoPvID vs DoctoCCID collision), different Tipo.
+	pagos := []domain.PagoCrudo{
+		pagoAt(ts, 500, 42, "pago", ""), // Tipo = TipoPago
+	}
+	ventas := []domain.VentaCruda{
+		ventaAt(ts, 3000, 42, "PV-42", true), // Tipo = TipoCompraCredito
+	}
+
+	result := domain.BuildTimeline(pagos, ventas)
+	require.Len(t, result, 2)
+	// Tipo asc: "compra_credito" < "pago" → compra_credito at index 0
+	assert.Equal(t, domain.TipoCompraCredito, result[0].Tipo, "compra_credito sorts before pago when Fecha+RefID tie")
+	assert.Equal(t, domain.TipoPago, result[1].Tipo)
+}
+
+// TestBuildTimeline_EmpateOrdenTotal verifies all three tiebreak levels together.
+// This is the comprehensive total-ordering test: different Fecha, different RefID
+// same Fecha, and same Fecha+RefID with different Tipo are all exercised.
+func TestBuildTimeline_EmpateOrdenTotal(t *testing.T) {
+	t.Parallel()
+
+	ts := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	tsPrev := time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC)
+
+	// Event A: tsPrev — comes last (older date)
+	// Events B, C: ts, RefID=100 vs RefID=50 → B before C (RefID desc)
+	// Events D, E: ts, RefID=42 (collision), Tipo compra_contado vs pago → D before E (Tipo asc)
+	pagos := []domain.PagoCrudo{
+		pagoAt(tsPrev, 100, 1, "old", ""), // A — oldest
+		pagoAt(ts, 200, 50, "p50", ""),    // C — same ts, RefID=50
+		pagoAt(ts, 300, 42, "p42", ""),    // E — same ts, RefID=42 (TipoPago)
+	}
+	ventas := []domain.VentaCruda{
+		ventaAt(ts, 400, 100, "PV-100", true), // B — same ts, RefID=100
+		ventaAt(ts, 500, 42, "PV-42", false),  // D — same ts, RefID=42 (TipoCompraContado)
+	}
+
+	result := domain.BuildTimeline(pagos, ventas)
+	require.Len(t, result, 5)
+
+	// Expected order: B(RefID=100,compra_credito), C(RefID=50,pago), D(RefID=42,compra_contado), E(RefID=42,pago), A(old)
+	assert.Equal(t, 100, result[0].RefID, "result[0]: highest RefID")
+	assert.Equal(t, domain.TipoCompraCredito, result[0].Tipo)
+
+	assert.Equal(t, 50, result[1].RefID, "result[1]: RefID=50")
+	assert.Equal(t, domain.TipoPago, result[1].Tipo)
+
+	assert.Equal(t, 42, result[2].RefID, "result[2]: RefID=42, Tipo asc → compra_contado")
+	assert.Equal(t, domain.TipoCompraContado, result[2].Tipo)
+
+	assert.Equal(t, 42, result[3].RefID, "result[3]: RefID=42, Tipo asc → pago")
+	assert.Equal(t, domain.TipoPago, result[3].Tipo)
+
+	assert.Equal(t, tsPrev, result[4].Fecha, "result[4]: oldest event last")
+}
+
 // ─── Property tests ───────────────────────────────────────────────────────────
 
 // genPagoCrudo is a rapid generator for PagoCrudo with arbitrary but valid data.
