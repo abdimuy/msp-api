@@ -132,7 +132,7 @@ type HydrateCarteraSnapshotParams struct {
 func HydrateCarteraSnapshot(p HydrateCarteraSnapshotParams) *CarteraSnapshot {
 	return &CarteraSnapshot{
 		id:            p.ID,
-		fechaCorte:    p.FechaCorte,
+		fechaCorte:    p.FechaCorte.UTC(),
 		zonaClienteID: p.ZonaClienteID,
 		cobradorID:    p.CobradorID,
 		bucket:        p.Bucket,
