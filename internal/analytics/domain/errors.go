@@ -169,4 +169,11 @@ var (
 		"cartera_snapshot_conteo_invalido",
 		"el conteo del snapshot de cartera no puede ser negativo",
 	)
+
+	// ErrEstadoCumplimientoInvalido is returned when a string cannot be parsed
+	// as an EstadoCumplimiento.
+	ErrEstadoCumplimientoInvalido = apperror.NewValidation(
+		"estado_cumplimiento_invalido",
+		"el estado de cumplimiento no es válido",
+	)
 )
