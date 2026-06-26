@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/abdimuy/msp-api/internal/analytics"
 	"github.com/abdimuy/msp-api/internal/clientes/app"
 	"github.com/abdimuy/msp-api/internal/clientes/domain"
@@ -156,6 +158,42 @@ func TestObtenerFicha_PulsoTransportError(t *testing.T) {
 	}
 	if appErr.Kind != apperror.KindInternal {
 		t.Errorf("expected KindInternal for transport error, got %v", appErr.Kind)
+	}
+}
+
+// TestObtenerFicha_TendenciaComputada verifies that ObtenerFicha computes the
+// Tendencia from AbonosPorMes and attaches it to FichaCliente.
+func TestObtenerFicha_TendenciaComputada(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	cliente := newCliente(1, "Test Tendencia")
+	// Increasing monthly series → slope > 0 → mejorando.
+	resumen := outbound.ResumenFicha{
+		AbonosPorMes: []outbound.PuntoMensual{
+			{Anio: 2025, Mes: 1, Monto: decimal.NewFromInt(100)},
+			{Anio: 2025, Mes: 2, Monto: decimal.NewFromInt(200)},
+			{Anio: 2025, Mes: 3, Monto: decimal.NewFromInt(300)},
+			{Anio: 2025, Mes: 4, Monto: decimal.NewFromInt(400)},
+			{Anio: 2025, Mes: 5, Monto: decimal.NewFromInt(500)},
+		},
+	}
+	repo := &fakeClientesRepo{
+		clienteByID: map[int]*domain.Cliente{1: cliente},
+		resumen:     resumen,
+	}
+	anl := &fakeAnalyticsClient{pulsos: map[int]analytics.ClientePulsoContract{}}
+
+	svc := newFichaService(repo, anl)
+	ficha, err := svc.ObtenerFicha(ctx, 1, outbound.RangoFechas{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ficha.Tendencia.Slope <= 0 {
+		t.Errorf("expected positive slope for increasing series, got %f", ficha.Tendencia.Slope)
+	}
+	if ficha.Tendencia.Direccion != domain.DireccionMejorando {
+		t.Errorf("expected DireccionMejorando, got %q", ficha.Tendencia.Direccion)
 	}
 }
 

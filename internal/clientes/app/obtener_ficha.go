@@ -16,6 +16,7 @@ type FichaCliente struct {
 	Resumen    outbound.ResumenFicha
 	Pulso      analytics.ClientePulsoContract // zero value when TienePulso is false
 	TienePulso bool                           // false when the client has no materialized analytics row
+	Tendencia  domain.Tendencia               // linear trend of the monthly abonos series
 }
 
 // ObtenerFicha assembles a Customer 360 view for the given clienteID.
@@ -52,6 +53,13 @@ func (s *Service) ObtenerFicha(ctx context.Context, clienteID int, rango outboun
 			WithSource(source).WithError(err)
 	}
 
+	// Compute linear trend of monthly abonos series (pure; no I/O).
+	valores := make([]float64, len(resumen.AbonosPorMes))
+	for i, p := range resumen.AbonosPorMes {
+		valores[i] = p.Monto.InexactFloat64()
+	}
+	tendencia := domain.CalcularTendencia(valores)
+
 	// Step 3: fetch analytics pulse — DEGRADE on not-found, ERROR on transport failure.
 	pulso, found, err := s.analytics.ObtenerPulso(ctx, clienteID)
 	if err != nil {
@@ -64,5 +72,6 @@ func (s *Service) ObtenerFicha(ctx context.Context, clienteID int, rango outboun
 		Resumen:    resumen,
 		Pulso:      pulso,
 		TienePulso: found,
+		Tendencia:  tendencia,
 	}, nil
 }

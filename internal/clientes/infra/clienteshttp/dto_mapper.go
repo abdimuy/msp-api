@@ -91,6 +91,9 @@ func toFichaDTO(ficha clientesapp.FichaCliente) FichaDTO {
 	c := ficha.Cliente
 	r := ficha.Resumen
 
+	series := toSeriesDTO(r)
+	series.Tendencia = tendenciaToDTO(ficha.Tendencia)
+
 	dto := FichaDTO{
 		ClienteID: c.ClienteID(),
 		Nombre:    c.Nombre(),
@@ -120,7 +123,7 @@ func toFichaDTO(ficha clientesapp.FichaCliente) FichaDTO {
 			NumVentas:      r.NumVentas,
 			NumPagos:       r.NumPagos,
 		},
-		Series: toSeriesDTO(r),
+		Series: series,
 	}
 
 	if ficha.TienePulso {
@@ -163,6 +166,15 @@ func toFichaDTO(ficha clientesapp.FichaCliente) FichaDTO {
 	}
 
 	return dto
+}
+
+// tendenciaToDTO maps a domain.Tendencia to its wire DTO.
+func tendenciaToDTO(t domain.Tendencia) TendenciaDTO {
+	return TendenciaDTO{
+		Slope:     t.Slope,
+		Direccion: t.Direccion,
+		Cambio:    t.Cambio,
+	}
 }
 
 // toSeriesDTO maps the ResumenFicha time-series slices to their wire DTOs.

@@ -525,6 +525,48 @@ func TestObtenerFicha_NotFound_404(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 }
 
+// TestObtenerFicha_TendenciaEnSeries verifica que toFichaDTO propaga la
+// tendencia calculada al bloque Series.Tendencia de la respuesta HTTP.
+func TestObtenerFicha_TendenciaEnSeries(t *testing.T) {
+	t.Parallel()
+
+	c := newCliente(42)
+	// Increasing series → mejorando.
+	resumen := outbound.ResumenFicha{
+		AbonosPorMes: []outbound.PuntoMensual{
+			{Anio: 2025, Mes: 1, Monto: decimal.NewFromInt(100)},
+			{Anio: 2025, Mes: 2, Monto: decimal.NewFromInt(200)},
+			{Anio: 2025, Mes: 3, Monto: decimal.NewFromInt(300)},
+			{Anio: 2025, Mes: 4, Monto: decimal.NewFromInt(400)},
+			{Anio: 2025, Mes: 5, Monto: decimal.NewFromInt(500)},
+		},
+	}
+	repo := &fakeRepo{
+		cliente: c,
+		resumen: resumen,
+	}
+	ac := &fakeAnalytics{pulsos: map[int]analytics.ClientePulsoContract{}}
+	svc := buildService(repo, ac)
+	cu := userWith(auth.PermClientesLeer)
+	h := buildRouter(svc, cu)
+
+	rec := doJSON(h, http.MethodGet, "/clientes/42", nil)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	var resp struct {
+		Series struct {
+			Tendencia struct {
+				Slope     float64 `json:"slope"`
+				Direccion string  `json:"direccion"`
+				Cambio    bool    `json:"cambio"`
+			} `json:"tendencia"`
+		} `json:"series"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	assert.Greater(t, resp.Series.Tendencia.Slope, 0.0, "slope must be positive for increasing series")
+	assert.Equal(t, "mejorando", resp.Series.Tendencia.Direccion)
+}
+
 // ─── Scenario 3: GET /clientes/{id}/ventas ───────────────────────────────────
 
 func TestListarVentasCliente_HappyPath_200(t *testing.T) {

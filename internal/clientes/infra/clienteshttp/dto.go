@@ -143,6 +143,14 @@ type ResumenDTO struct {
 type SeriesDTO struct {
 	AbonosPorMes      []PuntoMensualDTO         `json:"abonos_por_mes"        doc:"Abonos mensuales (serie trailing)"`
 	CompradoVsAbonado []PuntoCompradoAbonadoDTO `json:"comprado_vs_abonado"  doc:"Comprado vs abonado por mes (dual serie)"`
+	Tendencia         TendenciaDTO              `json:"tendencia"            doc:"Tendencia de la serie de abonos/mes"`
+}
+
+// TendenciaDTO is the wire representation of the linear trend of the abonos/mes series.
+type TendenciaDTO struct {
+	Slope     float64 `json:"slope"     doc:"pendiente de la regresión lineal de abonos/mes"`
+	Direccion string  `json:"direccion" doc:"mejorando | estable | empeorando"`
+	Cambio    bool    `json:"cambio"    doc:"true si el último mes difiere notablemente de la media previa"`
 }
 
 // PuntoMensualDTO is a single (year, month, amount) data point.
