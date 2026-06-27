@@ -50,7 +50,8 @@ func MountRouter(r chi.Router, svc *analyticsapp.Service) huma.API {
 }
 
 // registerOperations declares every Huma operation the analytics module
-// exposes: winback list, attribution query, and candidatos refresh.
+// exposes: winback list, attribution query, candidatos refresh, and all six
+// cartera dashboard endpoints.
 func registerOperations(api huma.API, h *Handlers) {
 	security := []map[string][]string{{securitySchemeName: {}}}
 	tags := []string{"analytics"}
@@ -87,4 +88,75 @@ func registerOperations(api huma.API, h *Handlers) {
 		Security:      security,
 		DefaultStatus: http.StatusAccepted,
 	}, h.RefrescarCandidatos)
+
+	registerCarteraOperations(api, h, security, tags)
+}
+
+// registerCarteraOperations registers the six cartera dashboard endpoints.
+func registerCarteraOperations(api huma.API, h *Handlers, security []map[string][]string, tags []string) {
+	huma.Register(api, huma.Operation{
+		OperationID:   "cartera-salud",
+		Method:        http.MethodGet,
+		Path:          "/cartera/salud",
+		Summary:       "Salud de la cartera",
+		Description:   "KPIs ejecutivos de la cartera de crédito: PAR, CEI, saldo moroso, cuentas en mora y margen real proxy.",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+	}, h.SaludCartera)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "cartera-aging",
+		Method:        http.MethodGet,
+		Path:          "/cartera/aging",
+		Summary:       "Distribución de aging",
+		Description:   "Distribución del saldo por cubeta de antigüedad de la deuda: 0-30, 31-60, 61-90, 90+ días.",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+	}, h.AgingCartera)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "cartera-cosechas",
+		Method:        http.MethodGet,
+		Path:          "/cartera/cosechas",
+		Summary:       "Cosechas de crédito",
+		Description:   "Saldo vigente agrupado por cohorte de originación (vintage). Identifica qué generación de créditos concentra mayor riesgo.",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+	}, h.CosechasCartera)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "cartera-cobradores",
+		Method:        http.MethodGet,
+		Path:          "/cartera/cobradores",
+		Summary:       "Ranking de cobradores",
+		Description:   "Métricas de desempeño por cobrador: CEI, PAR, porcentaje al corriente, saldo total y saldo moroso.",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+	}, h.CobradorRanking)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "cartera-cuentas-riesgo",
+		Method:        http.MethodGet,
+		Path:          "/cartera/cuentas-riesgo",
+		Summary:       "Cuentas en riesgo",
+		Description:   "Listado accionable de clientes con saldo vigente, clasificados por tier de riesgo (CRITICO, EN_RIESGO, VIGILANCIA, AL_DIA) y segmento RFM.",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+	}, h.CuentasRiesgo)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "cartera-roll-rate",
+		Method:        http.MethodGet,
+		Path:          "/cartera/roll-rate",
+		Summary:       "Roll-rate de la cartera",
+		Description:   "Escalar de migración neta de la deuda entre los dos cortes de snapshot más recientes. Disponible=false indica que el sistema está acumulando datos iniciales.",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+	}, h.RollRate)
 }

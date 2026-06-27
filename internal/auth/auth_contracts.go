@@ -116,6 +116,8 @@ const (
 	PermAnalyticsWinbackRead = domain.PermAnalyticsWinbackRead
 	// PermAnalyticsRefresh — see domain.PermAnalyticsRefresh.
 	PermAnalyticsRefresh = domain.PermAnalyticsRefresh
+	// PermAnalyticsCarteraRead — see domain.PermAnalyticsCarteraRead.
+	PermAnalyticsCarteraRead = domain.PermAnalyticsCarteraRead
 
 	// PermClientesLeer — see domain.PermClientesLeer.
 	PermClientesLeer = domain.PermClientesLeer

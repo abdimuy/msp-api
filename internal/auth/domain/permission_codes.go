@@ -99,6 +99,10 @@ const (
 	// PermAnalyticsRefresh grants triggering a manual refresh of the analytics
 	// materialized tables (winback candidates, refresh state).
 	PermAnalyticsRefresh Permission = "analytics:refrescar"
+	// PermAnalyticsCarteraRead grants reading the cartera health dashboard:
+	// aging distribution, vintage cosechas, cobrador ranking, at-risk accounts,
+	// and the roll-rate indicator.
+	PermAnalyticsCarteraRead Permission = "analytics:cartera_ver"
 
 	// PermClientesLeer grants read access to the clientes hub: directory, ficha,
 	// ventas list, and venta detail.
@@ -178,6 +182,7 @@ func AllPermissions() []PermissionMeta {
 
 		{PermAnalyticsWinbackRead, "ver la lista de candidatos winback y vistas de analytics", categoriaAnalytics},
 		{PermAnalyticsRefresh, "disparar un refresh manual de las tablas materializadas de analytics", categoriaAnalytics},
+		{PermAnalyticsCarteraRead, "ver el dashboard de salud de cartera y cobranza", categoriaAnalytics},
 
 		{PermClientesLeer, "ver el directorio, ficha, ventas y detalle de clientes", categoriaClientes},
 		{PermClientesReindexar, "reconstruir el índice de búsqueda de clientes", categoriaClientes},

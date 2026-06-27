@@ -6,6 +6,7 @@
 package analyticshttp
 
 import (
+	"github.com/abdimuy/msp-api/internal/analytics"
 	analyticsapp "github.com/abdimuy/msp-api/internal/analytics/app"
 )
 
@@ -46,4 +47,86 @@ func fillAttributionOutput(out *AttributionOutput, a analyticsapp.AtribucionResu
 	out.Body.TasaTreatment = a.TasaTreatment.StringFixed(rateScale)
 	out.Body.TasaControl = a.TasaControl.StringFixed(rateScale)
 	out.Body.Uplift = a.Uplift.StringFixed(rateScale)
+}
+
+// ─── Cartera mappers ──────────────────────────────────────────────────────────
+
+// toSaludCarteraDTO maps a SaludCarteraContract to its wire DTO.
+// Money fields use moneyScale (2 dp); ratio fields use rateScale (4 dp).
+func toSaludCarteraDTO(c analytics.SaludCarteraContract) SaludCarteraDTO {
+	return SaludCarteraDTO{
+		SaldoTotal:       c.SaldoTotal.StringFixed(moneyScale),
+		SaldoMoroso:      c.SaldoMoroso.StringFixed(moneyScale),
+		PAR:              c.PAR.StringFixed(rateScale),
+		CEIRate:          c.CEIRate.StringFixed(rateScale),
+		ImporteColectado: c.ImporteColectado.StringFixed(moneyScale),
+		CuentasTotal:     c.CuentasTotal,
+		CuentasEnMora:    c.CuentasEnMora,
+		MargenRealProxy:  c.MargenRealProxy.StringFixed(moneyScale),
+	}
+}
+
+// toAgingBucketDTO maps an AgingBucketContract to its wire DTO.
+func toAgingBucketDTO(c analytics.AgingBucketContract) AgingBucketDTO {
+	return AgingBucketDTO{
+		Bucket:   c.Bucket,
+		Saldo:    c.Saldo.StringFixed(moneyScale),
+		Conteo:   c.Conteo,
+		PctSaldo: c.PctSaldo.StringFixed(rateScale),
+	}
+}
+
+// toCosechaDTO maps a CosechaContract to its wire DTO.
+func toCosechaDTO(c analytics.CosechaContract) CosechaDTO {
+	return CosechaDTO{
+		CohortMonth: c.CohortMonth,
+		AgeMonths:   c.AgeMonths,
+		Saldo:       c.Saldo.StringFixed(moneyScale),
+		Conteo:      c.Conteo,
+	}
+}
+
+// toCobradorPerformanceDTO maps a CobradorPerformanceContract to its wire DTO.
+func toCobradorPerformanceDTO(c analytics.CobradorPerformanceContract) CobradorPerformanceDTO {
+	return CobradorPerformanceDTO{
+		CobradorID:       c.CobradorID,
+		ZonaClienteID:    c.ZonaClienteID,
+		CEI:              c.CEI.StringFixed(rateScale),
+		PAR:              c.PAR.StringFixed(rateScale),
+		PctCorriente:     c.PctCorriente.StringFixed(rateScale),
+		SaldoTotal:       c.SaldoTotal.StringFixed(moneyScale),
+		SaldoMoroso:      c.SaldoMoroso.StringFixed(moneyScale),
+		CuentasTotal:     c.CuentasTotal,
+		ImporteColectado: c.ImporteColectado.StringFixed(moneyScale),
+	}
+}
+
+// toCuentaRiesgoDTO maps a CuentaRiesgoContract to its wire DTO.
+// Date fields use formatTime (RFC3339Nano UTC; empty string for zero times).
+func toCuentaRiesgoDTO(c analytics.CuentaRiesgoContract) CuentaRiesgoDTO {
+	return CuentaRiesgoDTO{
+		ClienteID:       c.ClienteID,
+		Nombre:          c.Nombre,
+		Zona:            c.Zona,
+		TierRiesgo:      c.TierRiesgo,
+		Segmento:        c.Segmento,
+		EstadoPago:      c.EstadoPago,
+		Saldo:           c.Saldo.StringFixed(moneyScale),
+		DiasAtrasoProm:  c.DiasAtrasoProm,
+		PctPagosATiempo: c.PctPagosATiempo.StringFixed(moneyScale),
+		CadenciaDias:    c.CadenciaDias,
+		FechaUltimoPago: formatTime(c.FechaUltimoPago),
+		FechaProxPago:   formatTime(c.FechaProxPago),
+	}
+}
+
+// toRollRateDTO maps a RollRateContract to its wire DTO.
+// Date fields use formatTime (RFC3339Nano UTC; empty string when Disponible=false).
+func toRollRateDTO(c analytics.RollRateContract) RollRateDTO {
+	return RollRateDTO{
+		Disponible:         c.Disponible,
+		RollRate:           c.RollRate,
+		FechaCorteAnterior: formatTime(c.FechaCorteAnterior),
+		FechaCorteReciente: formatTime(c.FechaCorteReciente),
+	}
 }
