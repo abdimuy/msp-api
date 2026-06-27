@@ -441,15 +441,16 @@ func TestCosechasCartera_HappyPath_200(t *testing.T) {
 // ─── Cobradores happy path ────────────────────────────────────────────────────
 
 // TestCobradorRanking_HappyPath_200 asserts cobrador performance items are
-// returned with money as 2-dp strings and rate fields as 4-dp strings.
+// returned with money as 2-dp strings, rate fields as 4-dp strings, and
+// cobrador_nombre populated from the contract.
 func TestCobradorRanking_HappyPath_200(t *testing.T) {
 	t.Parallel()
 
 	cobID := 42
 	repo := &fakeCarteraRepo{
 		agingCobr: []outbound.AgingRow{
-			{ZonaClienteID: 1, CobradorID: &cobID, Bucket: domain.BucketAgingDias0_30, Saldo: decimal.NewFromInt(30000), Conteo: 5},
-			{ZonaClienteID: 1, CobradorID: &cobID, Bucket: domain.BucketAgingDias31_60, Saldo: decimal.NewFromInt(5000), Conteo: 1},
+			{ZonaClienteID: 1, CobradorID: &cobID, CobradorNombre: "Maria Gonzalez", Bucket: domain.BucketAgingDias0_30, Saldo: decimal.NewFromInt(30000), Conteo: 5},
+			{ZonaClienteID: 1, CobradorID: &cobID, CobradorNombre: "Maria Gonzalez", Bucket: domain.BucketAgingDias31_60, Saldo: decimal.NewFromInt(5000), Conteo: 1},
 		},
 		ceiRows: []outbound.CEIRow{
 			{ZonaClienteID: 1, CobradorID: &cobID, Importe: decimal.NewFromInt(3000)},
@@ -465,6 +466,7 @@ func TestCobradorRanking_HappyPath_200(t *testing.T) {
 	var resp struct {
 		Items []struct {
 			CobradorID       int    `json:"cobrador_id"`
+			CobradorNombre   string `json:"cobrador_nombre"`
 			ZonaClienteID    int    `json:"zona_cliente_id"`
 			CEI              string `json:"cei"`
 			PAR              string `json:"par"`
@@ -476,6 +478,7 @@ func TestCobradorRanking_HappyPath_200(t *testing.T) {
 	require.Len(t, resp.Items, 1)
 	item := resp.Items[0]
 	assert.Equal(t, 42, item.CobradorID)
+	assert.Equal(t, "Maria Gonzalez", item.CobradorNombre, "cobrador_nombre must be serialized in response")
 	assert.Equal(t, 1, item.ZonaClienteID)
 	assert.Equal(t, "35000.00", item.SaldoTotal, "saldo_total must be 2-dp string")
 	assert.Equal(t, "3000.00", item.ImporteColectado)

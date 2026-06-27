@@ -528,7 +528,8 @@ func TestObtenerCosechas_RepoError(t *testing.T) {
 
 // ─── ObtenerRankingCobradores ─────────────────────────────────────────────────
 
-// TestObtenerRankingCobradores_PerCobrador verifies per-cobrador metrics.
+// TestObtenerRankingCobradores_PerCobrador verifies per-cobrador metrics
+// including that CobradorNombre is threaded through from the AgingRow.
 //
 // Cobrador 10: portfolio saldo=1000, moroso=0 (all 0-30), CEI=200/1000=0.20
 // Cobrador 20: portfolio saldo=500, moroso=500 (all 90+), CEI=50/500=0.10.
@@ -537,8 +538,8 @@ func TestObtenerRankingCobradores_PerCobrador(t *testing.T) {
 
 	cartera := &fakeCarteraRepo{
 		agingByCobrador: []outbound.AgingRow{
-			{ZonaClienteID: 1, CobradorID: intPtr(10), Bucket: "0-30", Saldo: decimal.NewFromInt(1000), Conteo: 10},
-			{ZonaClienteID: 1, CobradorID: intPtr(20), Bucket: "90+", Saldo: decimal.NewFromInt(500), Conteo: 5},
+			{ZonaClienteID: 1, CobradorID: intPtr(10), CobradorNombre: "Juan Lopez", Bucket: "0-30", Saldo: decimal.NewFromInt(1000), Conteo: 10},
+			{ZonaClienteID: 1, CobradorID: intPtr(20), CobradorNombre: "Pedro Ruiz", Bucket: "90+", Saldo: decimal.NewFromInt(500), Conteo: 5},
 		},
 		ceiRows: []outbound.CEIRow{
 			{ZonaClienteID: 1, CobradorID: intPtr(10), Importe: decimal.NewFromInt(200)},
@@ -553,10 +554,12 @@ func TestObtenerRankingCobradores_PerCobrador(t *testing.T) {
 
 	// Sorted by CEI DESC: cobrador 10 first (CEI=0.20), cobrador 20 second (CEI=0.10).
 	assert.Equal(t, 10, ranking[0].CobradorID)
+	assert.Equal(t, "Juan Lopez", ranking[0].CobradorNombre, "nombre must thread through from AgingRow")
 	assert.True(t, ranking[0].PAR.Equal(decimal.Zero), "cob10 PAR should be 0 (no moroso)")
 	assert.True(t, ranking[0].SaldoTotal.Equal(decimal.NewFromInt(1000)))
 
 	assert.Equal(t, 20, ranking[1].CobradorID)
+	assert.Equal(t, "Pedro Ruiz", ranking[1].CobradorNombre, "nombre must thread through from AgingRow")
 	// PAR for cobrador 20 = 500/500 = 1.0
 	assert.True(t, ranking[1].PAR.Equal(decimal.NewFromInt(1)), "cob20 PAR should be 1.0")
 }

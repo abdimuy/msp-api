@@ -81,13 +81,17 @@ const agingInnerSelectCobrador = `
     AND sv.SALDO > 0
     AND sv.ZONA_CLIENTE_ID IS NOT NULL`
 
+// agingSaldosByCobradorQuery joins COBRADORES to resolve the collector name.
+// The JOIN is on the outer aggregation so COBRADOR_NOMBRE is in GROUP BY once;
+// NULL when no cobrador is assigned.
 const agingSaldosByCobradorQuery = `
-SELECT d.ZONA_CLIENTE_ID, d.COBRADOR_ID, d.BUCKET,
+SELECT d.ZONA_CLIENTE_ID, d.COBRADOR_ID, co.NOMBRE AS COBRADOR_NOMBRE, d.BUCKET,
   CAST(SUM(d.SALDO) AS NUMERIC(18,2)) AS SALDO,
   COUNT(*) AS CONTEO
 FROM (` + agingInnerSelectCobrador + `
 ) d
-GROUP BY d.ZONA_CLIENTE_ID, d.COBRADOR_ID, d.BUCKET`
+LEFT JOIN COBRADORES co ON co.COBRADOR_ID = d.COBRADOR_ID
+GROUP BY d.ZONA_CLIENTE_ID, d.COBRADOR_ID, co.NOMBRE, d.BUCKET`
 
 // ─── SQL — vintage cohort ─────────────────────────────────────────────────────
 //
@@ -189,15 +193,16 @@ func scanAgingRows(rows *sql.Rows, withCobrador bool) ([]outbound.AgingRow, erro
 
 func scanOneAgingRow(s rowScanner, withCobrador bool) (outbound.AgingRow, error) {
 	var (
-		zonaID   int
-		cobrador sql.NullInt64
-		bucket   string
-		saldoRaw any
-		conteo   int
+		zonaID         int
+		cobrador       sql.NullInt64
+		cobradorNombre sql.NullString // COBRADORES.NOMBRE; plain UTF-8 scan per project encoding rule
+		bucket         string
+		saldoRaw       any
+		conteo         int
 	)
 	var err error
 	if withCobrador {
-		err = s.Scan(&zonaID, &cobrador, &bucket, &saldoRaw, &conteo)
+		err = s.Scan(&zonaID, &cobrador, &cobradorNombre, &bucket, &saldoRaw, &conteo)
 	} else {
 		err = s.Scan(&zonaID, &bucket, &saldoRaw, &conteo)
 	}
@@ -217,6 +222,7 @@ func scanOneAgingRow(s rowScanner, withCobrador bool) (outbound.AgingRow, error)
 	if withCobrador && cobrador.Valid {
 		id := int(cobrador.Int64)
 		row.CobradorID = &id
+		row.CobradorNombre = cobradorNombre.String
 	}
 	return row, nil
 }

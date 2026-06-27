@@ -90,6 +90,7 @@ func toCosechaDTO(c analytics.CosechaContract) CosechaDTO {
 func toCobradorPerformanceDTO(c analytics.CobradorPerformanceContract) CobradorPerformanceDTO {
 	return CobradorPerformanceDTO{
 		CobradorID:       c.CobradorID,
+		CobradorNombre:   c.CobradorNombre,
 		ZonaClienteID:    c.ZonaClienteID,
 		CEI:              c.CEI.StringFixed(rateScale),
 		PAR:              c.PAR.StringFixed(rateScale),

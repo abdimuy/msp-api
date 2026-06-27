@@ -184,6 +184,7 @@ type CosechaContract struct {
 // one collector (cobrador). NOT a competitive leaderboard — just performance rows.
 type CobradorPerformanceContract struct {
 	CobradorID       int             // 0 = accounts with no cobrador assigned
+	CobradorNombre   string          // display name from COBRADORES.NOMBRE; "" when CobradorID == 0
 	ZonaClienteID    int             // zone of this cobrador's portfolio
 	CEI              decimal.Decimal // Collection Effectiveness Index [0,1]
 	PAR              decimal.Decimal // Portfolio-at-Risk for their cartera [0,1]

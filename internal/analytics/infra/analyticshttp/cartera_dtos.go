@@ -39,6 +39,7 @@ type CosechaDTO struct {
 // CobradorPerformanceDTO is the wire representation of one cobrador's portfolio performance.
 type CobradorPerformanceDTO struct {
 	CobradorID       int    `json:"cobrador_id"       doc:"Cobrador numeric ID; 0 = accounts with no cobrador assigned"`
+	CobradorNombre   string `json:"cobrador_nombre"   doc:"Cobrador display name from COBRADORES.NOMBRE; empty when cobrador_id is 0"`
 	ZonaClienteID    int    `json:"zona_cliente_id"   doc:"Zone of this cobrador's portfolio"`
 	CEI              string `json:"cei"               doc:"Collection Effectiveness Index [0,1] (4 dp)"`
 	PAR              string `json:"par"               doc:"Portfolio-at-Risk for this cobrador's cartera [0,1] (4 dp)"`

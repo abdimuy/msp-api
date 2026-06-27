@@ -50,7 +50,8 @@ func insertSaldoRow(
 		fupArg = firebird.ToWallClock(fechaUltPago)
 	}
 
-	_, err := q.ExecContext(ctx, `
+	_, err := q.ExecContext(
+		ctx, `
 INSERT INTO MSP_SALDOS_VENTAS
   (DOCTO_CC_ID, DOCTO_PV_ID, CLIENTE_ID, ZONA_CLIENTE_ID, FOLIO,
    FECHA_CARGO, PRECIO_TOTAL, TOTAL_IMPORTE, IMPTE_REST, NUM_PAGOS,
@@ -86,7 +87,8 @@ func insertPagoRow(
 ) {
 	t.Helper()
 	q := firebird.GetQuerier(ctx, pool.DB)
-	_, err := q.ExecContext(ctx, `
+	_, err := q.ExecContext(
+		ctx, `
 INSERT INTO MSP_PAGOS_VENTAS
   (IMPTE_DOCTO_CC_ID, DOCTO_CC_ID, DOCTO_CC_ACR_ID, CLIENTE_ID, ZONA_CLIENTE_ID,
    FOLIO, CONCEPTO_CC_ID, FECHA, IMPORTE, IMPUESTO, LAT, LON,
@@ -217,14 +219,16 @@ func TestCarteraRepo_AgingSaldosByZona_MorosoThreshold(t *testing.T) {
 // ─── AgingSaldosByCobrador ────────────────────────────────────────────────────
 
 // TestCarteraRepo_AgingSaldosByCobrador verifies that the CLIENTES JOIN in
-// AgingSaldosByCobrador correctly populates CobradorID.
+// AgingSaldosByCobrador correctly populates CobradorID and that the COBRADORES
+// JOIN populates CobradorNombre with a non-empty display name.
 //
 // Strategy: inside the rollback-only tx, discover a real stable CLIENTES row
 // with a non-null COBRADOR_ID, then insert a fixture MSP_SALDOS_VENTAS row
 // referencing that real CLIENTE_ID under a synthetic zona. AgingSaldosByCobrador
 // must return a row for that synthetic zona whose CobradorID matches the
-// discovered cobrador. A JOIN on the wrong key would leave CobradorID nil and
-// the assertion would fail — making any JOIN regression observable.
+// discovered cobrador AND whose CobradorNombre is non-empty. A JOIN on the
+// wrong key would leave CobradorID nil and the assertion would fail — making
+// any JOIN regression observable.
 //
 //nolint:paralleltest // serial: shares rollback-only tx.
 func TestCarteraRepo_AgingSaldosByCobrador(t *testing.T) {
@@ -237,11 +241,22 @@ func TestCarteraRepo_AgingSaldosByCobrador(t *testing.T) {
 
 		// Step 1: discover a real CLIENTES row with a non-null COBRADOR_ID.
 		var realClienteID, realCobradorID int
-		err := q.QueryRowContext(ctx,
+		err := q.QueryRowContext(
+			ctx,
 			`SELECT FIRST 1 CLIENTE_ID, COBRADOR_ID FROM CLIENTES WHERE COBRADOR_ID IS NOT NULL`,
 		).Scan(&realClienteID, &realCobradorID)
 		if err != nil {
 			t.Skipf("no CLIENTES row with non-null COBRADOR_ID found: %v", err)
+		}
+
+		// Step 1b: resolve the cobrador NOMBRE so we can assert the JOIN returns it.
+		var realCobradorNombre string
+		err = q.QueryRowContext(
+			ctx,
+			`SELECT NOMBRE FROM COBRADORES WHERE COBRADOR_ID = ?`, realCobradorID,
+		).Scan(&realCobradorNombre)
+		if err != nil {
+			t.Skipf("COBRADORES row not found for COBRADOR_ID=%d: %v", realCobradorID, err)
 		}
 
 		// Step 2: insert a fixture saldo row referencing the real CLIENTE_ID,
@@ -257,16 +272,18 @@ func TestCarteraRepo_AgingSaldosByCobrador(t *testing.T) {
 		require.NoError(t, err)
 
 		var (
-			found       bool
-			foundCobID  *int
-			foundSaldo  decimal.Decimal
-			foundBucket string
-			foundConteo int
+			found          bool
+			foundCobID     *int
+			foundCobNombre string
+			foundSaldo     decimal.Decimal
+			foundBucket    string
+			foundConteo    int
 		)
 		for _, r := range agingRows {
 			if r.ZonaClienteID == zonaCob {
 				found = true
 				foundCobID = r.CobradorID
+				foundCobNombre = r.CobradorNombre
 				foundSaldo = r.Saldo
 				foundBucket = r.Bucket
 				foundConteo = r.Conteo
@@ -279,14 +296,21 @@ func TestCarteraRepo_AgingSaldosByCobrador(t *testing.T) {
 				"(realClienteID=%d); got %d total rows",
 			zonaCob, realClienteID, len(agingRows))
 
-		// Step 4: assert the JOIN carried the cobrador through correctly.
+		// Step 4: assert the CLIENTES JOIN carried the cobrador through correctly.
 		require.NotNil(t, foundCobID,
 			"CobradorID must be non-nil: the CLIENTES JOIN on CLIENTE_ID must "+
 				"populate it for realClienteID=%d", realClienteID)
 		assert.Equal(t, realCobradorID, *foundCobID,
 			"CobradorID must equal the one discovered from CLIENTES")
 
-		// Step 5: assert the fixture saldo and bucket are correct.
+		// Step 5: assert the COBRADORES JOIN returned a non-empty nombre.
+		assert.NotEmpty(t, foundCobNombre,
+			"CobradorNombre must be non-empty: the COBRADORES JOIN must populate NOMBRE "+
+				"for cobrador_id=%d", realCobradorID)
+		assert.Equal(t, realCobradorNombre, foundCobNombre,
+			"CobradorNombre must match COBRADORES.NOMBRE for cobrador_id=%d", realCobradorID)
+
+		// Step 6: assert the fixture saldo and bucket are correct.
 		assert.Equal(t, "0-30", foundBucket,
 			"FECHA_ULT_PAGO 10 days ago must land in bucket '0-30'")
 		assert.True(t, decimal.NewFromFloat(770.00).Equal(foundSaldo),
@@ -294,8 +318,8 @@ func TestCarteraRepo_AgingSaldosByCobrador(t *testing.T) {
 		assert.Equal(t, 1, foundConteo, "conteo must be 1 for the single fixture row")
 
 		t.Logf("AgingSaldosByCobrador JOIN ok: realClienteID=%d realCobradorID=%d "+
-			"zona=%d saldo=%s bucket=%s",
-			realClienteID, realCobradorID, zonaCob, foundSaldo, foundBucket)
+			"cobradorNombre=%q zona=%d saldo=%s bucket=%s",
+			realClienteID, realCobradorID, foundCobNombre, zonaCob, foundSaldo, foundBucket)
 	})
 }
 
@@ -377,7 +401,8 @@ func TestCarteraRepo_ColeccionCEI(t *testing.T) {
 		fechaPago, _ := time.Parse(time.RFC3339, pagoFecha)
 
 		// Insert one pago: concepto 87327 (cobranza en ruta), CANCELADO='N', APLICADO='S'.
-		insertPagoRow(t, ctx, pool,
+		insertPagoRow(
+			t, ctx, pool,
 			-99830, -99830, -99830, // impteID, doctoID, acrID
 			clienteC, zonaC,
 			87327, // conceptoCobranzaRuta

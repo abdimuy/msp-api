@@ -432,6 +432,7 @@ type cobrKey struct {
 
 // cobrAgg accumulates balance, counts, and collected amounts for one cobrador.
 type cobrAgg struct {
+	nombre           string // first non-empty COBRADORES.NOMBRE seen for this cobrador
 	saldoTotal       decimal.Decimal
 	saldoMoroso      decimal.Decimal
 	saldoCorriente   decimal.Decimal // 0-30 saldo
@@ -487,6 +488,7 @@ func buildCobradorPerformanceContracts(byKey map[cobrKey]*cobrAgg) []analytics.C
 
 		result = append(result, analytics.CobradorPerformanceContract{
 			CobradorID:       k.cobID,
+			CobradorNombre:   agg.nombre,
 			ZonaClienteID:    k.zonaID,
 			CEI:              cei,
 			PAR:              par,
@@ -558,8 +560,12 @@ func (s *Service) ObtenerRankingCobradores(ctx context.Context, p CarteraParams)
 		k := cobrKey{cobID: cobID, zonaID: r.ZonaClienteID}
 		agg, ok := byKey[k]
 		if !ok {
-			byKey[k] = &cobrAgg{}
+			byKey[k] = &cobrAgg{nombre: r.CobradorNombre}
 			agg = byKey[k]
+		}
+		// Prefer the first non-empty nombre if subsequent rows carry one.
+		if agg.nombre == "" && r.CobradorNombre != "" {
+			agg.nombre = r.CobradorNombre
 		}
 		agg.saldoTotal = agg.saldoTotal.Add(r.Saldo)
 		agg.cuentasTotal += r.Conteo

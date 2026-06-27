@@ -121,11 +121,12 @@ type WinbackRepo interface {
 
 // AgingRow is one row from the per-zone or per-cobrador aging aggregation.
 type AgingRow struct {
-	ZonaClienteID int
-	CobradorID    *int            // nil for zone-level aggregates or clients with no cobrador
-	Bucket        string          // one of the domain.BucketAgingDias* constants
-	Saldo         decimal.Decimal // sum of SALDO in this bucket (NUMERIC 18,2)
-	Conteo        int             // count of active cargo rows in this bucket
+	ZonaClienteID  int
+	CobradorID     *int            // nil for zone-level aggregates or clients with no cobrador
+	CobradorNombre string          // display name from COBRADORES.NOMBRE; "" when CobradorID is nil
+	Bucket         string          // one of the domain.BucketAgingDias* constants
+	Saldo          decimal.Decimal // sum of SALDO in this bucket (NUMERIC 18,2)
+	Conteo         int             // count of active cargo rows in this bucket
 }
 
 // VintageRow is one row from the vintage cohort aggregation over MSP_SALDOS_VENTAS.
