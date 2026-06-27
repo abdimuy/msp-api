@@ -290,69 +290,69 @@ func TestRollRate(t *testing.T) {
 		{
 			name:       "empty prev returns 0",
 			prev:       map[domain.AgingBucket]decimal.Decimal{},
-			curr:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket0_30: d("100000")},
+			curr:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket0_30: d("100000")}, //nolint:exhaustive
 			wantApprox: 0,
 			tolerance:  1e-9,
 		},
 		{
 			name:       "empty curr returns 0",
-			prev:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket0_30: d("100000")},
+			prev:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket0_30: d("100000")}, //nolint:exhaustive
 			curr:       map[domain.AgingBucket]decimal.Decimal{},
 			wantApprox: 0,
 			tolerance:  1e-9,
 		},
 		{
 			name:       "identical distribution returns 0",
-			prev:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket0_30: d("100000"), domain.AgingBucket31_60: d("20000")},
-			curr:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket0_30: d("100000"), domain.AgingBucket31_60: d("20000")},
+			prev:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket0_30: d("100000"), domain.AgingBucket31_60: d("20000")}, //nolint:exhaustive
+			curr:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket0_30: d("100000"), domain.AgingBucket31_60: d("20000")}, //nolint:exhaustive
 			wantApprox: 0,
 			tolerance:  1e-9,
 		},
 		{
 			// All balance moves from bucket 0 to bucket 1: forward migration of 1/3.
 			name:       "all balance shifts one bucket forward",
-			prev:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket0_30: d("100000")},
-			curr:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket31_60: d("100000")},
+			prev:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket0_30: d("100000")},  //nolint:exhaustive
+			curr:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket31_60: d("100000")}, //nolint:exhaustive
 			wantApprox: 1.0 / 3.0,
 			tolerance:  1e-9,
 		},
 		{
 			// All balance moves from bucket 1 to bucket 2: also +1/3.
 			name:       "shift from bucket 1 to bucket 2",
-			prev:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket31_60: d("100000")},
-			curr:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket61_90: d("100000")},
+			prev:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket31_60: d("100000")}, //nolint:exhaustive
+			curr:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket61_90: d("100000")}, //nolint:exhaustive
 			wantApprox: 1.0 / 3.0,
 			tolerance:  1e-9,
 		},
 		{
 			// All balance moves from bucket 2 to bucket 3: +1/3.
 			name:       "shift from bucket 2 to bucket 3",
-			prev:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket61_90: d("100000")},
-			curr:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket90Plus: d("100000")},
+			prev:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket61_90: d("100000")},  //nolint:exhaustive
+			curr:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket90Plus: d("100000")}, //nolint:exhaustive
 			wantApprox: 1.0 / 3.0,
 			tolerance:  1e-9,
 		},
 		{
 			// All balance moves from bucket 0 to bucket 3: maximum deterioration = +1.
 			name:       "max deterioration: bucket 0 to bucket 3",
-			prev:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket0_30: d("100000")},
-			curr:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket90Plus: d("100000")},
+			prev:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket0_30: d("100000")},   //nolint:exhaustive
+			curr:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket90Plus: d("100000")}, //nolint:exhaustive
 			wantApprox: 1.0,
 			tolerance:  1e-9,
 		},
 		{
 			// All balance improves from bucket 3 to bucket 0: maximum improvement = -1.
 			name:       "max improvement: bucket 3 to bucket 0",
-			prev:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket90Plus: d("100000")},
-			curr:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket0_30: d("100000")},
+			prev:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket90Plus: d("100000")}, //nolint:exhaustive
+			curr:       map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket0_30: d("100000")},   //nolint:exhaustive
 			wantApprox: -1.0,
 			tolerance:  1e-9,
 		},
 		{
 			// Mixed: half stays in 0-30, half worsens to 31-60 → small positive rate.
 			name: "half worsens by one bucket",
-			prev: map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket0_30: d("200000")},
-			curr: map[domain.AgingBucket]decimal.Decimal{
+			prev: map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket0_30: d("200000")}, //nolint:exhaustive
+			curr: map[domain.AgingBucket]decimal.Decimal{ //nolint:exhaustive
 				domain.AgingBucket0_30:  d("100000"),
 				domain.AgingBucket31_60: d("100000"),
 			},
@@ -364,8 +364,8 @@ func TestRollRate(t *testing.T) {
 		{
 			// Negative saldo entries should be clamped to zero.
 			name: "negative saldo clamped to zero",
-			prev: map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket0_30: d("100000")},
-			curr: map[domain.AgingBucket]decimal.Decimal{
+			prev: map[domain.AgingBucket]decimal.Decimal{domain.AgingBucket0_30: d("100000")}, //nolint:exhaustive
+			curr: map[domain.AgingBucket]decimal.Decimal{ //nolint:exhaustive
 				domain.AgingBucket0_30:  d("100000"),
 				domain.AgingBucket31_60: d("-50000"), // poisoned entry → ignored
 			},
@@ -640,7 +640,7 @@ func TestProperty_RollRate_Monotonic(t *testing.T) {
 		domain.AgingBucket61_90,
 	}
 
-	nextBucket := map[domain.AgingBucket]domain.AgingBucket{
+	nextBucket := map[domain.AgingBucket]domain.AgingBucket{ //nolint:exhaustive // 90+ has no next bucket by definition
 		domain.AgingBucket0_30:  domain.AgingBucket31_60,
 		domain.AgingBucket31_60: domain.AgingBucket61_90,
 		domain.AgingBucket61_90: domain.AgingBucket90Plus,
@@ -657,11 +657,11 @@ func TestProperty_RollRate_Monotonic(t *testing.T) {
 
 		// Baseline: all balance stays in startBucket (roll-rate from startBucket
 		// to startBucket = 0 by definition when prev == curr).
-		baseline := map[domain.AgingBucket]decimal.Decimal{startBucket: saldo}
+		baseline := map[domain.AgingBucket]decimal.Decimal{startBucket: saldo} //nolint:exhaustive
 		baseRate := domain.RollRate(baseline, baseline)
 
 		// Shifted: all balance moves to the next (worse) bucket.
-		shifted := map[domain.AgingBucket]decimal.Decimal{endBucket: saldo}
+		shifted := map[domain.AgingBucket]decimal.Decimal{endBucket: saldo} //nolint:exhaustive
 		shiftedRate := domain.RollRate(baseline, shifted)
 
 		// Monotonic: shifting forward must strictly increase the roll-rate.

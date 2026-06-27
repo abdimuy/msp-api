@@ -52,10 +52,11 @@ func NewRepo(pool *firebird.Pool) *Repo {
 	return &Repo{pool: pool}
 }
 
-// Compile-time checks: Repo must satisfy both outbound interfaces.
+// Compile-time checks: Repo must satisfy all outbound interfaces.
 var (
 	_ outbound.WinbackRepo    = (*Repo)(nil)
 	_ outbound.MicrosipReader = (*Repo)(nil)
+	_ outbound.CarteraRepo    = (*Repo)(nil)
 )
 
 // ─── WinbackRepo — MSP_AN_WINBACK_CANDIDATOS ─────────────────────────────────

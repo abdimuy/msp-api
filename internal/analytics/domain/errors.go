@@ -137,7 +137,7 @@ var (
 		"los parámetros de clv embebidos no son válidos",
 	)
 
-	// ─── CarteraSnapshot errors ───────────────────────────────────────────────────
+	// CarteraSnapshot errors.
 
 	// ErrCarteraSnapshotFechaCorteInvalida is returned when fechaCorte is zero.
 	ErrCarteraSnapshotFechaCorteInvalida = apperror.NewValidation(

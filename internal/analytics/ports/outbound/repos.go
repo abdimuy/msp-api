@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/abdimuy/msp-api/internal/analytics/domain"
 )
 
@@ -113,4 +115,69 @@ type WinbackRepo interface {
 	// from the last refresh; computing it live keeps it consistent with the
 	// rest of the recency-aware features (e.g. DIAS_SIN_PAGAR).
 	ContarPagosRecientes(ctx context.Context, clienteIDs []int, desde, hasta time.Time) (map[int]int, error)
+}
+
+// ─── Cartera repo types ───────────────────────────────────────────────────────
+
+// AgingRow is one row from the per-zone or per-cobrador aging aggregation.
+type AgingRow struct {
+	ZonaClienteID int
+	CobradorID    *int            // nil for zone-level aggregates or clients with no cobrador
+	Bucket        string          // one of the domain.BucketAgingDias* constants
+	Saldo         decimal.Decimal // sum of SALDO in this bucket (NUMERIC 18,2)
+	Conteo        int             // count of active cargo rows in this bucket
+}
+
+// VintageRow is one row from the vintage cohort aggregation over MSP_SALDOS_VENTAS.
+type VintageRow struct {
+	ZonaClienteID int
+	CohortMonth   int             // year*12 + int(month), matches domain.VintageCohort
+	Saldo         decimal.Decimal // sum of SALDO for this cohort (NUMERIC 18,2)
+	Conteo        int             // count of active cargo rows in this cohort
+}
+
+// CEIRow is one row from the collection-effectiveness (CEI) aggregation.
+type CEIRow struct {
+	ZonaClienteID int
+	CobradorID    *int            // nil when client has no cobrador assigned
+	Importe       decimal.Decimal // sum of IMPORTE collected in the period (NUMERIC 18,2)
+	Conteo        int             // count of distinct clientes who paid
+}
+
+// CarteraRepo provides aggregated cartera queries over the MSP_SALDOS_VENTAS
+// and MSP_PAGOS_VENTAS read-model caches, plus read/write access to
+// MSP_AN_CARTERA_SNAPSHOT for point-in-time roll-rate and trend analytics.
+//
+//nolint:interfacebloat // six methods map to distinct operations; splitting would obscure cohesion.
+type CarteraRepo interface {
+	// AgingSaldosByZona returns per-zone aging distribution: saldo + conteo per
+	// (ZONA_CLIENTE_ID, aging bucket) from active MSP_SALDOS_VENTAS rows
+	// (CARGO_CANCELADO='N', SALDO>0). Bucket boundaries match domain.BucketForDays.
+	// CobradorID is always nil in the returned rows.
+	AgingSaldosByZona(ctx context.Context, today time.Time) ([]AgingRow, error)
+
+	// AgingSaldosByCobrador returns per-cobrador aging distribution: saldo +
+	// conteo per (ZONA_CLIENTE_ID, COBRADOR_ID, aging bucket). JOINs CLIENTES
+	// to resolve COBRADOR_ID; rows with no cobrador have CobradorID==nil.
+	AgingSaldosByCobrador(ctx context.Context, today time.Time) ([]AgingRow, error)
+
+	// VintageSaldos returns saldo aggregated by vintage cohort month
+	// (FECHA_CARGO year×12+month ordinal, per domain.VintageCohort) and zone,
+	// from active MSP_SALDOS_VENTAS rows only.
+	VintageSaldos(ctx context.Context) ([]VintageRow, error)
+
+	// ColeccionCEI returns collection effectiveness per (ZONA_CLIENTE_ID,
+	// COBRADOR_ID) from MSP_PAGOS_VENTAS for abono concepts 87327/155/11,
+	// CANCELADO='N', APLICADO='S', FECHA in [desde, hasta).
+	ColeccionCEI(ctx context.Context, desde, hasta time.Time) ([]CEIRow, error)
+
+	// SaveCarteraSnapshot upserts a batch of snapshot rows into
+	// MSP_AN_CARTERA_SNAPSHOT using EXECUTE BLOCK. Zone-level rows
+	// (CobradorID==nil) are matched with WHERE COBRADOR_ID IS NULL explicitly
+	// because Firebird UNIQUE constraints do not enforce uniqueness for NULLs.
+	SaveCarteraSnapshot(ctx context.Context, rows []domain.CarteraSnapshot) error
+
+	// ListRecentSnapshots returns the most recent `limit` snapshot rows ordered
+	// FECHA_CORTE DESC, ZONA_CLIENTE_ID ASC, BUCKET ASC. Limit <=0 returns all.
+	ListRecentSnapshots(ctx context.Context, limit int) ([]domain.CarteraSnapshot, error)
 }
