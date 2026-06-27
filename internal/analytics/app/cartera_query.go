@@ -39,14 +39,19 @@ import (
 // Usage: MargenBruto = MargenVerificado × Ventas (period cash collected).
 const MargenVerificado = 0.528
 
-// lgdCartera is the Loss Given Default assumed for the portfolio (v1 constant).
+// Package-level decimals built from strings to avoid float64 representation
+// noise (shopspring/decimal is exact; constructing from floats can lose the
+// last ULP).
 //
-// v1 formula: PerdidaEsperada = PAR × SaldoTotal × lgdCartera.
-//
-// Assumption: 70% of delinquent balance is unrecoverable in the short term.
-// This is a documented R1 proxy. Replace with empirical write-off rate once
-// historical charge-off data is available from the Microsip books.
-const lgdCartera = 0.70
+// lgdCarteraDecimal: Loss Given Default assumed for the portfolio (v1 constant,
+// 70%). Proxy: 70% of delinquent balance is unrecoverable short-term.
+// v1 formula: PerdidaEsperada = PAR × SaldoTotal × lgdCarteraDecimal.
+// Replace with empirical write-off rate once historical charge-off data is
+// available from the Microsip books.
+var (
+	margenVerificadoDecimal = decimal.RequireFromString("0.528")
+	lgdCarteraDecimal       = decimal.RequireFromString("0.70")
+)
 
 // defaultCEIPeriodDays is the fallback CEI window (calendar days) when the
 // caller does not supply Desde/Hasta in CarteraParams. 30 days maps to one
@@ -214,11 +219,8 @@ func sumCEIImporte(rows []outbound.CEIRow) decimal.Decimal {
 // PerdidaEsperada = PAR × saldoTotal × lgdCartera
 // MargenReal      = MargenBruto − PerdidaEsperada (floored at 0).
 func computeMargenRealDecimal(ventas, par, saldoTotal decimal.Decimal) (decimal.Decimal, decimal.Decimal, decimal.Decimal) {
-	mv := decimal.NewFromFloat(MargenVerificado)
-	lgd := decimal.NewFromFloat(lgdCartera)
-
-	margenBruto := mv.Mul(ventas)
-	perdida := par.Mul(saldoTotal).Mul(lgd)
+	margenBruto := margenVerificadoDecimal.Mul(ventas)
+	perdida := par.Mul(saldoTotal).Mul(lgdCarteraDecimal)
 	margenReal := margenBruto.Sub(perdida)
 	if margenReal.IsNegative() {
 		margenReal = decimal.Zero
@@ -439,7 +441,9 @@ type cobrAgg struct {
 }
 
 // mergeCEIImporte distributes CEI row importes into the byKey aggregation map.
-// A row whose cobID is found in byKey (under any zona) increments that entry.
+// A row is matched on (cobID, zonaID) — both must agree so that a cobrador who
+// manages clients in two zones only accumulates importe for the zone the CEI row
+// belongs to (matching on cobID alone would inflate the other zone's entry).
 // A row for a cobrador not present in byKey is inserted as a new entry using the
 // CEI row's zona (fully-paid collector scenario).
 func mergeCEIImporte(byKey map[cobrKey]*cobrAgg, rows []outbound.CEIRow) {
@@ -450,7 +454,7 @@ func mergeCEIImporte(byKey map[cobrKey]*cobrAgg, rows []outbound.CEIRow) {
 		}
 		matched := false
 		for k, agg := range byKey {
-			if k.cobID == cobID {
+			if k.cobID == cobID && k.zonaID == r.ZonaClienteID {
 				agg.importe = agg.importe.Add(r.Importe)
 				matched = true
 			}
@@ -761,6 +765,6 @@ func (s *Service) MargenReal(ctx context.Context, p CarteraParams) (analytics.Ma
 		MargenReal:      margenReal,
 		PAR:             par,
 		SaldoTotal:      saldoTotal,
-		LGD:             decimal.NewFromFloat(lgdCartera),
+		LGD:             lgdCarteraDecimal,
 	}, nil
 }

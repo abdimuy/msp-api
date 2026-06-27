@@ -78,9 +78,6 @@ func newCarteraService(wb *fakeWinbackRepo, cartera *fakeCarteraRepo) *app.Servi
 	return svc
 }
 
-// newZonaInt is a helper to get a *int for zone IDs.
-func newZonaInt(v int) *int { return &v }
-
 // intPtr returns a *int to val.
 func intPtr(v int) *int { return &v }
 
@@ -198,10 +195,9 @@ func TestObtenerSaludCartera_MargenReal_Positive(t *testing.T) {
 	// MargenBruto = 0.528 * 10000 = 5280
 	// PerdidaEsperada = 0.05 * 1000 * 0.70 = 35
 	// MargenReal = 5280 - 35 = 5245
-	expected := decimal.NewFromFloat(5245)
-	diff := result.MargenRealProxy.Sub(expected).Abs()
-	assert.True(t, diff.LessThan(decimal.NewFromFloat(0.01)),
-		"MargenRealProxy should be ~5245, got %s", result.MargenRealProxy)
+	expected := decimal.RequireFromString("5245")
+	assert.True(t, result.MargenRealProxy.Equal(expected),
+		"MargenRealProxy should be 5245, got %s", result.MargenRealProxy)
 }
 
 // TestObtenerSaludCartera_Empty verifies graceful degradation on empty data.
@@ -999,22 +995,19 @@ func TestMargenReal_Formula(t *testing.T) {
 	assert.True(t, result.Ventas.Equal(decimal.NewFromInt(10_000)))
 
 	// MargenBruto = 0.528 × 10000 = 5280
-	expectedMB := decimal.NewFromFloat(5280)
-	diff := result.MargenBruto.Sub(expectedMB).Abs()
-	assert.True(t, diff.LessThan(decimal.NewFromFloat(0.01)),
-		"MargenBruto should be ~5280, got %s", result.MargenBruto)
+	expectedMB := decimal.RequireFromString("5280")
+	assert.True(t, result.MargenBruto.Equal(expectedMB),
+		"MargenBruto should be 5280, got %s", result.MargenBruto)
 
 	// PerdidaEsperada = 0.10 × 5000 × 0.70 = 350
-	expectedPE := decimal.NewFromFloat(350)
-	diffPE := result.PerdidaEsperada.Sub(expectedPE).Abs()
-	assert.True(t, diffPE.LessThan(decimal.NewFromFloat(0.01)),
-		"PerdidaEsperada should be ~350, got %s", result.PerdidaEsperada)
+	expectedPE := decimal.RequireFromString("350")
+	assert.True(t, result.PerdidaEsperada.Equal(expectedPE),
+		"PerdidaEsperada should be 350, got %s", result.PerdidaEsperada)
 
 	// MargenReal = 5280 - 350 = 4930
-	expectedMR := decimal.NewFromFloat(4930)
-	diffMR := result.MargenReal.Sub(expectedMR).Abs()
-	assert.True(t, diffMR.LessThan(decimal.NewFromFloat(0.01)),
-		"MargenReal should be ~4930, got %s", result.MargenReal)
+	expectedMR := decimal.RequireFromString("4930")
+	assert.True(t, result.MargenReal.Equal(expectedMR),
+		"MargenReal should be 4930, got %s", result.MargenReal)
 }
 
 // TestMargenReal_Floor verifies that negative MargenReal is floored to 0.
@@ -1295,8 +1288,58 @@ func TestListarCuentasRiesgo_EnRiesgo(t *testing.T) {
 	assert.Equal(t, "EN_RIESGO", cuentas[0].TierRiesgo)
 }
 
+// TestObtenerRankingCobradores_CEI_MultiZone verifies that mergeCEIImporte
+// does NOT inflate a cobrador's importe when that cobrador appears in two zones
+// and the CEI row targets only one of those zones.
+//
+// Setup:
+//
+//	cobrador 7 has aging rows in zona 1 AND zona 2.
+//	CEI row exists only for cobrador 7 + zona 1 (importe = 300).
+//
+// Expected:
+//
+//	zona 1 entry: ImporteColectado = 300, CEI = 300/1000 = 0.30.
+//	zona 2 entry: ImporteColectado = 0   (NOT inflated by zona-1 CEI row).
+//
+// This test FAILS against the old cobID-only match and PASSES with the
+// (cobID, zonaID) match introduced in the fix.
+func TestObtenerRankingCobradores_CEI_MultiZone(t *testing.T) {
+	t.Parallel()
+
+	cartera := &fakeCarteraRepo{
+		agingByCobrador: []outbound.AgingRow{
+			{ZonaClienteID: 1, CobradorID: intPtr(7), Bucket: "0-30", Saldo: decimal.NewFromInt(1000), Conteo: 10},
+			{ZonaClienteID: 2, CobradorID: intPtr(7), Bucket: "0-30", Saldo: decimal.NewFromInt(500), Conteo: 5},
+		},
+		// CEI row targets zona 1 only.
+		ceiRows: []outbound.CEIRow{
+			{ZonaClienteID: 1, CobradorID: intPtr(7), Importe: decimal.NewFromInt(300)},
+		},
+	}
+
+	svc := newCarteraService(newFakeWinbackRepo(), cartera)
+	ranking, err := svc.ObtenerRankingCobradores(context.Background(), app.CarteraParams{})
+	require.NoError(t, err)
+	require.Len(t, ranking, 2, "expect two entries: cobrador 7 in zona 1 and zona 2")
+
+	// Build a lookup by zona for convenience.
+	byZona := make(map[int]int, 2) // zona → index into ranking slice
+	for i, r := range ranking {
+		byZona[r.ZonaClienteID] = i
+	}
+
+	zona1 := ranking[byZona[1]]
+	zona2 := ranking[byZona[2]]
+
+	// Zona 1 must carry the CEI importe.
+	assert.True(t, zona1.ImporteColectado.Equal(decimal.NewFromInt(300)),
+		"zona 1 ImporteColectado should be 300, got %s", zona1.ImporteColectado)
+
+	// Zona 2 must NOT be inflated — importe stays 0.
+	assert.True(t, zona2.ImporteColectado.Equal(decimal.Zero),
+		"zona 2 ImporteColectado must be 0 (not inflated), got %s", zona2.ImporteColectado)
+}
+
 // Verify *fakeCarteraRepo satisfies outbound.CarteraRepo.
 var _ outbound.CarteraRepo = (*fakeCarteraRepo)(nil)
-
-// Verify *newZonaInt works (compile check only).
-var _ = newZonaInt
