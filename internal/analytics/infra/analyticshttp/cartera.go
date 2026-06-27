@@ -173,10 +173,13 @@ func (h *Handlers) CobradorRanking(ctx context.Context, input *CarteraQueryInput
 }
 
 // CuentasRiesgo handles GET /cartera/cuentas-riesgo.
-// The zona (int) param is parsed and validated but not applied to the candidato
-// filter: ListarCuentasRiesgo filters by zone name (string), not zone ID (int),
-// and the candidatos store zone names. Zone filtering by int ID is not supported
-// for this endpoint in v1.
+// Both zona and cobrador params are validated (zona as a positive int ID, cobrador
+// as a positive int ID) but neither is forwarded to ListarCuentasRiesgo in v1:
+//   - zona: ListarCuentasRiesgo filters by zone name string (WinbackCandidato.Zona()),
+//     not by numeric zone ID. No ID→name lookup exists in v1; the endpoint returns
+//     the whole portfolio and the client filters locally.
+//   - cobrador: ListarCuentasRiesgo operates at portfolio level and has no cobrador
+//     filter; the candidatos read-model does not carry a cobrador ID per account.
 func (h *Handlers) CuentasRiesgo(ctx context.Context, input *CarteraQueryInput) (*CuentasRiesgoOutput, error) {
 	cu, err := currentUserOrError(ctx)
 	if err != nil {

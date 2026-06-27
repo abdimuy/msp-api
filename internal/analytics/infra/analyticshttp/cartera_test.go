@@ -114,6 +114,36 @@ func TestRollRate_NoPermission_403(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 }
 
+// TestCosechasCartera_NoPermission_403 asserts 403 on GET /cartera/cosechas.
+func TestCosechasCartera_NoPermission_403(t *testing.T) {
+	t.Parallel()
+	svc := buildServiceWithCartera(&fakeCarteraRepo{})
+	cu := userWith(auth.PermVentasListar)
+	h := buildRouter(svc, cu)
+	rec := doJSON(h, http.MethodGet, "/cartera/cosechas", nil)
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+}
+
+// TestCobradorRanking_NoPermission_403 asserts 403 on GET /cartera/cobradores.
+func TestCobradorRanking_NoPermission_403(t *testing.T) {
+	t.Parallel()
+	svc := buildServiceWithCartera(&fakeCarteraRepo{})
+	cu := userWith() // no perms
+	h := buildRouter(svc, cu)
+	rec := doJSON(h, http.MethodGet, "/cartera/cobradores", nil)
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+}
+
+// TestCuentasRiesgo_NoPermission_403 asserts 403 on GET /cartera/cuentas-riesgo.
+func TestCuentasRiesgo_NoPermission_403(t *testing.T) {
+	t.Parallel()
+	svc := buildServiceWithCartera(&fakeCarteraRepo{})
+	cu := userWith(auth.PermAnalyticsWinbackRead) // analytics perm but wrong one
+	h := buildRouter(svc, cu)
+	rec := doJSON(h, http.MethodGet, "/cartera/cuentas-riesgo", nil)
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+}
+
 // TestSaludCartera_Unauthenticated_401 asserts 401 when no user is planted.
 func TestSaludCartera_Unauthenticated_401(t *testing.T) {
 	t.Parallel()
