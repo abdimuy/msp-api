@@ -147,3 +147,95 @@ type PrediccionesContract struct {
 	ProximaCompraDias   IntervaloContract // days until next purchase
 	Draws               int
 }
+
+// ─── Cartera contracts (Task B4) ──────────────────────────────────────────────
+
+// SaludCarteraContract is the executive KPI set for credit-portfolio health.
+// Money fields are decimal.Decimal; the HTTP layer converts them to strings.
+type SaludCarteraContract struct {
+	SaldoTotal       decimal.Decimal // total outstanding balance
+	SaldoMoroso      decimal.Decimal // balance in buckets 31-60, 61-90, 90+
+	PAR              decimal.Decimal // Portfolio-at-Risk = SaldoMoroso / SaldoTotal [0,1]
+	CEIRate          decimal.Decimal // Collection Effectiveness Index = ImporteColectado / SaldoTotal [0,1]
+	ImporteColectado decimal.Decimal // total collected in the CEI period
+	CuentasTotal     int             // count of active credit accounts
+	CuentasEnMora    int             // count of accounts in buckets 31+
+	MargenRealProxy  decimal.Decimal // MargenVerificado × ImporteColectado − PerdidaEsperada
+}
+
+// AgingBucketContract is one row of the aging-bucket distribution.
+type AgingBucketContract struct {
+	Bucket   string          // one of domain.BucketAgingDias* constants
+	Saldo    decimal.Decimal // total outstanding balance in this bucket
+	Conteo   int             // count of active accounts in this bucket
+	PctSaldo decimal.Decimal // proportion of total saldo [0,1]; 0 when total is 0
+}
+
+// CosechaContract is one vintage cohort row.
+// CohortMonth = year×12 + month (matching domain.VintageCohort).
+type CosechaContract struct {
+	CohortMonth int             // year*12 + month ordinal (e.g. 2026*12+6 = 24318)
+	AgeMonths   int             // months since cohort origin relative to now
+	Saldo       decimal.Decimal // outstanding balance from this cohort
+	Conteo      int             // count of active accounts from this cohort
+}
+
+// CobradorPerformanceContract holds credit-portfolio performance metrics for
+// one collector (cobrador). NOT a competitive leaderboard — just performance rows.
+type CobradorPerformanceContract struct {
+	CobradorID       int             // 0 = accounts with no cobrador assigned
+	ZonaClienteID    int             // zone of this cobrador's portfolio
+	CEI              decimal.Decimal // Collection Effectiveness Index [0,1]
+	PAR              decimal.Decimal // Portfolio-at-Risk for their cartera [0,1]
+	PctCorriente     decimal.Decimal // % of accounts in 0-30 (current) bucket [0,1]
+	SaldoTotal       decimal.Decimal // total outstanding balance they manage
+	SaldoMoroso      decimal.Decimal // balance in buckets 31+
+	CuentasTotal     int             // total accounts managed
+	ImporteColectado decimal.Decimal // collected in the CEI period
+}
+
+// CuentaRiesgoContract is one at-risk account enriched with its cobranza tier
+// and RFM segment from the riesgo×disposición matrix.
+type CuentaRiesgoContract struct {
+	ClienteID       int
+	Nombre          string
+	Zona            string
+	TierRiesgo      string // domain.TierRiesgo → string
+	Segmento        string // domain.Segmento → string
+	EstadoPago      string // domain.EstadoPago → string
+	Saldo           decimal.Decimal
+	DiasAtrasoProm  int             // read-time adjusted (includes open gap)
+	PctPagosATiempo decimal.Decimal // read-time adjusted [0,100]
+	CadenciaDias    int
+	FechaUltimoPago time.Time // zero when no payment history
+	FechaProxPago   time.Time // zero when no cadencia
+}
+
+// CumplimientoDistContract is the expected-payment compliance distribution
+// across the active-credit portfolio, computed via domain.CumplimientoEsperado.
+type CumplimientoDistContract struct {
+	AlCorriente int // count in EstadoCumplimientoAlCorriente
+	VencidoLeve int // count in EstadoCumplimientoVencidoLeve
+	Vencido     int // count in EstadoCumplimientoVencido
+	Total       int // AlCorriente + VencidoLeve + Vencido
+}
+
+// MargenRealContract holds the detailed breakdown of the margin proxy computation.
+//
+// v1 formula:
+//
+//	MargenBruto     = MargenVerificado (0.528) × Ventas
+//	PerdidaEsperada = PAR × SaldoTotal × LGD (0.70)
+//	MargenReal      = MargenBruto − PerdidaEsperada  (floored at 0)
+//
+// "Ventas" = ImporteColectado (period cash collected) — a revenue proxy.
+// LGD = 0.70 (70% of delinquent balance is assumed unrecoverable; R1 constant).
+type MargenRealContract struct {
+	Ventas          decimal.Decimal // period cash collected (revenue proxy)
+	MargenBruto     decimal.Decimal // MargenVerificado × Ventas
+	PerdidaEsperada decimal.Decimal // PAR × SaldoTotal × LGD
+	MargenReal      decimal.Decimal // MargenBruto − PerdidaEsperada (≥ 0)
+	PAR             decimal.Decimal // PAR used in the formula
+	SaldoTotal      decimal.Decimal // SaldoTotal used in the formula
+	LGD             decimal.Decimal // LGD constant used (= 0.70)
+}

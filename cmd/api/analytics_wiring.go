@@ -48,20 +48,30 @@ func provideAnalyticsTxRunner(m *firebird.TxManager) analyticsapp.TxRunner {
 	return m
 }
 
+// provideAnalyticsCarteraRepo exposes the concrete Repo as the CarteraRepo
+// port so fx can inject it into provideAnalyticsService (Task B4).
+func provideAnalyticsCarteraRepo(r *analyticsfb.Repo) analyticsoutbound.CarteraRepo {
+	return r
+}
+
 // provideAnalyticsService assembles the analytics query and command service.
 // narrativaRepo and cfg are added to wire the Fase-2 narrativa read-path;
 // with LLM_ENABLED=false (the default), WithNarrativa keeps the service in
 // cache-only mode — no new generation is ever enqueued.
+// carteraRepo (Task B4) powers the portfolio health, aging, vintage, ranking,
+// cuentas-riesgo, cumplimiento, and margen-real endpoints.
 func provideAnalyticsService(
 	repo analyticsoutbound.WinbackRepo,
 	micro analyticsoutbound.MicrosipReader,
 	clock analyticsoutbound.Clock,
 	txRunner analyticsapp.TxRunner,
 	narrativaRepo analyticsoutbound.NarrativaRepo,
+	carteraRepo analyticsoutbound.CarteraRepo,
 	cfg *config.Config,
 ) *analyticsapp.Service {
 	return analyticsapp.NewService(repo, micro, clock, txRunner).
-		WithNarrativa(narrativaRepo, cfg.LLM.Enabled)
+		WithNarrativa(narrativaRepo, cfg.LLM.Enabled).
+		WithCarteraRepo(carteraRepo)
 }
 
 // provideAnalyticsRefreshWorker builds the background worker that periodically

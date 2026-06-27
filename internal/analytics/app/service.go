@@ -49,6 +49,12 @@ type Service struct {
 	// false means serve the cache only, never enqueue (default).
 	llmEnabled bool
 
+	// carteraRepo powers the cartera analytics methods (Task B4):
+	// ObtenerSaludCartera, ObtenerAging, ObtenerCosechas,
+	// ObtenerRankingCobradores, ListarCuentasRiesgo, ObtenerCumplimiento,
+	// MargenReal. nil means all cartera methods return an internal error.
+	carteraRepo outbound.CarteraRepo
+
 	// refreshRunning is the single-flight guard for RefrescarEnSegundoPlano.
 	// atomic.Bool is safe for concurrent access without a mutex.
 	refreshRunning atomic.Bool
@@ -128,6 +134,16 @@ func (s *Service) WithLogger(l *slog.Logger) *Service {
 func (s *Service) WithNarrativa(repo outbound.NarrativaRepo, enabled bool) *Service {
 	s.narrativaRepo = repo
 	s.llmEnabled = enabled
+	return s
+}
+
+// WithCarteraRepo wires the cartera analytics repo. Must be called before any
+// cartera method (ObtenerSaludCartera, ObtenerAging, ObtenerCosechas,
+// ObtenerRankingCobradores, ListarCuentasRiesgo, ObtenerCumplimiento,
+// MargenReal). If not set, those methods return ErrCarteraRepoNotConfigured.
+// Returns s for chaining.
+func (s *Service) WithCarteraRepo(r outbound.CarteraRepo) *Service {
+	s.carteraRepo = r
 	return s
 }
 

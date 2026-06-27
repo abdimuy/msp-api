@@ -148,6 +148,7 @@ func appOptions() []fx.Option {
 			provideAnalyticsClock,
 			provideAnalyticsTxRunner,
 			provideAnalyticsNarrativaRepo,
+			provideAnalyticsCarteraRepo,
 			provideAnalyticsService,
 			provideAnalyticsRefreshWorker,
 			// LLM client + analytics narrativa worker (Fase 2).
