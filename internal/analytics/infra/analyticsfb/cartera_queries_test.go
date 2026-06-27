@@ -216,35 +216,86 @@ func TestCarteraRepo_AgingSaldosByZona_MorosoThreshold(t *testing.T) {
 
 // ─── AgingSaldosByCobrador ────────────────────────────────────────────────────
 
-// TestCarteraRepo_AgingSaldosByCobrador verifies that AgingSaldosByCobrador
-// returns a result and that the CobradorID field is populated (or nil for
-// clients with no CLIENTES match). Uses existing Microsip data (read-only).
+// TestCarteraRepo_AgingSaldosByCobrador verifies that the CLIENTES JOIN in
+// AgingSaldosByCobrador correctly populates CobradorID.
 //
-//nolint:paralleltest // serial: read-only against live data.
+// Strategy: inside the rollback-only tx, discover a real stable CLIENTES row
+// with a non-null COBRADOR_ID, then insert a fixture MSP_SALDOS_VENTAS row
+// referencing that real CLIENTE_ID under a synthetic zona. AgingSaldosByCobrador
+// must return a row for that synthetic zona whose CobradorID matches the
+// discovered cobrador. A JOIN on the wrong key would leave CobradorID nil and
+// the assertion would fail — making any JOIN regression observable.
+//
+//nolint:paralleltest // serial: shares rollback-only tx.
 func TestCarteraRepo_AgingSaldosByCobrador(t *testing.T) {
 	requireFBEnv(t)
 	pool := fbtestutil.NewTestFirebirdPool(t)
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		repo := analyticsfb.NewRepo(pool)
+		q := firebird.GetQuerier(ctx, pool.DB)
 
-		today := time.Now().UTC()
-		agingRows, err := repo.AgingSaldosByCobrador(ctx, today)
+		// Step 1: discover a real CLIENTES row with a non-null COBRADOR_ID.
+		var realClienteID, realCobradorID int
+		err := q.QueryRowContext(ctx,
+			`SELECT FIRST 1 CLIENTE_ID, COBRADOR_ID FROM CLIENTES WHERE COBRADOR_ID IS NOT NULL`,
+		).Scan(&realClienteID, &realCobradorID)
 		if err != nil {
-			t.Skipf("AgingSaldosByCobrador error — check schema: %v", err)
+			t.Skipf("no CLIENTES row with non-null COBRADOR_ID found: %v", err)
 		}
 
-		// Smoke: each row has a valid bucket and non-negative saldo.
-		for i, r := range agingRows {
-			assert.Contains(t, []string{"0-30", "31-60", "61-90", "90+"},
-				r.Bucket, "row %d: unexpected bucket %q", i, r.Bucket)
-			assert.False(t, r.Saldo.IsNegative(),
-				"row %d: saldo must be >= 0, got %s", i, r.Saldo)
-			assert.NotZero(t, r.ZonaClienteID,
-				"row %d: ZonaClienteID must not be zero", i)
-			assert.Positive(t, r.Conteo, "row %d: conteo must be > 0", i)
+		// Step 2: insert a fixture saldo row referencing the real CLIENTE_ID,
+		// under a synthetic zona that cannot exist in production data.
+		// FECHA_ULT_PAGO = 10 days ago → aging bucket "0-30".
+		const zonaCob = syntheticZona - 5 // -970006; unique, never in real data
+		today := time.Now().UTC().Truncate(24 * time.Hour)
+		insertSaldoRow(t, ctx, pool, -99890, zonaCob, realClienteID,
+			today.AddDate(-1, 0, 0), 770.00, today.AddDate(0, 0, -10))
+
+		// Step 3: call AgingSaldosByCobrador and isolate the row for our zona.
+		agingRows, err := repo.AgingSaldosByCobrador(ctx, today)
+		require.NoError(t, err)
+
+		var (
+			found       bool
+			foundCobID  *int
+			foundSaldo  decimal.Decimal
+			foundBucket string
+			foundConteo int
+		)
+		for _, r := range agingRows {
+			if r.ZonaClienteID == zonaCob {
+				found = true
+				foundCobID = r.CobradorID
+				foundSaldo = r.Saldo
+				foundBucket = r.Bucket
+				foundConteo = r.Conteo
+				break
+			}
 		}
-		t.Logf("AgingSaldosByCobrador smoke ok: %d rows", len(agingRows))
+
+		require.True(t, found,
+			"AgingSaldosByCobrador must return a row for synthetic zona %d "+
+				"(realClienteID=%d); got %d total rows",
+			zonaCob, realClienteID, len(agingRows))
+
+		// Step 4: assert the JOIN carried the cobrador through correctly.
+		require.NotNil(t, foundCobID,
+			"CobradorID must be non-nil: the CLIENTES JOIN on CLIENTE_ID must "+
+				"populate it for realClienteID=%d", realClienteID)
+		assert.Equal(t, realCobradorID, *foundCobID,
+			"CobradorID must equal the one discovered from CLIENTES")
+
+		// Step 5: assert the fixture saldo and bucket are correct.
+		assert.Equal(t, "0-30", foundBucket,
+			"FECHA_ULT_PAGO 10 days ago must land in bucket '0-30'")
+		assert.True(t, decimal.NewFromFloat(770.00).Equal(foundSaldo),
+			"saldo must equal the inserted fixture: want 770.00 got %s", foundSaldo)
+		assert.Equal(t, 1, foundConteo, "conteo must be 1 for the single fixture row")
+
+		t.Logf("AgingSaldosByCobrador JOIN ok: realClienteID=%d realCobradorID=%d "+
+			"zona=%d saldo=%s bucket=%s",
+			realClienteID, realCobradorID, zonaCob, foundSaldo, foundBucket)
 	})
 }
 
