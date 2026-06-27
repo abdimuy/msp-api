@@ -151,6 +151,7 @@ func (w *RefreshWorker) tick(ctx context.Context) {
 	)
 	if full {
 		w.svc.LogDistribucionBandasCredito(ctx)
+		w.svc.MaterializarCarteraSnapshot(ctx, now)
 	}
 }
 

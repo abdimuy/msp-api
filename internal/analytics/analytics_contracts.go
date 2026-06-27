@@ -239,3 +239,30 @@ type MargenRealContract struct {
 	SaldoTotal      decimal.Decimal // SaldoTotal used in the formula
 	LGD             decimal.Decimal // LGD constant used (= 0.70)
 }
+
+// ─── Roll-rate contract (Task B5) ─────────────────────────────────────────────
+
+// RollRateContract is the cross-module result of comparing two consecutive
+// cartera snapshot cuts for net delinquency migration.
+//
+// Disponible=false means fewer than 2 distinct FECHA_CORTE cuts have been
+// persisted yet ("acumulando datos"). This is NOT an error — the system is
+// still warming up. All other fields are zero when Disponible=false.
+type RollRateContract struct {
+	// Disponible is false when the system does not yet have 2 snapshot cuts
+	// to compare. All other fields are zero in that case.
+	Disponible bool
+
+	// RollRate is the signed net delinquency migration scalar in [-1,+1].
+	// Positive means net deterioration (balance moved to worse buckets).
+	// Negative means net improvement. Zero when Disponible=false.
+	RollRate float64
+
+	// FechaCorteAnterior is the UTC cutoff of the older (prev) snapshot cut.
+	// Zero when Disponible=false.
+	FechaCorteAnterior time.Time
+
+	// FechaCorteReciente is the UTC cutoff of the newer (curr) snapshot cut.
+	// Zero when Disponible=false.
+	FechaCorteReciente time.Time
+}

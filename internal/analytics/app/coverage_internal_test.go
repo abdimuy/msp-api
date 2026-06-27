@@ -56,15 +56,19 @@ func TestApplyDefaults_NegativeInterval_SetsDefault(t *testing.T) {
 // scope, because the worker's tick is not exported and must be exercised via
 // the loop goroutine).
 type internalFakeRepo struct {
-	mu       sync.Mutex
-	upserted int
-	savedJob string
-	notified chan struct{}
-	once     sync.Once
+	mu               sync.Mutex
+	upserted         int
+	savedJob         string
+	savedStatesByJob map[string]outbound.RefreshState
+	notified         chan struct{}
+	once             sync.Once
 }
 
 func newInternalFakeRepo() *internalFakeRepo {
-	return &internalFakeRepo{notified: make(chan struct{})}
+	return &internalFakeRepo{
+		notified:         make(chan struct{}),
+		savedStatesByJob: make(map[string]outbound.RefreshState),
+	}
 }
 
 func (r *internalFakeRepo) UpsertCandidatos(_ context.Context, candidatos []*domain.WinbackCandidato) error {
@@ -85,6 +89,7 @@ func (r *internalFakeRepo) GetRefreshState(_ context.Context, _ string) (outboun
 func (r *internalFakeRepo) SaveRefreshState(_ context.Context, st outbound.RefreshState) error {
 	r.mu.Lock()
 	r.savedJob = st.Job
+	r.savedStatesByJob[st.Job] = st
 	r.mu.Unlock()
 	r.once.Do(func() { close(r.notified) })
 	return nil
@@ -317,4 +322,132 @@ func TestRefreshWorker_Tick_Error(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return repo.upsertCallCount() >= 2
 	}, 2*time.Second, 5*time.Millisecond, "worker must keep ticking after a tick error")
+}
+
+// ─── internalFakeCarteraRepo ──────────────────────────────────────────────────
+
+// internalFakeCarteraRepo is a minimal CarteraRepo for worker-level snapshot
+// tests. Runs in package app scope because tick() is not exported.
+type internalFakeCarteraRepo struct {
+	mu             sync.Mutex
+	agingByZona    []outbound.AgingRow
+	savedSnapshots []domain.CarteraSnapshot
+	saveErr        error
+}
+
+func (r *internalFakeCarteraRepo) AgingSaldosByZona(_ context.Context, _ time.Time) ([]outbound.AgingRow, error) {
+	return r.agingByZona, nil
+}
+
+func (r *internalFakeCarteraRepo) AgingSaldosByCobrador(_ context.Context, _ time.Time) ([]outbound.AgingRow, error) {
+	return nil, nil
+}
+
+func (r *internalFakeCarteraRepo) VintageSaldos(_ context.Context) ([]outbound.VintageRow, error) {
+	return nil, nil
+}
+
+func (r *internalFakeCarteraRepo) ColeccionCEI(_ context.Context, _, _ time.Time) ([]outbound.CEIRow, error) {
+	return nil, nil
+}
+
+func (r *internalFakeCarteraRepo) SaveCarteraSnapshot(_ context.Context, rows []domain.CarteraSnapshot) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.saveErr != nil {
+		return r.saveErr
+	}
+	r.savedSnapshots = append(r.savedSnapshots, rows...)
+	return nil
+}
+
+func (r *internalFakeCarteraRepo) ListRecentSnapshots(_ context.Context, _ int) ([]domain.CarteraSnapshot, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.savedSnapshots, nil
+}
+
+func (r *internalFakeCarteraRepo) snapshotCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.savedSnapshots)
+}
+
+// ─── tick: full path with snapshot materialization ────────────────────────────
+
+// TestRefreshWorker_Tick_Full_MaterializesSnapshot verifies that a full-tick
+// (3 AM UTC) with carteraRepo configured:
+//   - persists snapshot rows via SaveCarteraSnapshot (one per aging row), and
+//   - records SaveRefreshState("cartera_snapshot").
+//
+// tick() is called directly (synchronous) so no channels are needed.
+func TestRefreshWorker_Tick_Full_MaterializesSnapshot(t *testing.T) {
+	t.Parallel()
+
+	now3am := time.Date(2026, 6, 20, fullRefreshHour, 0, 0, 0, time.UTC)
+	clk := fixedClock{t: now3am}
+	repo := newInternalFakeRepo()
+	micro := &internalFakeMicrosip{anclas: buildInternalAnclas(2)}
+	svc := NewService(repo, micro, clk, nil)
+
+	cartera := &internalFakeCarteraRepo{
+		agingByZona: []outbound.AgingRow{
+			{ZonaClienteID: 1, Bucket: domain.BucketAgingDias0_30, Saldo: decimal.NewFromInt(800), Conteo: 8},
+			{ZonaClienteID: 1, Bucket: domain.BucketAgingDias31_60, Saldo: decimal.NewFromInt(200), Conteo: 2},
+		},
+	}
+	svc.WithCarteraRepo(cartera)
+
+	w := NewRefreshWorker(svc, clk, RefreshWorkerConfig{Interval: time.Hour}, nil)
+
+	// Call tick directly — synchronous, no goroutine coordination needed.
+	w.tick(context.Background())
+
+	// Two snapshot rows (one per aging row) must be persisted.
+	require.Equal(t, 2, cartera.snapshotCount(), "full tick must persist one snapshot row per aging row")
+
+	// cartera_snapshot refresh state must be recorded.
+	repo.mu.Lock()
+	_, hasState := repo.savedStatesByJob["cartera_snapshot"]
+	repo.mu.Unlock()
+	require.True(t, hasState, "full tick must record cartera_snapshot refresh state")
+}
+
+// TestRefreshWorker_Tick_Full_SnapshotSaveError_TickContinues verifies that a
+// SaveCarteraSnapshot failure does NOT abort the full tick — the tick function
+// returns normally (no panic, no early return from the top-level tick).
+//
+// Evidence: after tick() returns, we check that winback_full was still saved
+// (RefrescarCandidatos ran to completion) and that cartera_snapshot was NOT
+// saved (the snapshot save failed).
+func TestRefreshWorker_Tick_Full_SnapshotSaveError_TickContinues(t *testing.T) {
+	t.Parallel()
+
+	now3am := time.Date(2026, 6, 20, fullRefreshHour, 0, 0, 0, time.UTC)
+	clk := fixedClock{t: now3am}
+	repo := newInternalFakeRepo()
+	micro := &internalFakeMicrosip{anclas: buildInternalAnclas(1)}
+	svc := NewService(repo, micro, clk, nil)
+
+	cartera := &internalFakeCarteraRepo{
+		agingByZona: []outbound.AgingRow{
+			{ZonaClienteID: 1, Bucket: domain.BucketAgingDias0_30, Saldo: decimal.NewFromInt(100), Conteo: 1},
+		},
+		saveErr: errors.New("forced save error"),
+	}
+	svc.WithCarteraRepo(cartera)
+
+	w := NewRefreshWorker(svc, clk, RefreshWorkerConfig{Interval: time.Hour}, nil)
+
+	// Must not panic.
+	w.tick(context.Background())
+
+	// winback_full must have been saved (RefrescarCandidatos ran to completion).
+	repo.mu.Lock()
+	_, hasWinback := repo.savedStatesByJob["winback_full"]
+	_, hasSnapshot := repo.savedStatesByJob["cartera_snapshot"]
+	repo.mu.Unlock()
+
+	require.True(t, hasWinback, "winback_full must be recorded even when snapshot save fails")
+	require.False(t, hasSnapshot, "cartera_snapshot must NOT be recorded when save failed")
 }
