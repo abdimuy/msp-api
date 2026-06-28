@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -875,10 +876,23 @@ func readFoliosCajas(ctx context.Context, q firebird.Querier, cajaID int) (serie
 	return serie, consecutivo, nil
 }
 
-// buildFolio constructs the FOLIO string: SERIE + LPAD(CONSECUTIVO, 8, '0').
-// e.g. "Y" + 2262 → "Y00002262".
+// folioMaxLen is the width of Microsip's DOCTOS_PV.FOLIO column (CHAR(9)).
+const folioMaxLen = 9
+
+// buildFolio constructs the FOLIO string to fit DOCTOS_PV.FOLIO CHAR(9):
+// SERIE + the consecutivo zero-padded to (9 - len(serie)) digits, so the
+// total is always 9 — matching Microsip's own folio scheme.
+// e.g. "Y"+2262 → "Y00002262", "AI"+2412 → "AI0002412", "ABC"+1 → "ABC000001".
+//
+// Series wider than the column (≥9 chars) are not expected for ventas; the
+// padding floors at 1 digit to avoid a negative width.
 func buildFolio(serie string, consecutivo int) string {
-	return fmt.Sprintf("%s%08d", serie, consecutivo)
+	serie = strings.TrimSpace(serie)
+	width := folioMaxLen - len(serie)
+	if width < 1 {
+		width = 1
+	}
+	return fmt.Sprintf("%s%0*d", serie, width, consecutivo)
 }
 
 // buildFolioConceptos constructs the enganche folio: LPAD(CONSECUTIVO, 9, '0').
