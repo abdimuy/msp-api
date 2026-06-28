@@ -289,6 +289,24 @@ func parseDecimalField(raw, name string) (decimal.Decimal, error) {
 	return d, nil
 }
 
+// montoDecimals is the scale of the monetary NUMERIC(14,2) columns.
+const montoDecimals = 2
+
+// parseMoneyField parses a monetary string and rounds it to montoDecimals
+// places (HALF_UP). Money values are rounded at ingress so a client that sends
+// extra decimals — e.g. an Android combo price built by summing Doubles, which
+// yields 300.29999999999995 — is accepted as its canonical 2-decimal form
+// instead of rejected with 422. Magnitude bugs are still caught downstream by
+// the domain's MaxMontoVenta cap. Use this for every monto/precio field;
+// cantidad keeps its full scale via parseDecimalField.
+func parseMoneyField(raw, name string) (decimal.Decimal, error) {
+	d, err := parseDecimalField(raw, name)
+	if err != nil {
+		return decimal.Zero, err
+	}
+	return d.Round(montoDecimals), nil
+}
+
 // parseTimeField parses an RFC3339 timestamp into a time.Time with a stable
 // apperror tagged by the field name.
 func parseTimeField(raw, name string) (time.Time, error) {
@@ -370,15 +388,15 @@ type montosTriple struct {
 
 // parseMontos parses the three top-level monto strings into decimals.
 func parseMontos(m MontosDTO) (montosTriple, error) {
-	anual, err := parseDecimalField(m.Anual, "montos.anual")
+	anual, err := parseMoneyField(m.Anual, "montos.anual")
 	if err != nil {
 		return montosTriple{}, err
 	}
-	corto, err := parseDecimalField(m.CortoPlazo, "montos.corto_plazo")
+	corto, err := parseMoneyField(m.CortoPlazo, "montos.corto_plazo")
 	if err != nil {
 		return montosTriple{}, err
 	}
-	contado, err := parseDecimalField(m.Contado, "montos.contado")
+	contado, err := parseMoneyField(m.Contado, "montos.contado")
 	if err != nil {
 		return montosTriple{}, err
 	}
@@ -390,11 +408,11 @@ func parsePlanCreditoDTO(p *PlanCreditoDTO) (*ventasapp.CrearVentaPlanCreditoInp
 	if p == nil {
 		return nil, nil //nolint:nilnil // optional value.
 	}
-	enganche, err := parseDecimalField(p.Enganche, "plan_credito.enganche")
+	enganche, err := parseMoneyField(p.Enganche, "plan_credito.enganche")
 	if err != nil {
 		return nil, err
 	}
-	parc, err := parseDecimalField(p.Parcialidad, "plan_credito.parcialidad")
+	parc, err := parseMoneyField(p.Parcialidad, "plan_credito.parcialidad")
 	if err != nil {
 		return nil, err
 	}
@@ -424,15 +442,15 @@ func parseCombosDTO(in []ComboDTO) ([]ventasapp.CrearVentaComboInput, error) {
 		if err != nil {
 			return nil, err
 		}
-		anual, err := parseDecimalField(c.PrecioAnual, fieldRef("combos", i, "precio_anual"))
+		anual, err := parseMoneyField(c.PrecioAnual, fieldRef("combos", i, "precio_anual"))
 		if err != nil {
 			return nil, err
 		}
-		corto, err := parseDecimalField(c.PrecioCorto, fieldRef("combos", i, "precio_corto"))
+		corto, err := parseMoneyField(c.PrecioCorto, fieldRef("combos", i, "precio_corto"))
 		if err != nil {
 			return nil, err
 		}
-		contado, err := parseDecimalField(c.PrecioContado, fieldRef("combos", i, "precio_contado"))
+		contado, err := parseMoneyField(c.PrecioContado, fieldRef("combos", i, "precio_contado"))
 		if err != nil {
 			return nil, err
 		}
@@ -474,15 +492,15 @@ func parseProductoDTO(p ProductoDTO, idx int) (ventasapp.CrearVentaProductoInput
 	if err != nil {
 		return ventasapp.CrearVentaProductoInput{}, err
 	}
-	anual, err := parseDecimalField(p.PrecioAnual, fieldRef("productos", idx, "precio_anual"))
+	anual, err := parseMoneyField(p.PrecioAnual, fieldRef("productos", idx, "precio_anual"))
 	if err != nil {
 		return ventasapp.CrearVentaProductoInput{}, err
 	}
-	corto, err := parseDecimalField(p.PrecioCorto, fieldRef("productos", idx, "precio_corto"))
+	corto, err := parseMoneyField(p.PrecioCorto, fieldRef("productos", idx, "precio_corto"))
 	if err != nil {
 		return ventasapp.CrearVentaProductoInput{}, err
 	}
-	contado, err := parseDecimalField(p.PrecioContado, fieldRef("productos", idx, "precio_contado"))
+	contado, err := parseMoneyField(p.PrecioContado, fieldRef("productos", idx, "precio_contado"))
 	if err != nil {
 		return ventasapp.CrearVentaProductoInput{}, err
 	}
