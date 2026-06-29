@@ -26,6 +26,10 @@ type AplicarDefaults struct {
 	SucursalID          int
 	FormaCobroContadoID int
 	FormaCobroCreditoID int
+	// CajaContadoID is the fixed mostrador caja used for contado ventas (no zona).
+	CajaContadoID int
+	// CajeroContadoID is the fixed mostrador cajero used for contado ventas (no zona).
+	CajeroContadoID int
 }
 
 // AplicarConfig resolves the editable Microsip mapping needed to materialize a

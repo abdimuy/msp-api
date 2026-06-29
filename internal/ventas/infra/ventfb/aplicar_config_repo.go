@@ -36,7 +36,8 @@ FROM MSP_CFG_NUM_VENDEDORES
 WHERE NUM_VENDEDORES = ?`
 
 const selectAplicarDefaults = `
-SELECT SUCURSAL_ID, FORMA_COBRO_CONTADO_ID, FORMA_COBRO_CREDITO_ID
+SELECT SUCURSAL_ID, FORMA_COBRO_CONTADO_ID, FORMA_COBRO_CREDITO_ID,
+       CAJA_CONTADO_ID, CAJERO_CONTADO_ID
 FROM MSP_CFG_APLICAR
 WHERE ID = 1`
 
@@ -156,6 +157,8 @@ func (r *AplicarConfigRepo) Defaults(ctx context.Context) (outbound.AplicarDefau
 		&d.SucursalID,
 		&d.FormaCobroContadoID,
 		&d.FormaCobroCreditoID,
+		&d.CajaContadoID,
+		&d.CajeroContadoID,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return outbound.AplicarDefaults{}, domain.ErrConfigAplicarFaltante

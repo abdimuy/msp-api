@@ -45,6 +45,7 @@ func newFakeAplicarConfig() *fakeAplicarConfig {
 		cc: outbound.CajaCajero{CajaID: 22198, CajeroID: 22392, VendedorID: 88266},
 		defs: outbound.AplicarDefaults{
 			SucursalID: 225490, FormaCobroContadoID: 67, FormaCobroCreditoID: 71,
+			CajaContadoID: 12151, CajeroContadoID: 12266,
 		},
 		fpIDs:   map[string]int{"SEMANAL": 33824, "QUINCENAL": 33825, "MENSUAL": 33826},
 		cmIDs:   map[int]int{6: 33830, 9: 33829, 12: 33828, 18: 33827},
@@ -423,13 +424,14 @@ func TestAplicarVenta_SinClienteMicrosip(t *testing.T) {
 	assert.Equal(t, 0, writer.callsCount())
 }
 
-// TestAplicarVenta_SinZona verifies ErrVentaSinZona when the venta has no
-// zona_cliente_id.
-func TestAplicarVenta_SinZona(t *testing.T) {
+// TestAplicarVenta_Credito_SinZona verifies ErrVentaSinZona when a CREDITO
+// venta has no zona_cliente_id. Contado ventas do not require zona (they use
+// the fixed mostrador caja configured via CAJA_CONTADO_ID).
+func TestAplicarVenta_Credito_SinZona(t *testing.T) {
 	t.Parallel()
 	h, _, writer, _ := newAplicarHarness(t)
 
-	base := validContadoInput()
+	base := validCreditoInput()
 	cid := 47913
 	base.ClienteID = &cid
 	// No ZonaClienteID.
@@ -510,12 +512,16 @@ func TestAplicarVenta_AutoCreaCliente_HappyPath(t *testing.T) {
 	// fakeAplicarConfig returns CobradorID=-1 by default; set a real one.
 	// The fake cc is {CajaID:22198, CajeroID:22392, VendedorID:88266}.
 	// Update it to include CobradorID for assertion.
+	// The auto-create branch for CONTADO uses the fixed mostrador caja
+	// (CajaContadoID/CajeroContadoID) with CobradorID=-1 / VendedorID=-1.
+	// seedAprobadaSinCliente seeds a CONTADO venta with zona=21563 but no ClienteID.
 	h.svc = ventasapp.NewService(
 		h.ventas, nil, nil, h.storage, h.clock, h.outbox, h.imageProc, nil,
 		&fakeAplicarConfig{
 			cc: outbound.CajaCajero{CajaID: 22198, CajeroID: 22392, VendedorID: 88266, CobradorID: 11502},
 			defs: outbound.AplicarDefaults{
 				SucursalID: 225490, FormaCobroContadoID: 67, FormaCobroCreditoID: 71,
+				CajaContadoID: 12151, CajeroContadoID: 12266,
 			},
 			fpIDs:   map[string]int{"SEMANAL": 33824, "QUINCENAL": 33825, "MENSUAL": 33826},
 			cmIDs:   map[int]int{6: 33830, 9: 33829, 12: 33828, 18: 33827},
@@ -533,9 +539,11 @@ func TestAplicarVenta_AutoCreaCliente_HappyPath(t *testing.T) {
 	assert.Equal(t, 1, clienteWriter.callsCount(), "microsipCliente.Crear must be called once")
 	// Cliente nombre is folded to ALL CAPS by the domain (Microsip convention).
 	assert.Equal(t, "JUAN PEREZ", clienteWriter.LastIn.Nombre)
+	// Contado auto-create: zona from the venta is preserved; cobrador/vendedor
+	// are the sentinel -1 (fixed mostrador caja has no zona-based cobrador).
 	assert.Equal(t, 21563, clienteWriter.LastIn.ZonaClienteID)
-	assert.Equal(t, 11502, clienteWriter.LastIn.CobradorID)
-	assert.Equal(t, 88266, clienteWriter.LastIn.VendedorID)
+	assert.Equal(t, -1, clienteWriter.LastIn.CobradorID)
+	assert.Equal(t, -1, clienteWriter.LastIn.VendedorID)
 	require.NotNil(t, v.ClienteID(), "venta must have ClienteID linked after auto-create")
 	assert.Equal(t, 15300000, *v.ClienteID(), "ClienteID must equal fake result")
 	assert.Equal(t, 1, writer.callsCount(), "DOCTOS_PV writer must also fire")
@@ -599,15 +607,16 @@ func TestAplicarVenta_AutoCreaCliente_DOCTOS_PVFalla_Rollback(t *testing.T) {
 	assert.Equal(t, domain.SincronizacionPendiente, v.Sincronizacion(), "venta must NOT be aplicada on doctos_pv failure")
 }
 
-// TestAplicarVenta_AutoCreaCliente_SinZona_Rechazado verifies ErrVentaSinZona
-// is returned when the venta has no zona AND no ClienteID (zona check fires
-// before the auto-create guard).
-func TestAplicarVenta_AutoCreaCliente_SinZona_Rechazado(t *testing.T) {
+// TestAplicarVenta_Credito_AutoCreaCliente_SinZona_Rechazado verifies
+// ErrVentaSinZona is returned when a CREDITO venta has no zona AND no
+// ClienteID. For credito, zona is required (the check fires before auto-create).
+// Contado ventas do not require zona and are unaffected by this test.
+func TestAplicarVenta_Credito_AutoCreaCliente_SinZona_Rechazado(t *testing.T) {
 	t.Parallel()
 	h, _, writer, clienteWriter := newAplicarHarness(t)
 
-	// No zona, no clienteID.
-	base := validContadoInput()
+	// CREDITO: no zona, no clienteID.
+	base := validCreditoInput()
 	by := uuid.New()
 	v, err := h.svc.CrearVenta(t.Context(), base, by)
 	require.NoError(t, err)
@@ -704,14 +713,15 @@ func TestCheckPreconditions_PuedeAutoCrear_TableDriven(t *testing.T) {
 
 // TestAplicarVenta_ZonaCoincide_Procede verifies that when the zona on the venta
 // matches the Microsip cliente's ZONA_CLIENTE_ID, aplicar proceeds normally.
+// Uses a CREDITO venta — contado ventas skip the zona check entirely.
 func TestAplicarVenta_ZonaCoincide_Procede(t *testing.T) {
 	t.Parallel()
 	h, _, writer, _ := newAplicarHarness(t)
-	// seedAprobadaContado seeds zona=21563. Supply matching zona reader.
+	// seedAprobadaCredito seeds zona=21563. Supply matching zona reader.
 	zonaReader := newFakeClienteZonaReader(21563)
 	h.svc = h.svc.WithZonaReader(zonaReader)
 
-	id := seedAprobadaContado(t, h)
+	id := seedAprobadaCredito(t, h)
 
 	v, err := h.svc.AplicarVenta(t.Context(), id, uuid.New())
 
@@ -724,14 +734,15 @@ func TestAplicarVenta_ZonaCoincide_Procede(t *testing.T) {
 // TestAplicarVenta_ZonaNoCoincide_Rechazado verifies ErrVentaZonaNoCoincideCliente
 // is returned when the venta's zona does not match the Microsip cliente's zona.
 // The writer must NOT be called and the venta must stay pendiente.
+// Uses a CREDITO venta — contado ventas skip the zona check entirely.
 func TestAplicarVenta_ZonaNoCoincide_Rechazado(t *testing.T) {
 	t.Parallel()
 	h, _, writer, _ := newAplicarHarness(t)
-	// seedAprobadaContado seeds zona=21563. Mismatch: reader returns a different zona.
+	// seedAprobadaCredito seeds zona=21563. Mismatch: reader returns a different zona.
 	zonaReader := newFakeClienteZonaReader(99999)
 	h.svc = h.svc.WithZonaReader(zonaReader)
 
-	id := seedAprobadaContado(t, h)
+	id := seedAprobadaCredito(t, h)
 
 	_, err := h.svc.AplicarVenta(t.Context(), id, uuid.New())
 
@@ -746,6 +757,7 @@ func TestAplicarVenta_ZonaNoCoincide_Rechazado(t *testing.T) {
 // TestAplicarVenta_ZonaNula_Procede verifies that when the Microsip cliente has
 // a NULL ZONA_CLIENTE_ID (zona reader returns nil, nil), AplicarVenta proceeds
 // normally — no zona constraint on the cliente means no check is performed.
+// Uses a CREDITO venta — contado ventas skip the zona check entirely.
 func TestAplicarVenta_ZonaNula_Procede(t *testing.T) {
 	t.Parallel()
 	h, _, writer, _ := newAplicarHarness(t)
@@ -753,7 +765,7 @@ func TestAplicarVenta_ZonaNula_Procede(t *testing.T) {
 	zonaReader := &fakeClienteZonaReader{ZonaNil: true}
 	h.svc = h.svc.WithZonaReader(zonaReader)
 
-	id := seedAprobadaContado(t, h)
+	id := seedAprobadaCredito(t, h)
 
 	v, err := h.svc.AplicarVenta(t.Context(), id, uuid.New())
 
@@ -763,13 +775,13 @@ func TestAplicarVenta_ZonaNula_Procede(t *testing.T) {
 	assert.Equal(t, 1, zonaReader.callsCount(), "zona reader must be consulted once")
 }
 
-// TestAplicarVenta_AutoCrea_ZonaReaderSkipped verifies that when the venta has
-// no ClienteID (auto-create branch), the zona reader is NOT consulted — the
-// auto-created cliente inherits the venta's zona, so no mismatch is possible.
+// TestAplicarVenta_AutoCrea_ZonaReaderSkipped verifies that when the venta is
+// CONTADO with no ClienteID (auto-create branch), the zona reader is NOT
+// consulted — contado ventas skip the zona check entirely.
 func TestAplicarVenta_AutoCrea_ZonaReaderSkipped(t *testing.T) {
 	t.Parallel()
 	h, _, writer, _ := newAplicarHarness(t)
-	// Mismatch zona, but auto-create should skip the check entirely.
+	// Contado skips zona validation regardless of reader output.
 	zonaReader := newFakeClienteZonaReader(99999)
 	h.svc = h.svc.WithZonaReader(zonaReader)
 
@@ -780,7 +792,124 @@ func TestAplicarVenta_AutoCrea_ZonaReaderSkipped(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, domain.SincronizacionAplicada, v.Sincronizacion())
 	assert.Equal(t, 1, writer.callsCount(), "writer must be called for auto-create branch")
-	assert.Equal(t, 0, zonaReader.callsCount(), "zona reader must NOT be consulted for auto-create branch")
+	assert.Equal(t, 0, zonaReader.callsCount(), "zona reader must NOT be consulted for contado ventas")
+}
+
+// ─── Contado sin zona (caja fija) tests ──────────────────────────────────────
+
+// seedAprobadaContadoSinZona creates an aprobada CONTADO venta with a pre-linked
+// ClienteID but NO ZonaClienteID and one evidencia imagen. Used to verify the
+// contado caja-fija path.
+func seedAprobadaContadoSinZona(t *testing.T, h *testHarness) uuid.UUID {
+	t.Helper()
+	in := validContadoInput()
+	cid := 47913
+	in.ClienteID = &cid
+	// ZonaClienteID intentionally not set.
+	by := uuid.New()
+
+	v, err := h.svc.CrearVenta(t.Context(), in, by)
+	require.NoError(t, err)
+	seedOneEvidencia(t, h, v.ID(), by)
+
+	_, err = h.svc.EnviarARevision(t.Context(), v.ID(), by)
+	require.NoError(t, err)
+	_, err = h.svc.Aprobar(t.Context(), v.ID(), by)
+	require.NoError(t, err)
+
+	h.outbox.mu.Lock()
+	h.outbox.calls = nil
+	h.outbox.mu.Unlock()
+	return v.ID()
+}
+
+// TestAplicarVenta_Contado_SinZona_UsaCajaFija verifies that a CONTADO venta
+// with no zona succeeds and uses the fixed mostrador caja
+// (CajaContadoID=12151, CajeroContadoID=12266) rather than the zona-based caja.
+func TestAplicarVenta_Contado_SinZona_UsaCajaFija(t *testing.T) {
+	t.Parallel()
+	h, _, writer, _ := newAplicarHarness(t)
+
+	id := seedAprobadaContadoSinZona(t, h)
+
+	v, err := h.svc.AplicarVenta(t.Context(), id, uuid.New())
+
+	require.NoError(t, err)
+	assert.Equal(t, domain.SincronizacionAplicada, v.Sincronizacion())
+	require.Equal(t, 1, writer.callsCount(), "writer must be called exactly once")
+	assert.Equal(t, 12151, writer.lastInput().CajaID, "contado must use fixed mostrador caja")
+	assert.Equal(t, 12266, writer.lastInput().CajeroID, "contado must use fixed mostrador cajero")
+}
+
+// TestAplicarVenta_Contado_AutoCrea_ZonaNil verifies that when a CONTADO venta
+// has no ClienteID and no zona, the auto-create flow runs with the sentinel
+// values: ZonaClienteID=-1, CobradorID=-1, VendedorID=-1.
+func TestAplicarVenta_Contado_AutoCrea_ZonaNil(t *testing.T) {
+	t.Parallel()
+	h, _, writer, clienteWriter := newAplicarHarness(t)
+
+	// CONTADO, no zona, no clienteID, full address snapshot.
+	in := validContadoInput()
+	// ZonaClienteID intentionally not set.
+	by := uuid.New()
+	v, err := h.svc.CrearVenta(t.Context(), in, by)
+	require.NoError(t, err)
+	seedOneEvidencia(t, h, v.ID(), by)
+	_, err = h.svc.EnviarARevision(t.Context(), v.ID(), by)
+	require.NoError(t, err)
+	_, err = h.svc.Aprobar(t.Context(), v.ID(), by)
+	require.NoError(t, err)
+
+	result, err := h.svc.AplicarVenta(t.Context(), v.ID(), uuid.New())
+
+	require.NoError(t, err)
+	assert.Equal(t, domain.SincronizacionAplicada, result.Sincronizacion())
+	require.Equal(t, 1, clienteWriter.callsCount(), "microsipCliente.Crear must be called once")
+	assert.Equal(t, -1, clienteWriter.LastIn.ZonaClienteID, "no zona → sentinel -1")
+	assert.Equal(t, -1, clienteWriter.LastIn.CobradorID, "fixed caja has no cobrador → sentinel -1")
+	assert.Equal(t, -1, clienteWriter.LastIn.VendedorID, "fixed caja has no vendedor → sentinel -1")
+	assert.Equal(t, 1, writer.callsCount(), "DOCTOS_PV writer must fire")
+}
+
+// TestAplicarVenta_Contado_ClientePreExistente_SaltaValidacionZona verifies
+// that a CONTADO venta with a pre-existing Microsip cliente ID skips the zona
+// validation check even when the zonaReader returns a mismatching zona.
+func TestAplicarVenta_Contado_ClientePreExistente_SaltaValidacionZona(t *testing.T) {
+	t.Parallel()
+	h, _, writer, _ := newAplicarHarness(t)
+	// Wire a zonaReader that returns a mismatch — it must NOT be consulted for contado.
+	zonaReader := newFakeClienteZonaReader(99999)
+	h.svc = h.svc.WithZonaReader(zonaReader)
+
+	id := seedAprobadaContadoSinZona(t, h) // pre-existing clienteID, no zona
+
+	v, err := h.svc.AplicarVenta(t.Context(), id, uuid.New())
+
+	require.NoError(t, err, "contado must not be rejected even with a zona mismatch in the reader")
+	assert.Equal(t, domain.SincronizacionAplicada, v.Sincronizacion())
+	assert.Equal(t, 0, zonaReader.callsCount(), "zona reader must NOT be consulted for contado")
+	assert.Equal(t, 1, writer.callsCount())
+}
+
+// TestAplicarVenta_Credito_ConZona_UsaCajaPorZona verifies that a CREDITO venta
+// with a zona uses the zona-based caja (CajaCajero) rather than the fixed
+// mostrador caja. This is the regression guard: credito behavior is unchanged.
+func TestAplicarVenta_Credito_ConZona_UsaCajaPorZona(t *testing.T) {
+	t.Parallel()
+	h, cfg, writer, _ := newAplicarHarness(t)
+
+	id := seedAprobadaCredito(t, h) // zona=21563, clienteID=47913
+
+	_, err := h.svc.AplicarVenta(t.Context(), id, uuid.New())
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, writer.callsCount())
+	// CajaID must come from CajaCajero(zona), not from the fixed contado caja.
+	// The fake cfg returns cc.CajaID=22198 for any zona; contado would give 12151.
+	assert.Equal(t, cfg.cc.CajaID, writer.lastInput().CajaID,
+		"credito must use zona-based caja (22198), not fixed mostrador caja (12151)")
+	assert.NotEqual(t, 12151, writer.lastInput().CajaID,
+		"fixed contado caja must NOT be used for credito")
 }
 
 // ─── TestCrearVentaInput extensions (for ZonaClienteID) ─────────────────────

@@ -208,6 +208,8 @@ func TestAplicarConfigRepo_Defaults_Hit(t *testing.T) {
 			SucursalID:          225490,
 			FormaCobroContadoID: 67,
 			FormaCobroCreditoID: 71,
+			CajaContadoID:       12151,
+			CajeroContadoID:     12266,
 		}, got)
 	})
 }

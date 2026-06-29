@@ -185,11 +185,24 @@ func (w *ClienteWriter) claimIDs(ctx context.Context, q firebird.Querier) (claim
 }
 
 // execInsertCliente runs the CLIENTES INSERT.
+// ZonaClienteID, CobradorID and VendedorID carry the sentinel -1 for contado
+// ventas (no zona). A sentinel value is bound as nil so the column is written
+// as SQL NULL rather than a stale integer.
 func (w *ClienteWriter) execInsertCliente(ctx context.Context, q firebird.Querier, clienteID int, in outbound.MicrosipClienteInput) error {
+	var zona, cobrador, vendedor any
+	if in.ZonaClienteID >= 0 {
+		zona = in.ZonaClienteID
+	}
+	if in.CobradorID >= 0 {
+		cobrador = in.CobradorID
+	}
+	if in.VendedorID >= 0 {
+		vendedor = in.VendedorID
+	}
 	_, err := q.ExecContext(ctx, insertCliente,
 		clienteID, in.Nombre,
 		w.limiteCredito, in.MonedaID, in.CondPagoID, in.TipoClienteID,
-		in.ZonaClienteID, in.CobradorID, in.VendedorID,
+		zona, cobrador, vendedor,
 	)
 	if err != nil {
 		return fmt.Errorf("microsip crear cliente: insert clientes: %w", firebird.MapError(err))

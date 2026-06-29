@@ -98,9 +98,9 @@ func checkPreconditions(v *domain.Venta) error {
 	if v.Situacion() != domain.SituacionAprobada {
 		return domain.ErrVentaNoAplicable
 	}
-	// Zona must be set before checking ClienteID: if both are missing, the
-	// caller sees ErrVentaSinZona first (the more actionable error).
-	if v.Direccion().ZonaClienteID() == nil {
+	// Zona is required only for credito ventas (to resolve the zona caja).
+	// Contado ventas use the fixed mostrador caja regardless of zona.
+	if v.TipoVenta() == domain.TipoVentaCredito && v.Direccion().ZonaClienteID() == nil {
 		return domain.ErrVentaSinZona
 	}
 	// ClienteID is nil only when the auto-create branch will run inside the
@@ -138,14 +138,23 @@ func puedeAutoCrearCliente(v *domain.Venta) bool {
 
 // buildWriterInput resolves all Microsip config IDs needed by the writer.
 func (s *Service) buildWriterInput(ctx context.Context, v *domain.Venta) (outbound.MicrosipVentaInput, error) {
-	zona := *v.Direccion().ZonaClienteID()
-	cc, err := s.aplicarCfg.CajaCajero(ctx, zona)
-	if err != nil {
-		return outbound.MicrosipVentaInput{}, err
-	}
 	defs, err := s.aplicarCfg.Defaults(ctx)
 	if err != nil {
 		return outbound.MicrosipVentaInput{}, err
+	}
+
+	var cc outbound.CajaCajero
+	if v.TipoVenta() == domain.TipoVentaContado {
+		// Contado uses the fixed mostrador caja; no zona needed.
+		cc = outbound.CajaCajero{
+			CajaID: defs.CajaContadoID, CajeroID: defs.CajeroContadoID,
+			VendedorID: -1, CobradorID: -1,
+		}
+	} else {
+		cc, err = s.aplicarCfg.CajaCajero(ctx, *v.Direccion().ZonaClienteID())
+		if err != nil {
+			return outbound.MicrosipVentaInput{}, err
+		}
 	}
 
 	formaCobroID := defs.FormaCobroContadoID
@@ -238,11 +247,26 @@ func (s *Service) autoCrearClienteSiNecesario(ctx context.Context, v *domain.Ven
 	if s.microsipCliente == nil {
 		return domain.ErrVentaSinClienteMicrosip
 	}
-	zona := *v.Direccion().ZonaClienteID()
-	cc, err := s.aplicarCfg.CajaCajero(ctx, zona)
-	if err != nil {
-		return err
+
+	var cc outbound.CajaCajero
+	if v.TipoVenta() == domain.TipoVentaContado {
+		// Contado uses the fixed mostrador caja; no zona needed.
+		defs, err := s.aplicarCfg.Defaults(ctx)
+		if err != nil {
+			return err
+		}
+		cc = outbound.CajaCajero{
+			CajaID: defs.CajaContadoID, CajeroID: defs.CajeroContadoID,
+			VendedorID: -1, CobradorID: -1,
+		}
+	} else {
+		var err error
+		cc, err = s.aplicarCfg.CajaCajero(ctx, *v.Direccion().ZonaClienteID())
+		if err != nil {
+			return err
+		}
 	}
+
 	in := buildAutoCreateClienteInput(v, cc)
 	res, err := s.microsipCliente.Crear(ctx, in)
 	if err != nil {
@@ -259,9 +283,13 @@ func (s *Service) autoCrearClienteSiNecesario(ctx context.Context, v *domain.Ven
 // is the ClienteID value captured BEFORE autoCrearClienteSiNecesario runs: when
 // nil, the auto-create branch ran and the new cliente inherits the venta's zona
 // — so the check is skipped. Returns nil when zonaReader is not wired.
+// Contado ventas skip the check entirely — they have no zona constraint.
 // When the repo returns nil (cliente exists but ZONA_CLIENTE_ID is NULL), the
 // check is also skipped — a NULL zona means "no zona constraint" on the cliente.
 func (s *Service) validarZonaClienteMicrosipPreExistente(ctx context.Context, v *domain.Venta, clienteIDPreExistente *int) error {
+	if v.TipoVenta() == domain.TipoVentaContado {
+		return nil
+	}
 	if clienteIDPreExistente == nil || s.zonaReader == nil {
 		return nil
 	}
@@ -284,13 +312,19 @@ func buildAutoCreateClienteInput(v *domain.Venta, cc outbound.CajaCajero) outbou
 	dir := v.Direccion()
 	gps := v.GPS()
 
+	// Use the sentinel -1 when zona is nil (contado ventas have no zona).
+	zonaID := -1
+	if dir.ZonaClienteID() != nil {
+		zonaID = *dir.ZonaClienteID()
+	}
+
 	in := outbound.MicrosipClienteInput{
 		Nombre:                  v.Cliente().Nombre().Value(),
 		Calle:                   dir.Calle(),
 		NumeroExterior:          dir.NumeroExterior(),
 		Colonia:                 dir.Colonia(),
 		Poblacion:               dir.Poblacion(),
-		ZonaClienteID:           *dir.ZonaClienteID(),
+		ZonaClienteID:           zonaID,
 		CobradorID:              cc.CobradorID,
 		VendedorID:              cc.VendedorID,
 		CiudadID:                outbound.DefaultCiudadID,
