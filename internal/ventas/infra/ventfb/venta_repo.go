@@ -567,6 +567,190 @@ func loadImagenes(ctx context.Context, q firebird.Querier, ventaID uuid.UUID) ([
 	return out, nil
 }
 
+// ventaIDPrefixScanner wraps a rowScanner and prepends one extra Scan
+// destination (the VENTA_ID column that the batch queries select first) before
+// forwarding to the underlying row. This lets the batch loaders reuse the
+// existing scan* helpers — which expect the child columns starting at position
+// 0 — without duplicating their column lists.
+type ventaIDPrefixScanner struct {
+	rows    rowScanner
+	ventaID *string
+}
+
+// Scan implements rowScanner by prepending the ventaID destination before
+// forwarding to the underlying row scanner.
+func (s ventaIDPrefixScanner) Scan(dest ...any) error {
+	return s.rows.Scan(append([]any{s.ventaID}, dest...)...)
+}
+
+// loadCombosByVentaIDs fetches all MSP_VENTAS_COMBOS rows for the given venta
+// IDs in a single query and groups the results by venta ID.
+//
+//nolint:dupl // four batch loaders share the same structure intentionally; each handles a different child type.
+func loadCombosByVentaIDs(ctx context.Context, q firebird.Querier, ids []uuid.UUID) (map[uuid.UUID][]*domain.Combo, error) {
+	out := make(map[uuid.UUID][]*domain.Combo, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	ph := strings.Repeat("?,", len(ids))
+	ph = ph[:len(ph)-1]
+	query := "SELECT VENTA_ID, " + comboColumns + " FROM MSP_VENTAS_COMBOS WHERE VENTA_ID IN (" + ph + ") ORDER BY VENTA_ID, POSICION"
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id.String()
+	}
+	rows, err := q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, firebird.MapError(err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var vid string
+		c, scanErr := scanCombo(ventaIDPrefixScanner{rows: rows, ventaID: &vid})
+		if scanErr != nil {
+			return nil, firebird.MapError(scanErr)
+		}
+		id, perr := uuid.Parse(strings.TrimSpace(vid))
+		if perr != nil {
+			return nil, apperror.NewInternal(
+				"firebird_uuid_invalid",
+				"uuid inválido en columna de base de datos",
+			).WithSource("firebird").WithError(perr).WithField("column", "VENTA_ID")
+		}
+		out[id] = append(out[id], c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, firebird.MapError(err)
+	}
+	return out, nil
+}
+
+// loadProductosByVentaIDs fetches all MSP_VENTAS_PRODUCTOS rows for the given
+// venta IDs in a single query and groups the results by venta ID.
+//
+//nolint:dupl // four batch loaders share the same structure intentionally; each handles a different child type.
+func loadProductosByVentaIDs(ctx context.Context, q firebird.Querier, ids []uuid.UUID) (map[uuid.UUID][]*domain.Producto, error) {
+	out := make(map[uuid.UUID][]*domain.Producto, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	ph := strings.Repeat("?,", len(ids))
+	ph = ph[:len(ph)-1]
+	query := "SELECT VENTA_ID, " + productoColumns + " FROM MSP_VENTAS_PRODUCTOS WHERE VENTA_ID IN (" + ph + ") ORDER BY VENTA_ID, POSICION"
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id.String()
+	}
+	rows, err := q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, firebird.MapError(err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var vid string
+		p, scanErr := scanProducto(ventaIDPrefixScanner{rows: rows, ventaID: &vid})
+		if scanErr != nil {
+			return nil, firebird.MapError(scanErr)
+		}
+		id, perr := uuid.Parse(strings.TrimSpace(vid))
+		if perr != nil {
+			return nil, apperror.NewInternal(
+				"firebird_uuid_invalid",
+				"uuid inválido en columna de base de datos",
+			).WithSource("firebird").WithError(perr).WithField("column", "VENTA_ID")
+		}
+		out[id] = append(out[id], p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, firebird.MapError(err)
+	}
+	return out, nil
+}
+
+// loadVendedoresByVentaIDs fetches all MSP_VENTAS_VENDEDORES rows for the
+// given venta IDs in a single query and groups the results by venta ID.
+//
+//nolint:dupl // four batch loaders share the same structure intentionally; each handles a different child type.
+func loadVendedoresByVentaIDs(ctx context.Context, q firebird.Querier, ids []uuid.UUID) (map[uuid.UUID][]*domain.Vendedor, error) {
+	out := make(map[uuid.UUID][]*domain.Vendedor, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	ph := strings.Repeat("?,", len(ids))
+	ph = ph[:len(ph)-1]
+	query := "SELECT VENTA_ID, " + vendedorColumns + " FROM MSP_VENTAS_VENDEDORES WHERE VENTA_ID IN (" + ph + ") ORDER BY VENTA_ID, POSICION"
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id.String()
+	}
+	rows, err := q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, firebird.MapError(err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var vid string
+		v, scanErr := scanVendedor(ventaIDPrefixScanner{rows: rows, ventaID: &vid})
+		if scanErr != nil {
+			return nil, firebird.MapError(scanErr)
+		}
+		id, perr := uuid.Parse(strings.TrimSpace(vid))
+		if perr != nil {
+			return nil, apperror.NewInternal(
+				"firebird_uuid_invalid",
+				"uuid inválido en columna de base de datos",
+			).WithSource("firebird").WithError(perr).WithField("column", "VENTA_ID")
+		}
+		out[id] = append(out[id], v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, firebird.MapError(err)
+	}
+	return out, nil
+}
+
+// loadImagenesByVentaIDs fetches all MSP_VENTAS_IMAGENES rows for the given
+// venta IDs in a single query and groups the results by venta ID.
+//
+//nolint:dupl // four batch loaders share the same structure intentionally; each handles a different child type.
+func loadImagenesByVentaIDs(ctx context.Context, q firebird.Querier, ids []uuid.UUID) (map[uuid.UUID][]*domain.Imagen, error) {
+	out := make(map[uuid.UUID][]*domain.Imagen, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	ph := strings.Repeat("?,", len(ids))
+	ph = ph[:len(ph)-1]
+	query := "SELECT VENTA_ID, " + imagenColumns + " FROM MSP_VENTAS_IMAGENES WHERE VENTA_ID IN (" + ph + ") ORDER BY VENTA_ID, CREATED_AT, ID"
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id.String()
+	}
+	rows, err := q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, firebird.MapError(err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var vid string
+		img, scanErr := scanImagen(ventaIDPrefixScanner{rows: rows, ventaID: &vid})
+		if scanErr != nil {
+			return nil, firebird.MapError(scanErr)
+		}
+		id, perr := uuid.Parse(strings.TrimSpace(vid))
+		if perr != nil {
+			return nil, apperror.NewInternal(
+				"firebird_uuid_invalid",
+				"uuid inválido en columna de base de datos",
+			).WithSource("firebird").WithError(perr).WithField("column", "VENTA_ID")
+		}
+		out[id] = append(out[id], img)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, firebird.MapError(err)
+	}
+	return out, nil
+}
+
 // List returns a cursor-paginated page of ventas matching f. Children are
 // loaded for every venta on the page (4 batched queries shared across the
 // page) so the response carries a fully hydrated aggregate; pageSize is
@@ -661,14 +845,21 @@ func nextCursorFromLast(last *ventaRowRaw) (string, error) {
 	return encodeCursor(fv, id), nil
 }
 
-// assembleListItems loads the four child collections for every venta on the
-// page and combines them with the scanned headers into hydrated aggregates.
+// assembleListItems batch-loads the four child collections for all ventas on
+// the page with four IN-queries (one per table), then combines them with the
+// scanned headers into hydrated aggregates. The result is 5 queries per page
+// regardless of page size, replacing the previous 1+4×N fan-out.
 func (r *VentaRepo) assembleListItems(
 	ctx context.Context,
 	q firebird.Querier,
 	headers []*ventaRowRaw,
 ) ([]*domain.Venta, error) {
-	items := make([]*domain.Venta, 0, len(headers))
+	type parsedHeader struct {
+		raw *ventaRowRaw
+		id  uuid.UUID
+	}
+	parsed := make([]parsedHeader, 0, len(headers))
+	ids := make([]uuid.UUID, 0, len(headers))
 	for _, raw := range headers {
 		id, err := uuid.Parse(raw.idRaw)
 		if err != nil {
@@ -677,23 +868,44 @@ func (r *VentaRepo) assembleListItems(
 				"uuid inválido en columna de base de datos",
 			).WithSource("firebird").WithError(err).WithField("column", "ID")
 		}
-		combos, err := loadCombos(ctx, q, id)
-		if err != nil {
-			return nil, err
+		parsed = append(parsed, parsedHeader{raw: raw, id: id})
+		ids = append(ids, id)
+	}
+	byCombos, err := loadCombosByVentaIDs(ctx, q, ids)
+	if err != nil {
+		return nil, err
+	}
+	byProductos, err := loadProductosByVentaIDs(ctx, q, ids)
+	if err != nil {
+		return nil, err
+	}
+	byVendedores, err := loadVendedoresByVentaIDs(ctx, q, ids)
+	if err != nil {
+		return nil, err
+	}
+	byImagenes, err := loadImagenesByVentaIDs(ctx, q, ids)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]*domain.Venta, 0, len(parsed))
+	for _, ph := range parsed {
+		combos := byCombos[ph.id]
+		if combos == nil {
+			combos = []*domain.Combo{}
 		}
-		productos, err := loadProductos(ctx, q, id)
-		if err != nil {
-			return nil, err
+		productos := byProductos[ph.id]
+		if productos == nil {
+			productos = []*domain.Producto{}
 		}
-		vendedores, err := loadVendedores(ctx, q, id)
-		if err != nil {
-			return nil, err
+		vendedores := byVendedores[ph.id]
+		if vendedores == nil {
+			vendedores = []*domain.Vendedor{}
 		}
-		imagenes, err := loadImagenes(ctx, q, id)
-		if err != nil {
-			return nil, err
+		imagenes := byImagenes[ph.id]
+		if imagenes == nil {
+			imagenes = []*domain.Imagen{}
 		}
-		v, err := assembleVenta(raw, combos, productos, vendedores, imagenes)
+		v, err := assembleVenta(ph.raw, combos, productos, vendedores, imagenes)
 		if err != nil {
 			return nil, err
 		}
