@@ -555,11 +555,15 @@ func drawVentaHeader(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
 	pdf.Line(margin, y, pageW-margin, y)
 	pdf.Ln(2)
 
-	// Left side: folio + date + almacen
+	// Left side: folio + date on the same line (date beside the folio, not below).
 	startY := pdf.GetY()
 	pdf.SetFont("PoppinsSB", "", 9.5)
 	pdf.SetTextColor(inkR, inkG, inkB)
-	pdf.CellFormat(80, 5.5, v.Folio, "", 0, "L", false, 0, "")
+	folioW := pdf.GetStringWidth(v.Folio) + 5
+	pdf.CellFormat(folioW, 5.5, v.Folio, "", 0, "L", false, 0, "")
+	pdf.SetFont("Poppins", "", 8)
+	pdf.SetTextColor(grayR, grayG, grayB)
+	pdf.CellFormat(40, 5.5, formatFecha(v.Fecha), "", 0, "L", false, 0, "")
 
 	// Right side: total + status chip
 	// Determine chip text and colors
@@ -573,15 +577,15 @@ func drawVentaHeader(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
 		chipR, chipG, chipB = amberR, amberG, amberB
 	}
 
-	// Total
-	pdf.SetFont("PlexMonoMed", "", 9.5)
-	pdf.SetTextColor(inkR, inkG, inkB)
-	totalStr := formatMXN(v.Total)
-	pdf.CellFormat(bodyW-80-40, 5.5, totalStr, "", 0, "R", false, 0, "")
-
-	// Chip: draw bordered rect + text
+	// Total: right-aligned in the space between the date and the chip.
 	chipW := 36.0
 	chipX := pageW - margin - chipW
+	totalW := chipX - (margin + folioW + 40) - 2
+	pdf.SetFont("PlexMonoMed", "", 9.5)
+	pdf.SetTextColor(inkR, inkG, inkB)
+	pdf.CellFormat(totalW, 5.5, formatMXN(v.Total), "", 0, "R", false, 0, "")
+
+	// Chip: draw bordered rect + text
 	chipY := startY
 	pdf.SetDrawColor(chipR, chipG, chipB)
 	pdf.SetLineWidth(0.4)
@@ -590,12 +594,6 @@ func drawVentaHeader(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
 	pdf.SetTextColor(chipR, chipG, chipB)
 	pdf.SetXY(chipX, chipY)
 	pdf.CellFormat(chipW, 5.5, chipText, "", 1, "C", false, 0, "")
-
-	// Second line: date only (almacén intentionally omitted per UX request)
-	pdf.SetXY(margin, startY+6)
-	pdf.SetFont("Poppins", "", 8)
-	pdf.SetTextColor(grayR, grayG, grayB)
-	pdf.CellFormat(bodyW, 4.5, formatFecha(v.Fecha), "", 1, "L", false, 0, "")
 
 	pdf.Ln(1.5)
 }
