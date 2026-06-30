@@ -114,6 +114,8 @@ type ContratoCredito struct {
 	Enganche decimal.Decimal
 	// PrecioDeContado is the cash price at the time of sale.
 	PrecioDeContado decimal.Decimal
+	// MontoCortoPlazo is the short-term price from LIBRES_CARGOS_CC.MONTO_A_CORTO_PLAZO; whole pesos.
+	MontoCortoPlazo decimal.Decimal
 	// PlazoMeses is the inferred loan duration in months.
 	PlazoMeses int
 	// FormaDePago describes the payment frequency (e.g. "mensual", "quincenal").

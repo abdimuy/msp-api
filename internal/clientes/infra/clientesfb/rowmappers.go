@@ -308,14 +308,15 @@ func (r *productoRowRaw) assemble() (*domain.ProductoVenta, error) {
 // contratoRowRaw holds raw scan targets for the credit contract query.
 // Ordering matches queryContrato column list.
 type contratoRowRaw struct {
-	parcialidadRaw   sql.NullInt64
-	engancheRaw      any
-	precioContadoRaw any
-	plazoMesesRaw    sql.NullInt64
-	formaDePagoRaw   firebird.Win1252 // LISTAS_ATRIBUTOS.VALOR_DESPLEGADO — CHARACTER SET NONE
-	vendedor1Raw     firebird.Win1252 // LISTAS_ATRIBUTOS.VALOR_DESPLEGADO — CHARACTER SET NONE
-	vendedor2Raw     firebird.Win1252 // LISTAS_ATRIBUTOS.VALOR_DESPLEGADO — CHARACTER SET NONE
-	vendedor3Raw     firebird.Win1252 // LISTAS_ATRIBUTOS.VALOR_DESPLEGADO — CHARACTER SET NONE
+	parcialidadRaw     sql.NullInt64
+	engancheRaw        any
+	precioContadoRaw   any
+	montoCortoPlazoRaw any // CAST(MONTO_A_CORTO_PLAZO AS NUMERIC(18,2)) — INTEGER column, cast to scale 2
+	plazoMesesRaw      sql.NullInt64
+	formaDePagoRaw     firebird.Win1252 // LISTAS_ATRIBUTOS.VALOR_DESPLEGADO — CHARACTER SET NONE
+	vendedor1Raw       firebird.Win1252 // LISTAS_ATRIBUTOS.VALOR_DESPLEGADO — CHARACTER SET NONE
+	vendedor2Raw       firebird.Win1252 // LISTAS_ATRIBUTOS.VALOR_DESPLEGADO — CHARACTER SET NONE
+	vendedor3Raw       firebird.Win1252 // LISTAS_ATRIBUTOS.VALOR_DESPLEGADO — CHARACTER SET NONE
 }
 
 func (r *contratoRowRaw) scanFrom(s scannable) error {
@@ -323,6 +324,7 @@ func (r *contratoRowRaw) scanFrom(s scannable) error {
 		&r.parcialidadRaw,
 		&r.engancheRaw,
 		&r.precioContadoRaw,
+		&r.montoCortoPlazoRaw,
 		&r.plazoMesesRaw,
 		&r.formaDePagoRaw,
 		&r.vendedor1Raw,
@@ -347,6 +349,12 @@ func (r *contratoRowRaw) assemble() (*outbound.ContratoCredito, error) {
 	if err != nil {
 		return nil, err
 	}
+	// MONTO_A_CORTO_PLAZO is INTEGER (scale 0); CASTs to NUMERIC(18,2) in query
+	// so the driver returns it at scale 2, same as the other money amounts.
+	montoCortoPlazo, err := scanNullDecimalOrZero(r.montoCortoPlazoRaw)
+	if err != nil {
+		return nil, err
+	}
 	plazoMeses := 0
 	if r.plazoMesesRaw.Valid {
 		plazoMeses = int(r.plazoMesesRaw.Int64)
@@ -362,6 +370,7 @@ func (r *contratoRowRaw) assemble() (*outbound.ContratoCredito, error) {
 		Parcialidad:     parcialidad,
 		Enganche:        enganche,
 		PrecioDeContado: precioContado,
+		MontoCortoPlazo: montoCortoPlazo,
 		PlazoMeses:      plazoMeses,
 		FormaDePago:     string(r.formaDePagoRaw),
 		Vendedores:      vendedores,

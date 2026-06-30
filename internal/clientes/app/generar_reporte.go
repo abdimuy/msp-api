@@ -157,12 +157,13 @@ func (s *Service) buildReporteVenta(ctx context.Context, v *domain.VentaCliente,
 	var credito *outbound.ReporteCredito
 	if c := detalle.Contrato; c != nil {
 		credito = &outbound.ReporteCredito{
-			Parcialidad:   c.Parcialidad,
-			FormaPago:     c.FormaDePago,
-			PlazoMeses:    c.PlazoMeses,
-			Enganche:      c.Enganche,
-			PrecioContado: c.PrecioDeContado,
-			Vendedores:    c.Vendedores,
+			Parcialidad:     c.Parcialidad,
+			FormaPago:       c.FormaDePago,
+			PlazoMeses:      c.PlazoMeses,
+			Enganche:        c.Enganche,
+			PrecioContado:   c.PrecioDeContado,
+			MontoCortoPlazo: c.MontoCortoPlazo,
+			Vendedores:      c.Vendedores,
 		}
 	}
 

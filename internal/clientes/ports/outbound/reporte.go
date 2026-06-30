@@ -59,12 +59,13 @@ type ReporteProducto struct {
 
 // ReporteCredito holds the credit-contract terms of a sale.
 type ReporteCredito struct {
-	Parcialidad   decimal.Decimal
-	FormaPago     string
-	PlazoMeses    int
-	Enganche      decimal.Decimal
-	PrecioContado decimal.Decimal
-	Vendedores    []string
+	Parcialidad     decimal.Decimal
+	FormaPago       string
+	PlazoMeses      int
+	Enganche        decimal.Decimal
+	PrecioContado   decimal.Decimal
+	MontoCortoPlazo decimal.Decimal
+	Vendedores      []string
 }
 
 // ReportePago is a single payment entry within a sale's payment history.

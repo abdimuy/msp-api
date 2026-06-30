@@ -108,8 +108,6 @@ const (
 
 var meses = [...]string{"ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"}
 
-var mesesLargo = [...]string{"ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE"}
-
 // Render produces the PDF bytes for a client report.
 // gen is the generation timestamp (injected for deterministic tests).
 // generadoPor is the display name of the user who generated the report,
@@ -454,7 +452,10 @@ func drawCredito(pdf *fpdf.Fpdf, c *outbound.ReporteCredito) {
 		pairs = append(pairs, kv{"Parcialidad", v})
 	}
 	if c.PlazoMeses > 0 {
-		pairs = append(pairs, kv{"Plazo", fmt.Sprintf("%d meses", c.PlazoMeses)})
+		pairs = append(pairs, kv{"Plazo corto plazo", fmt.Sprintf("%d meses", c.PlazoMeses)})
+	}
+	if c.MontoCortoPlazo.IsPositive() {
+		pairs = append(pairs, kv{"Precio corto plazo", formatMXN(c.MontoCortoPlazo)})
 	}
 	if c.Enganche.IsPositive() {
 		pairs = append(pairs, kv{"Enganche", formatMXN(c.Enganche)})
@@ -589,12 +590,11 @@ func drawVentaHeader(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
 	pdf.SetXY(chipX, chipY)
 	pdf.CellFormat(chipW, 5.5, chipText, "", 1, "C", false, 0, "")
 
-	// Second line: date + almacen
+	// Second line: date only (almacén intentionally omitted per UX request)
 	pdf.SetXY(margin, startY+6)
 	pdf.SetFont("Poppins", "", 8)
 	pdf.SetTextColor(grayR, grayG, grayB)
-	dateAlm := formatFecha(v.Fecha) + "   " + v.Almacen
-	pdf.CellFormat(bodyW, 4.5, dateAlm, "", 1, "L", false, 0, "")
+	pdf.CellFormat(bodyW, 4.5, formatFecha(v.Fecha), "", 1, "L", false, 0, "")
 
 	pdf.Ln(1.5)
 }
@@ -618,12 +618,13 @@ func drawPagosTable(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
 		return pagos[i].Fecha.Before(pagos[j].Fecha)
 	})
 
-	colFecha := 26.0
-	colConcepto := 78.0
-	colCobrador := 60.0
-	colImporte := bodyW - colFecha - colConcepto - colCobrador
+	colMes := 22.0
+	colFecha := 23.0
+	colConcepto := 66.0
+	colCobrador := 52.0
+	colImporte := bodyW - colMes - colFecha - colConcepto - colCobrador
 	rowH := 4.5
-	cols := pagoCols{colFecha, colConcepto, colCobrador, colImporte, rowH}
+	cols := pagoCols{colMes, colFecha, colConcepto, colCobrador, colImporte, rowH}
 
 	drawColHdr := makePagosColumnHeader(pdf, cols)
 	drawColHdr()
@@ -636,19 +637,22 @@ func drawPagosTable(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
 		drawContinuation(pdf, v.Folio)
 		drawColHdr()
 	}
-	labelArea := colFecha + colConcepto + colCobrador
+	labelArea := colMes + colFecha + colConcepto + colCobrador
 	for i, ln := range lines {
 		drawSubtotalRow(pdf, labelArea, colImporte, rowH, ln.label, ln.amount, ln.r, ln.g, ln.b, i == 0)
 	}
 }
 
 // makePagosColumnHeader returns a closure that draws the payment table column
-// header using the given column widths.
+// header using the given column widths. It emits an empty gutter cell first so
+// the data headers align with the data columns.
 func makePagosColumnHeader(pdf *fpdf.Fpdf, cols pagoCols) func() {
 	return func() {
 		pdf.SetFont("PlexMono", "", 6)
 		pdf.SetTextColor(grayR, grayG, grayB)
 		pdf.SetFillColor(hairR, hairG, hairB)
+		// Empty gutter cell — header row has no month label.
+		pdf.CellFormat(cols.mes, cols.rowH, "", "", 0, "L", true, 0, "")
 		headers := []struct {
 			text  string
 			width float64
@@ -666,8 +670,10 @@ func makePagosColumnHeader(pdf *fpdf.Fpdf, cols pagoCols) func() {
 	}
 }
 
-// drawPagoRows iterates sorted pagos, inserting month-group headers on month
-// changes and paginating manually. Returns per-category payment totals.
+// drawPagoRows iterates sorted pagos, tracking the current month and printing its
+// label in the left gutter column on the first row of each group. Paginates
+// manually; re-prints the month label on the first row of a continuation page so
+// context is never lost. Returns per-category payment totals.
 func drawPagoRows(
 	pdf *fpdf.Fpdf,
 	folio string,
@@ -676,25 +682,27 @@ func drawPagoRows(
 	drawColHdr func(),
 ) (decimal.Decimal, decimal.Decimal, decimal.Decimal) {
 	var ingreso, condon, perdida decimal.Decimal
-	var lastYM [2]int // [year, month] of the previous row; zero = none yet
+	var lastYM [2]int // [year, month] of the last printed row; zero = none yet
+	needMonthLabel := false
+
 	for i, p := range pagos {
-		curY, curM := p.Fecha.Year(), p.Fecha.Month()
-		if lastYM[0] != curY || lastYM[1] != int(curM) {
-			// Anti-orphan: ensure month header + at least one payment fit together.
-			if pdf.GetY()+2*cols.rowH > bottomLimit {
-				pdf.AddPage()
-				drawContinuation(pdf, folio)
-				drawColHdr()
-			}
-			drawPagosMonthHeader(pdf, p.Fecha, cols.rowH)
-			lastYM = [2]int{curY, int(curM)}
+		curY, curM := p.Fecha.Year(), int(p.Fecha.Month())
+		if lastYM[0] != curY || lastYM[1] != curM {
+			lastYM = [2]int{curY, curM}
+			needMonthLabel = true
 		}
 		if pdf.GetY()+cols.rowH > bottomLimit {
 			pdf.AddPage()
 			drawContinuation(pdf, folio)
 			drawColHdr()
+			needMonthLabel = true // re-print month label at top of continuation page
 		}
-		drawPagoRow(pdf, p, i%2 == 1, cols)
+		mesLabel := ""
+		if needMonthLabel {
+			mesLabel = formatMesAnioCorto(p.Fecha)
+			needMonthLabel = false
+		}
+		drawPagoRow(pdf, p, i%2 == 1, cols, mesLabel)
 		switch {
 		case p.EsIngreso:
 			ingreso = ingreso.Add(p.Importe)
@@ -707,27 +715,28 @@ func drawPagoRows(
 	return ingreso, condon, perdida
 }
 
-// drawPagosMonthHeader draws a tinted month separator row (e.g. "ABRIL 2024").
-func drawPagosMonthHeader(pdf *fpdf.Fpdf, t time.Time, rowH float64) {
-	pdf.SetFont("PlexMono", "", 6.5)
-	pdf.SetTextColor(slateR, slateG, slateB)
-	pdf.SetFillColor(hairR, hairG, hairB)
-	pdf.CellFormat(bodyW, rowH, formatMesAnio(t), "", 1, "L", true, 0, "")
-}
-
 // pagoCols carries the payment-table column widths and row height.
+// mes is the left gutter column that shows the month label on the first row of
+// each group; fecha/concepto/cobrador/importe are the data columns.
 type pagoCols struct {
-	fecha, concepto, cobrador, importe, rowH float64
+	mes, fecha, concepto, cobrador, importe, rowH float64
 }
 
-// drawPagoRow renders one payment row, tinting concepto + importe by category.
-func drawPagoRow(pdf *fpdf.Fpdf, p outbound.ReportePago, fill bool, c pagoCols) {
+// drawPagoRow renders one payment row. mesLabel is printed in the left gutter
+// column (slate, PlexMono 6.5pt); pass "" for rows that are not the first of
+// their month group. Concepto + importe are tinted by category.
+func drawPagoRow(pdf *fpdf.Fpdf, p outbound.ReportePago, fill bool, c pagoCols, mesLabel string) {
 	if fill {
 		pdf.SetFillColor(altFillR, altFillG, altFillB)
 	} else {
 		pdf.SetFillColor(255, 255, 255)
 	}
 	cr, cg, cb := pagoColor(p)
+
+	// Left gutter: month label on first row of a group, empty otherwise.
+	pdf.SetFont("PlexMono", "", 6.5)
+	pdf.SetTextColor(slateR, slateG, slateB)
+	pdf.CellFormat(c.mes, c.rowH, mesLabel, "", 0, "L", fill, 0, "")
 
 	pdf.SetFont("PlexMono", "", 7)
 	pdf.SetTextColor(inkR, inkG, inkB)
@@ -829,9 +838,10 @@ func formatFecha(t time.Time) string {
 	return fmt.Sprintf("%d %s %d", t.Day(), meses[t.Month()-1], t.Year())
 }
 
-// formatMesAnio formats a month/year as "ABRIL 2024" for month-group headers.
-func formatMesAnio(t time.Time) string {
-	return fmt.Sprintf("%s %d", mesesLargo[t.Month()-1], t.Year())
+// formatMesAnioCorto formats a month/year as "ABR 2024" for the payment-table
+// month gutter (short uppercase month, fits in ~22 mm at PlexMono 6.5pt).
+func formatMesAnioCorto(t time.Time) string {
+	return fmt.Sprintf("%s %d", strings.ToUpper(meses[t.Month()-1]), t.Year())
 }
 
 // formatFechaHora formats a datetime as "20 jun 2026, 14:30".

@@ -81,7 +81,8 @@ func buildSample() outbound.ReporteCliente {
 				},
 				Credito: &outbound.ReporteCredito{
 					Parcialidad: d("2000.00"), FormaPago: "Quincenal", PlazoMeses: 12,
-					Enganche: d("3700.00"), PrecioContado: d("16500.00"),
+					MontoCortoPlazo: d("19800.00"),
+					Enganche:        d("3700.00"), PrecioContado: d("16500.00"),
 					Vendedores: []string{"ANDRÉS RODRÍGUEZ"},
 				},
 				Pagos: []outbound.ReportePago{
@@ -107,7 +108,8 @@ func buildSample() outbound.ReporteCliente {
 				},
 				Credito: &outbound.ReporteCredito{
 					Parcialidad: d("1500.00"), FormaPago: "Semanal", PlazoMeses: 24,
-					Enganche: d("6000.00"), PrecioContado: d("26000.00"),
+					MontoCortoPlazo: d("29500.00"),
+					Enganche:        d("6000.00"), PrecioContado: d("26000.00"),
 					Vendedores: []string{"ANDRÉS RODRÍGUEZ"},
 				},
 				Pagos: []outbound.ReportePago{
