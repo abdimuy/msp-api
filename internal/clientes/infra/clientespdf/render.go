@@ -127,7 +127,7 @@ func Render(rep outbound.ReporteCliente, gen time.Time, generadoPor string) ([]b
 
 	drawMasthead(pdf)
 	drawClienteBlock(pdf, rep.Cliente)
-	drawResumenBand(pdf, rep.TotalVentas, rep.VentasLiquidadas, rep.VentasActivas)
+	drawResumenBand(pdf, rep.TotalVentas, rep.VentasLiquidadas, rep.VentasActivas, rep.Resumen.SaldoTotal)
 	drawVentas(pdf, rep.Ventas)
 
 	var buf bytes.Buffer
@@ -309,12 +309,13 @@ func writeNotaRich(pdf *fpdf.Fpdf, nota string) {
 	pdf.Ln(lineH)
 }
 
-// drawResumenBand renders the 3-metric sales-count strip: total ventas,
-// liquidadas (fully paid), and activas (outstanding balance > 0).
-// All three counts cover all client ventas, not just the printed subset.
-func drawResumenBand(pdf *fpdf.Fpdf, total, liquidadas, activas int) {
+// drawResumenBand renders the 4-metric summary strip: total ventas,
+// liquidadas (fully paid), activas (outstanding balance > 0), and saldo
+// (total outstanding balance across all active ventas).
+// All counts and the saldo cover all client ventas, not just the printed subset.
+func drawResumenBand(pdf *fpdf.Fpdf, total, liquidadas, activas int, saldo decimal.Decimal) {
 	bandH := 13.0
-	colW := bodyW / 3
+	colW := bodyW / 4
 	y := pdf.GetY()
 
 	// Top and bottom hairlines
@@ -331,6 +332,7 @@ func drawResumenBand(pdf *fpdf.Fpdf, total, liquidadas, activas int) {
 		{"VENTAS TOTALES", strconv.Itoa(total)},
 		{"LIQUIDADAS", strconv.Itoa(liquidadas)},
 		{"ACTIVAS", strconv.Itoa(activas)},
+		{"SALDO", formatMXN(saldo)},
 	}
 
 	for i, m := range metrics {
