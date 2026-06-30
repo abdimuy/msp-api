@@ -130,20 +130,24 @@ func e2eDiscoverDosComponentes(ctx context.Context, t *testing.T, q firebird.Que
 }
 
 // e2eSalidasInventario reads SALDOS_IN.SALIDAS_UNIDADES for an article+almacén
-// in the current year+month. SALDOS_IN has one row per (ARTICULO_ID, ALMACEN_ID,
-// ANO, MES) — without the ANO/MES filter the query returns multiple rows and
-// QueryRowContext picks an arbitrary one, making the delta measure unreliable.
+// in the SALE month (e2eFixedTime), not the current month. Microsip's
+// GENERA_DOCTO_IN_PV cascade stamps the generated inventory movement with
+// DOCTOS_PV.FECHA, which the writer now sets from the venta's real FechaVenta
+// (= e2eFixedTime here), so the discharge lands in that month's SALDOS_IN row
+// rather than the application month. SALDOS_IN has one row per
+// (ARTICULO_ID, ALMACEN_ID, ANO, MES) — without the ANO/MES filter
+// QueryRowContext picks an arbitrary row, making the delta measure unreliable.
 // Returns decimal.Zero when no row exists (zero baseline before any discharge).
 func e2eSalidasInventario(ctx context.Context, t *testing.T, q firebird.Querier, articuloID, almacenID int) decimal.Decimal {
 	t.Helper()
+	ventaMonth := e2eFixedTime()
 	var raw any
 	err := q.QueryRowContext(ctx,
 		`SELECT CAST(SALIDAS_UNIDADES AS NUMERIC(18,6))
 		 FROM SALDOS_IN
 		 WHERE ARTICULO_ID = ? AND ALMACEN_ID = ?
-		   AND ANO = EXTRACT(YEAR FROM CURRENT_DATE)
-		   AND MES = EXTRACT(MONTH FROM CURRENT_DATE)`,
-		articuloID, almacenID,
+		   AND ANO = ? AND MES = ?`,
+		articuloID, almacenID, ventaMonth.Year(), int(ventaMonth.Month()),
 	).Scan(&raw)
 	if err != nil {
 		return decimal.Zero
