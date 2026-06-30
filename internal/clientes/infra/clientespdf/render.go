@@ -6,6 +6,7 @@ import (
 	"embed"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -101,15 +102,19 @@ const (
 	margin = 15.0
 	bodyW  = pageW - 2*margin
 	// bottomLimit is the lowest Y content may reach before a manual page break,
-	// leaving room for the footer (drawn at SetY(-12)).
-	bottomLimit = pageH - 16
+	// leaving room for the two-line footer (drawn starting at SetY(-16)).
+	bottomLimit = pageH - 20
 )
 
 var meses = [...]string{"ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"}
 
+var mesesLargo = [...]string{"ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE"}
+
 // Render produces the PDF bytes for a client report.
 // gen is the generation timestamp (injected for deterministic tests).
-func Render(rep outbound.ReporteCliente, gen time.Time) ([]byte, error) {
+// generadoPor is the display name of the user who generated the report,
+// shown in the footer of every page.
+func Render(rep outbound.ReporteCliente, gen time.Time, generadoPor string) ([]byte, error) {
 	pdf := fpdf.New("P", "mm", "Letter", "")
 	pdf.SetMargins(margin, margin, margin)
 	// Pagination is managed manually (see drawVenta / drawPagosTable) so venta
@@ -122,17 +127,19 @@ func Render(rep outbound.ReporteCliente, gen time.Time) ([]byte, error) {
 		return nil, fmt.Errorf("cargar fuentes: %w", err)
 	}
 
+	impresas := len(rep.Ventas)
+	total := rep.TotalVentas
 	pdf.SetFooterFunc(func() {
-		drawFooter(pdf, gen)
+		drawFooter(pdf, gen, generadoPor, impresas, total)
 	})
 
 	pdf.AddPage()
 
 	ingreso, condon, perdida := sumarCategorias(rep.Ventas)
 
-	drawMasthead(pdf, gen)
+	drawMasthead(pdf)
 	drawClienteBlock(pdf, rep.Cliente)
-	drawResumenBand(pdf, rep.Resumen, ingreso, condon.Add(perdida))
+	drawResumenBand(pdf, rep.Resumen, ingreso, condon.Add(perdida), rep.TotalVentas)
 	drawVentas(pdf, rep.Ventas)
 
 	var buf bytes.Buffer
@@ -167,15 +174,13 @@ func loadFonts(pdf *fpdf.Fpdf) error {
 	return nil
 }
 
-// drawMasthead renders the top header: company name, report title, date and rule.
-func drawMasthead(pdf *fpdf.Fpdf, gen time.Time) {
-	// Row 1: company name (left) + generation date (right)
+// drawMasthead renders the top header: company name, report title and rule.
+// The generation date was moved to the footer (Cambio 2).
+func drawMasthead(pdf *fpdf.Fpdf) {
+	// Row 1: company name (left only; generation date moved to footer)
 	pdf.SetTextColor(slateR, slateG, slateB)
 	pdf.SetFont("PoppinsSB", "", 7)
-	pdf.CellFormat(bodyW/2, 4.5, "MUEBLERÍA MSP", "", 0, "L", false, 0, "")
-	pdf.SetTextColor(grayR, grayG, grayB)
-	pdf.SetFont("PlexMono", "", 7)
-	pdf.CellFormat(bodyW/2, 4.5, formatFechaHora(gen), "", 1, "R", false, 0, "")
+	pdf.CellFormat(bodyW, 4.5, "MUEBLERÍA MSP", "", 1, "L", false, 0, "")
 
 	// Row 2: report title
 	pdf.SetTextColor(inkR, inkG, inkB)
@@ -200,11 +205,10 @@ func drawClienteBlock(pdf *fpdf.Fpdf, c outbound.ReporteClienteDatos) {
 	pdf.CellFormat(bodyW, 6.5, c.Nombre, "", 1, "L", false, 0, "")
 	pdf.Ln(0.5)
 
-	// 2-column key/value pairs
+	// 2-column key/value pairs (ID removed per Cambio 5)
 	colW := bodyW / 2
 	type kv struct{ k, v string }
 	pairs := []kv{
-		{"ID", strconv.Itoa(c.ID)},
 		{"Teléfono", c.Telefono},
 		{"Zona", c.Zona},
 		{"Cobrador", c.Cobrador},
@@ -320,8 +324,9 @@ func writeNotaRich(pdf *fpdf.Fpdf, nota string) {
 // drawResumenBand renders the 6-metric financial summary strip. abonadoIngreso
 // is collected money only (excludes condonación/pérdida); noCobrado is the sum
 // of forgiven debt + write-offs — so ABONADO here means real cash, coherent with
-// the per-venta subtotals and the rest of the app.
-func drawResumenBand(pdf *fpdf.Fpdf, r outbound.ResumenFicha, abonadoIngreso, noCobrado decimal.Decimal) {
+// the per-venta subtotals and the rest of the app. totalVentas is the client's
+// total number of sales (unfiltered), used for the # VENTAS metric.
+func drawResumenBand(pdf *fpdf.Fpdf, r outbound.ResumenFicha, abonadoIngreso, noCobrado decimal.Decimal, totalVentas int) {
 	bandH := 13.0
 	colW := bodyW / 6
 	y := pdf.GetY()
@@ -342,7 +347,7 @@ func drawResumenBand(pdf *fpdf.Fpdf, r outbound.ResumenFicha, abonadoIngreso, no
 		{"NO COBRADO", formatMXN(noCobrado)},
 		{"SALDO", formatMXN(r.SaldoTotal)},
 		{"% LIQUIDADO", r.PctLiquidado.StringFixed(1) + "%"},
-		{"# VENTAS", strconv.Itoa(r.NumVentas)},
+		{"# VENTAS", strconv.Itoa(totalVentas)},
 	}
 
 	for i, m := range metrics {
@@ -596,24 +601,51 @@ func drawVentaHeader(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
 
 // drawPagosTable renders the payment table for a venta, paginating manually so
 // long tables repeat their column header (and the venta folio) on each page.
+// Payments are sorted ascending by date and grouped by month with a subtle
+// month-header separator row.
 func drawPagosTable(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
-	pagos := v.Pagos
-	if len(pagos) == 0 {
+	if len(v.Pagos) == 0 {
 		pdf.SetFont("Poppins", "", 7.5)
 		pdf.SetTextColor(grayR, grayG, grayB)
 		pdf.CellFormat(bodyW, 4.5, "Sin pagos registrados", "", 1, "L", false, 0, "")
 		return
 	}
 
-	// Column widths
+	// Sort a copy of the pagos slice ascending by date so month grouping is clean.
+	pagos := make([]outbound.ReportePago, len(v.Pagos))
+	copy(pagos, v.Pagos)
+	sort.Slice(pagos, func(i, j int) bool {
+		return pagos[i].Fecha.Before(pagos[j].Fecha)
+	})
+
 	colFecha := 26.0
 	colConcepto := 78.0
 	colCobrador := 60.0
 	colImporte := bodyW - colFecha - colConcepto - colCobrador
-
 	rowH := 4.5
+	cols := pagoCols{colFecha, colConcepto, colCobrador, colImporte, rowH}
 
-	drawColumnHeader := func() {
+	drawColHdr := makePagosColumnHeader(pdf, cols)
+	drawColHdr()
+
+	ingreso, condon, perdida := drawPagoRows(pdf, v.Folio, pagos, cols, drawColHdr)
+
+	lines := buildSubtotales(ingreso, condon, perdida)
+	if pdf.GetY()+float64(len(lines))*rowH > bottomLimit {
+		pdf.AddPage()
+		drawContinuation(pdf, v.Folio)
+		drawColHdr()
+	}
+	labelArea := colFecha + colConcepto + colCobrador
+	for i, ln := range lines {
+		drawSubtotalRow(pdf, labelArea, colImporte, rowH, ln.label, ln.amount, ln.r, ln.g, ln.b, i == 0)
+	}
+}
+
+// makePagosColumnHeader returns a closure that draws the payment table column
+// header using the given column widths.
+func makePagosColumnHeader(pdf *fpdf.Fpdf, cols pagoCols) func() {
+	return func() {
 		pdf.SetFont("PlexMono", "", 6)
 		pdf.SetTextColor(grayR, grayG, grayB)
 		pdf.SetFillColor(hairR, hairG, hairB)
@@ -622,28 +654,45 @@ func drawPagosTable(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
 			width float64
 			align string
 		}{
-			{"FECHA", colFecha, "L"},
-			{"CONCEPTO", colConcepto, "L"},
-			{"COBRADOR", colCobrador, "L"},
-			{"IMPORTE", colImporte, "R"},
+			{"FECHA", cols.fecha, "L"},
+			{"CONCEPTO", cols.concepto, "L"},
+			{"COBRADOR", cols.cobrador, "L"},
+			{"IMPORTE", cols.importe, "R"},
 		}
 		for _, h := range headers {
-			pdf.CellFormat(h.width, rowH, h.text, "", 0, h.align, true, 0, "")
+			pdf.CellFormat(h.width, cols.rowH, h.text, "", 0, h.align, true, 0, "")
 		}
-		pdf.Ln(rowH)
+		pdf.Ln(cols.rowH)
 	}
+}
 
-	drawColumnHeader()
-
-	// Payment rows — break manually, repeating folio + column header.
-	// Condonación/pérdida rows are colored and totaled apart from real money.
+// drawPagoRows iterates sorted pagos, inserting month-group headers on month
+// changes and paginating manually. Returns per-category payment totals.
+func drawPagoRows(
+	pdf *fpdf.Fpdf,
+	folio string,
+	pagos []outbound.ReportePago,
+	cols pagoCols,
+	drawColHdr func(),
+) (decimal.Decimal, decimal.Decimal, decimal.Decimal) {
 	var ingreso, condon, perdida decimal.Decimal
-	cols := pagoCols{colFecha, colConcepto, colCobrador, colImporte, rowH}
+	var lastYM [2]int // [year, month] of the previous row; zero = none yet
 	for i, p := range pagos {
-		if pdf.GetY()+rowH > bottomLimit {
+		curY, curM := p.Fecha.Year(), p.Fecha.Month()
+		if lastYM[0] != curY || lastYM[1] != int(curM) {
+			// Anti-orphan: ensure month header + at least one payment fit together.
+			if pdf.GetY()+2*cols.rowH > bottomLimit {
+				pdf.AddPage()
+				drawContinuation(pdf, folio)
+				drawColHdr()
+			}
+			drawPagosMonthHeader(pdf, p.Fecha, cols.rowH)
+			lastYM = [2]int{curY, int(curM)}
+		}
+		if pdf.GetY()+cols.rowH > bottomLimit {
 			pdf.AddPage()
-			drawContinuation(pdf, v.Folio)
-			drawColumnHeader()
+			drawContinuation(pdf, folio)
+			drawColHdr()
 		}
 		drawPagoRow(pdf, p, i%2 == 1, cols)
 		switch {
@@ -655,18 +704,15 @@ func drawPagosTable(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
 			condon = condon.Add(p.Importe)
 		}
 	}
+	return ingreso, condon, perdida
+}
 
-	lines := buildSubtotales(ingreso, condon, perdida)
-	// Keep the whole subtotal block with the table.
-	if pdf.GetY()+float64(len(lines))*rowH > bottomLimit {
-		pdf.AddPage()
-		drawContinuation(pdf, v.Folio)
-		drawColumnHeader()
-	}
-	labelArea := colFecha + colConcepto + colCobrador
-	for i, ln := range lines {
-		drawSubtotalRow(pdf, labelArea, colImporte, rowH, ln.label, ln.amount, ln.r, ln.g, ln.b, i == 0)
-	}
+// drawPagosMonthHeader draws a tinted month separator row (e.g. "ABRIL 2024").
+func drawPagosMonthHeader(pdf *fpdf.Fpdf, t time.Time, rowH float64) {
+	pdf.SetFont("PlexMono", "", 6.5)
+	pdf.SetTextColor(slateR, slateG, slateB)
+	pdf.SetFillColor(hairR, hairG, hairB)
+	pdf.CellFormat(bodyW, rowH, formatMesAnio(t), "", 1, "L", true, 0, "")
 }
 
 // pagoCols carries the payment-table column widths and row height.
@@ -727,18 +773,27 @@ func drawSubtotalRow(pdf *fpdf.Fpdf, labelArea, colImporte, rowH float64, label 
 	pdf.CellFormat(colImporte, rowH, formatMXN(total), "", 1, "R", false, 0, "")
 }
 
-// drawFooter renders the page footer (called by fpdf on every page).
-func drawFooter(pdf *fpdf.Fpdf, _ time.Time) {
-	pdf.SetY(-12)
+// drawFooter renders the two-line page footer (called by fpdf on every page).
+// Line 1: generation info (generadoPor · date · X de Y ventas).
+// Line 2: page number right-aligned.
+func drawFooter(pdf *fpdf.Fpdf, gen time.Time, generadoPor string, impresas, total int) {
+	pdf.SetY(-16)
 	pdf.SetDrawColor(hairR, hairG, hairB)
 	pdf.SetLineWidth(0.2)
 	pdf.Line(margin, pdf.GetY(), pageW-margin, pdf.GetY())
 	pdf.Ln(1.5)
-	pdf.SetFont("Poppins", "", 6.5)
-	pdf.SetTextColor(grayR, grayG, grayB)
-	pdf.CellFormat(bodyW/2, 4, "Mueblería MSP", "", 0, "L", false, 0, "")
+
+	// Line 1: "Generado por <Nombre> · <fecha> · X de Y ventas"
+	infoText := fmt.Sprintf("Generado por %s · %s · %d de %d ventas",
+		generadoPor, formatFechaHora(gen), impresas, total)
 	pdf.SetFont("PlexMono", "", 6.5)
-	pdf.CellFormat(bodyW/2, 4, "Página "+strconv.Itoa(pdf.PageNo())+" de {nb}", "", 0, "R", false, 0, "")
+	pdf.SetTextColor(grayR, grayG, grayB)
+	pdf.CellFormat(bodyW, 4, infoText, "", 1, "L", false, 0, "")
+
+	// Line 2: page number right-aligned
+	pdf.SetFont("PlexMono", "", 6.5)
+	pdf.SetTextColor(grayR, grayG, grayB)
+	pdf.CellFormat(bodyW, 4, "Página "+strconv.Itoa(pdf.PageNo())+" de {nb}", "", 0, "R", false, 0, "")
 }
 
 // formatMXN formats a decimal as "$1,200.00".
@@ -772,6 +827,11 @@ func formatMXN(d decimal.Decimal) string {
 // formatFecha formats a date as "12 mar 2024".
 func formatFecha(t time.Time) string {
 	return fmt.Sprintf("%d %s %d", t.Day(), meses[t.Month()-1], t.Year())
+}
+
+// formatMesAnio formats a month/year as "ABRIL 2024" for month-group headers.
+func formatMesAnio(t time.Time) string {
+	return fmt.Sprintf("%s %d", mesesLargo[t.Month()-1], t.Year())
 }
 
 // formatFechaHora formats a datetime as "20 jun 2026, 14:30".

@@ -60,7 +60,7 @@ func TestReporteIntegration_MinervaLopez(t *testing.T) {
 			assert.Len(t, rep.Ventas, 4, "cliente 24037 debe tener 4 ventas reales")
 		}
 
-		pdf, err := clientespdf.Render(rep, genFijo)
+		pdf, err := clientespdf.Render(rep, genFijo, "Juan Pérez")
 		require.NoError(t, err, "error al renderizar el PDF")
 		require.GreaterOrEqual(t, len(pdf), 4, "el PDF no debe estar vacío")
 		assert.Equal(t, "%PDF", string(pdf[:4]), "los bytes del PDF deben iniciar con %%PDF")

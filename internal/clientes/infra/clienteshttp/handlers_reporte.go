@@ -44,6 +44,17 @@ func (h *Handlers) Reporte(w http.ResponseWriter, req *http.Request) {
 		ventaIDs = append(ventaIDs, id)
 	}
 
+	// Resolve the authenticated user for the footer attribution line.
+	cu, err := currentUserOrError(ctx)
+	if err != nil {
+		http.Error(w, "no autenticado", http.StatusUnauthorized)
+		return
+	}
+	generadoPor := cu.Nombre
+	if generadoPor == "" {
+		generadoPor = cu.Email
+	}
+
 	// Assemble the report read-model from the repository.
 	rep, err := h.svc.GenerarReporteCliente(ctx, clienteID, ventaIDs)
 	if err != nil {
@@ -61,7 +72,7 @@ func (h *Handlers) Reporte(w http.ResponseWriter, req *http.Request) {
 	}
 
 	// Render PDF bytes from the assembled read-model.
-	pdfBytes, err := clientespdf.Render(rep, time.Now())
+	pdfBytes, err := clientespdf.Render(rep, time.Now(), generadoPor)
 	if err != nil {
 		slog.ErrorContext(ctx, "error al renderizar el pdf del reporte",
 			"cliente_id", clienteID,

@@ -18,13 +18,13 @@ func TestRenderSample(t *testing.T) {
 	sample := buildSample()
 	gen := time.Date(2026, 6, 20, 14, 30, 0, 0, time.UTC)
 
-	got, err := clientespdf.Render(sample, gen)
+	got, err := clientespdf.Render(sample, gen, "Juan Pérez")
 	require.NoError(t, err)
 	require.Greater(t, len(got), 5000, "pdf demasiado pequeño: %d bytes", len(got))
 	require.Equal(t, "%PDF", string(got[:4]))
 
 	// Idempotency check
-	got2, err := clientespdf.Render(sample, gen)
+	got2, err := clientespdf.Render(sample, gen, "Juan Pérez")
 	require.NoError(t, err)
 	require.Len(t, got2, len(got), "tamaño no idempotente")
 
@@ -62,9 +62,10 @@ func buildSample() outbound.ReporteCliente {
 			TotalAbonado:  d("31200.00"),
 			SaldoTotal:    d("17300.00"),
 			PctLiquidado:  d("64.3"),
-			NumVentas:     2,
+			NumVentas:     12,
 			NumPagos:      14,
 		},
+		TotalVentas: 12,
 		Ventas: []outbound.ReporteVenta{
 			{
 				DoctoPvID: 10231,

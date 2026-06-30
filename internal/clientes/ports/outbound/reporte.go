@@ -13,6 +13,9 @@ type ReporteCliente struct {
 	Cliente ReporteClienteDatos
 	Resumen ResumenFicha
 	Ventas  []ReporteVenta
+	// TotalVentas is the total number of sales on record for the client.
+	// Ventas may be a printed subset (when the caller filters by venta IDs).
+	TotalVentas int
 }
 
 // ReporteClienteDatos holds the identity fields shown in the client block of
