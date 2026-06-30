@@ -48,6 +48,14 @@ func (s *Service) GenerarReporteCliente(ctx context.Context, clienteID int, vent
 		return outbound.ReporteCliente{}, err
 	}
 
+	total := len(allVentas)
+	liquidadas := 0
+	for _, v := range allVentas {
+		if v.SaldoVenta().IsZero() {
+			liquidadas++
+		}
+	}
+
 	return outbound.ReporteCliente{
 		Cliente: outbound.ReporteClienteDatos{
 			ID:        cliente.ClienteID(),
@@ -58,9 +66,11 @@ func (s *Service) GenerarReporteCliente(ctx context.Context, clienteID int, vent
 			Cobrador:  cliente.CobradorNombre(),
 			Notas:     cliente.Notas(),
 		},
-		Resumen:     resumen,
-		Ventas:      reporteVentas,
-		TotalVentas: len(allVentas),
+		Resumen:          resumen,
+		Ventas:           reporteVentas,
+		TotalVentas:      total,
+		VentasLiquidadas: liquidadas,
+		VentasActivas:    total - liquidadas,
 	}, nil
 }
 

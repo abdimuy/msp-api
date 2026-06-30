@@ -65,7 +65,9 @@ func buildSample() outbound.ReporteCliente {
 			NumVentas:     12,
 			NumPagos:      14,
 		},
-		TotalVentas: 12,
+		TotalVentas:      12,
+		VentasLiquidadas: 10,
+		VentasActivas:    2,
 		Ventas: []outbound.ReporteVenta{
 			{
 				DoctoPvID: 10231,

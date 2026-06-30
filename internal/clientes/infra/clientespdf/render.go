@@ -80,25 +80,6 @@ func buildSubtotales(ingreso, condon, perdida decimal.Decimal) []subtotalLine {
 	return lines
 }
 
-// sumarCategorias totals payments across all ventas, split into collected income,
-// condonación, and pérdida.
-func sumarCategorias(ventas []outbound.ReporteVenta) (decimal.Decimal, decimal.Decimal, decimal.Decimal) {
-	var ingreso, condon, perdida decimal.Decimal
-	for _, v := range ventas {
-		for _, p := range v.Pagos {
-			switch {
-			case p.EsIngreso:
-				ingreso = ingreso.Add(p.Importe)
-			case p.Categoria == catPerdida:
-				perdida = perdida.Add(p.Importe)
-			default:
-				condon = condon.Add(p.Importe)
-			}
-		}
-	}
-	return ingreso, condon, perdida
-}
-
 // Letter size in mm.
 const (
 	pageW  = 215.9
@@ -144,11 +125,9 @@ func Render(rep outbound.ReporteCliente, gen time.Time, generadoPor string) ([]b
 
 	pdf.AddPage()
 
-	ingreso, condon, perdida := sumarCategorias(rep.Ventas)
-
 	drawMasthead(pdf)
 	drawClienteBlock(pdf, rep.Cliente)
-	drawResumenBand(pdf, rep.Resumen, ingreso, condon.Add(perdida), rep.TotalVentas)
+	drawResumenBand(pdf, rep.TotalVentas, rep.VentasLiquidadas, rep.VentasActivas)
 	drawVentas(pdf, rep.Ventas)
 
 	var buf bytes.Buffer
@@ -330,14 +309,12 @@ func writeNotaRich(pdf *fpdf.Fpdf, nota string) {
 	pdf.Ln(lineH)
 }
 
-// drawResumenBand renders the 6-metric financial summary strip. abonadoIngreso
-// is collected money only (excludes condonación/pérdida); noCobrado is the sum
-// of forgiven debt + write-offs — so ABONADO here means real cash, coherent with
-// the per-venta subtotals and the rest of the app. totalVentas is the client's
-// total number of sales (unfiltered), used for the # VENTAS metric.
-func drawResumenBand(pdf *fpdf.Fpdf, r outbound.ResumenFicha, abonadoIngreso, noCobrado decimal.Decimal, totalVentas int) {
+// drawResumenBand renders the 3-metric sales-count strip: total ventas,
+// liquidadas (fully paid), and activas (outstanding balance > 0).
+// All three counts cover all client ventas, not just the printed subset.
+func drawResumenBand(pdf *fpdf.Fpdf, total, liquidadas, activas int) {
 	bandH := 13.0
-	colW := bodyW / 6
+	colW := bodyW / 3
 	y := pdf.GetY()
 
 	// Top and bottom hairlines
@@ -351,12 +328,9 @@ func drawResumenBand(pdf *fpdf.Fpdf, r outbound.ResumenFicha, abonadoIngreso, no
 		value string
 	}
 	metrics := []metric{
-		{"COMPRADO", formatMXN(r.TotalComprado)},
-		{"ABONADO", formatMXN(abonadoIngreso)},
-		{"NO COBRADO", formatMXN(noCobrado)},
-		{"SALDO", formatMXN(r.SaldoTotal)},
-		{"% LIQUIDADO", r.PctLiquidado.StringFixed(1) + "%"},
-		{"# VENTAS", strconv.Itoa(totalVentas)},
+		{"VENTAS TOTALES", strconv.Itoa(total)},
+		{"LIQUIDADAS", strconv.Itoa(liquidadas)},
+		{"ACTIVAS", strconv.Itoa(activas)},
 	}
 
 	for i, m := range metrics {

@@ -16,6 +16,12 @@ type ReporteCliente struct {
 	// TotalVentas is the total number of sales on record for the client.
 	// Ventas may be a printed subset (when the caller filters by venta IDs).
 	TotalVentas int
+	// VentasLiquidadas is the count of sales with a zero outstanding balance
+	// (fully paid), computed over all client ventas (not just the printed subset).
+	VentasLiquidadas int
+	// VentasActivas is the count of sales with a positive outstanding balance,
+	// computed over all client ventas (not just the printed subset).
+	VentasActivas int
 }
 
 // ReporteClienteDatos holds the identity fields shown in the client block of

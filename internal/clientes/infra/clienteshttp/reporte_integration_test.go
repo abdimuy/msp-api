@@ -58,6 +58,9 @@ func TestReporteIntegration_MinervaLopez(t *testing.T) {
 			// Solo ventas reales (TIPO_DOCTO='V'): 24037 tiene 4 (antes salían 45
 			// porque se contaban los documentos de cobranza 'P').
 			assert.Len(t, rep.Ventas, 4, "cliente 24037 debe tener 4 ventas reales")
+			assert.Equal(t, 4, rep.TotalVentas, "TotalVentas debe ser 4")
+			assert.Equal(t, 3, rep.VentasLiquidadas, "VentasLiquidadas debe ser 3")
+			assert.Equal(t, 1, rep.VentasActivas, "VentasActivas debe ser 1")
 		}
 
 		pdf, err := clientespdf.Render(rep, genFijo, "Juan Pérez")

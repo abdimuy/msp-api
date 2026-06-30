@@ -189,6 +189,10 @@ func TestGenerarReporteCliente_Liquidada(t *testing.T) {
 
 	assert.True(t, rep.Ventas[0].Liquidada, "saldo=0 debe ser Liquidada=true")
 	assert.False(t, rep.Ventas[1].Liquidada, "saldo>0 debe ser Liquidada=false")
+
+	assert.Equal(t, 2, rep.TotalVentas, "TotalVentas debe contar todas las ventas")
+	assert.Equal(t, 1, rep.VentasLiquidadas, "VentasLiquidadas: solo la de saldo=0")
+	assert.Equal(t, 1, rep.VentasActivas, "VentasActivas: solo la de saldo>0")
 }
 
 // ─── TestGenerarReporteCliente_ClienteNoEncontrado ───────────────────────────
