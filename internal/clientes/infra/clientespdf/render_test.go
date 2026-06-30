@@ -113,7 +113,10 @@ func buildSample() outbound.ReporteCliente {
 					Vendedores: []string{"ANDRÉS RODRÍGUEZ"},
 				},
 				Pagos: []outbound.ReportePago{
+					ing("2025-01-06", "Cobranza en ruta", "RUTA 36 - OSCAR ROQUE", "1500.00", "pago"),
+					ing("2025-01-13", "Cobranza en ruta", "RUTA 36 - OSCAR ROQUE", "1500.00", "pago"),
 					ing("2025-01-20", "Enganche", "RUTA 36 - OSCAR ROQUE", "6000.00", "enganche"),
+					ing("2025-01-27", "Cobranza en ruta", "RUTA 36 - OSCAR ROQUE", "1500.00", "pago"),
 					ing("2025-02-18", "Cobranza en ruta", "RUTA 36 - OSCAR ROQUE", "1500.00", "pago"),
 					ing("2025-03-19", "Cobranza en ruta", "RUTA 36 - OSCAR ROQUE", "1500.00", "pago"),
 					ing("2025-04-16", "Cobranza en ruta", "RUTA 36 - OSCAR ROQUE", "1500.00", "pago"),

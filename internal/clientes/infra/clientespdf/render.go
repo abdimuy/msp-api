@@ -36,8 +36,8 @@ const (
 	violetR, violetG, violetB    = 124, 77, 196 // condonación (matches the app's violet)
 	redR, redG, redB             = 200, 50, 50  // pérdida / fuga / mal cliente
 	altFillR, altFillG, altFillB = 248, 249, 250
-	// bandEven* — subtle tint for even-indexed month blocks in the payment table.
-	bandEvenR, bandEvenG, bandEvenB = 245, 247, 250
+	// bandEven* — tint for even-indexed month blocks; visible in B/N print.
+	bandEvenR, bandEvenG, bandEvenB = 234, 238, 243
 	// accentBar* — lighter slate for the left accent bar of each month block.
 	accentBarR, accentBarG, accentBarB = 100, 116, 139
 )
@@ -113,6 +113,8 @@ const (
 	monthAccentBarW = 0.8 // mm
 	// monthGapH is the vertical gap inserted between consecutive month blocks.
 	monthGapH = 1.2 // mm
+	// monthLabelPadL is the gap between the accent bar right edge and the month label.
+	monthLabelPadL = 1.5 // mm
 )
 
 var meses = [...]string{"ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"}
@@ -536,9 +538,23 @@ func drawContinuation(pdf *fpdf.Fpdf, folio string) {
 	pdf.Ln(0.5)
 }
 
+// sanitizeLine replaces any control character (< 0x20) with a space and
+// collapses consecutive whitespace to a single space. This prevents the ▯
+// tofu glyph that appears when legacy Microsip strings embed newlines.
+func sanitizeLine(s string) string {
+	mapped := strings.Map(func(r rune) rune {
+		if r < 0x20 {
+			return ' '
+		}
+		return r
+	}, s)
+	return strings.Join(strings.Fields(mapped), " ")
+}
+
 // fitText truncates s with an ellipsis so it never overflows maxW under the
 // current font. UTF-8 safe (trims by rune).
 func fitText(pdf *fpdf.Fpdf, s string, maxW float64) string {
+	s = sanitizeLine(s)
 	const pad = 1.5 // mm safety so the text never touches the next column
 	avail := maxW - pad
 	if pdf.GetStringWidth(s) <= avail {
@@ -637,6 +653,25 @@ func drawMonthAccentBar(pdf *fpdf.Fpdf, startY, endY float64) {
 	}
 	pdf.SetFillColor(accentBarR, accentBarG, accentBarB)
 	pdf.Rect(margin, startY, monthAccentBarW, endY-startY, "F")
+}
+
+// drawMonthLabelCentered draws the month label vertically centered within the
+// page segment [segStartY, segEndY). The label sits to the right of the accent
+// bar with monthLabelPadL breathing room. Cursor is restored to segEndY.
+func drawMonthLabelCentered(pdf *fpdf.Fpdf, label string, segStartY, segEndY float64, cols pagoCols) {
+	segH := segEndY - segStartY
+	lineH := cols.rowH
+	labelY := segStartY + (segH-lineH)/2
+	if labelY < segStartY {
+		labelY = segStartY
+	}
+	labelX := margin + monthAccentBarW + monthLabelPadL
+	labelW := cols.mes - monthAccentBarW - monthLabelPadL
+	pdf.SetFont("PlexMono", "", 6.5)
+	pdf.SetTextColor(slateR, slateG, slateB)
+	pdf.SetXY(labelX, labelY)
+	pdf.CellFormat(labelW, lineH, label, "", 0, "L", false, 0, "")
+	pdf.SetXY(margin, segEndY)
 }
 
 // drawPagosTable renders the payment table for a venta, paginating manually so
@@ -746,28 +781,21 @@ func drawPagoRows(
 			}
 		}
 
-		groupBandStartY := pdf.GetY()
-		needMonthLabel := true // always label the first row of each block
+		grpLabel := formatMesAnioCorto(grp.pagos[0].Fecha)
+		segStartY := pdf.GetY()
 
 		for _, p := range grp.pagos {
 			if pdf.GetY()+cols.rowH > bottomLimit {
-				// Close the accent bar for the rows already drawn on this page …
-				drawMonthAccentBar(pdf, groupBandStartY, pdf.GetY())
-				// … then continue on a fresh page, re-printing the month label.
+				segEndY := pdf.GetY()
+				drawMonthAccentBar(pdf, segStartY, segEndY)
+				drawMonthLabelCentered(pdf, grpLabel, segStartY, segEndY, cols)
 				pdf.AddPage()
 				drawContinuation(pdf, folio)
 				drawColHdr()
-				groupBandStartY = pdf.GetY()
-				needMonthLabel = true
+				segStartY = pdf.GetY()
 			}
 
-			mesLabel := ""
-			if needMonthLabel {
-				mesLabel = formatMesAnioCorto(p.Fecha)
-				needMonthLabel = false
-			}
-
-			drawPagoRow(pdf, p, bfR, bfG, bfB, cols, mesLabel)
+			drawPagoRow(pdf, p, bfR, bfG, bfB, cols)
 
 			switch {
 			case p.EsIngreso:
@@ -779,8 +807,9 @@ func drawPagoRows(
 			}
 		}
 
-		// Draw the accent bar spanning all rows of this block on the current page.
-		drawMonthAccentBar(pdf, groupBandStartY, pdf.GetY())
+		segEndY := pdf.GetY()
+		drawMonthAccentBar(pdf, segStartY, segEndY)
+		drawMonthLabelCentered(pdf, grpLabel, segStartY, segEndY, cols)
 	}
 	return ingreso, condon, perdida
 }
@@ -794,17 +823,17 @@ type pagoCols struct {
 
 // drawPagoRow renders one payment row using the given month-block fill color
 // (fillR/G/B). All rows in the same month block share the same fill so the band
-// reads as a continuous block. mesLabel is printed in the left gutter on the
-// first row of a group; pass "" for subsequent rows.
+// reads as a continuous block. The left gutter is always empty — the month label
+// is drawn separately, vertically centered, by drawMonthLabelCentered.
 // Concepto + importe are tinted by payment category (colors go on top of the fill).
-func drawPagoRow(pdf *fpdf.Fpdf, p outbound.ReportePago, fillR, fillG, fillB int, c pagoCols, mesLabel string) {
+func drawPagoRow(pdf *fpdf.Fpdf, p outbound.ReportePago, fillR, fillG, fillB int, c pagoCols) {
 	pdf.SetFillColor(fillR, fillG, fillB)
 	cr, cg, cb := pagoColor(p)
 
-	// Left gutter: month label on first row of a block (slate, PlexMono 6.5pt).
+	// Left gutter: always empty — month label drawn separately, vertically centered.
 	pdf.SetFont("PlexMono", "", 6.5)
 	pdf.SetTextColor(slateR, slateG, slateB)
-	pdf.CellFormat(c.mes, c.rowH, mesLabel, "", 0, "L", true, 0, "")
+	pdf.CellFormat(c.mes, c.rowH, "", "", 0, "L", true, 0, "")
 
 	pdf.SetFont("PlexMono", "", 7)
 	pdf.SetTextColor(inkR, inkG, inkB)
