@@ -143,18 +143,17 @@ func (s *Service) buildWriterInput(ctx context.Context, v *domain.Venta) (outbou
 		return outbound.MicrosipVentaInput{}, err
 	}
 
+	// Resolve caja for the venta type. Contado uses the fixed mostrador caja
+	// (from MSP_CFG_APLICAR); credito uses the zona mapping. The error check
+	// is shared outside the if/else to keep nesting flat.
 	var cc outbound.CajaCajero
 	if v.TipoVenta() == domain.TipoVentaContado {
-		// Contado uses the fixed mostrador caja; no zona needed.
-		cc = outbound.CajaCajero{
-			CajaID: defs.CajaContadoID, CajeroID: defs.CajeroContadoID,
-			VendedorID: -1, CobradorID: -1,
-		}
+		cc, err = contadoCajaCajeroFromDefaults(defs)
 	} else {
 		cc, err = s.aplicarCfg.CajaCajero(ctx, *v.Direccion().ZonaClienteID())
-		if err != nil {
-			return outbound.MicrosipVentaInput{}, err
-		}
+	}
+	if err != nil {
+		return outbound.MicrosipVentaInput{}, err
 	}
 
 	formaCobroID := defs.FormaCobroContadoID
@@ -248,23 +247,9 @@ func (s *Service) autoCrearClienteSiNecesario(ctx context.Context, v *domain.Ven
 		return domain.ErrVentaSinClienteMicrosip
 	}
 
-	var cc outbound.CajaCajero
-	if v.TipoVenta() == domain.TipoVentaContado {
-		// Contado uses the fixed mostrador caja; no zona needed.
-		defs, err := s.aplicarCfg.Defaults(ctx)
-		if err != nil {
-			return err
-		}
-		cc = outbound.CajaCajero{
-			CajaID: defs.CajaContadoID, CajeroID: defs.CajeroContadoID,
-			VendedorID: -1, CobradorID: -1,
-		}
-	} else {
-		var err error
-		cc, err = s.aplicarCfg.CajaCajero(ctx, *v.Direccion().ZonaClienteID())
-		if err != nil {
-			return err
-		}
+	cc, err := s.resolveAutoCreateCajaCajero(ctx, v)
+	if err != nil {
+		return err
 	}
 
 	in := buildAutoCreateClienteInput(v, cc)
@@ -276,6 +261,34 @@ func (s *Service) autoCrearClienteSiNecesario(ctx context.Context, v *domain.Ven
 		return err
 	}
 	return s.ventas.UpdateCliente(ctx, v)
+}
+
+// resolveAutoCreateCajaCajero returns the CajaCajero to use when auto-creating
+// a new Microsip cliente during AplicarVenta. CONTADO ventas use the fixed
+// mostrador caja loaded from MSP_CFG_APLICAR; CREDITO ventas use the zona
+// mapping. Extracted to keep autoCrearClienteSiNecesario flat.
+func (s *Service) resolveAutoCreateCajaCajero(ctx context.Context, v *domain.Venta) (outbound.CajaCajero, error) {
+	if v.TipoVenta() != domain.TipoVentaContado {
+		return s.aplicarCfg.CajaCajero(ctx, *v.Direccion().ZonaClienteID())
+	}
+	defs, err := s.aplicarCfg.Defaults(ctx)
+	if err != nil {
+		return outbound.CajaCajero{}, err
+	}
+	return contadoCajaCajeroFromDefaults(defs)
+}
+
+// contadoCajaCajeroFromDefaults builds the fixed mostrador CajaCajero from
+// AplicarDefaults. Returns domain.ErrConfigCajaContadoFaltante when
+// CAJA_CONTADO_ID / CAJERO_CONTADO_ID are NULL (sentinel -1 from the repo).
+func contadoCajaCajeroFromDefaults(defs outbound.AplicarDefaults) (outbound.CajaCajero, error) {
+	if defs.CajaContadoID < 0 || defs.CajeroContadoID < 0 {
+		return outbound.CajaCajero{}, domain.ErrConfigCajaContadoFaltante
+	}
+	return outbound.CajaCajero{
+		CajaID: defs.CajaContadoID, CajeroID: defs.CajeroContadoID,
+		VendedorID: -1, CobradorID: -1,
+	}, nil
 }
 
 // validarZonaClienteMicrosipPreExistente checks that the venta's zona matches

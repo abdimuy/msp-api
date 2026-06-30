@@ -141,6 +141,8 @@ func (r *AplicarConfigRepo) VendedorListaIDs(ctx context.Context, usuarioID uuid
 }
 
 // nullIntOr returns the int value of n, or def when n is NULL.
+//
+//nolint:unparam // def is always -1 by design — sentinel for "not configured".
 func nullIntOr(n sql.NullInt64, def int) int {
 	if !n.Valid {
 		return def
@@ -150,15 +152,19 @@ func nullIntOr(n sql.NullInt64, def int) int {
 
 // Defaults returns the singleton MSP_CFG_APLICAR row.
 // Returns domain.ErrConfigAplicarFaltante when the row is absent.
+// CAJA_CONTADO_ID / CAJERO_CONTADO_ID are nullable columns (no backfill until
+// a separate data UPDATE runs); missing values map to the sentinel -1 so a NULL
+// column does not break credito applies that never read those fields.
 func (r *AplicarConfigRepo) Defaults(ctx context.Context) (outbound.AplicarDefaults, error) {
 	q := firebird.GetQuerier(ctx, r.pool.DB)
 	var d outbound.AplicarDefaults
+	var cajaContado, cajeroContado sql.NullInt64
 	err := q.QueryRowContext(ctx, selectAplicarDefaults).Scan(
 		&d.SucursalID,
 		&d.FormaCobroContadoID,
 		&d.FormaCobroCreditoID,
-		&d.CajaContadoID,
-		&d.CajeroContadoID,
+		&cajaContado,
+		&cajeroContado,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return outbound.AplicarDefaults{}, domain.ErrConfigAplicarFaltante
@@ -166,5 +172,7 @@ func (r *AplicarConfigRepo) Defaults(ctx context.Context) (outbound.AplicarDefau
 	if err != nil {
 		return outbound.AplicarDefaults{}, firebird.MapError(err)
 	}
+	d.CajaContadoID = nullIntOr(cajaContado, -1)
+	d.CajeroContadoID = nullIntOr(cajeroContado, -1)
 	return d, nil
 }

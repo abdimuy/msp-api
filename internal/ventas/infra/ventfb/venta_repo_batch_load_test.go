@@ -85,13 +85,13 @@ func assertBatchChildrenMatchPerID(t *testing.T, label string, want, got *domain
 	t.Helper()
 
 	// ── Counts ──────────────────────────────────────────────────────────────
-	assert.Equal(t, want.CombosCount(), got.CombosCount(),
+	require.Equal(t, want.CombosCount(), got.CombosCount(),
 		"%s: combos count mismatch", label)
-	assert.Equal(t, want.ProductosCount(), got.ProductosCount(),
+	require.Equal(t, want.ProductosCount(), got.ProductosCount(),
 		"%s: productos count mismatch", label)
-	assert.Equal(t, want.VendedoresCount(), got.VendedoresCount(),
+	require.Equal(t, want.VendedoresCount(), got.VendedoresCount(),
 		"%s: vendedores count mismatch", label)
-	assert.Equal(t, want.ImagenesCount(), got.ImagenesCount(),
+	require.Equal(t, want.ImagenesCount(), got.ImagenesCount(),
 		"%s: imagenes count mismatch", label)
 
 	// ── Combo IDs in order ───────────────────────────────────────────────────

@@ -912,6 +912,72 @@ func TestAplicarVenta_Credito_ConZona_UsaCajaPorZona(t *testing.T) {
 		"fixed contado caja must NOT be used for credito")
 }
 
+// ─── Contado caja config guard tests ─────────────────────────────────────────
+
+// TestAplicarVenta_Contado_CajaContadoNoConfigurada verifies that when
+// MSP_CFG_APLICAR has NULL CAJA_CONTADO_ID (sentinel -1) a CONTADO venta
+// returns ErrConfigCajaContadoFaltante. The fix decouples the contado config
+// from the credito path so only contado ventas fail.
+func TestAplicarVenta_Contado_CajaContadoNoConfigurada(t *testing.T) {
+	t.Parallel()
+	h, _, writer, _ := newAplicarHarness(t)
+	// Override defs so that CAJA_CONTADO_ID is the sentinel -1 (NULL).
+	h.svc = ventasapp.NewService(
+		h.ventas, nil, nil, h.storage, h.clock, h.outbox, h.imageProc, nil,
+		&fakeAplicarConfig{
+			defs: outbound.AplicarDefaults{
+				SucursalID: 225490, FormaCobroContadoID: 67, FormaCobroCreditoID: 71,
+				CajaContadoID: -1, CajeroContadoID: -1, // not configured
+			},
+			fpIDs:   map[string]int{"SEMANAL": 33824, "QUINCENAL": 33825, "MENSUAL": 33826},
+			cmIDs:   map[int]int{6: 33830, 9: 33829, 12: 33828, 18: 33827},
+			numVIDs: map[int]int{1: 47558, 2: 47559, 3: 47560},
+		},
+		writer,
+		newFakeClienteWriter(),
+	)
+
+	id := seedAprobadaContado(t, h)
+
+	_, err := h.svc.AplicarVenta(t.Context(), id, uuid.New())
+
+	require.ErrorIs(t, err, domain.ErrConfigCajaContadoFaltante)
+	assert.Zero(t, writer.callsCount(), "writer must NOT be called when contado caja is not configured")
+}
+
+// TestAplicarVenta_Credito_CajaContadoNula_NoRompe verifies that a CREDITO
+// venta applies successfully even when CAJA_CONTADO_ID is NULL (sentinel -1).
+// Credito never reads the contado caja, so a NULL contado config must not
+// break it — this is the regression guard for the decoupling fix.
+func TestAplicarVenta_Credito_CajaContadoNula_NoRompe(t *testing.T) {
+	t.Parallel()
+	h, _, writer, _ := newAplicarHarness(t)
+	// Override defs with NULL contado caja but valid credito config.
+	h.svc = ventasapp.NewService(
+		h.ventas, nil, nil, h.storage, h.clock, h.outbox, h.imageProc, nil,
+		&fakeAplicarConfig{
+			cc: outbound.CajaCajero{CajaID: 22198, CajeroID: 22392, VendedorID: 88266},
+			defs: outbound.AplicarDefaults{
+				SucursalID: 225490, FormaCobroContadoID: 67, FormaCobroCreditoID: 71,
+				CajaContadoID: -1, CajeroContadoID: -1, // not configured — must not affect credito
+			},
+			fpIDs:   map[string]int{"SEMANAL": 33824, "QUINCENAL": 33825, "MENSUAL": 33826},
+			cmIDs:   map[int]int{6: 33830, 9: 33829, 12: 33828, 18: 33827},
+			numVIDs: map[int]int{1: 47558, 2: 47559, 3: 47560},
+		},
+		writer,
+		newFakeClienteWriter(),
+	)
+
+	id := seedAprobadaCredito(t, h)
+
+	v, err := h.svc.AplicarVenta(t.Context(), id, uuid.New())
+
+	require.NoError(t, err, "credito venta must apply even when contado caja is NULL")
+	assert.Equal(t, domain.SincronizacionAplicada, v.Sincronizacion())
+	assert.Equal(t, 1, writer.callsCount(), "writer must be called for credito venta")
+}
+
 // ─── TestCrearVentaInput extensions (for ZonaClienteID) ─────────────────────
 
 // Extend the in-package validContadoInput to include ZonaClienteID for

@@ -208,6 +208,40 @@ func TestClienteWriter_Crear_SinTelefono(t *testing.T) { //nolint:paralleltest /
 	})
 }
 
+// TestClienteWriter_Crear_ZonaNullInsert verifies that passing the sentinel -1
+// for ZonaClienteID, CobradorID, and VendedorID writes NULL to the CLIENTES
+// and DIRS_CLIENTES rows, confirming those columns are nullable in Microsip.
+func TestClienteWriter_Crear_ZonaNullInsert(t *testing.T) { //nolint:paralleltest // serial: Firebird MAX on CLAVES_CLIENTES would race across parallel txs
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	writer := microsip.NewClienteWriter(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		in := defaultInput("CARMEN RUIZ ESPINOZA TEST NULL 20260629")
+		// Sentinel -1 maps to SQL NULL for these three optional FK columns.
+		in.ZonaClienteID = -1
+		in.CobradorID = -1
+		in.VendedorID = -1
+
+		result, err := writer.Crear(ctx, in)
+		require.NoError(t, err, "crear with NULL zona/cobrador/vendedor must succeed")
+		require.NotZero(t, result.ClienteID)
+
+		q := firebird.GetQuerier(ctx, pool.DB)
+
+		// ZONA_CLIENTE_ID, COBRADOR_ID, VENDEDOR_ID must all be NULL in CLIENTES.
+		var zonaID, cobradorID, vendedorID sql.NullInt64
+		err = q.QueryRowContext(ctx,
+			`SELECT ZONA_CLIENTE_ID, COBRADOR_ID, VENDEDOR_ID FROM CLIENTES WHERE CLIENTE_ID = ?`,
+			result.ClienteID,
+		).Scan(&zonaID, &cobradorID, &vendedorID)
+		require.NoError(t, err)
+		require.False(t, zonaID.Valid, "ZONA_CLIENTE_ID must be NULL when sentinel -1 is passed")
+		require.False(t, cobradorID.Valid, "COBRADOR_ID must be NULL when sentinel -1 is passed")
+		require.False(t, vendedorID.Valid, "VENDEDOR_ID must be NULL when sentinel -1 is passed")
+	})
+}
+
 func TestClienteWriter_NextClaveCliente_Incremental(t *testing.T) { //nolint:paralleltest // serial: two sequential Crear calls inside same tx verify +1 increment
 	requireFBEnv(t)
 	pool := fbtestutil.NewTestFirebirdPool(t)

@@ -155,6 +155,13 @@ var (
 		"config_aplicar_faltante",
 		"falta la configuración de aplicación de ventas",
 	)
+	// ErrConfigCajaContadoFaltante is returned when a CONTADO venta needs the
+	// fixed counter caja but MSP_CFG_APLICAR has no CAJA_CONTADO_ID /
+	// CAJERO_CONTADO_ID configured.
+	ErrConfigCajaContadoFaltante = apperror.NewValidation(
+		"config_caja_contado_faltante",
+		"falta la caja de contado configurada",
+	)
 	// ErrVentaSinClienteMicrosip is returned when AplicarVenta is called on a
 	// venta that has no cliente_id link to Microsip's CLIENTES table.
 	ErrVentaSinClienteMicrosip = apperror.NewValidation(

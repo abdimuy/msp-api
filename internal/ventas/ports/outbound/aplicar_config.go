@@ -27,8 +27,10 @@ type AplicarDefaults struct {
 	FormaCobroContadoID int
 	FormaCobroCreditoID int
 	// CajaContadoID is the fixed mostrador caja used for contado ventas (no zona).
+	// -1 means the column is NULL in MSP_CFG_APLICAR (not yet configured).
 	CajaContadoID int
 	// CajeroContadoID is the fixed mostrador cajero used for contado ventas (no zona).
+	// -1 means the column is NULL in MSP_CFG_APLICAR (not yet configured).
 	CajeroContadoID int
 }
 
