@@ -36,6 +36,10 @@ const (
 	violetR, violetG, violetB    = 124, 77, 196 // condonación (matches the app's violet)
 	redR, redG, redB             = 200, 50, 50  // pérdida / fuga / mal cliente
 	altFillR, altFillG, altFillB = 248, 249, 250
+	// bandEven* — subtle tint for even-indexed month blocks in the payment table.
+	bandEvenR, bandEvenG, bandEvenB = 245, 247, 250
+	// accentBar* — lighter slate for the left accent bar of each month block.
+	accentBarR, accentBarG, accentBarB = 100, 116, 139
 )
 
 // Payment categories that are NOT real collected money (shown apart, in color).
@@ -104,6 +108,11 @@ const (
 	// bottomLimit is the lowest Y content may reach before a manual page break,
 	// leaving room for the two-line footer (drawn starting at SetY(-16)).
 	bottomLimit = pageH - 20
+
+	// monthAccentBarW is the width of the left accent bar for each month block.
+	monthAccentBarW = 0.8 // mm
+	// monthGapH is the vertical gap inserted between consecutive month blocks.
+	monthGapH = 1.2 // mm
 )
 
 var meses = [...]string{"ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"}
@@ -599,6 +608,37 @@ func drawVentaHeader(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
 	pdf.Ln(1.5)
 }
 
+// pagoGroup is a set of consecutive payments belonging to the same (year, month).
+type pagoGroup struct {
+	year, month int
+	pagos       []outbound.ReportePago
+}
+
+// groupPaymentsByMonth groups sorted payments into consecutive month blocks.
+// Payments must already be sorted ascending by date.
+func groupPaymentsByMonth(pagos []outbound.ReportePago) []pagoGroup {
+	var groups []pagoGroup
+	for _, p := range pagos {
+		y, m := p.Fecha.Year(), int(p.Fecha.Month())
+		if len(groups) == 0 || groups[len(groups)-1].year != y || groups[len(groups)-1].month != m {
+			groups = append(groups, pagoGroup{year: y, month: m})
+		}
+		groups[len(groups)-1].pagos = append(groups[len(groups)-1].pagos, p)
+	}
+	return groups
+}
+
+// drawMonthAccentBar draws the thin left accent bar for a month block, spanning
+// from startY to endY (absolute mm). It is drawn after all rows of the block so
+// it sits on top of the fill, never under it.
+func drawMonthAccentBar(pdf *fpdf.Fpdf, startY, endY float64) {
+	if endY <= startY {
+		return
+	}
+	pdf.SetFillColor(accentBarR, accentBarG, accentBarB)
+	pdf.Rect(margin, startY, monthAccentBarW, endY-startY, "F")
+}
+
 // drawPagosTable renders the payment table for a venta, paginating manually so
 // long tables repeat their column header (and the venta folio) on each page.
 // Payments are sorted ascending by date and grouped by month with a subtle
@@ -670,10 +710,11 @@ func makePagosColumnHeader(pdf *fpdf.Fpdf, cols pagoCols) func() {
 	}
 }
 
-// drawPagoRows iterates sorted pagos, tracking the current month and printing its
-// label in the left gutter column on the first row of each group. Paginates
-// manually; re-prints the month label on the first row of a continuation page so
-// context is never lost. Returns per-category payment totals.
+// drawPagoRows renders sorted payments grouped by month as banded ledger blocks.
+// Each month group alternates between a subtle tint (even) and white (odd), with a
+// slim left accent bar spanning all rows of the group. A small vertical gap
+// separates consecutive groups. Paginates manually; the month label and band
+// continue coherently across page breaks. Returns per-category payment totals.
 func drawPagoRows(
 	pdf *fpdf.Fpdf,
 	folio string,
@@ -682,35 +723,64 @@ func drawPagoRows(
 	drawColHdr func(),
 ) (decimal.Decimal, decimal.Decimal, decimal.Decimal) {
 	var ingreso, condon, perdida decimal.Decimal
-	var lastYM [2]int // [year, month] of the last printed row; zero = none yet
-	needMonthLabel := false
+	groups := groupPaymentsByMonth(pagos)
 
-	for i, p := range pagos {
-		curY, curM := p.Fecha.Year(), int(p.Fecha.Month())
-		if lastYM[0] != curY || lastYM[1] != curM {
-			lastYM = [2]int{curY, curM}
-			needMonthLabel = true
+	for g, grp := range groups {
+		// Determine band fill: even groups get a subtle tint, odd groups get white.
+		var bfR, bfG, bfB int
+		if g%2 == 0 {
+			bfR, bfG, bfB = bandEvenR, bandEvenG, bandEvenB
+		} else {
+			bfR, bfG, bfB = 255, 255, 255
 		}
-		if pdf.GetY()+cols.rowH > bottomLimit {
-			pdf.AddPage()
-			drawContinuation(pdf, folio)
-			drawColHdr()
-			needMonthLabel = true // re-print month label at top of continuation page
+
+		// Gap before consecutive groups. Anti-orphan: if gap + first row would exceed
+		// the bottom, break to a new page (the gap is implicit on a new page).
+		if g > 0 {
+			if pdf.GetY()+monthGapH+cols.rowH > bottomLimit {
+				pdf.AddPage()
+				drawContinuation(pdf, folio)
+				drawColHdr()
+			} else {
+				pdf.Ln(monthGapH)
+			}
 		}
-		mesLabel := ""
-		if needMonthLabel {
-			mesLabel = formatMesAnioCorto(p.Fecha)
-			needMonthLabel = false
+
+		groupBandStartY := pdf.GetY()
+		needMonthLabel := true // always label the first row of each block
+
+		for _, p := range grp.pagos {
+			if pdf.GetY()+cols.rowH > bottomLimit {
+				// Close the accent bar for the rows already drawn on this page …
+				drawMonthAccentBar(pdf, groupBandStartY, pdf.GetY())
+				// … then continue on a fresh page, re-printing the month label.
+				pdf.AddPage()
+				drawContinuation(pdf, folio)
+				drawColHdr()
+				groupBandStartY = pdf.GetY()
+				needMonthLabel = true
+			}
+
+			mesLabel := ""
+			if needMonthLabel {
+				mesLabel = formatMesAnioCorto(p.Fecha)
+				needMonthLabel = false
+			}
+
+			drawPagoRow(pdf, p, bfR, bfG, bfB, cols, mesLabel)
+
+			switch {
+			case p.EsIngreso:
+				ingreso = ingreso.Add(p.Importe)
+			case p.Categoria == catPerdida:
+				perdida = perdida.Add(p.Importe)
+			default:
+				condon = condon.Add(p.Importe)
+			}
 		}
-		drawPagoRow(pdf, p, i%2 == 1, cols, mesLabel)
-		switch {
-		case p.EsIngreso:
-			ingreso = ingreso.Add(p.Importe)
-		case p.Categoria == catPerdida:
-			perdida = perdida.Add(p.Importe)
-		default:
-			condon = condon.Add(p.Importe)
-		}
+
+		// Draw the accent bar spanning all rows of this block on the current page.
+		drawMonthAccentBar(pdf, groupBandStartY, pdf.GetY())
 	}
 	return ingreso, condon, perdida
 }
@@ -722,37 +792,35 @@ type pagoCols struct {
 	mes, fecha, concepto, cobrador, importe, rowH float64
 }
 
-// drawPagoRow renders one payment row. mesLabel is printed in the left gutter
-// column (slate, PlexMono 6.5pt); pass "" for rows that are not the first of
-// their month group. Concepto + importe are tinted by category.
-func drawPagoRow(pdf *fpdf.Fpdf, p outbound.ReportePago, fill bool, c pagoCols, mesLabel string) {
-	if fill {
-		pdf.SetFillColor(altFillR, altFillG, altFillB)
-	} else {
-		pdf.SetFillColor(255, 255, 255)
-	}
+// drawPagoRow renders one payment row using the given month-block fill color
+// (fillR/G/B). All rows in the same month block share the same fill so the band
+// reads as a continuous block. mesLabel is printed in the left gutter on the
+// first row of a group; pass "" for subsequent rows.
+// Concepto + importe are tinted by payment category (colors go on top of the fill).
+func drawPagoRow(pdf *fpdf.Fpdf, p outbound.ReportePago, fillR, fillG, fillB int, c pagoCols, mesLabel string) {
+	pdf.SetFillColor(fillR, fillG, fillB)
 	cr, cg, cb := pagoColor(p)
 
-	// Left gutter: month label on first row of a group, empty otherwise.
+	// Left gutter: month label on first row of a block (slate, PlexMono 6.5pt).
 	pdf.SetFont("PlexMono", "", 6.5)
 	pdf.SetTextColor(slateR, slateG, slateB)
-	pdf.CellFormat(c.mes, c.rowH, mesLabel, "", 0, "L", fill, 0, "")
+	pdf.CellFormat(c.mes, c.rowH, mesLabel, "", 0, "L", true, 0, "")
 
 	pdf.SetFont("PlexMono", "", 7)
 	pdf.SetTextColor(inkR, inkG, inkB)
-	pdf.CellFormat(c.fecha, c.rowH, formatFecha(p.Fecha), "", 0, "L", fill, 0, "")
+	pdf.CellFormat(c.fecha, c.rowH, formatFecha(p.Fecha), "", 0, "L", true, 0, "")
 
 	pdf.SetFont("Poppins", "", 7.5)
 	pdf.SetTextColor(cr, cg, cb)
-	pdf.CellFormat(c.concepto, c.rowH, fitText(pdf, p.Concepto, c.concepto), "", 0, "L", fill, 0, "")
+	pdf.CellFormat(c.concepto, c.rowH, fitText(pdf, p.Concepto, c.concepto), "", 0, "L", true, 0, "")
 
 	pdf.SetFont("Poppins", "", 7.5)
 	pdf.SetTextColor(grayR, grayG, grayB)
-	pdf.CellFormat(c.cobrador, c.rowH, fitText(pdf, p.Cobrador, c.cobrador), "", 0, "L", fill, 0, "")
+	pdf.CellFormat(c.cobrador, c.rowH, fitText(pdf, p.Cobrador, c.cobrador), "", 0, "L", true, 0, "")
 
 	pdf.SetFont("PlexMonoMed", "", 7.5)
 	pdf.SetTextColor(cr, cg, cb)
-	pdf.CellFormat(c.importe, c.rowH, formatMXN(p.Importe), "", 0, "R", fill, 0, "")
+	pdf.CellFormat(c.importe, c.rowH, formatMXN(p.Importe), "", 0, "R", true, 0, "")
 
 	pdf.Ln(c.rowH)
 }
