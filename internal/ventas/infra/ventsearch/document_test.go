@@ -1,6 +1,7 @@
 package ventsearch_test
 
 import (
+	"encoding/json"
 	"slices"
 	"testing"
 	"time"
@@ -189,4 +190,52 @@ func TestMapDoc_CreatedAt_ZeroTime_SortsLast(t *testing.T) {
 	got := ventsearchmeili.MapDocForTest(doc)
 	assert.Equal(t, int64(0), got.CreatedAtTs, "zero time → 0 epoch (omitempty sorts last)")
 	assert.Empty(t, got.CreatedAt, "zero time → empty display string")
+}
+
+// ── wire format (JSON marshaling) ───────────────────────────────────────────
+
+// TestMapDoc_ZeroTimes_OmitFromWire proves that when both FechaVenta and
+// CreatedAt are zero, the marshaled JSON has NEITHER "fecha_venta_ts" NOR
+// "created_at_ts" keys — omitempty must drop both symmetrically so
+// Meilisearch treats absent-attribute docs as sorting last in both asc and
+// desc, instead of an explicit 0 sorting first under asc.
+func TestMapDoc_ZeroTimes_OmitFromWire(t *testing.T) {
+	t.Parallel()
+	doc := outbound.VentaSearchDoc{ID: uuid.New()}
+
+	got := ventsearchmeili.MapDocForTest(doc)
+	raw, err := json.Marshal(got)
+	require.NoError(t, err)
+
+	var wire map[string]any
+	require.NoError(t, json.Unmarshal(raw, &wire))
+
+	assert.NotContains(t, wire, "fecha_venta_ts", "zero fecha_venta must be absent, not 0")
+	assert.NotContains(t, wire, "created_at_ts", "zero created_at must be absent, not 0")
+}
+
+// TestMapDoc_RealTimes_PresentOnWire proves that when both FechaVenta and
+// CreatedAt are set to real times, the marshaled JSON DOES contain both keys
+// with the correct epoch-seconds values.
+func TestMapDoc_RealTimes_PresentOnWire(t *testing.T) {
+	t.Parallel()
+	fecha := time.Date(2026, 7, 15, 10, 30, 0, 0, time.UTC)
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	doc := outbound.VentaSearchDoc{
+		ID:         uuid.New(),
+		FechaVenta: fecha,
+		CreatedAt:  created,
+	}
+
+	got := ventsearchmeili.MapDocForTest(doc)
+	raw, err := json.Marshal(got)
+	require.NoError(t, err)
+
+	var wire map[string]any
+	require.NoError(t, json.Unmarshal(raw, &wire))
+
+	require.Contains(t, wire, "fecha_venta_ts")
+	require.Contains(t, wire, "created_at_ts")
+	assert.InDelta(t, float64(fecha.Unix()), wire["fecha_venta_ts"], 0, "epoch-seconds on wire")
+	assert.InDelta(t, float64(created.Unix()), wire["created_at_ts"], 0, "epoch-seconds on wire")
 }

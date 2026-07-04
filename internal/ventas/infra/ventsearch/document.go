@@ -80,8 +80,10 @@ type VentaDoc struct {
 	// ── Filterable + sortable numeric ────────────────────────────────────
 
 	// FechaVentaTs is the sale date as Unix epoch-seconds. Filterable (range)
-	// + sortable.
-	FechaVentaTs int64 `json:"fecha_venta_ts"`
+	// + sortable. omitempty drops the field when zero so the document has NO
+	// sort value → Meilisearch ranks absent-attribute docs last in both asc
+	// and desc.
+	FechaVentaTs int64 `json:"fecha_venta_ts,omitempty"`
 
 	// PrecioTotal is the total sale amount. ONLY for Meilisearch numeric
 	// filtering/sorting — render PrecioTotalStr instead, which is exact (a
