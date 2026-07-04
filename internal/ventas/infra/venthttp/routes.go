@@ -244,4 +244,15 @@ func registerOperations(api huma.API, h *Handlers) {
 		Security:      security,
 		DefaultStatus: http.StatusNoContent,
 	}, h.EliminarImagen)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "refrescar-busqueda-ventas",
+		Method:        http.MethodPost,
+		Path:          "/ventas/_search/refresh",
+		Summary:       "Refrescar índice de búsqueda de ventas",
+		Description:   "Reconstruye el índice de texto completo desde el catálogo de ventas actual (incluye canceladas como soft-delete). Operación sincrónica — devuelve 200 con el número de documentos indexados.",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+	}, h.RefrescarBusqueda)
 }

@@ -249,6 +249,7 @@ func fullPerms(id uuid.UUID) auth.CurrentUser {
 			string(authdomain.PermVentasRevisar),
 			string(authdomain.PermVentasAprobar),
 			string(authdomain.PermVentasAplicar),
+			string(authdomain.PermVentasReindexar),
 		},
 	}
 }

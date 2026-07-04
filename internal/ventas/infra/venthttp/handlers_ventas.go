@@ -219,6 +219,32 @@ func (h *Handlers) ListarVentas(ctx context.Context, in *ListarVentasInput) (*Li
 	return &ListarVentasOutput{Body: ListResponse[VentaDTO]{Items: items, NextCursor: page.NextCursor}}, nil
 }
 
+// RefrescarBusqueda is the handler for POST /v2/ventas/_search/refresh. It
+// synchronously reconciles the full ventas catalog into the Meilisearch
+// index and returns the number of documents indexed. Mirrors clientes'
+// RefrescarBusqueda — a manual escape hatch for operators when the
+// incremental outbox handler + periodic reconcile worker need a nudge
+// (e.g. right after enabling Meilisearch for the first time).
+func (h *Handlers) RefrescarBusqueda(ctx context.Context, _ *RefrescarBusquedaInput) (*RefrescarBusquedaOutput, error) {
+	cu, err := currentUserOrError(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := requirePerm(cu, auth.PermVentasReindexar); err != nil {
+		return nil, err
+	}
+
+	n, err := h.svc.ReconciliarVentas(ctx)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+
+	out := &RefrescarBusquedaOutput{}
+	out.Body.Reindexado = true
+	out.Body.Documentos = n
+	return out, nil
+}
+
 // buildBuscarVentasInput parses every optional query parameter of a list
 // request into the typed app input. Empty strings are treated as "filter not
 // supplied". The Meili-only fields (Q, ZonaClienteID, VendedorEmail,
@@ -738,4 +764,5 @@ var (
 	_ func(context.Context, *AprobarVentaInput) (*AprobarVentaOutput, error)                   = (*Handlers)(nil).AprobarVenta
 	_ func(context.Context, *RegresarBorradorVentaInput) (*RegresarBorradorVentaOutput, error) = (*Handlers)(nil).RegresarBorradorVenta
 	_ func(context.Context, *AplicarVentaInput) (*AplicarVentaOutput, error)                   = (*Handlers)(nil).AplicarVenta
+	_ func(context.Context, *RefrescarBusquedaInput) (*RefrescarBusquedaOutput, error)         = (*Handlers)(nil).RefrescarBusqueda
 )

@@ -432,6 +432,20 @@ type ListResponse[T any] struct {
 	NextCursor string `json:"next_cursor,omitempty"`
 }
 
+// ─── Endpoint: POST /ventas/_search/refresh ────────────────────────────────
+
+// RefrescarBusquedaInput is the request for POST /ventas/_search/refresh.
+// No body needed — the operation is idempotent and parameterless.
+type RefrescarBusquedaInput struct{}
+
+// RefrescarBusquedaOutput is the response for POST /ventas/_search/refresh.
+type RefrescarBusquedaOutput struct {
+	Body struct {
+		Reindexado bool `json:"reindexado" doc:"Siempre true cuando la operación completa sin error"`
+		Documentos int  `json:"documentos" doc:"Número de documentos indexados en esta ejecución"`
+	}
+}
+
 // ─── Imagenes — multipart upload ───────────────────────────────────────────
 
 // ImagenUploadFields is the set of typed multipart fields accepted by
