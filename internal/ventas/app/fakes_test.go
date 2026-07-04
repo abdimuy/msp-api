@@ -246,6 +246,13 @@ type fakeVentaRepo struct {
 
 	ListPage outbound.Page[*domain.Venta]
 
+	// ListPages, when non-nil, drives a scripted multi-page sequence: each
+	// call to List pops the next entry (by call index), letting
+	// ReconciliarVentas' cursor loop be exercised deterministically without
+	// the fake needing to implement real cursor semantics. Takes precedence
+	// over ListPage/the byID default when set.
+	ListPages []outbound.Page[*domain.Venta]
+
 	// ListCalls/LastListParams/LastListFilters record the most recent List
 	// invocation so BuscarVentas fallback tests can assert the exact mapping
 	// without extra wiring.
@@ -329,6 +336,13 @@ func (f *fakeVentaRepo) List(_ context.Context, p outbound.ListParams, filters o
 	f.LastListFilters = filters
 	if f.ListErr != nil {
 		return outbound.Page[*domain.Venta]{}, f.ListErr
+	}
+	if f.ListPages != nil {
+		idx := f.ListCalls - 1
+		if idx < len(f.ListPages) {
+			return f.ListPages[idx], nil
+		}
+		return outbound.Page[*domain.Venta]{}, nil
 	}
 	if f.ListPage.Items != nil || f.ListPage.NextCursor != "" {
 		return f.ListPage, nil
@@ -508,9 +522,9 @@ func newFakeUsuarioChecker(known ...uuid.UUID) *fakeUsuarioChecker {
 }
 
 // fakeVentaSearchIndex is an in-memory outbound.VentaSearchIndex. Buscar
-// records the query it received and returns the configured Result/Err —
-// Reconciliar/IndexarUno/Eliminar are unused by the Task 2a read path but
-// must exist to satisfy the interface.
+// records the query it received and returns the configured Result/Err.
+// Reconciliar/IndexarUno/Eliminar record every call (and their configured
+// errors) for the ReconciliarVentas/ReindexVenta tests (Task 2b).
 type fakeVentaSearchIndex struct {
 	mu sync.Mutex
 
@@ -519,6 +533,19 @@ type fakeVentaSearchIndex struct {
 
 	Calls     int
 	LastQuery outbound.VentasSearchQuery
+
+	// ReconciliarErr/IndexarUnoErr/EliminarErr override the corresponding
+	// method's return value for the NEXT call only (nil after being
+	// consumed, unless ReconciliarErrSticky is set — some tests want the
+	// error to fire on every batch).
+	ReconciliarErr       error
+	ReconciliarErrSticky bool
+	IndexarUnoErr        error
+	EliminarErr          error
+
+	ReconciliarCalls [][]outbound.VentaSearchDoc
+	IndexarUnoCalls  []outbound.VentaSearchDoc
+	EliminarCalls    []uuid.UUID
 }
 
 func (f *fakeVentaSearchIndex) Buscar(_ context.Context, q outbound.VentasSearchQuery) (outbound.VentasSearchResultado, error) {
@@ -532,15 +559,41 @@ func (f *fakeVentaSearchIndex) Buscar(_ context.Context, q outbound.VentasSearch
 	return f.Result, nil
 }
 
-func (f *fakeVentaSearchIndex) Reconciliar(_ context.Context, _ []outbound.VentaSearchDoc) error {
+func (f *fakeVentaSearchIndex) Reconciliar(_ context.Context, docs []outbound.VentaSearchDoc) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ReconciliarCalls = append(f.ReconciliarCalls, append([]outbound.VentaSearchDoc{}, docs...))
+	if f.ReconciliarErr != nil {
+		err := f.ReconciliarErr
+		if !f.ReconciliarErrSticky {
+			f.ReconciliarErr = nil
+		}
+		return err
+	}
 	return nil
 }
 
-func (f *fakeVentaSearchIndex) IndexarUno(_ context.Context, _ outbound.VentaSearchDoc) error {
+func (f *fakeVentaSearchIndex) IndexarUno(_ context.Context, doc outbound.VentaSearchDoc) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.IndexarUnoCalls = append(f.IndexarUnoCalls, doc)
+	if f.IndexarUnoErr != nil {
+		err := f.IndexarUnoErr
+		f.IndexarUnoErr = nil
+		return err
+	}
 	return nil
 }
 
-func (f *fakeVentaSearchIndex) Eliminar(_ context.Context, _ uuid.UUID) error {
+func (f *fakeVentaSearchIndex) Eliminar(_ context.Context, id uuid.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.EliminarCalls = append(f.EliminarCalls, id)
+	if f.EliminarErr != nil {
+		err := f.EliminarErr
+		f.EliminarErr = nil
+		return err
+	}
 	return nil
 }
 
