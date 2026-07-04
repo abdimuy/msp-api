@@ -359,6 +359,19 @@ type ListarVentasInput struct {
 	Situacion         string `query:"situacion"           enum:"borrador,revisada,aprobada,cancelada"               doc:"Filtra por situación exacta"`
 	Sincronizacion    string `query:"sincronizacion"      enum:"pendiente,aplicada"                                 doc:"Filtra por sincronización exacta"`
 	IncluirCanceladas bool   `query:"incluir_canceladas"                                                            doc:"Incluye ventas canceladas en el resultado"`
+
+	// Q/ZonaClienteID/VendedorEmail/PrecioMin/PrecioMax/SortBy/SortOrder are
+	// only honored when a Meilisearch search index is wired to the Service
+	// (see ventasapp.Service.BuscarVentas); on the Firebird-fallback path
+	// (no index configured) they are silently ignored so the endpoint keeps
+	// behaving exactly as it does today.
+	Q             string `query:"search"        doc:"Búsqueda de texto libre (nombre, teléfono, dirección, folio, vendedor); requiere el índice de búsqueda"`
+	ZonaClienteID string `query:"zona_cliente_id"                                                  doc:"Restringe a ventas de esta zona de Microsip (entero positivo); requiere el índice de búsqueda"`
+	VendedorEmail string `query:"vendedor_email"                                                   doc:"Restringe a ventas de este vendedor por email; requiere el índice de búsqueda"`
+	PrecioMin     string `query:"precio_min"                                                       doc:"Filtra precio_total >= precio_min; requiere el índice de búsqueda"`
+	PrecioMax     string `query:"precio_max"                                                       doc:"Filtra precio_total < precio_max; requiere el índice de búsqueda"`
+	SortBy        string `query:"sort_by"       enum:"fecha_venta,precio_total,nombre_cliente"     doc:"Columna de ordenamiento; requiere el índice de búsqueda"`
+	SortOrder     string `query:"sort_order"    enum:"asc,desc"                                     doc:"Orden de clasificación; requiere el índice de búsqueda"`
 }
 
 // ─── Edit input wrappers ───────────────────────────────────────────────────

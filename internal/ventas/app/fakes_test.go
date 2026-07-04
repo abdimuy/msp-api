@@ -235,6 +235,7 @@ type fakeVentaRepo struct {
 	UpdateErr       error
 	FindErr         error
 	ListErr         error
+	FindByIDsErr    error
 	InsertImagenErr error
 	DeleteImagenErr error
 
@@ -244,6 +245,16 @@ type fakeVentaRepo struct {
 	DeleteImagenCalls int
 
 	ListPage outbound.Page[*domain.Venta]
+
+	// ListCalls/LastListParams/LastListFilters record the most recent List
+	// invocation so BuscarVentas fallback tests can assert the exact mapping
+	// without extra wiring.
+	ListCalls       int
+	LastListParams  outbound.ListParams
+	LastListFilters outbound.ListVentasFilters
+
+	// FindByIDsCalls records every FindByIDs invocation's ids slice.
+	FindByIDsCalls [][]uuid.UUID
 }
 
 // newFakeVentaRepo builds an empty repo.
@@ -308,10 +319,14 @@ func (f *fakeVentaRepo) LockByID(_ context.Context, id uuid.UUID) error {
 }
 
 // List returns the configured ListPage or the in-memory contents when the
-// page is unset, capped by p.PageSize.
-func (f *fakeVentaRepo) List(_ context.Context, p outbound.ListParams, _ outbound.ListVentasFilters) (outbound.Page[*domain.Venta], error) {
+// page is unset, capped by p.PageSize. Records the call so BuscarVentas
+// fallback tests can assert the mapped filters without extra wiring.
+func (f *fakeVentaRepo) List(_ context.Context, p outbound.ListParams, filters outbound.ListVentasFilters) (outbound.Page[*domain.Venta], error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.ListCalls++
+	f.LastListParams = p
+	f.LastListFilters = filters
 	if f.ListErr != nil {
 		return outbound.Page[*domain.Venta]{}, f.ListErr
 	}
@@ -326,6 +341,29 @@ func (f *fakeVentaRepo) List(_ context.Context, p outbound.ListParams, _ outboun
 		items = items[:p.PageSize]
 	}
 	return outbound.Page[*domain.Venta]{Items: items}, nil
+}
+
+// FindByIDs returns the hydrated ventas for the requested ids, deliberately
+// reversed so tests can prove that BuscarVentas — not the repo — is
+// responsible for reordering to the search index's result order. Ids with
+// no matching row are silently omitted, mirroring the real ventfb behavior.
+func (f *fakeVentaRepo) FindByIDs(_ context.Context, ids []uuid.UUID) ([]*domain.Venta, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.FindByIDsCalls = append(f.FindByIDsCalls, append([]uuid.UUID{}, ids...))
+	if f.FindByIDsErr != nil {
+		return nil, f.FindByIDsErr
+	}
+	out := make([]*domain.Venta, 0, len(ids))
+	for _, id := range ids {
+		if v, ok := f.byID[id]; ok {
+			out = append(out, v)
+		}
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, nil
 }
 
 // InsertImagen records the call. The aggregate already carries the new
@@ -467,6 +505,43 @@ func newFakeUsuarioChecker(known ...uuid.UUID) *fakeUsuarioChecker {
 		out.known[id] = struct{}{}
 	}
 	return out
+}
+
+// fakeVentaSearchIndex is an in-memory outbound.VentaSearchIndex. Buscar
+// records the query it received and returns the configured Result/Err —
+// Reconciliar/IndexarUno/Eliminar are unused by the Task 2a read path but
+// must exist to satisfy the interface.
+type fakeVentaSearchIndex struct {
+	mu sync.Mutex
+
+	Result outbound.VentasSearchResultado
+	Err    error
+
+	Calls     int
+	LastQuery outbound.VentasSearchQuery
+}
+
+func (f *fakeVentaSearchIndex) Buscar(_ context.Context, q outbound.VentasSearchQuery) (outbound.VentasSearchResultado, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.Calls++
+	f.LastQuery = q
+	if f.Err != nil {
+		return outbound.VentasSearchResultado{}, f.Err
+	}
+	return f.Result, nil
+}
+
+func (f *fakeVentaSearchIndex) Reconciliar(_ context.Context, _ []outbound.VentaSearchDoc) error {
+	return nil
+}
+
+func (f *fakeVentaSearchIndex) IndexarUno(_ context.Context, _ outbound.VentaSearchDoc) error {
+	return nil
+}
+
+func (f *fakeVentaSearchIndex) Eliminar(_ context.Context, _ uuid.UUID) error {
+	return nil
 }
 
 func (f *fakeUsuarioChecker) MissingIDs(_ context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {

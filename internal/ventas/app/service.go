@@ -67,6 +67,11 @@ type Service struct {
 	// WithZonaReader. When nil, the zona mismatch check is skipped — used for
 	// tests that do not exercise the pre-existing cliente branch.
 	zonaReader outbound.ClienteZonaReader
+	// searchIndex is optional. Tests omit it; production wires it via
+	// WithSearchIndex. When nil, BuscarVentas falls back to the Firebird
+	// keyset listing (ListarVentas) — the pre-Meilisearch behavior is
+	// preserved exactly until the index is wired at the composition root.
+	searchIndex outbound.VentaSearchIndex
 }
 
 // WithInventario attaches an InventarioService so CrearVenta validates stock
@@ -105,6 +110,14 @@ func (s *Service) WithAlmacenResolver(r outbound.AlmacenNombreResolver) *Service
 // venta's zona matches the pre-existing cliente's zona in Microsip.
 func (s *Service) WithZonaReader(r outbound.ClienteZonaReader) *Service {
 	s.zonaReader = r
+	return s
+}
+
+// WithSearchIndex attaches a VentaSearchIndex so BuscarVentas queries
+// Meilisearch instead of falling back to the Firebird keyset listing.
+// Returns s for fluent wiring at the composition root.
+func (s *Service) WithSearchIndex(idx outbound.VentaSearchIndex) *Service {
+	s.searchIndex = idx
 	return s
 }
 

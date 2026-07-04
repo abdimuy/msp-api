@@ -475,6 +475,40 @@ func (r *VentaRepo) FindByID(ctx context.Context, id uuid.UUID) (*domain.Venta, 
 	return assembleVenta(raw, combos, productos, vendedores, imagenes)
 }
 
+// FindByIDs loads multiple ventas by id in a single batched round: one
+// header SELECT ... WHERE ID IN (...) followed by the four child-collection
+// batch loaders shared with List (assembleListItems) — 5 queries total
+// regardless of how many ids are requested. The returned slice order
+// matches Firebird's row order, which is NOT guaranteed to match ids; the
+// app layer reorders to the caller's desired order. Ids without a matching
+// row are simply absent from the result. An empty ids slice short-circuits
+// to an empty slice without issuing any query.
+func (r *VentaRepo) FindByIDs(ctx context.Context, ids []uuid.UUID) ([]*domain.Venta, error) {
+	if len(ids) == 0 {
+		return []*domain.Venta{}, nil
+	}
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	ph := strings.Repeat("?,", len(ids))
+	ph = ph[:len(ph)-1]
+	query := "SELECT " + ventaColumns + " FROM MSP_VENTAS WHERE ID IN (" + ph + ")"
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id.String()
+	}
+	rows, err := q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, firebird.MapError(err)
+	}
+	headers, err := scanListRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(headers) == 0 {
+		return []*domain.Venta{}, nil
+	}
+	return r.assembleListItems(ctx, q, headers)
+}
+
 func loadHeaderRaw(ctx context.Context, q firebird.Querier, id uuid.UUID) (*ventaRowRaw, error) {
 	row := q.QueryRowContext(ctx, selectVentaByID, id.String())
 	raw, err := scanVentaRowRaw(row)

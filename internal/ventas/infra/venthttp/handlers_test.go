@@ -128,6 +128,18 @@ func (r *fakeRepo) List(_ context.Context, _ ventasoutbound.ListParams, _ ventas
 	return ventasoutbound.Page[*ventasdomain.Venta]{Items: items}, nil
 }
 
+func (r *fakeRepo) FindByIDs(_ context.Context, ids []uuid.UUID) ([]*ventasdomain.Venta, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]*ventasdomain.Venta, 0, len(ids))
+	for _, id := range ids {
+		if v, ok := r.store[id]; ok {
+			out = append(out, v)
+		}
+	}
+	return out, nil
+}
+
 func (r *fakeRepo) InsertImagen(_ context.Context, _ uuid.UUID, _ *ventasdomain.Imagen) error {
 	return nil
 }

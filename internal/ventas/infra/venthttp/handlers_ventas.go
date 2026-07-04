@@ -14,7 +14,6 @@ import (
 	"github.com/abdimuy/msp-api/internal/auth"
 	"github.com/abdimuy/msp-api/internal/platform/apperror"
 	ventasapp "github.com/abdimuy/msp-api/internal/ventas/app"
-	"github.com/abdimuy/msp-api/internal/ventas/ports/outbound"
 )
 
 // Handlers groups every Huma handler for the ventas module.
@@ -190,7 +189,11 @@ func (h *Handlers) CancelarVenta(ctx context.Context, in *CancelarVentaInput) (*
 	return &CancelarVentaOutput{Body: toVentaDTO(v, nil)}, nil
 }
 
-// ListarVentas is the handler for GET /v2/ventas.
+// ListarVentas is the handler for GET /v2/ventas. Routes to Meilisearch when
+// a search index is wired to the Service (ventasapp.Service.BuscarVentas),
+// otherwise falls back to the Firebird keyset listing — the routing itself
+// lives entirely in the app layer so this handler and the route/DTO shape
+// stay unchanged either way.
 func (h *Handlers) ListarVentas(ctx context.Context, in *ListarVentasInput) (*ListarVentasOutput, error) {
 	cu, err := currentUserOrError(ctx)
 	if err != nil {
@@ -199,71 +202,171 @@ func (h *Handlers) ListarVentas(ctx context.Context, in *ListarVentasInput) (*Li
 	if err := requirePerm(cu, auth.PermVentasListar); err != nil {
 		return nil, err
 	}
-	filters, err := buildListarFilters(in)
+	input, err := buildBuscarVentasInput(in)
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	page, err := h.svc.ListarVentas(ctx, ventasapp.ListarVentasInput{
-		Pagination: outbound.ListParams{Cursor: in.Cursor, PageSize: in.Limit},
-		Filters:    filters,
-	})
+	page, err := h.svc.BuscarVentas(ctx, input)
 	if err != nil {
 		return nil, mapAppError(err)
 	}
 	items := make([]VentaDTO, 0, len(page.Items))
 	for _, v := range page.Items {
+		// nil nombres: keeps the DTO byte-identical to the Firebird-fallback
+		// path (see ObtenerVenta for the actor-name-decorated read).
 		items = append(items, toVentaDTO(v, nil))
 	}
 	return &ListarVentasOutput{Body: ListResponse[VentaDTO]{Items: items, NextCursor: page.NextCursor}}, nil
 }
 
-// buildListarFilters parses the optional query parameters of a list request
-// into the typed filter struct the service consumes. Empty strings are
-// treated as "filter not supplied".
-func buildListarFilters(in *ListarVentasInput) (outbound.ListVentasFilters, error) {
-	filters := outbound.ListVentasFilters{
+// buildBuscarVentasInput parses every optional query parameter of a list
+// request into the typed app input. Empty strings are treated as "filter not
+// supplied". The Meili-only fields (Q, ZonaClienteID, VendedorEmail,
+// PrecioMin/Max, SortBy/SortOrder) are copied through unconditionally —
+// BuscarVentas itself decides whether they apply (index wired) or are
+// ignored (Firebird fallback).
+func buildBuscarVentasInput(in *ListarVentasInput) (ventasapp.BuscarVentasInput, error) {
+	desde, err := parseDesdeFilter(in.Desde)
+	if err != nil {
+		return ventasapp.BuscarVentasInput{}, err
+	}
+	hasta, err := parseHastaFilter(in.Hasta)
+	if err != nil {
+		return ventasapp.BuscarVentasInput{}, err
+	}
+	vendedorUsuarioID, err := parseVendedorUsuarioIDFilter(in.VendedorUsuarioID)
+	if err != nil {
+		return ventasapp.BuscarVentasInput{}, err
+	}
+	clienteID, err := parseClienteIDFilter(in.ClienteID)
+	if err != nil {
+		return ventasapp.BuscarVentasInput{}, err
+	}
+	zonaClienteID, err := parseZonaClienteIDFilter(in.ZonaClienteID)
+	if err != nil {
+		return ventasapp.BuscarVentasInput{}, err
+	}
+	precioMin, err := parseOptionalMoneyFilter(in.PrecioMin, "precio_min")
+	if err != nil {
+		return ventasapp.BuscarVentasInput{}, err
+	}
+	precioMax, err := parseOptionalMoneyFilter(in.PrecioMax, "precio_max")
+	if err != nil {
+		return ventasapp.BuscarVentasInput{}, err
+	}
+	var vendedorEmail *string
+	if in.VendedorEmail != "" {
+		email := in.VendedorEmail
+		vendedorEmail = &email
+	}
+	return ventasapp.BuscarVentasInput{
+		Q:                 in.Q,
+		Desde:             desde,
+		Hasta:             hasta,
+		VendedorUsuarioID: vendedorUsuarioID,
+		ClienteID:         clienteID,
 		TipoVenta:         in.TipoVenta,
 		Situacion:         in.Situacion,
 		Sincronizacion:    in.Sincronizacion,
 		IncluirCanceladas: in.IncluirCanceladas,
+		ZonaClienteID:     zonaClienteID,
+		VendedorEmail:     vendedorEmail,
+		PrecioMin:         precioMin,
+		PrecioMax:         precioMax,
+		SortBy:            in.SortBy,
+		SortOrder:         in.SortOrder,
+		Cursor:            in.Cursor,
+		Limit:             in.Limit,
+	}, nil
+}
+
+// parseDesdeFilter parses the desde query param into a *time.Time; empty
+// input yields (nil, nil).
+func parseDesdeFilter(raw string) (*time.Time, error) {
+	if raw == "" {
+		return nil, nil //nolint:nilnil // optional filter.
 	}
-	if in.Desde != "" {
-		t, err := time.Parse(time.RFC3339, in.Desde)
-		if err != nil {
-			return outbound.ListVentasFilters{}, apperror.NewValidation(
-				"invalid_desde", "el parámetro desde no es una fecha ISO8601 válida",
-			).WithError(err)
-		}
-		filters.Desde = &t
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return nil, apperror.NewValidation(
+			"invalid_desde", "el parámetro desde no es una fecha ISO8601 válida",
+		).WithError(err)
 	}
-	if in.Hasta != "" {
-		t, err := time.Parse(time.RFC3339, in.Hasta)
-		if err != nil {
-			return outbound.ListVentasFilters{}, apperror.NewValidation(
-				"invalid_hasta", "el parámetro hasta no es una fecha ISO8601 válida",
-			).WithError(err)
-		}
-		filters.Hasta = &t
+	return &t, nil
+}
+
+// parseHastaFilter parses the hasta query param into a *time.Time; empty
+// input yields (nil, nil).
+func parseHastaFilter(raw string) (*time.Time, error) {
+	if raw == "" {
+		return nil, nil //nolint:nilnil // optional filter.
 	}
-	if in.VendedorUsuarioID != "" {
-		id, err := uuid.Parse(in.VendedorUsuarioID)
-		if err != nil {
-			return outbound.ListVentasFilters{}, apperror.NewValidation(
-				"invalid_uuid", "el parámetro vendedor_usuario_id no es un UUID válido",
-			).WithError(err)
-		}
-		filters.VendedorUsuarioID = &id
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return nil, apperror.NewValidation(
+			"invalid_hasta", "el parámetro hasta no es una fecha ISO8601 válida",
+		).WithError(err)
 	}
-	if in.ClienteID != "" {
-		n, err := strconv.Atoi(in.ClienteID)
-		if err != nil || n <= 0 {
-			return outbound.ListVentasFilters{}, apperror.NewValidation(
-				"invalid_cliente_id", "el parámetro cliente_id debe ser un entero positivo",
-			).WithError(err)
-		}
-		filters.ClienteID = &n
+	return &t, nil
+}
+
+// parseVendedorUsuarioIDFilter parses the vendedor_usuario_id query param
+// into a *uuid.UUID; empty input yields (nil, nil).
+func parseVendedorUsuarioIDFilter(raw string) (*uuid.UUID, error) {
+	if raw == "" {
+		return nil, nil //nolint:nilnil // optional filter.
 	}
-	return filters, nil
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		return nil, apperror.NewValidation(
+			"invalid_uuid", "el parámetro vendedor_usuario_id no es un UUID válido",
+		).WithError(err)
+	}
+	return &id, nil
+}
+
+// parseClienteIDFilter parses the cliente_id query param into a *int; empty
+// input yields (nil, nil).
+func parseClienteIDFilter(raw string) (*int, error) {
+	if raw == "" {
+		return nil, nil //nolint:nilnil // optional filter.
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return nil, apperror.NewValidation(
+			"invalid_cliente_id", "el parámetro cliente_id debe ser un entero positivo",
+		).WithError(err)
+	}
+	return &n, nil
+}
+
+// parseZonaClienteIDFilter parses the zona_cliente_id query param into a
+// *int; empty input yields (nil, nil).
+func parseZonaClienteIDFilter(raw string) (*int, error) {
+	if raw == "" {
+		return nil, nil //nolint:nilnil // optional filter.
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return nil, apperror.NewValidation(
+			"invalid_zona_cliente_id", "el parámetro zona_cliente_id debe ser un entero positivo",
+		).WithError(err)
+	}
+	return &n, nil
+}
+
+// parseOptionalMoneyFilter parses an optional monetary query param (e.g.
+// precio_min/precio_max) into a *decimal.Decimal, rounded to montoDecimals
+// places; empty input yields (nil, nil).
+func parseOptionalMoneyFilter(raw, name string) (*decimal.Decimal, error) {
+	if raw == "" {
+		return nil, nil //nolint:nilnil // optional filter.
+	}
+	d, err := parseMoneyField(raw, name)
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
 }
 
 // parseUUIDField parses a string into a uuid.UUID with a stable apperror.

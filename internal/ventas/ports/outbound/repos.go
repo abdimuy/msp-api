@@ -126,6 +126,15 @@ type VentaRepo interface {
 	// Returns ErrVentaNotFound on miss.
 	FindByID(ctx context.Context, id uuid.UUID) (*domain.Venta, error)
 
+	// FindByIDs loads multiple ventas by id in a single batched round-trip
+	// (one header IN-query + the four batched child-collection queries),
+	// NOT a per-id loop. The returned slice order is NOT guaranteed to match
+	// ids — callers that need a specific order (e.g. the Meilisearch result
+	// order) must reorder after hydration. Ids with no matching row are
+	// silently omitted — never an error. An empty ids slice returns an
+	// empty slice without touching the database.
+	FindByIDs(ctx context.Context, ids []uuid.UUID) ([]*domain.Venta, error)
+
 	// LockByID takes a pessimistic row lock on the venta header (SELECT ...
 	// WITH LOCK) to serialize concurrent mutations on the same venta. Must be
 	// called inside a transaction. Returns ErrVentaNotFound on miss. Used by
