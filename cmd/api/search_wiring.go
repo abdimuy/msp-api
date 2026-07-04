@@ -11,6 +11,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/platform/config"
 	"github.com/abdimuy/msp-api/internal/platform/lifecycle"
 	platformmeili "github.com/abdimuy/msp-api/internal/platform/meilisearch"
+	"github.com/abdimuy/msp-api/internal/ventas/infra/ventsearch"
 )
 
 // ── Meilisearch provider ──────────────────────────────────────────────────────
@@ -91,3 +92,70 @@ func registerMeilisearchBootstrapLifecycle(
 // ── Compile-time assertion ────────────────────────────────────────────────────
 
 var _ lifecycle.Hooks = (*meilisearchBootstrap)(nil)
+
+// ── Lifecycle: idempotent ventas index bootstrap ──────────────────────────────
+
+// ventasSearchBootstrap runs EnsureIndex for the ventas Meilisearch index.
+// It shares the SAME underlying platformmeili.Client as meilisearchBootstrap
+// (the clientes directory bootstrap) — there is exactly one Meilisearch
+// client + connection pool per process, provided once by
+// provideMeilisearchClient.
+//
+// Double-Close guard: Stop is intentionally a no-op. meilisearchBootstrap's
+// Stop already closes the shared client; if this bootstrap's Stop closed it
+// again, the second Close would either double-free resources or race with
+// the first, depending on the underlying HTTP client implementation. Only
+// ONE bootstrap may own the Close call — that owner is the (chronologically
+// first-registered) clientes bootstrap.
+type ventasSearchBootstrap struct {
+	client    platformmeili.Client
+	indexName string
+}
+
+// Start kicks off the ventas index bootstrap (create + settings) and returns
+// immediately, running EnsureIndex detached in the background — same
+// rationale as meilisearchBootstrap.Start: applying settings on an
+// already-populated index can trigger a Meilisearch-side reindex that runs
+// far longer than fx's StartTimeout, and doing it inline risks aborting boot
+// with "context deadline exceeded".
+func (b *ventasSearchBootstrap) Start(ctx context.Context) error {
+	idxCfg := ventsearch.DefaultIndexConfig(b.indexName)
+	bgCtx := context.WithoutCancel(ctx)
+	go func() {
+		if err := b.client.EnsureIndex(bgCtx, idxCfg); err != nil {
+			if isNotConfiguredErr(err) {
+				slog.WarnContext(bgCtx, "meilisearch.ventas_bootstrap_skipped: not configured")
+				return
+			}
+			slog.ErrorContext(bgCtx, "meilisearch.ventas_bootstrap_failed", "error", err.Error())
+			return
+		}
+		slog.InfoContext(bgCtx, "meilisearch.ventas_bootstrap_done", "index", b.indexName)
+	}()
+	return nil
+}
+
+// Stop is a deliberate no-op — see the type doc's Double-Close guard. The
+// shared client is closed exactly once, by meilisearchBootstrap.Stop.
+func (b *ventasSearchBootstrap) Stop(_ context.Context) error {
+	return nil
+}
+
+// registerVentasSearchBootstrapLifecycle hooks the ventas index bootstrap
+// into the fx lifecycle so EnsureIndex runs on application start. Stop is a
+// no-op — see ventasSearchBootstrap's Double-Close guard.
+func registerVentasSearchBootstrapLifecycle(
+	lc fx.Lifecycle,
+	client platformmeili.Client,
+	cfg *config.Config,
+) {
+	b := &ventasSearchBootstrap{
+		client:    client,
+		indexName: cfg.Meilisearch.VentasIndexName,
+	}
+	lifecycle.Append(lc, "ventas-search-bootstrap", b)
+}
+
+// ── Compile-time assertion ────────────────────────────────────────────────────
+
+var _ lifecycle.Hooks = (*ventasSearchBootstrap)(nil)

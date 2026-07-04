@@ -2,14 +2,22 @@
 package main
 
 import (
+	"log/slog"
+
+	"go.uber.org/fx"
+
 	"github.com/abdimuy/msp-api/internal/platform/config"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 	"github.com/abdimuy/msp-api/internal/platform/imageprocessor"
+	"github.com/abdimuy/msp-api/internal/platform/lifecycle"
+	platformmeili "github.com/abdimuy/msp-api/internal/platform/meilisearch"
+	"github.com/abdimuy/msp-api/internal/platform/outboxfb"
 	ventasapp "github.com/abdimuy/msp-api/internal/ventas/app"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/microsip"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/storage"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/ventfb"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/ventoutbox"
+	"github.com/abdimuy/msp-api/internal/ventas/infra/ventsearch"
 	ventasoutbound "github.com/abdimuy/msp-api/internal/ventas/ports/outbound"
 )
 
@@ -118,6 +126,11 @@ func provideVentasMicrosipJuegoResolver(p *firebird.Pool) ventasoutbound.Microsi
 // The inventario adapter is attached via WithInventario so CrearVenta /
 // CancelarVenta exercise stock validation + automatic traspaso.
 // p and cfg are used to wire the optional JuegoResolver (combo→juego feature).
+//
+// searchIndex is applied via WithSearchIndex ONLY when non-nil — see
+// provideVentasSearchIndex: when Meilisearch is not configured it returns a
+// literal nil interface (not a typed-nil pointer) so this guard actually
+// works and BuscarVentas takes the Firebird-fallback branch.
 func provideVentasService(
 	repo ventasoutbound.VentaRepo,
 	clientes ventasoutbound.ClienteExistenceChecker,
@@ -134,14 +147,81 @@ func provideVentasService(
 	eventReader ventasoutbound.VentaEventReader,
 	usuarioResolver ventasoutbound.UsuarioNombreResolver,
 	almacenResolver ventasoutbound.AlmacenNombreResolver,
+	searchIndex ventasoutbound.VentaSearchIndex,
 	p *firebird.Pool,
 	cfg *config.Config,
 ) *ventasapp.Service {
-	return ventasapp.NewService(repo, clientes, usuarios, store, clock, outbox, imageProc, fbTxMgr, aplicarCfg, microsipWriter, microsipCliente).
+	svc := ventasapp.NewService(repo, clientes, usuarios, store, clock, outbox, imageProc, fbTxMgr, aplicarCfg, microsipWriter, microsipCliente).
 		WithInventario(inv).
 		WithEventReader(eventReader).
 		WithUsuarioResolver(usuarioResolver).
 		WithAlmacenResolver(almacenResolver).
 		WithJuegos(provideVentasMicrosipJuegoResolver(p), cfg.MicrosipVenta.JuegosEnabled, cfg.MicrosipVenta.JuegosLineaArticuloID).
 		WithZonaReader(ventfb.NewClienteRepo(p))
+	if searchIndex != nil {
+		svc = svc.WithSearchIndex(searchIndex)
+	}
+	return svc
+}
+
+// provideVentasSearchIndex builds the Meilisearch-backed ventas search index.
+// When Meilisearch is not configured (cfg.Meilisearch.URL == "") this
+// returns a LITERAL nil interface — not a typed-nil *MeilisearchVentaSearchIndex
+// — so provideVentasService's `searchIndex != nil` guard actually triggers
+// and Service.BuscarVentas falls back to the Firebird keyset listing. A
+// typed-nil pointer stored in an interface variable is never == nil, which
+// would silently break the fallback in dev/test environments without
+// MEILISEARCH_URL set.
+func provideVentasSearchIndex(
+	client platformmeili.Client,
+	cfg *config.Config,
+) ventasoutbound.VentaSearchIndex {
+	if cfg.Meilisearch.URL == "" {
+		return nil
+	}
+	return ventsearch.NewMeilisearchVentaSearchIndex(client, cfg.Meilisearch.VentasIndexName)
+}
+
+// provideVentasReindexHandlers builds one outbox handler per venta domain
+// event type, all delegating to Service.ReindexVenta — the incremental
+// half of ventas search freshness (the periodic VentasReconcileWorker is
+// the drift-recovery half).
+func provideVentasReindexHandlers(svc *ventasapp.Service) []outboxfb.Handler {
+	return ventoutbox.NewVentaReindexHandlers(svc)
+}
+
+// registerVentasOutboxHandlers registers every ventas-module outbox handler
+// on the shared registry. Must run before registerOutboxLifecycle so the
+// dispatcher sees the handlers when it starts (mirrors
+// registerAuthOutboxHandlers).
+func registerVentasOutboxHandlers(reg *outboxfb.HandlerRegistry, hs []outboxfb.Handler) {
+	for _, h := range hs {
+		reg.Register(h)
+	}
+}
+
+// provideVentasReconcileWorker builds the background worker that
+// periodically materializes the Meilisearch ventas index from Firebird
+// (warm-up + drift recovery). The interval is taken from
+// cfg.Meilisearch.SyncInterval (default 5m) — mirrors
+// provideClientesDirectoryReconcileWorker.
+func provideVentasReconcileWorker(
+	svc *ventasapp.Service,
+	cfg *config.Config,
+	logger *slog.Logger,
+) *ventasapp.VentasReconcileWorker {
+	return ventasapp.NewVentasReconcileWorker(
+		svc,
+		ventasapp.VentasReconcileWorkerConfig{Interval: cfg.Meilisearch.SyncInterval},
+		logger,
+	)
+}
+
+// registerVentasReconcileWorkerLifecycle hooks the ventas reconcile worker
+// into the fx lifecycle.
+func registerVentasReconcileWorkerLifecycle(
+	lc fx.Lifecycle,
+	w *ventasapp.VentasReconcileWorker,
+) {
+	lifecycle.Append(lc, "ventas-reconcile-worker", w)
 }
