@@ -90,6 +90,8 @@ const (
 	PermVentasAprobar = domain.PermVentasAprobar
 	// PermVentasAplicar — see domain.PermVentasAplicar.
 	PermVentasAplicar = domain.PermVentasAplicar
+	// PermVentasReindexar — see domain.PermVentasReindexar.
+	PermVentasReindexar = domain.PermVentasReindexar
 
 	// PermFailedIntentsVer — see domain.PermFailedIntentsVer.
 	PermFailedIntentsVer = domain.PermFailedIntentsVer

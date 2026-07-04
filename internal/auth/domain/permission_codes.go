@@ -69,6 +69,9 @@ const (
 	PermVentasAprobar Permission = "ventas:aprobar"
 	// PermVentasAplicar grants materializing (applying) a venta in Microsip.
 	PermVentasAplicar Permission = "ventas:aplicar"
+	// PermVentasReindexar grants triggering a manual rebuild of the ventas
+	// full-text search index.
+	PermVentasReindexar Permission = "ventas:reindexar"
 
 	// PermFailedIntentsVer grants reading captured failed intents (full
 	// request payload included — see ADR-0005 for the PII trade-off).
@@ -167,6 +170,7 @@ func AllPermissions() []PermissionMeta {
 		{PermVentasRevisar, "enviar una venta a revisión", categoriaVentas},
 		{PermVentasAprobar, "aprobar o regresar a borrador una venta", categoriaVentas},
 		{PermVentasAplicar, "aplicar (materializar) una venta en Microsip", categoriaVentas},
+		{PermVentasReindexar, "reconstruir el índice de búsqueda de ventas", categoriaVentas},
 
 		{PermFailedIntentsVer, "ver intents fallidos y sus payloads", categoriaFailedIntents},
 		{PermFailedIntentsResolver, "reproducir, ignorar y resolver intents fallidos", categoriaFailedIntents},
