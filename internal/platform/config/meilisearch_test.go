@@ -86,6 +86,23 @@ func TestLoad_MeilisearchIndexNameDefaults(t *testing.T) { //nolint:paralleltest
 	assert.Equal(t, "clientes", cfg.Meilisearch.IndexName)
 }
 
+func TestLoad_MeilisearchVentasIndexNameDefaults(t *testing.T) { //nolint:paralleltest // uses t.Setenv
+	setMinimal(t)
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "ventas", cfg.Meilisearch.VentasIndexName)
+}
+
+func TestLoad_MeilisearchVentasIndexNameOverride(t *testing.T) { //nolint:paralleltest // uses t.Setenv
+	setMinimal(t)
+	t.Setenv("MEILISEARCH_VENTAS_INDEX_NAME", "ventas-staging")
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "ventas-staging", cfg.Meilisearch.VentasIndexName)
+	// Clientes index name must be unaffected.
+	assert.Equal(t, "clientes", cfg.Meilisearch.IndexName)
+}
+
 func TestLoad_MeilisearchSyncIntervalDefaults(t *testing.T) { //nolint:paralleltest // uses t.Setenv
 	setMinimal(t)
 	cfg, err := config.Load()

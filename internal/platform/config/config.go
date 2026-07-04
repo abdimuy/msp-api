@@ -297,6 +297,8 @@ type Meilisearch struct {
 	APIKey string `env:"MEILISEARCH_API_KEY"`
 	// IndexName is the UID of the clientes index. Defaults to "clientes".
 	IndexName string `env:"MEILISEARCH_INDEX_NAME" envDefault:"clientes"`
+	// VentasIndexName is the UID of the ventas index. Defaults to "ventas".
+	VentasIndexName string `env:"MEILISEARCH_VENTAS_INDEX_NAME" envDefault:"ventas"`
 	// SyncInterval is how often the background reconcile worker pushes
 	// updates from Firebird into Meilisearch. Defaults to 5 minutes.
 	// Task A3: wire into the reconcile worker.
