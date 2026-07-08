@@ -214,8 +214,8 @@ SELECT GEN_ID(ID_DOCTOS, 1) FROM RDB$DATABASE  -- next DIR_CLI_ID
 | `CLIENTE_ID` | integer | `3083038` | `3083041` | ✅ | Generator `ID_DOCTOS` |
 | `NOMBRE` | varchar(200) | "URIEL …" | "ALDRICH …" | ✅ | Único por convención del GUI (warning, no UNIQUE) |
 | `CONTACTO1`, `CONTACTO2` | varchar(50) | NULL | NULL | | No usados en showroom |
-| `ESTATUS` | varchar(1) | `'A'` | `'A'` | (default `'A'`) | A=activo, S=suspendido |
-| `FECHA_SUSP` | date | NULL | NULL | | Solo si ESTATUS='S' |
+| `ESTATUS` | varchar(1) | `'A'` | `'A'` | (default `'A'`) | Dominio real: `CHECK_432` → `ESTATUS IN ('A','C','V','B')`. **No existe `'S'` (suspendido)** en esta base. `A`=activo (con saldo vigente), `B`=baja/bloqueado (63% de la base), `V`=cliente real sin saldo vigente (liquidado/inactivo, con historial de ventas; 14%), `C`=cancelado (0.2%). Ver [`inteligencia-cliente-diccionario-datos.md`](./research/inteligencia-cliente-diccionario-datos.md) |
+| `FECHA_SUSP` | date | NULL | NULL | | Se puebla 100% en `B`/`C`/`V`; en `A` solo ~53% — son ex-suspendidos **reactivados** (Microsip no limpia `FECHA_SUSP` al reactivar). Ver [`microsip-reactivar-cliente.md`](./microsip-reactivar-cliente.md) |
 | `CAUSA_SUSP` | varchar(100) | NULL | NULL | | Idem |
 | `COBRAR_IMPUESTOS` | varchar(1) | `'S'` | `'S'` | (default) | |
 | `GENERAR_INTERESES` | varchar(1) | `'S'` | `'S'` | (default) | |

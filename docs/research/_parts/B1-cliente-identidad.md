@@ -2,6 +2,12 @@
 
 **Corte de datos:** `MAX(FECHA) = 2026-06-11` en `DOCTOS_CC` (snapshot restaurado en `MUEBLERA_SNP.fdb`).
 
+> **NOTA — superseded en parte:** este bloque fuente quedó embebido tal cual en
+> [`inteligencia-cliente-diccionario-datos.md`](../inteligencia-cliente-diccionario-datos.md), que
+> tiene la corrección del **2026-06-24** sobre `ESTATUS` (no existe `'V'`=vendedor-ruta; el dominio
+> real es `CHECK_432`: `ESTATUS IN ('A','C','V','B')`) y las notas sobre `FECHA_SUSP`/`CAUSA_SUSP`.
+> Ese documento es la fuente vigente para esos campos; aquí solo se corrigen las glosas puntuales.
+
 > **Nota metodológica:** algunas consultas de los pasos 6–9 no pudieron completarse
 > porque un proceso `isql` quedó colgado dentro del contenedor `mueblera-firebird-snap`
 > (PID 739, 99.9 % CPU), bloqueando la BD con un lock exclusivo. Las secciones
@@ -82,9 +88,9 @@ ORDER BY RF.RDB$FIELD_POSITION;
 | `NOMBRE` | VARCHAR(200) | 200 | ✅ | Win1252; único por convención GUI (no UNIQUE constraint) |
 | `CONTACTO1` | VARCHAR(50) | 50 | — | Win1252 |
 | `CONTACTO2` | VARCHAR(50) | 50 | — | Win1252 |
-| `ESTATUS` | CHAR(1) | 1 | — | Default `'A'`; A=activo, B=bloqueado, V=vendedor-ruta, C=cancelado |
-| `CAUSA_SUSP` | VARCHAR(100) | 100 | — | Texto de suspensión |
-| `FECHA_SUSP` | DATE | 4 | — | Solo si ESTATUS='S' |
+| `ESTATUS` | CHAR(1) | 1 | — | Default `'A'`; dominio real `CHECK_432`: `ESTATUS IN ('A','C','V','B')` — no existe `'S'` (ver nota superseded arriba) |
+| `CAUSA_SUSP` | VARCHAR(100) | 100 | — | Texto libre opcional, no un código de estado |
+| `FECHA_SUSP` | DATE | 4 | — | Poblado en `B`/`C`/`V`; se conserva en `A` tras reactivar (ver nota superseded arriba) |
 | `COBRAR_IMPUESTOS` | CHAR(1) | 1 | — | Default `'S'` |
 | `RETIENE_IMPUESTOS` | CHAR(1) | 1 | — | Default `'N'` |
 | `SUJETO_IEPS` | CHAR(1) | 1 | ✅ | Sin default — obligatorio en INSERT |
@@ -170,10 +176,13 @@ SELECT ESTATUS, COUNT(*) AS CNT FROM CLIENTES GROUP BY ESTATUS ORDER BY CNT DESC
 | `V` | Vendedor-ruta (Microsip) | 6,445 | 14.3% |
 | `C` | Cancelado | 101 | 0.2% |
 
-> Los 6,445 registros con `ESTATUS='V'` son registros internos de Microsip
-> que representan rutas/vendedores, no clientes reales. Los clientes activos
-> reales son 10,207. Los "bloqueados" (28,463) incluyen clientes con saldo
-> en mora o dados de baja sin eliminar.
+> **SUPERSEDED — ver corrección 2026-06-24 en
+> [`inteligencia-cliente-diccionario-datos.md`](../inteligencia-cliente-diccionario-datos.md):**
+> la lectura de `ESTATUS='V'` como "registros internos de Microsip que representan
+> rutas/vendedores, no clientes reales" es **falsa**. El 96.6% de los `V` tienen ventas
+> reales en `DOCTOS_PV` — son clientes reales sin saldo vigente (liquidados/inactivos), no
+> pseudo-registros de ruta. `CLIENTES.ESTATUS` no tiene dominio en la BD (solo el `CHECK_432`
+> estructural `IN ('A','C','V','B')`); su significado es lógica de la app Microsip.
 
 ### Distribución TIPO_CLIENTE_ID
 

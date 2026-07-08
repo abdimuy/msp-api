@@ -229,9 +229,9 @@ ORDER BY RF.RDB$FIELD_POSITION;
 | `NOMBRE` | VARCHAR(200) | 200 | ✅ | Win1252; único por convención GUI (no UNIQUE constraint) |
 | `CONTACTO1` | VARCHAR(50) | 50 | — | Win1252 |
 | `CONTACTO2` | VARCHAR(50) | 50 | — | Win1252 |
-| `ESTATUS` | CHAR(1) | 1 | — | Default `'A'`; A=activo, B=bloqueado, V=vendedor-ruta, C=cancelado |
-| `CAUSA_SUSP` | VARCHAR(100) | 100 | — | Texto de suspensión |
-| `FECHA_SUSP` | DATE | 4 | — | Solo si ESTATUS='S' |
+| `ESTATUS` | CHAR(1) | 1 | — | Default `'A'`; CHECK constraint `CHECK_432`: `ESTATUS IN ('A','C','V','B')` — **no existe `'S'`**. Ver corrección 2026-06-24 abajo |
+| `CAUSA_SUSP` | VARCHAR(100) | 100 | — | Texto libre opcional (ej. `FUGA`, `FALLECIMIENTO`, `MAL CLIENTE`, `Limite de credito excedido`), no un código de estado |
+| `FECHA_SUSP` | DATE | 4 | — | Poblado 100% en `B`/`C`/`V`; en `A` solo ~53% (ex-suspendidos reactivados — Microsip **no limpia** `FECHA_SUSP` al pasar a `A`). Ver [`microsip-reactivar-cliente.md`](../microsip-reactivar-cliente.md) |
 | `COBRAR_IMPUESTOS` | CHAR(1) | 1 | — | Default `'S'` |
 | `RETIENE_IMPUESTOS` | CHAR(1) | 1 | — | Default `'N'` |
 | `SUJETO_IEPS` | CHAR(1) | 1 | ✅ | Sin default — obligatorio en INSERT |
@@ -255,9 +255,9 @@ ORDER BY RF.RDB$FIELD_POSITION;
 | `USUARIO_CREADOR` | VARCHAR(31) | 31 | — | |
 | `FECHA_HORA_CREACION` | TIMESTAMP | 8 | — | Llenado por trigger `CLIENTES_BEFINS` |
 | `USUARIO_AUT_CREACION` | VARCHAR(31) | 31 | — | |
-| `USUARIO_ULT_MODIF` | VARCHAR(31) | 31 | — | |
-| `FECHA_HORA_ULT_MODIF` | TIMESTAMP | 8 | — | |
-| `USUARIO_AUT_MODIF` | VARCHAR(31) | 31 | — | |
+| `USUARIO_ULT_MODIF` | VARCHAR(31) | 31 | — | Poblada 100%, pero por la app — ningún trigger la llena |
+| `FECHA_HORA_ULT_MODIF` | TIMESTAMP | 8 | — | Poblada 100%, pero por la app — ningún trigger la llena |
+| `USUARIO_AUT_MODIF` | VARCHAR(31) | 31 | — | Siempre NULL (legacy, no se usa) |
 | `PRECIO_EMPRESA_ID` | INTEGER | 4 | — | FK lista de precios |
 
 ### Cobertura de CLIENTES (45,216 registros totales)
