@@ -154,6 +154,12 @@ type MicrosipVenta struct {
 	// LINEAS_ARTICULOS row (e.g. 11774 in the dev DB). Required when
 	// JuegosEnabled is true; ignored otherwise.
 	JuegosLineaArticuloID int `env:"MICROSIP_VENTA_JUEGOS_LINEA_ARTICULO_ID" envDefault:"0"`
+	// ReactivarClienteEnabled gates the cliente-reactivation step inside
+	// AplicarVenta: when a CREDITO venta is applied for a cliente whose
+	// CLIENTES.ESTATUS is 'B' (baja), flip it back to 'A' in the same
+	// transaction. Default false. CONTADO ventas never trigger this
+	// regardless of the flag.
+	ReactivarClienteEnabled bool `env:"MICROSIP_REACTIVAR_CLIENTE_ENABLED" envDefault:"false"`
 }
 
 // validate enforces that the MicrosipVenta configuration is internally

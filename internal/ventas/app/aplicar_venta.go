@@ -3,6 +3,7 @@ package app
 
 import (
 	"context"
+	"log/slog"
 	"strconv"
 
 	"github.com/google/uuid"
@@ -68,6 +69,9 @@ func (s *Service) AplicarVenta(ctx context.Context, ventaID, by uuid.UUID) (*dom
 		}
 		res, err := s.microsipWriter.Aplicar(ctx, writerIn)
 		if err != nil {
+			return err
+		}
+		if err := s.reactivarClienteSiNecesario(ctx, v, res); err != nil {
 			return err
 		}
 		if err := v.MarcarAplicada(res.DoctoPVID, res.Folio, s.clock.Now(), by); err != nil {
@@ -403,4 +407,48 @@ func (s *Service) resolveJuegosPorCombo(ctx context.Context, v *domain.Venta) (m
 		result[combo.ID()] = res.ArticuloID
 	}
 	return result, nil
+}
+
+// reactivarClienteSiNecesario reactivates the venta's Microsip cliente
+// (ESTATUS 'B' → 'A') when a CREDITO sale is applied for a cliente currently
+// de baja. Runs inside AplicarVenta's ambient transaction, right after the
+// Microsip writer commits the DOCTOS_PV/DOCTOS_CC rows — an error here rolls
+// back the whole apply, same as any other step in the tx.
+//
+// Gated by MICROSIP_REACTIVAR_CLIENTE_ENABLED (WithReactivarCliente, default
+// off) and scoped to CREDITO ventas only: a CONTADO sale carries no ongoing
+// commercial relationship signal strong enough to justify reactivating a
+// suspended cliente. Idempotent: the underlying UPDATE guards on
+// ESTATUS='B', so a cliente that is already 'A' is a harmless no-op.
+func (s *Service) reactivarClienteSiNecesario(ctx context.Context, v *domain.Venta, res outbound.MicrosipVentaResult) error {
+	if !s.reactivarClienteEnabled || s.microsipCliente == nil {
+		return nil
+	}
+	if v.TipoVenta() != domain.TipoVentaCredito {
+		return nil
+	}
+	clienteID := v.ClienteID()
+	if clienteID == nil {
+		return nil
+	}
+
+	reactivado, err := s.microsipCliente.ReactivarSiEnBaja(ctx, *clienteID, s.clock.Now())
+	if err != nil {
+		return err
+	}
+	if !reactivado {
+		slog.DebugContext(ctx, "ventas.cliente_reactivacion_noop",
+			"cliente_id", *clienteID,
+			"venta_id", v.ID(),
+		)
+		return nil
+	}
+	slog.InfoContext(ctx, "ventas.cliente_reactivado",
+		"cliente_id", *clienteID,
+		"venta_id", v.ID(),
+		"docto_pv_id", res.DoctoPVID,
+		"folio", res.Folio,
+		"rows_affected", 1,
+	)
+	return nil
 }

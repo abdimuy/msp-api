@@ -312,3 +312,20 @@ func TestLoad_MicrosipVenta_JuegosEnabled_LineaZero_Fails(t *testing.T) { //noli
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "MICROSIP_VENTA_JUEGOS_LINEA_ARTICULO_ID")
 }
+
+// ─── MicrosipVenta.ReactivarClienteEnabled ──────────────────────────────────
+
+func TestLoad_MicrosipVenta_ReactivarClienteEnabled_DefaultFalse(t *testing.T) { //nolint:paralleltest // uses t.Setenv
+	setMinimal(t)
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.False(t, cfg.MicrosipVenta.ReactivarClienteEnabled)
+}
+
+func TestLoad_MicrosipVenta_ReactivarClienteEnabled_True(t *testing.T) { //nolint:paralleltest // uses t.Setenv
+	setMinimal(t)
+	t.Setenv("MICROSIP_REACTIVAR_CLIENTE_ENABLED", "true")
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.True(t, cfg.MicrosipVenta.ReactivarClienteEnabled)
+}

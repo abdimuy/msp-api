@@ -153,13 +153,20 @@ func (f *fakeMicrosipVentaWriter) lastInput() outbound.MicrosipVentaInput {
 	return f.LastIn
 }
 
-// fakeMicrosipClienteWriter records calls to Crear.
+// fakeMicrosipClienteWriter records calls to Crear and ReactivarSiEnBaja.
 type fakeMicrosipClienteWriter struct {
 	mu     sync.Mutex
 	calls  int
 	Err    error
 	LastIn outbound.MicrosipClienteInput
 	Res    outbound.MicrosipClienteResult
+
+	// ReactivarSiEnBaja recording.
+	reactivarCalls       int
+	ReactivarErr         error
+	ReactivarResult      bool
+	LastReactivarCliente int
+	LastReactivarNow     time.Time
 }
 
 func newFakeClienteWriter() *fakeMicrosipClienteWriter {
@@ -185,6 +192,24 @@ func (f *fakeMicrosipClienteWriter) callsCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.calls
+}
+
+func (f *fakeMicrosipClienteWriter) ReactivarSiEnBaja(_ context.Context, clienteID int, now time.Time) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reactivarCalls++
+	f.LastReactivarCliente = clienteID
+	f.LastReactivarNow = now
+	if f.ReactivarErr != nil {
+		return false, f.ReactivarErr
+	}
+	return f.ReactivarResult, nil
+}
+
+func (f *fakeMicrosipClienteWriter) reactivarCallsCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.reactivarCalls
 }
 
 // ─── harness helper ──────────────────────────────────────────────────────────

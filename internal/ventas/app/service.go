@@ -72,6 +72,12 @@ type Service struct {
 	// keyset listing (ListarVentas) — the pre-Meilisearch behavior is
 	// preserved exactly until the index is wired at the composition root.
 	searchIndex outbound.VentaSearchIndex
+	// reactivarClienteEnabled gates the cliente-reactivation step inside
+	// AplicarVenta (MICROSIP_REACTIVAR_CLIENTE_ENABLED, default false). When
+	// false, AplicarVenta never calls microsipCliente.ReactivarSiEnBaja —
+	// pre-feature behavior is preserved exactly. Wired via
+	// WithReactivarCliente.
+	reactivarClienteEnabled bool
 }
 
 // WithInventario attaches an InventarioService so CrearVenta validates stock
@@ -130,6 +136,14 @@ func (s *Service) WithJuegos(r outbound.MicrosipJuegoResolver, enabled bool, lin
 	s.juegoResolver = r
 	s.juegosEnabled = enabled
 	s.juegosLineaArticuloID = lineaArticuloID
+	return s
+}
+
+// WithReactivarCliente toggles the cliente-reactivation step inside
+// AplicarVenta (see reactivarClienteEnabled). Returns s for fluent wiring at
+// the composition root.
+func (s *Service) WithReactivarCliente(enabled bool) *Service {
+	s.reactivarClienteEnabled = enabled
 	return s
 }
 

@@ -7,7 +7,9 @@ import (
 	"os"
 	"strconv"
 	"testing"
+	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/abdimuy/msp-api/internal/platform/fbtestutil"
@@ -269,5 +271,115 @@ func TestClienteWriter_NextClaveCliente_Incremental(t *testing.T) { //nolint:par
 		require.Greater(t, n2, n1, "segunda clave debe ser estrictamente mayor que la primera")
 
 		require.Len(t, result2.ClaveCliente, 7, "segunda clave debe tener padding 7 dígitos")
+	})
+}
+
+// ─── ReactivarSiEnBaja ───────────────────────────────────────────────────────
+
+// marcarClienteEnBaja is test-only setup: it forces ESTATUS='B' plus
+// FECHA_SUSP/CAUSA_SUSP on a cliente already created via writer.Crear, so the
+// reactivation tests exercise a realistic "cliente dado de baja con
+// historial de suspensión" row. Runs inside the caller's rollback-only tx —
+// never persisted.
+func marcarClienteEnBaja(ctx context.Context, t *testing.T, pool *firebird.Pool, clienteID int, fechaSusp time.Time, causaSusp string) {
+	t.Helper()
+	q := firebird.GetQuerier(ctx, pool.DB)
+	_, err := q.ExecContext(ctx,
+		`UPDATE CLIENTES SET ESTATUS = 'B', FECHA_SUSP = ?, CAUSA_SUSP = ? WHERE CLIENTE_ID = ?`,
+		fechaSusp, causaSusp, clienteID,
+	)
+	require.NoError(t, err, "test setup: marcar cliente en baja")
+}
+
+// TestClienteWriter_ReactivarSiEnBaja_ClienteEnBaja_Reactiva verifies the
+// happy path: a cliente with ESTATUS='B' flips to 'A', USUARIO_ULT_MODIF /
+// FECHA_HORA_ULT_MODIF are stamped, and FECHA_SUSP/CAUSA_SUSP are left
+// untouched (Microsip keeps them as suspension history).
+func TestClienteWriter_ReactivarSiEnBaja_ClienteEnBaja_Reactiva(t *testing.T) { //nolint:paralleltest // serial: Firebird MAX on CLAVES_CLIENTES would race across parallel txs
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	writer := microsip.NewClienteWriter(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		in := defaultInput("ROSA ISELA DOMINGUEZ CASTILLO TEST BAJA 20260708")
+		created, err := writer.Crear(ctx, in)
+		require.NoError(t, err)
+
+		fechaSusp := time.Date(2025, 3, 15, 0, 0, 0, 0, time.UTC)
+		causaSusp := "CARTERA VENCIDA"
+		marcarClienteEnBaja(ctx, t, pool, created.ClienteID, fechaSusp, causaSusp)
+
+		now := time.Date(2026, 7, 8, 12, 30, 0, 0, time.UTC)
+		reactivado, err := writer.ReactivarSiEnBaja(ctx, created.ClienteID, now)
+		require.NoError(t, err)
+		assert.True(t, reactivado, "cliente estaba en baja: debe reactivarse")
+
+		q := firebird.GetQuerier(ctx, pool.DB)
+
+		var estatus, usuarioUltModif, causaSuspRead string
+		var fechaHoraUltModif any
+		var fechaSuspRead time.Time
+		err = q.QueryRowContext(ctx,
+			`SELECT ESTATUS, USUARIO_ULT_MODIF, FECHA_HORA_ULT_MODIF, FECHA_SUSP, CAUSA_SUSP
+			   FROM CLIENTES WHERE CLIENTE_ID = ?`, created.ClienteID,
+		).Scan(&estatus, &usuarioUltModif, &fechaHoraUltModif, &fechaSuspRead, &causaSuspRead)
+		require.NoError(t, err)
+
+		assert.Equal(t, "A", estatus, "ESTATUS debe volver a 'A'")
+		assert.Equal(t, "SYSDBA", usuarioUltModif, "USUARIO_ULT_MODIF debe ser el marcador de sistema")
+
+		ultModif, err := firebird.ScanUTCTime(fechaHoraUltModif)
+		require.NoError(t, err)
+		assert.WithinDuration(t, now, ultModif, time.Second, "FECHA_HORA_ULT_MODIF debe ser el now pasado a ReactivarSiEnBaja")
+
+		// FECHA_SUSP / CAUSA_SUSP must be untouched — Microsip keeps them as
+		// suspension history even after reactivation.
+		assert.True(t, fechaSuspRead.Equal(fechaSusp) || fechaSuspRead.Year() == fechaSusp.Year() && fechaSuspRead.Month() == fechaSusp.Month() && fechaSuspRead.Day() == fechaSusp.Day(),
+			"FECHA_SUSP no debe modificarse: esperado %v, obtuvo %v", fechaSusp, fechaSuspRead)
+		assert.Equal(t, causaSusp, causaSuspRead, "CAUSA_SUSP no debe modificarse")
+	})
+}
+
+// TestClienteWriter_ReactivarSiEnBaja_ClienteYaActivo_NoOp verifies the guard:
+// calling ReactivarSiEnBaja on a cliente that is NOT 'B' (e.g. already 'A')
+// affects 0 rows and leaves ESTATUS unchanged.
+func TestClienteWriter_ReactivarSiEnBaja_ClienteYaActivo_NoOp(t *testing.T) { //nolint:paralleltest // serial: Firebird MAX on CLAVES_CLIENTES would race across parallel txs
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	writer := microsip.NewClienteWriter(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		in := defaultInput("HUGO ALBERTO VAZQUEZ MORALES TEST ACTIVO 20260708")
+		created, err := writer.Crear(ctx, in)
+		require.NoError(t, err)
+		// Crear leaves ESTATUS='A' — no marcarClienteEnBaja call here.
+
+		now := time.Date(2026, 7, 8, 12, 30, 0, 0, time.UTC)
+		reactivado, err := writer.ReactivarSiEnBaja(ctx, created.ClienteID, now)
+		require.NoError(t, err)
+		assert.False(t, reactivado, "cliente ya estaba activo: el guard no debe afectar filas")
+
+		q := firebird.GetQuerier(ctx, pool.DB)
+		var estatus string
+		err = q.QueryRowContext(ctx, `SELECT ESTATUS FROM CLIENTES WHERE CLIENTE_ID = ?`, created.ClienteID).Scan(&estatus)
+		require.NoError(t, err)
+		assert.Equal(t, "A", estatus, "ESTATUS debe permanecer 'A'")
+	})
+}
+
+// TestClienteWriter_ReactivarSiEnBaja_ClienteInexistente_NoOp verifies that
+// calling ReactivarSiEnBaja with a CLIENTE_ID that does not exist in Microsip
+// is a harmless no-op (0 rows affected, no error) rather than a failure.
+func TestClienteWriter_ReactivarSiEnBaja_ClienteInexistente_NoOp(t *testing.T) { //nolint:paralleltest // serial: shares the FB_DATABASE gate with the rest of this file
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	writer := microsip.NewClienteWriter(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		const clienteIDInexistente = 999999999
+		now := time.Date(2026, 7, 8, 12, 30, 0, 0, time.UTC)
+		reactivado, err := writer.ReactivarSiEnBaja(ctx, clienteIDInexistente, now)
+		require.NoError(t, err)
+		assert.False(t, reactivado)
 	})
 }

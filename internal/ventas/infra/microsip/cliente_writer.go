@@ -6,10 +6,24 @@ package microsip
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 	"github.com/abdimuy/msp-api/internal/ventas/ports/outbound"
 )
+
+// usuarioReactivacionCliente is what ReactivarSiEnBaja writes into
+// CLIENTES.USUARIO_ULT_MODIF (VARCHAR(31)) when it flips ESTATUS 'B' → 'A'.
+// insertCliente below never stamps USUARIO_CREADOR explicitly for the same
+// reason: Microsip's CLIENTES_BEFINS trigger auto-fills it from the
+// connecting Firebird user, which this API always uses as SYSDBA (see
+// config.FirebirdPool.User, envDefault "SYSDBA"). "SYSDBA" is also the
+// existing system-identity marker for this narrow style of column elsewhere
+// in the codebase — see internal/inventario/infra/invfb/traspaso_writer.go
+// (DOCTOS_IN.USUARIO_CREADOR). Reused here rather than invented anew so a
+// support engineer sees one consistent "who wrote this" marker across
+// Microsip system-generated changes.
+const usuarioReactivacionCliente = "SYSDBA"
 
 // ─── SQL constants ────────────────────────────────────────────────────────────
 
@@ -88,6 +102,18 @@ const insertLibresClienteConOpcionales = `INSERT INTO LIBRES_CLIENTES
    REFERENCIA, U_LATITUD, U_LONGITUD)
 VALUES (?, ?, ?, ?, ?, ?, ?)`
 
+// updateReactivarCliente flips a de-baja cliente back to activo. The guard
+// ESTATUS = 'B' in the WHERE clause makes the statement idempotent: calling
+// it twice (or on a cliente that was never de baja) affects 0 rows the second
+// time. FECHA_SUSP / CAUSA_SUSP are deliberately NOT touched — Microsip keeps
+// them as suspension history even after reactivation (verified against 5,407
+// reactivated clientes in production).
+//
+//nolint:gosec // SQL constant, not user input.
+const updateReactivarCliente = `UPDATE CLIENTES
+   SET ESTATUS = 'A', USUARIO_ULT_MODIF = ?, FECHA_HORA_ULT_MODIF = ?
+ WHERE CLIENTE_ID = ? AND ESTATUS = 'B'`
+
 // ─── ClienteWriter ────────────────────────────────────────────────────────────
 
 // ClienteWriter implements outbound.MicrosipClienteWriter against the Microsip
@@ -152,6 +178,26 @@ func (w *ClienteWriter) Crear(ctx context.Context, in outbound.MicrosipClienteIn
 		DirCliID:     ids.dirCliID,
 		ClaveCliente: ids.claveCliente,
 	}, nil
+}
+
+// ReactivarSiEnBaja implements outbound.MicrosipClienteWriter. See the
+// interface doc for the idempotency contract; see updateReactivarCliente for
+// the exact SQL and why FECHA_SUSP/CAUSA_SUSP are left untouched.
+func (w *ClienteWriter) ReactivarSiEnBaja(ctx context.Context, clienteID int, now time.Time) (bool, error) {
+	q := firebird.GetQuerier(ctx, w.pool.DB)
+
+	res, err := q.ExecContext(ctx, updateReactivarCliente,
+		usuarioReactivacionCliente, firebird.ToWallClock(now), clienteID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("microsip reactivar cliente: update clientes: %w", firebird.MapError(err))
+	}
+
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("microsip reactivar cliente: rows affected: %w", firebird.MapError(err))
+	}
+	return n > 0, nil
 }
 
 // ─── Phase helpers ────────────────────────────────────────────────────────────

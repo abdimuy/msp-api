@@ -1,7 +1,10 @@
 //nolint:misspell // ventas vocabulary is Spanish per project convention.
 package outbound
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // MicrosipClienteInput is the input value object for MicrosipClienteWriter.Crear.
 // Snapshot data comes from the venta; catálogo defaults come from cliente_defaults.go.
@@ -43,4 +46,14 @@ type MicrosipClienteResult struct {
 // firebird.GetQuerier(ctx, pool.DB).
 type MicrosipClienteWriter interface {
 	Crear(ctx context.Context, in MicrosipClienteInput) (MicrosipClienteResult, error)
+
+	// ReactivarSiEnBaja flips CLIENTES.ESTATUS from 'B' (baja) to 'A' (activo)
+	// for clienteID, stamping USUARIO_ULT_MODIF / FECHA_HORA_ULT_MODIF with the
+	// given now. Idempotent: the underlying UPDATE guards on ESTATUS='B', so
+	// calling this on a cliente that is already 'A' (or any other estatus) is a
+	// no-op — reactivado reports false and no columns are touched. Must be
+	// called inside an open Firebird transaction — joins via
+	// firebird.GetQuerier(ctx, pool.DB). Does NOT touch FECHA_SUSP/CAUSA_SUSP;
+	// Microsip keeps those as suspension history even after reactivation.
+	ReactivarSiEnBaja(ctx context.Context, clienteID int, now time.Time) (reactivado bool, err error)
 }

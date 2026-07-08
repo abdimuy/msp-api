@@ -157,7 +157,8 @@ func provideVentasService(
 		WithUsuarioResolver(usuarioResolver).
 		WithAlmacenResolver(almacenResolver).
 		WithJuegos(provideVentasMicrosipJuegoResolver(p), cfg.MicrosipVenta.JuegosEnabled, cfg.MicrosipVenta.JuegosLineaArticuloID).
-		WithZonaReader(ventfb.NewClienteRepo(p))
+		WithZonaReader(ventfb.NewClienteRepo(p)).
+		WithReactivarCliente(cfg.MicrosipVenta.ReactivarClienteEnabled)
 	if searchIndex != nil {
 		svc = svc.WithSearchIndex(searchIndex)
 	}
