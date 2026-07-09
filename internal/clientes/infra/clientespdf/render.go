@@ -363,8 +363,77 @@ func drawVentas(pdf *fpdf.Fpdf, ventas []outbound.ReporteVenta) {
 	}
 }
 
+// Card geometry — a light rounded border wraps each venta so it reads as a
+// distinct "card". A single venta can span page breaks, so the card is drawn
+// per page-segment (rounded top on the first segment, rounded bottom on the
+// last, straight between). See ventaCard.
+const (
+	cardPadX      = 2.0 // outset beyond the content margins, left and right
+	cardPadTop    = 1.5
+	cardPadBottom = 1.5
+	cardRadius    = 2.0
+	cardGap       = 3.5 // vertical air between consecutive cards
+)
+
+// ventaCard tracks the current page-segment of a venta so its rounded border can
+// be drawn one segment at a time. It is only ever used for stroking an outline
+// (mode "D") on top of already-drawn content, so it never covers text — a filled
+// panel across page breaks would have to be painted before content of unknown
+// height, which is fragile; a clean outline is robust and reads as a card.
+type ventaCard struct {
+	top      float64 // top Y of the content in the current page segment
+	firstSeg bool    // whether the current segment is the venta's first
+}
+
+// newVentaCard starts a card whose first segment begins at the current Y.
+func newVentaCard(pdf *fpdf.Fpdf) *ventaCard {
+	return &ventaCard{top: pdf.GetY(), firstSeg: true}
+}
+
+// drawSegment strokes the rounded border for the current segment, from the
+// segment top down to bottomY. Corners are rounded only where the card actually
+// begins/ends: top corners on the first segment, bottom corners on the last.
+func (vc *ventaCard) drawSegment(pdf *fpdf.Fpdf, bottomY float64, last bool) {
+	x := margin - cardPadX
+	w := bodyW + 2*cardPadX
+	yTop := vc.top - cardPadTop
+	yBot := bottomY + cardPadBottom
+	if yBot <= yTop {
+		return
+	}
+	var rTL, rTR, rBR, rBL float64
+	if vc.firstSeg {
+		rTL, rTR = cardRadius, cardRadius
+	}
+	if last {
+		rBR, rBL = cardRadius, cardRadius
+	}
+	pdf.SetDrawColor(hairR, hairG, hairB)
+	pdf.SetLineWidth(0.3)
+	pdf.RoundedRectExt(x, yTop, w, yBot-yTop, rTL, rTR, rBR, rBL, "D")
+	pdf.SetLineWidth(0.2)
+}
+
+// pageBreak closes the current segment's border at the current Y, moves to a new
+// page, redraws the venta continuation + column header, and opens the next
+// segment. It replaces the raw AddPage+continuation dance so the card border
+// stays consistent across breaks.
+func (vc *ventaCard) pageBreak(pdf *fpdf.Fpdf, folio string, drawColHdr func()) {
+	vc.drawSegment(pdf, pdf.GetY(), false)
+	pdf.AddPage()
+	vc.firstSeg = false
+	vc.top = pdf.GetY()
+	drawContinuation(pdf, folio)
+	drawColHdr()
+}
+
+// close strokes the final segment's border (rounded bottom) at the current Y.
+func (vc *ventaCard) close(pdf *fpdf.Fpdf) {
+	vc.drawSegment(pdf, pdf.GetY(), true)
+}
+
 // drawVenta renders one venta section: header, line items, credit terms (when
-// applicable) and its payment table.
+// applicable) and its payment table, wrapped in a rounded card border.
 func drawVenta(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
 	// Keep the venta header + meta with the start of its table: if too little
 	// room remains, start on a fresh page so the section is never orphaned.
@@ -383,14 +452,17 @@ func drawVenta(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
 	}
 	pdf.Ln(1.5)
 
+	card := newVentaCard(pdf)
+
 	drawVentaHeader(pdf, v)
 	drawArticulos(pdf, v.Productos)
 	if v.Credito != nil {
 		drawCredito(pdf, v.Credito)
 	}
-	drawPagosTable(pdf, v)
+	drawPagosTable(pdf, v, card)
 
-	pdf.Ln(2.5)
+	card.close(pdf)
+	pdf.Ln(cardGap)
 }
 
 // drawArticulos renders the sale's line items: "cantidad × nombre", unit price
@@ -548,11 +620,8 @@ func fitText(pdf *fpdf.Fpdf, s string, maxW float64) string {
 }
 
 func drawVentaHeader(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
-	// Hairline above venta
-	pdf.SetDrawColor(hairR, hairG, hairB)
-	pdf.SetLineWidth(0.3)
-	y := pdf.GetY()
-	pdf.Line(margin, y, pageW-margin, y)
+	// Top padding inside the card (the card's rounded border separates ventas,
+	// so no hairline is drawn here anymore).
 	pdf.Ln(2)
 
 	// Left side: folio + date on the same line (date beside the folio, not below).
@@ -652,7 +721,7 @@ func drawMonthLabelCentered(pdf *fpdf.Fpdf, label string, segStartY, segEndY flo
 // long tables repeat their column header (and the venta folio) on each page.
 // Payments are sorted ascending by date and grouped by month with a subtle
 // month-header separator row.
-func drawPagosTable(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
+func drawPagosTable(pdf *fpdf.Fpdf, v outbound.ReporteVenta, card *ventaCard) {
 	if len(v.Pagos) == 0 {
 		pdf.SetFont("Poppins", "", 7.5)
 		pdf.SetTextColor(grayR, grayG, grayB)
@@ -667,28 +736,20 @@ func drawPagosTable(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
 		return pagos[i].Fecha.Before(pagos[j].Fecha)
 	})
 
-	colMes := 22.0
-	colFecha := 23.0
-	colConcepto := 66.0
-	colCobrador := 52.0
-	colImporte := bodyW - colMes - colFecha - colConcepto - colCobrador
-	rowH := 4.5
-	cols := pagoCols{colMes, colFecha, colConcepto, colCobrador, colImporte, rowH}
+	cols := newPagoCols()
 
 	drawColHdr := makePagosColumnHeader(pdf, cols)
 	drawColHdr()
 
-	ingreso, condon, perdida := drawPagoRows(pdf, v.Folio, pagos, cols, drawColHdr)
+	ingreso, condon, perdida := drawPagoRows(pdf, v.Folio, pagos, cols, drawColHdr, card)
 
 	lines := buildSubtotales(ingreso, condon, perdida)
-	if pdf.GetY()+float64(len(lines))*rowH > bottomLimit {
-		pdf.AddPage()
-		drawContinuation(pdf, v.Folio)
-		drawColHdr()
+	if pdf.GetY()+float64(len(lines))*cols.rowH > bottomLimit {
+		card.pageBreak(pdf, v.Folio, drawColHdr)
 	}
-	labelArea := colMes + colFecha + colConcepto + colCobrador
+	labelArea := cols.mes + cols.fecha + cols.concepto + cols.descripcion
 	for i, ln := range lines {
-		drawSubtotalRow(pdf, labelArea, colImporte, rowH, ln.label, ln.amount, ln.r, ln.g, ln.b, i == 0)
+		drawSubtotalRow(pdf, labelArea, cols.importe, cols.rowH, ln.label, ln.amount, ln.r, ln.g, ln.b, i == 0)
 	}
 }
 
@@ -709,7 +770,7 @@ func makePagosColumnHeader(pdf *fpdf.Fpdf, cols pagoCols) func() {
 		}{
 			{"FECHA", cols.fecha, "L"},
 			{"CONCEPTO", cols.concepto, "L"},
-			{"COBRADOR", cols.cobrador, "L"},
+			{"DESCRIPCIÓN", cols.descripcion, "L"},
 			{"IMPORTE", cols.importe, "R"},
 		}
 		for _, h := range headers {
@@ -730,6 +791,7 @@ func drawPagoRows(
 	pagos []outbound.ReportePago,
 	cols pagoCols,
 	drawColHdr func(),
+	card *ventaCard,
 ) (decimal.Decimal, decimal.Decimal, decimal.Decimal) {
 	var ingreso, condon, perdida decimal.Decimal
 	groups := groupPaymentsByMonth(pagos)
@@ -743,13 +805,13 @@ func drawPagoRows(
 			bfR, bfG, bfB = 255, 255, 255
 		}
 
-		// Gap before consecutive groups. Anti-orphan: if gap + first row would exceed
-		// the bottom, break to a new page (the gap is implicit on a new page).
+		// Gap before consecutive groups. Anti-orphan: if the gap + the (possibly
+		// multi-line) first row would exceed the bottom, break to a new page (the
+		// gap is implicit on a new page).
 		if g > 0 {
-			if pdf.GetY()+monthGapH+cols.rowH > bottomLimit {
-				pdf.AddPage()
-				drawContinuation(pdf, folio)
-				drawColHdr()
+			firstRowH := pagoRowHeight(pdf, grp.pagos[0], cols)
+			if pdf.GetY()+monthGapH+firstRowH > bottomLimit {
+				card.pageBreak(pdf, folio, drawColHdr)
 			} else {
 				pdf.Ln(monthGapH)
 			}
@@ -759,17 +821,16 @@ func drawPagoRows(
 		segStartY := pdf.GetY()
 
 		for _, p := range grp.pagos {
-			if pdf.GetY()+cols.rowH > bottomLimit {
+			rh := pagoRowHeight(pdf, p, cols)
+			if pdf.GetY()+rh > bottomLimit {
 				segEndY := pdf.GetY()
 				drawMonthAccentBar(pdf, segStartY, segEndY)
 				drawMonthLabelCentered(pdf, grpLabel, segStartY, segEndY, cols)
-				pdf.AddPage()
-				drawContinuation(pdf, folio)
-				drawColHdr()
+				card.pageBreak(pdf, folio, drawColHdr)
 				segStartY = pdf.GetY()
 			}
 
-			drawPagoRow(pdf, p, bfR, bfG, bfB, cols)
+			drawPagoRow(pdf, p, bfR, bfG, bfB, cols, rh)
 
 			switch {
 			case p.EsIngreso:
@@ -788,44 +849,99 @@ func drawPagoRows(
 	return ingreso, condon, perdida
 }
 
-// pagoCols carries the payment-table column widths and row height.
+// pagoCols carries the payment-table column widths and base row height.
 // mes is the left gutter column that shows the month label on the first row of
-// each group; fecha/concepto/cobrador/importe are the data columns.
+// each group; fecha/concepto/descripcion/importe are the data columns. rowH is
+// the minimum (single-line) row height; the descripcion cell wraps and can make
+// a row taller (see pagoRowHeight).
 type pagoCols struct {
-	mes, fecha, concepto, cobrador, importe, rowH float64
+	mes, fecha, concepto, descripcion, importe, rowH float64
 }
 
-// drawPagoRow renders one payment row using the given month-block fill color
-// (fillR/G/B). All rows in the same month block share the same fill so the band
-// reads as a continuous block. The left gutter is always empty — the month label
-// is drawn separately, vertically centered, by drawMonthLabelCentered.
-// Concepto + importe are tinted by payment category (colors go on top of the fill).
-func drawPagoRow(pdf *fpdf.Fpdf, p outbound.ReportePago, fillR, fillG, fillB int, c pagoCols) {
-	pdf.SetFillColor(fillR, fillG, fillB)
-	cr, cg, cb := pagoColor(p)
+// pagoLineH is the line height used for the wrapped descripcion cell and to
+// measure how tall a payment row must be to show its full description.
+const pagoLineH = 4.0
 
-	// Left gutter: always empty — month label drawn separately, vertically centered.
-	pdf.SetFont("PlexMono", "", 6.5)
-	pdf.SetTextColor(slateR, slateG, slateB)
-	pdf.CellFormat(c.mes, c.rowH, "", "", 0, "L", true, 0, "")
+// newPagoCols returns the payment-table column widths. concepto is narrow and
+// descripcion is wide (it wraps to show the full text); their sum is preserved
+// so the importe column (the remainder) keeps its previous width.
+func newPagoCols() pagoCols {
+	const (
+		colMes         = 22.0
+		colFecha       = 23.0
+		colConcepto    = 44.0
+		colDescripcion = 74.0 // colConcepto+colDescripcion == 118 (was 66+52)
+		rowH           = 4.5
+	)
+	colImporte := bodyW - colMes - colFecha - colConcepto - colDescripcion
+	return pagoCols{colMes, colFecha, colConcepto, colDescripcion, colImporte, rowH}
+}
+
+// rowHeight returns the height needed for nLines of text at pagoLineH per line:
+// at least baseH, else nLines*pagoLineH. Pure helper so pagination math is
+// unit-testable.
+func rowHeight(nLines int, baseH float64) float64 {
+	if nLines < 1 {
+		nLines = 1
+	}
+	if h := float64(nLines) * pagoLineH; h > baseH {
+		return h
+	}
+	return baseH
+}
+
+// pagoRowHeight measures how tall a payment row must be so its descripcion cell
+// shows the full text (wrapped at the descripcion column width). It sets the
+// descripcion font as a side effect (same font drawPagoRow uses to wrap).
+func pagoRowHeight(pdf *fpdf.Fpdf, p outbound.ReportePago, c pagoCols) float64 {
+	pdf.SetFont("Poppins", "", 7.5)
+	lines := pdf.SplitText(sanitizeLine(p.Cobrador), c.descripcion)
+	return rowHeight(len(lines), c.rowH)
+}
+
+// drawPagoRow renders one payment row of the given total height (rh, from
+// pagoRowHeight) using the month-block fill color (fillR/G/B). The whole row is
+// filled once as a band so multi-line rows read as a continuous block; the
+// single-line cells (fecha, concepto, importe) top-align with the first line of
+// the wrapped descripcion. The left gutter is always empty — the month label is
+// drawn separately, vertically centered, by drawMonthLabelCentered. Concepto +
+// importe are tinted by payment category (colors go on top of the fill).
+func drawPagoRow(pdf *fpdf.Fpdf, p outbound.ReportePago, fillR, fillG, fillB int, c pagoCols, rh float64) {
+	cr, cg, cb := pagoColor(p)
+	y := pdf.GetY()
+
+	// Band background for the full row (all columns), drawn once behind the text.
+	pdf.SetFillColor(fillR, fillG, fillB)
+	pdf.Rect(margin, y, bodyW, rh, "F")
+
+	// Single-line cells use pagoLineH so they align with the first wrapped line.
+	x := margin + c.mes
 
 	pdf.SetFont("PlexMono", "", 7)
 	pdf.SetTextColor(inkR, inkG, inkB)
-	pdf.CellFormat(c.fecha, c.rowH, formatFecha(p.Fecha), "", 0, "L", true, 0, "")
+	pdf.SetXY(x, y)
+	pdf.CellFormat(c.fecha, pagoLineH, formatFecha(p.Fecha), "", 0, "L", false, 0, "")
+	x += c.fecha
 
 	pdf.SetFont("Poppins", "", 7.5)
 	pdf.SetTextColor(cr, cg, cb)
-	pdf.CellFormat(c.concepto, c.rowH, fitText(pdf, p.Concepto, c.concepto), "", 0, "L", true, 0, "")
+	pdf.SetXY(x, y)
+	pdf.CellFormat(c.concepto, pagoLineH, fitText(pdf, p.Concepto, c.concepto), "", 0, "L", false, 0, "")
+	x += c.concepto
 
+	// Descripcion wraps to as many lines as needed — never truncated.
 	pdf.SetFont("Poppins", "", 7.5)
 	pdf.SetTextColor(grayR, grayG, grayB)
-	pdf.CellFormat(c.cobrador, c.rowH, fitText(pdf, p.Cobrador, c.cobrador), "", 0, "L", true, 0, "")
+	pdf.SetXY(x, y)
+	pdf.MultiCell(c.descripcion, pagoLineH, sanitizeLine(p.Cobrador), "", "L", false)
+	x += c.descripcion
 
 	pdf.SetFont("PlexMonoMed", "", 7.5)
 	pdf.SetTextColor(cr, cg, cb)
-	pdf.CellFormat(c.importe, c.rowH, formatMXN(p.Importe), "", 0, "R", true, 0, "")
+	pdf.SetXY(x, y)
+	pdf.CellFormat(c.importe, pagoLineH, formatMXN(p.Importe), "", 0, "R", false, 0, "")
 
-	pdf.Ln(c.rowH)
+	pdf.SetXY(margin, y+rh)
 }
 
 // drawSubtotalRow renders one subtotal line (label + amount) beneath a payment
