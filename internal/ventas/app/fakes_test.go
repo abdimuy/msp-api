@@ -502,6 +502,37 @@ func (f *fakeClienteZonaReader) callsCount() int {
 	return f.calls
 }
 
+// fakeClienteEstatusReader is an in-memory outbound.ClienteEstatusReader.
+// Estatus is the raw ESTATUS string returned for any clienteID when Err is
+// nil. Err overrides the happy path with an error (e.g.
+// domain.ErrClienteNotFoundInMicrosip).
+type fakeClienteEstatusReader struct {
+	mu      sync.Mutex
+	calls   int
+	Estatus string
+	Err     error
+}
+
+func newFakeClienteEstatusReader(estatus string) *fakeClienteEstatusReader {
+	return &fakeClienteEstatusReader{Estatus: estatus}
+}
+
+func (f *fakeClienteEstatusReader) EstatusDeCliente(_ context.Context, _ int) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.Err != nil {
+		return "", f.Err
+	}
+	return f.Estatus, nil
+}
+
+func (f *fakeClienteEstatusReader) callsCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
 // fakeUsuarioChecker is an in-memory outbound.VendedorUsuarioExistenceChecker.
 // The known set decides which uuids are present in MSP_USUARIOS; anything
 // outside it is returned as missing. Calls counts invocations so tests can

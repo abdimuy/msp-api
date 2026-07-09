@@ -67,6 +67,10 @@ type Service struct {
 	// WithZonaReader. When nil, the zona mismatch check is skipped — used for
 	// tests that do not exercise the pre-existing cliente branch.
 	zonaReader outbound.ClienteZonaReader
+	// estatusReader is optional. Tests omit it; production wires it via
+	// WithEstatusReader. When nil, EstatusMicrosipDeCliente returns nil — used
+	// for tests that do not exercise the cliente estatus hint.
+	estatusReader outbound.ClienteEstatusReader
 	// searchIndex is optional. Tests omit it; production wires it via
 	// WithSearchIndex. When nil, BuscarVentas falls back to the Firebird
 	// keyset listing (ListarVentas) — the pre-Meilisearch behavior is
@@ -116,6 +120,13 @@ func (s *Service) WithAlmacenResolver(r outbound.AlmacenNombreResolver) *Service
 // venta's zona matches the pre-existing cliente's zona in Microsip.
 func (s *Service) WithZonaReader(r outbound.ClienteZonaReader) *Service {
 	s.zonaReader = r
+	return s
+}
+
+// WithEstatusReader attaches a ClienteEstatusReader so the venta detail read
+// can surface the cliente's current ESTATUS in Microsip.
+func (s *Service) WithEstatusReader(r outbound.ClienteEstatusReader) *Service {
+	s.estatusReader = r
 	return s
 }
 

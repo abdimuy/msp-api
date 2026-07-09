@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 	"github.com/abdimuy/msp-api/internal/ventas/domain"
@@ -27,6 +28,9 @@ var _ outbound.ClienteExistenceChecker = (*ClienteRepo)(nil)
 
 // Compile-time: ClienteRepo also satisfies ClienteZonaReader.
 var _ outbound.ClienteZonaReader = (*ClienteRepo)(nil)
+
+// Compile-time: ClienteRepo also satisfies ClienteEstatusReader.
+var _ outbound.ClienteEstatusReader = (*ClienteRepo)(nil)
 
 // Exists reports whether a row with the supplied CLIENTE_ID exists in
 // CLIENTES. Non-positive ids short-circuit to (false, nil) — they cannot
@@ -66,4 +70,21 @@ func (r *ClienteRepo) ZonaDeCliente(ctx context.Context, clienteID int) (*int, e
 	}
 	z := int(zona.Int32)
 	return &z, nil
+}
+
+// EstatusDeCliente reads the ESTATUS from CLIENTES for the given clienteID.
+// ESTATUS is a CHAR column, so the raw scan comes back space-padded — the
+// result is trimmed before being returned. Returns
+// ("", domain.ErrClienteNotFoundInMicrosip) when no row exists.
+func (r *ClienteRepo) EstatusDeCliente(ctx context.Context, clienteID int) (string, error) {
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	var estatus string
+	err := q.QueryRowContext(ctx, selectClienteEstatus, clienteID).Scan(&estatus)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", domain.ErrClienteNotFoundInMicrosip
+	}
+	if err != nil {
+		return "", firebird.MapError(err)
+	}
+	return strings.TrimSpace(estatus), nil
 }

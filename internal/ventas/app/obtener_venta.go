@@ -45,3 +45,27 @@ func (s *Service) ZonaMicrosipDeVenta(ctx context.Context, v *domain.Venta) (*in
 	mismatch := ventaZona != nil && *ventaZona != *z
 	return z, mismatch
 }
+
+// EstatusMicrosipDeCliente fetches the cliente's current ESTATUS from
+// Microsip (A/B/V/C) as a best-effort, NON-blocking hint. It must NEVER fail
+// the venta detail read, so every adverse condition degrades to nil:
+//   - reader not wired → nil
+//   - venta has no cliente link → nil
+//   - ANY reader error (cliente not found in Microsip, transient I/O, …) →
+//     nil — degrade gracefully rather than failing the read
+//   - ESTATUS is an empty string → nil — no useful info
+func (s *Service) EstatusMicrosipDeCliente(ctx context.Context, v *domain.Venta) *string {
+	if s.estatusReader == nil || v.ClienteID() == nil {
+		return nil
+	}
+	est, err := s.estatusReader.EstatusDeCliente(ctx, *v.ClienteID())
+	if err != nil {
+		// Best-effort hint: degrade on ANY error (not-found, transient I/O, …)
+		// rather than failing the venta detail read.
+		return nil
+	}
+	if est == "" {
+		return nil
+	}
+	return &est
+}
