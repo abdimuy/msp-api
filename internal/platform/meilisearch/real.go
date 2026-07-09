@@ -134,9 +134,27 @@ func (c *RealClient) buildSettings(cfg IndexConfig) *meili.Settings {
 	return s
 }
 
+// universalPrimaryKey is the JSON field name every Meilisearch document in
+// this repo uses as its primary key — see ventsearch.VentaDoc.ID and
+// clientessearch.ClienteDoc.ID, both tagged `json:"id"`, and both modules'
+// DefaultIndexConfig declaring PrimaryKey: "id".
+//
+// UpsertDocs passes it explicitly to AddDocuments so that, if this call is
+// the one that ends up auto-creating a brand-new index (a race against the
+// boot-time EnsureIndex goroutine — see cmd/api/search_wiring.go), Meilisearch
+// uses this value directly instead of trying to INFER the primary key from
+// the document shape. Inference fails whenever a document has more than one
+// field name ending in "id" (id, cliente_id, zona_cliente_id, ...), which
+// both VentaDoc and ClienteDoc do: Meilisearch then returns
+// index_primary_key_multiple_candidates_found and the newly auto-created
+// index is stuck at zero documents until someone fixes the primary key by
+// hand. See .superpowers/sdd/fix-meili-pk-brief.md for the incident.
+const universalPrimaryKey = "id"
+
 // UpsertDocs bulk-adds or replaces documents. docs must be JSON-serializable.
 func (c *RealClient) UpsertDocs(_ context.Context, indexUID string, docs any) error {
-	task, err := c.sdk.Index(indexUID).AddDocuments(docs, nil)
+	pk := universalPrimaryKey
+	task, err := c.sdk.Index(indexUID).AddDocuments(docs, &meili.DocumentOptions{PrimaryKey: &pk})
 	if err != nil {
 		return classifyError("meilisearch_upsert_docs_failed",
 			"no se pudieron indexar los documentos", err)

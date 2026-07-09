@@ -147,3 +147,70 @@ func TestIntegration_UpsertAndSearch(t *testing.T) { //nolint:paralleltest // mu
 	err = c.DeleteDocs(ctx, cfg.IndexName, []string{"doc-1", "doc-2", "doc-3"})
 	require.NoError(t, err)
 }
+
+// TestIntegration_UpsertDocs_NewIndexAutoCreatesWithPrimaryKeyID reproduces
+// the production race described in
+// .superpowers/sdd/fix-meili-pk-brief.md: a reconcile worker's warm-up tick
+// calls UpsertDocs on a brand-new index BEFORE the boot-time EnsureIndex
+// goroutine has a chance to create it with an explicit primary key. When
+// UpsertDocs is the call that ends up auto-creating the index, Meilisearch
+// must be given the primary key explicitly — otherwise it falls back to
+// inferring it from the document shape, which fails whenever more than one
+// field name ends in "id" (id, cliente_id, zona_cliente_id — exactly the
+// shape of ventsearch.VentaDoc and clientessearch.ClienteDoc) with
+// index_primary_key_multiple_candidates_found, and the index is stuck at
+// zero documents forever.
+//
+//nolint:paralleltest // mutates shared Meilisearch state
+func TestIntegration_UpsertDocs_NewIndexAutoCreatesWithPrimaryKeyID(t *testing.T) {
+	rawURL := skipIfNoMeilisearch(t)
+
+	cfg := platformmeili.NewTestConfig(rawURL)
+	cfg.IndexName = sanitizeIndexName("integration-pk-race-" + t.Name())
+
+	c, err := platformmeili.NewRealClient(cfg)
+	require.NoError(t, err)
+	defer c.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	t.Cleanup(func() {
+		cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cleanCancel()
+		_ = c.DeleteIndexForTest(cleanCtx, cfg.IndexName)
+	})
+
+	// Documents mirror the real production shape that triggers Meilisearch's
+	// primary-key inference ambiguity: three fields end in "id"
+	// (id, cliente_id, zona_cliente_id), exactly like ventsearch.VentaDoc.
+	docs := []map[string]any{
+		{"id": "venta-1", "cliente_id": 101, "zona_cliente_id": 7, "nombre_cliente": "Fernández López"},
+		{"id": "venta-2", "cliente_id": 102, "zona_cliente_id": 8, "nombre_cliente": "García Ramírez"},
+	}
+
+	// Deliberately NO EnsureIndex call — reproduces the reconcile worker
+	// winning the race against the boot-time EnsureIndex goroutine, so this
+	// UpsertDocs call is the one that ends up auto-creating the index.
+	err = c.UpsertDocs(ctx, cfg.IndexName, docs)
+	require.NoError(t, err, "UpsertDocs must not error when it auto-creates the index")
+
+	// UpsertDocs is fire-and-forget (matches production usage) — poll for the
+	// enqueued task to settle instead of sleeping a fixed duration. Bounded to
+	// 10s: on a healthy fix the task resolves in well under a second; on the
+	// old (buggy) code the add-documents task fails permanently and this loop
+	// times out, which is the RED signal.
+	require.Eventually(t, func() bool {
+		info, ferr := c.FetchIndexInfoForTest(ctx, cfg.IndexName)
+		return ferr == nil && info.NumberOfDocuments == int64(len(docs))
+	}, 10*time.Second, 200*time.Millisecond,
+		"documents must eventually be indexed — if this times out, the primary key "+
+			"was left for Meilisearch to infer and the add-documents task failed permanently")
+
+	info, err := c.FetchIndexInfoForTest(ctx, cfg.IndexName)
+	require.NoError(t, err)
+	assert.Equal(t, "id", info.PrimaryKey,
+		"index auto-created by UpsertDocs must get primaryKey=id, not left for Meilisearch to infer")
+	assert.Equal(t, int64(len(docs)), info.NumberOfDocuments,
+		"documents must be indexed, not stuck behind a failed add-documents task")
+}

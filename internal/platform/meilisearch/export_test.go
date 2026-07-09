@@ -50,6 +50,33 @@ func (c *RealClient) DeleteIndexForTest(ctx context.Context, uid string) error {
 	return err
 }
 
+// IndexInfoForTest carries the primary key and document count for a
+// Meilisearch index, combined from FetchInfo + GetStats so integration
+// tests can assert both without importing the SDK directly.
+type IndexInfoForTest struct {
+	PrimaryKey        string
+	NumberOfDocuments int64
+}
+
+// FetchIndexInfoForTest fetches the current primary key and document count
+// for uid. Used by integration tests to assert the outcome of a UpsertDocs
+// call that ends up auto-creating the index (the primary-key race).
+func (c *RealClient) FetchIndexInfoForTest(ctx context.Context, uid string) (IndexInfoForTest, error) {
+	idx := c.sdk.Index(uid)
+	info, err := idx.FetchInfoWithContext(ctx)
+	if err != nil {
+		return IndexInfoForTest{}, err
+	}
+	stats, err := idx.GetStatsWithContext(ctx, nil)
+	if err != nil {
+		return IndexInfoForTest{}, err
+	}
+	return IndexInfoForTest{
+		PrimaryKey:        info.PrimaryKey,
+		NumberOfDocuments: stats.NumberOfDocuments,
+	}, nil
+}
+
 // ErrCodeCommunicationForTest exposes the SDK constant so test assertions
 // do not need to import the SDK directly.
 //
