@@ -19,22 +19,38 @@ import (
 )
 
 // recorder satisfies the narrower fakeClient interface exposed via
-// NewMeilisearchVentaSearchIndexForTest. It records upsert/delete calls and
-// returns a canned search result for assertions.
+// NewMeilisearchVentaSearchIndexForTest. It records upsert/delete/ensure
+// calls and returns a canned search result for assertions.
 type recorder struct {
 	upsertBatches [][]ventsearchmeili.VentaDocForTest
 	deleteCalls   [][]string
-	indexUID      string
+	ensureCalls   []platformmeili.IndexConfig
+	// calls logs the ORDER of method invocations ("ensure", "upsert",
+	// "delete") across the whole recorder, so tests can assert that
+	// EnsureIndex runs BEFORE UpsertDocs.
+	calls    []string
+	indexUID string
 
 	upsertErr error
 	deleteErr error
+	ensureErr error
 
 	searchResult platformmeili.SearchResult
 	searchErr    error
 	searchParams platformmeili.SearchParams
 }
 
+func (r *recorder) EnsureIndex(_ context.Context, cfg platformmeili.IndexConfig) error {
+	r.calls = append(r.calls, "ensure")
+	r.ensureCalls = append(r.ensureCalls, cfg)
+	if r.ensureErr != nil {
+		return r.ensureErr
+	}
+	return nil
+}
+
 func (r *recorder) UpsertDocs(_ context.Context, indexUID string, docs any) error {
+	r.calls = append(r.calls, "upsert")
 	if r.upsertErr != nil {
 		return r.upsertErr
 	}
@@ -99,6 +115,7 @@ func TestReconciliar_EmptyInput_NoUpsertCall(t *testing.T) {
 	err := idx.Reconciliar(context.Background(), nil)
 	require.NoError(t, err)
 	assert.Empty(t, rec.upsertBatches)
+	assert.Empty(t, rec.ensureCalls, "empty input should not even ensure the index config")
 }
 
 func TestReconciliar_PropagatesUpsertError(t *testing.T) {
@@ -110,6 +127,51 @@ func TestReconciliar_PropagatesUpsertError(t *testing.T) {
 	err := idx.Reconciliar(context.Background(), []outbound.VentaSearchDoc{{ID: uuid.New()}})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, wantErr)
+}
+
+// ── EnsureIndex-before-upsert (settings race fix) ──────────────────────────
+//
+// See .superpowers/sdd/fix-settings-race-brief.md: a UpsertDocs call that
+// auto-creates the index leaves it with default (empty) filterable/sortable
+// settings, breaking every filtered/sorted search. Reconciliar must ensure
+// the index's full config BEFORE every upsert, unconditionally, every tick.
+
+func TestReconciliar_EnsuresIndexConfigBeforeUpsert(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	idx := ventsearchmeili.NewMeilisearchVentaSearchIndexForTest(rec, "my-ventas")
+
+	err := idx.Reconciliar(context.Background(), []outbound.VentaSearchDoc{{ID: uuid.New()}})
+	require.NoError(t, err)
+
+	require.Len(t, rec.ensureCalls, 1)
+	assert.Equal(t, "my-ventas", rec.ensureCalls[0].UID)
+	assert.Equal(t, ventsearchmeili.DefaultIndexConfig("my-ventas"), rec.ensureCalls[0])
+	assert.Equal(t, []string{"ensure", "upsert"}, rec.calls, "EnsureIndex must run before UpsertDocs")
+}
+
+func TestReconciliar_PropagatesEnsureIndexError_DoesNotUpsert(t *testing.T) {
+	t.Parallel()
+	wantErr := errors.New("meili down")
+	rec := &recorder{ensureErr: wantErr}
+	idx := ventsearchmeili.NewMeilisearchVentaSearchIndexForTest(rec, "ventas")
+
+	err := idx.Reconciliar(context.Background(), []outbound.VentaSearchDoc{{ID: uuid.New()}})
+	require.ErrorIs(t, err, wantErr)
+	assert.Empty(t, rec.upsertBatches, "must not upsert when the index could not be configured")
+}
+
+func TestReconciliar_CallsEnsureIndexOnEveryTick(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	idx := ventsearchmeili.NewMeilisearchVentaSearchIndexForTest(rec, "ventas")
+
+	doc := outbound.VentaSearchDoc{ID: uuid.New()}
+	require.NoError(t, idx.Reconciliar(context.Background(), []outbound.VentaSearchDoc{doc}))
+	require.NoError(t, idx.Reconciliar(context.Background(), []outbound.VentaSearchDoc{doc}))
+
+	assert.Len(t, rec.ensureCalls, 2,
+		"Reconciliar must re-ensure the index config unconditionally on every tick (self-healing)")
 }
 
 // ── IndexarUno ────────────────────────────────────────────────────────────
@@ -140,6 +202,77 @@ func TestIndexarUno_PropagatesUpsertError(t *testing.T) {
 	err := idx.IndexarUno(context.Background(), outbound.VentaSearchDoc{ID: uuid.New()})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, wantErr)
+}
+
+// ── IndexarUno: ensure-index-once guard (settings race fix) ───────────────
+
+func TestIndexarUno_EnsuresIndexConfigBeforeFirstUpsert(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	idx := ventsearchmeili.NewMeilisearchVentaSearchIndexForTest(rec, "ventas")
+
+	err := idx.IndexarUno(context.Background(), outbound.VentaSearchDoc{ID: uuid.New()})
+	require.NoError(t, err)
+	require.Len(t, rec.ensureCalls, 1)
+	assert.Equal(t, []string{"ensure", "upsert"}, rec.calls, "EnsureIndex must run before the first UpsertDocs")
+}
+
+func TestIndexarUno_SkipsEnsureIndexAfterFirstSuccess(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	idx := ventsearchmeili.NewMeilisearchVentaSearchIndexForTest(rec, "ventas")
+
+	require.NoError(t, idx.IndexarUno(context.Background(), outbound.VentaSearchDoc{ID: uuid.New()}))
+	require.NoError(t, idx.IndexarUno(context.Background(), outbound.VentaSearchDoc{ID: uuid.New()}))
+	require.NoError(t, idx.IndexarUno(context.Background(), outbound.VentaSearchDoc{ID: uuid.New()}))
+
+	assert.Len(t, rec.ensureCalls, 1,
+		"once configured, subsequent IndexarUno calls must not re-apply settings on every event")
+	assert.Len(t, rec.upsertBatches, 3)
+}
+
+func TestIndexarUno_PropagatesEnsureIndexError_DoesNotUpsert(t *testing.T) {
+	t.Parallel()
+	wantErr := errors.New("meili down")
+	rec := &recorder{ensureErr: wantErr}
+	idx := ventsearchmeili.NewMeilisearchVentaSearchIndexForTest(rec, "ventas")
+
+	err := idx.IndexarUno(context.Background(), outbound.VentaSearchDoc{ID: uuid.New()})
+	require.ErrorIs(t, err, wantErr)
+	assert.Empty(t, rec.upsertBatches)
+}
+
+func TestIndexarUno_RetriesEnsureIndexAfterFailure(t *testing.T) {
+	t.Parallel()
+	wantErr := errors.New("meili down")
+	rec := &recorder{ensureErr: wantErr}
+	idx := ventsearchmeili.NewMeilisearchVentaSearchIndexForTest(rec, "ventas")
+
+	err := idx.IndexarUno(context.Background(), outbound.VentaSearchDoc{ID: uuid.New()})
+	require.Error(t, err)
+
+	// A transient failure must not permanently wedge the guard: the NEXT
+	// call retries EnsureIndex instead of assuming the index is configured.
+	rec.ensureErr = nil
+	err = idx.IndexarUno(context.Background(), outbound.VentaSearchDoc{ID: uuid.New()})
+	require.NoError(t, err)
+
+	assert.Len(t, rec.ensureCalls, 2)
+	assert.Len(t, rec.upsertBatches, 1)
+}
+
+func TestIndexarUno_SkipsEnsureIndexWhenReconciliarAlreadyConfigured(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	idx := ventsearchmeili.NewMeilisearchVentaSearchIndexForTest(rec, "ventas")
+
+	require.NoError(t, idx.Reconciliar(context.Background(), []outbound.VentaSearchDoc{{ID: uuid.New()}}))
+	require.Len(t, rec.ensureCalls, 1, "sanity: Reconciliar configured the index")
+
+	require.NoError(t, idx.IndexarUno(context.Background(), outbound.VentaSearchDoc{ID: uuid.New()}))
+
+	assert.Len(t, rec.ensureCalls, 1,
+		"IndexarUno must reuse the config already applied by Reconciliar (shared guard)")
 }
 
 // ── Eliminar ──────────────────────────────────────────────────────────────

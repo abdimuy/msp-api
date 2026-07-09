@@ -40,9 +40,11 @@ func ExtractBatch(docs any) []ClienteDoc {
 }
 
 // upsertOnlyClient is an interface satisfied by the test fakes below. It is
-// narrower than platformmeili.Client — only the method that Reconciliar actually
-// calls. Used exclusively from export_test.go.
+// narrower than platformmeili.Client — only the methods that Reconciliar
+// actually calls (EnsureIndex to configure the index before every upsert,
+// then UpsertDocs). Used exclusively from export_test.go.
 type upsertOnlyClient interface {
+	EnsureIndex(ctx context.Context, cfg platformmeili.IndexConfig) error
 	UpsertDocs(ctx context.Context, indexUID string, docs any) error
 }
 
@@ -63,8 +65,8 @@ type upsertOnlyAdapter struct {
 	inner upsertOnlyClient
 }
 
-func (a *upsertOnlyAdapter) EnsureIndex(_ context.Context, _ platformmeili.IndexConfig) error {
-	panic("upsertOnlyAdapter.EnsureIndex called — not supported in this test fake")
+func (a *upsertOnlyAdapter) EnsureIndex(ctx context.Context, cfg platformmeili.IndexConfig) error {
+	return a.inner.EnsureIndex(ctx, cfg)
 }
 
 func (a *upsertOnlyAdapter) UpsertDocs(ctx context.Context, indexUID string, docs any) error {

@@ -147,6 +147,104 @@ func TestIntegration_VentaSearchIndex_LiveRoundTrip(t *testing.T) { //nolint:par
 	assert.Contains(t, resFolio.IDs, idJuan, "search by folio must find Juan")
 }
 
+// TestIntegration_VentaSearchIndex_ReconciliarAutoCreatesIndex_WithFullSettings
+// is the regression test for .superpowers/sdd/fix-settings-race-brief.md: a
+// UpsertDocs call that auto-creates a brand-new Meilisearch index leaves it
+// with DEFAULT settings (searchableAttributes=["*"], filterableAttributes=[],
+// sortableAttributes=[]) unless something applies the real settings first.
+// Before the fix, Reconciliar went straight to UpsertDocs — so if it (or the
+// reconcile worker's warm-up) was the FIRST call to touch a not-yet-existing
+// index, filtered/sorted searches against that index would fail with a
+// Meilisearch error surfaced as ventas_search_failed (HTTP 500).
+//
+// This test deliberately does NOT call EnsureIndex before Reconciliar — it
+// must self-configure. RED (pre-fix): filterableAttributes/sortableAttributes
+// come back empty and the filtered+sorted Buscar call fails. GREEN
+// (post-fix): both are populated and Buscar succeeds.
+func TestIntegration_VentaSearchIndex_ReconciliarAutoCreatesIndex_WithFullSettings(t *testing.T) { //nolint:paralleltest // mutates shared Meilisearch state
+	rawURL := skipIfNoMeilisearch(t)
+
+	indexName := sanitizeIndexName("integration-ventas-autocreate-" + t.Name() + "-" + uuid.NewString())
+	client, err := platformmeili.NewMeilisearchClient(config.Meilisearch{URL: rawURL})
+	require.NoError(t, err)
+	defer client.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	t.Cleanup(func() {
+		deleteIndexForTest(t, rawURL, indexName)
+	})
+
+	// No EnsureIndex call here — Reconciliar must configure the index itself.
+	idx := ventsearch.NewMeilisearchVentaSearchIndex(client, indexName)
+
+	clienteID := 777001
+	ventaID := uuid.New()
+	now := time.Now().UTC()
+	doc := outbound.VentaSearchDoc{
+		ID:            ventaID,
+		NombreCliente: "PEDRO SIN INDICE CONFIGURADO",
+		ClienteID:     clienteID,
+		Situacion:     "aprobada",
+		FechaVenta:    now,
+		CreatedAt:     now,
+		PrecioTotal:   decimal.NewFromInt(1000),
+	}
+	require.NoError(t, idx.Reconciliar(ctx, []outbound.VentaSearchDoc{doc}))
+
+	// Wait for the document to actually be indexed before inspecting settings
+	// or searching.
+	statsURL := fmt.Sprintf("%s/indexes/%s/stats", rawURL, indexName)
+	pollDeadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(pollDeadline) {
+		if fetchNumberOfDocuments(t, statsURL) >= 1 {
+			break
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+
+	settings := fetchIndexSettings(t, rawURL, indexName)
+	assert.NotEmpty(t, settings.FilterableAttributes,
+		"filterableAttributes must not be empty — Reconciliar must configure a freshly auto-created index")
+	assert.NotEmpty(t, settings.SortableAttributes,
+		"sortableAttributes must not be empty — Reconciliar must configure a freshly auto-created index")
+
+	// The actual symptom from the incident: a filtered + sorted search must
+	// succeed, not fail with a Meilisearch "attribute not filterable/sortable"
+	// error.
+	res, err := idx.Buscar(ctx, outbound.VentasSearchQuery{
+		ClienteID: &clienteID,
+		SortBy:    "fecha_venta",
+		SortOrder: "desc",
+		Limit:     10,
+	})
+	require.NoError(t, err, "filtered+sorted search must succeed once the index is fully configured")
+	assert.Contains(t, res.IDs, ventaID)
+}
+
+// meilisearchIndexSettings is the minimal shape decoded from GET
+// /indexes/{uid}/settings for this test's assertions.
+//
+//nolint:tagliatelle // Meilisearch API returns camelCase field names.
+type meilisearchIndexSettings struct {
+	FilterableAttributes []string `json:"filterableAttributes"`
+	SortableAttributes   []string `json:"sortableAttributes"`
+}
+
+// fetchIndexSettings issues a raw HTTP GET against the Meilisearch REST API
+// to read the live settings of the given index.
+func fetchIndexSettings(t *testing.T, baseURL, indexName string) meilisearchIndexSettings {
+	t.Helper()
+	settingsURL := fmt.Sprintf("%s/indexes/%s/settings", baseURL, indexName)
+	resp, err := http.Get(settingsURL) //nolint:noctx,gosec // test-only convenience call against a trusted local URL
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var settings meilisearchIndexSettings
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&settings))
+	return settings
+}
+
 // fetchNumberOfDocuments polls the Meilisearch stats endpoint for the given
 // index and returns numberOfDocuments (0 on any transport/decode error, to
 // keep the polling loop resilient to transient 404s while the index is

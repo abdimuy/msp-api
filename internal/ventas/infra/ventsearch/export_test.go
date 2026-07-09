@@ -42,6 +42,7 @@ func ExtractBatch(docs any) []VentaDoc {
 // platformmeili.Client and only carries the methods actually exercised in
 // unit tests. Used exclusively from export_test.go.
 type fakeClient interface {
+	EnsureIndex(ctx context.Context, cfg platformmeili.IndexConfig) error
 	UpsertDocs(ctx context.Context, indexUID string, docs any) error
 	DeleteDocs(ctx context.Context, indexUID string, ids []string) error
 	Search(ctx context.Context, indexUID string, params platformmeili.SearchParams) (platformmeili.SearchResult, error)
@@ -64,8 +65,8 @@ type fakeClientAdapter struct {
 	inner fakeClient
 }
 
-func (a *fakeClientAdapter) EnsureIndex(_ context.Context, _ platformmeili.IndexConfig) error {
-	panic("fakeClientAdapter.EnsureIndex called — not supported in this test fake")
+func (a *fakeClientAdapter) EnsureIndex(ctx context.Context, cfg platformmeili.IndexConfig) error {
+	return a.inner.EnsureIndex(ctx, cfg)
 }
 
 func (a *fakeClientAdapter) UpsertDocs(ctx context.Context, indexUID string, docs any) error {

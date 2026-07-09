@@ -2,6 +2,7 @@ package clientessearch_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 
 	clientessearchmeili "github.com/abdimuy/msp-api/internal/clientes/infra/clientessearch"
 	"github.com/abdimuy/msp-api/internal/clientes/ports/outbound"
+	platformmeili "github.com/abdimuy/msp-api/internal/platform/meilisearch"
 )
 
 // ── ordinal helpers ───────────────────────────────────────────────────────────
@@ -67,14 +69,30 @@ func TestEstadoPagoOrdinal_KnownValues(t *testing.T) {
 // ── Reconciliar tests ─────────────────────────────────────────────────────────
 
 // recorder satisfies the narrower upsertOnlyClient interface exposed via
-// NewMeilisearchDirectoryIndexForTest. It records batches for assertions.
+// NewMeilisearchDirectoryIndexForTest. It records batches/ensure calls for
+// assertions.
 type recorder struct {
-	batches  [][]clientessearchmeili.ClienteDocForTest
-	indexUID string
-	err      error
+	batches     [][]clientessearchmeili.ClienteDocForTest
+	ensureCalls []platformmeili.IndexConfig
+	// calls logs the ORDER of method invocations ("ensure", "upsert") so
+	// tests can assert EnsureIndex runs BEFORE UpsertDocs.
+	calls     []string
+	indexUID  string
+	err       error
+	ensureErr error
+}
+
+func (r *recorder) EnsureIndex(_ context.Context, cfg platformmeili.IndexConfig) error {
+	r.calls = append(r.calls, "ensure")
+	r.ensureCalls = append(r.ensureCalls, cfg)
+	if r.ensureErr != nil {
+		return r.ensureErr
+	}
+	return nil
 }
 
 func (r *recorder) UpsertDocs(_ context.Context, indexUID string, docs any) error {
+	r.calls = append(r.calls, "upsert")
 	if r.err != nil {
 		return r.err
 	}
@@ -201,6 +219,7 @@ func TestMeilisearchDirectoryIndex_Reconciliar_EmptyInput(t *testing.T) {
 	err := idx.Reconciliar(context.Background(), nil)
 	require.NoError(t, err)
 	assert.Empty(t, rec.batches, "no UpsertDocs call expected for empty/nil input")
+	assert.Empty(t, rec.ensureCalls, "empty input should not even ensure the index config")
 }
 
 func TestMeilisearchDirectoryIndex_Reconciliar_SendsToCorrectIndex(t *testing.T) {
@@ -212,6 +231,52 @@ func TestMeilisearchDirectoryIndex_Reconciliar_SendsToCorrectIndex(t *testing.T)
 		{ClienteID: 1, Nombre: "TEST"},
 	})
 	assert.Equal(t, "my-clientes", rec.indexUID)
+}
+
+// ── EnsureIndex-before-upsert (settings race fix) ──────────────────────────
+//
+// See .superpowers/sdd/fix-settings-race-brief.md: a UpsertDocs call that
+// auto-creates the index leaves it with default (empty) filterable/sortable
+// settings, breaking every filtered/sorted directory search. Reconciliar
+// must ensure the index's full config BEFORE every upsert, unconditionally,
+// every tick — including for the ~43k-doc production directory.
+
+func TestMeilisearchDirectoryIndex_Reconciliar_EnsuresIndexConfigBeforeUpsert(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	idx := clientessearchmeili.NewMeilisearchDirectoryIndexForTest(rec, "my-clientes")
+
+	err := idx.Reconciliar(context.Background(), []outbound.DirectorioDoc{{ClienteID: 1, Nombre: "TEST"}})
+	require.NoError(t, err)
+
+	require.Len(t, rec.ensureCalls, 1)
+	assert.Equal(t, "my-clientes", rec.ensureCalls[0].UID)
+	assert.Equal(t, clientessearchmeili.DefaultIndexConfig("my-clientes"), rec.ensureCalls[0])
+	assert.Equal(t, []string{"ensure", "upsert"}, rec.calls, "EnsureIndex must run before UpsertDocs")
+}
+
+func TestMeilisearchDirectoryIndex_Reconciliar_PropagatesEnsureIndexError_DoesNotUpsert(t *testing.T) {
+	t.Parallel()
+	wantErr := errors.New("meili down")
+	rec := &recorder{ensureErr: wantErr}
+	idx := clientessearchmeili.NewMeilisearchDirectoryIndexForTest(rec, "clientes")
+
+	err := idx.Reconciliar(context.Background(), []outbound.DirectorioDoc{{ClienteID: 1}})
+	require.ErrorIs(t, err, wantErr)
+	assert.Empty(t, rec.batches, "must not upsert when the index could not be configured")
+}
+
+func TestMeilisearchDirectoryIndex_Reconciliar_CallsEnsureIndexOnEveryTick(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	idx := clientessearchmeili.NewMeilisearchDirectoryIndexForTest(rec, "clientes")
+
+	doc := outbound.DirectorioDoc{ClienteID: 1, Nombre: "TEST"}
+	require.NoError(t, idx.Reconciliar(context.Background(), []outbound.DirectorioDoc{doc}))
+	require.NoError(t, idx.Reconciliar(context.Background(), []outbound.DirectorioDoc{doc}))
+
+	assert.Len(t, rec.ensureCalls, 2,
+		"Reconciliar must re-ensure the index config unconditionally on every tick (self-healing)")
 }
 
 // ── B2: cobranza intelligence signal mapping ───────────────────────────────

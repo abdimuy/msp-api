@@ -48,7 +48,30 @@ var _ outbound.DirectoryIndex = (*MeilisearchDirectoryIndex)(nil)
 
 // Reconciliar maps each DirectorioDoc to a ClienteDoc and bulk-upserts them
 // into the Meilisearch index in batches. Returns on the first batch error.
+//
+// Before upserting, it unconditionally (re-)applies the index's full
+// configuration (primaryKey + searchable/filterable/sortable/ranking/
+// faceting/pagination, from DefaultIndexConfig) via EnsureIndex. This guards
+// against the race where a previous UpsertDocs (from this or another
+// process, or from this same method on a prior run against a now-deleted
+// index) was the call that auto-created the index: Meilisearch gives an
+// auto-created index default settings (searchableAttributes=["*"],
+// filterableAttributes=[], sortableAttributes=[]), which makes any filtered
+// or sorted directory search fail. Re-applying identical settings on an
+// already-configured index is cheap — Meilisearch diffs the incoming
+// settings against the stored ones and only recomputes the structures for
+// attributes that actually changed — so doing this on every reconcile tick
+// (including for the ~43k-doc production directory) is safe and doubles as
+// self-healing if the index is ever deleted or reset at runtime, without
+// requiring an API restart. See .superpowers/sdd/fix-settings-race-brief.md
+// for the incident this closes.
 func (idx *MeilisearchDirectoryIndex) Reconciliar(ctx context.Context, docs []outbound.DirectorioDoc) error {
+	if len(docs) == 0 {
+		return nil
+	}
+	if err := idx.client.EnsureIndex(ctx, DefaultIndexConfig(idx.indexName)); err != nil {
+		return fmt.Errorf("clientessearch: ensure index config: %w", err)
+	}
 	for start := 0; start < len(docs); start += upsertBatchSize {
 		end := start + upsertBatchSize
 		if end > len(docs) {
