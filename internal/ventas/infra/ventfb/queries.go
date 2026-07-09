@@ -241,3 +241,5 @@ const cursorPredicateDesc = `(v.FECHA_VENTA < ?) OR (v.FECHA_VENTA = ? AND v.ID 
 const selectClienteExists = `SELECT FIRST 1 1 FROM CLIENTES WHERE CLIENTE_ID = ?`
 
 const selectClienteZona = `SELECT FIRST 1 ZONA_CLIENTE_ID FROM CLIENTES WHERE CLIENTE_ID = ?`
+
+const selectClienteEstatus = `SELECT FIRST 1 ESTATUS FROM CLIENTES WHERE CLIENTE_ID = ?`

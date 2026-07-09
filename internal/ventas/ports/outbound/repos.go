@@ -74,6 +74,15 @@ type ClienteZonaReader interface {
 	ZonaDeCliente(ctx context.Context, clienteID int) (*int, error)
 }
 
+// ClienteEstatusReader reads the current ESTATUS of a Microsip cliente. Used
+// by the venta-detail read path to surface the cliente's status (A/B/V/C) as
+// a best-effort, non-blocking hint. Mirrors ClienteZonaReader.
+type ClienteEstatusReader interface {
+	// EstatusDeCliente returns the raw ESTATUS string for the given clienteID.
+	// Returns domain.ErrClienteNotFoundInMicrosip when no row exists.
+	EstatusDeCliente(ctx context.Context, clienteID int) (string, error)
+}
+
 // VendedorUsuarioExistenceChecker is consulted by the ventas service to
 // validate that every vendedor on a CrearVenta request has a corresponding
 // row in MSP_USUARIOS before any INSERT is attempted. Without this check,

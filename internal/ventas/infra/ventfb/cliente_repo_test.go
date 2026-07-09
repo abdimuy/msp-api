@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -141,5 +142,37 @@ func TestClienteRepo_ZonaDeCliente_NotFound(t *testing.T) {
 		got, err := repo.ZonaDeCliente(ctx, 999_999_999)
 		require.ErrorIs(t, err, domain.ErrClienteNotFoundInMicrosip)
 		assert.Nil(t, got)
+	})
+}
+
+func TestClienteRepo_EstatusDeCliente_HitsRealRow(t *testing.T) {
+	requireFBEnv(t)
+	t.Parallel()
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := ventfb.NewClienteRepo(pool)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		q := firebird.GetQuerier(ctx, pool.DB)
+		var id int
+		var estatus string
+		err := q.QueryRowContext(ctx, `SELECT FIRST 1 CLIENTE_ID, ESTATUS FROM CLIENTES WHERE ESTATUS IS NOT NULL`).Scan(&id, &estatus)
+		if errors.Is(err, sql.ErrNoRows) {
+			t.Skip("no cliente with ESTATUS in dev DB")
+		}
+		require.NoError(t, err)
+		got, err := repo.EstatusDeCliente(ctx, id)
+		require.NoError(t, err)
+		assert.Equal(t, strings.TrimSpace(estatus), got)
+	})
+}
+
+func TestClienteRepo_EstatusDeCliente_NotFound(t *testing.T) {
+	requireFBEnv(t)
+	t.Parallel()
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := ventfb.NewClienteRepo(pool)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		got, err := repo.EstatusDeCliente(ctx, 999_999_999)
+		require.ErrorIs(t, err, domain.ErrClienteNotFoundInMicrosip)
+		assert.Empty(t, got)
 	})
 }

@@ -182,3 +182,80 @@ func TestZonaMicrosipDeVenta(t *testing.T) {
 		assert.False(t, mismatch, "venta zona nil must never trigger mismatch")
 	})
 }
+
+func TestEstatusMicrosipDeCliente(t *testing.T) {
+	t.Parallel()
+
+	t.Run("estatusReader_nil_returns_nil", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		// no WithEstatusReader — reader is nil
+		v := seedVentaConCliente(t, h)
+
+		got := h.svc.EstatusMicrosipDeCliente(t.Context(), v)
+		assert.Nil(t, got)
+	})
+
+	t.Run("cliente_nil_returns_nil_reader_not_consulted", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		r := newFakeClienteEstatusReader("A")
+		h.svc = h.svc.WithEstatusReader(r)
+		// Seed a venta WITHOUT a clienteID using standard seedVenta helper.
+		ventaID := h.seedVenta(t)
+		v, err := h.svc.ObtenerVenta(t.Context(), *ventaID)
+		require.NoError(t, err)
+
+		got := h.svc.EstatusMicrosipDeCliente(t.Context(), v)
+		assert.Nil(t, got)
+		assert.Equal(t, 0, r.callsCount(), "reader must NOT be consulted when venta has no cliente_id")
+	})
+
+	t.Run("reader_error_degrades_to_nil", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		r := newFakeClienteEstatusReader("")
+		r.Err = domain.ErrClienteNotFoundInMicrosip
+		h.svc = h.svc.WithEstatusReader(r)
+		v := seedVentaConCliente(t, h)
+
+		got := h.svc.EstatusMicrosipDeCliente(t.Context(), v)
+		assert.Nil(t, got, "ErrClienteNotFoundInMicrosip must degrade — no estatus info")
+	})
+
+	t.Run("reader_transient_error_degrades_to_nil", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		boom := errors.New("microsip unavailable")
+		r := newFakeClienteEstatusReader("")
+		r.Err = boom
+		h.svc = h.svc.WithEstatusReader(r)
+		v := seedVentaConCliente(t, h)
+
+		// A transient reader error must NEVER fail the venta detail read; it
+		// degrades to "no estatus info" (nil).
+		got := h.svc.EstatusMicrosipDeCliente(t.Context(), v)
+		assert.Nil(t, got, "transient reader error must degrade, not propagate")
+	})
+
+	t.Run("empty_estatus_returns_nil", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		h.svc = h.svc.WithEstatusReader(newFakeClienteEstatusReader(""))
+		v := seedVentaConCliente(t, h)
+
+		got := h.svc.EstatusMicrosipDeCliente(t.Context(), v)
+		assert.Nil(t, got, "empty ESTATUS must yield nil — no useful info")
+	})
+
+	t.Run("estatus_V_returns_pointer_to_V", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		h.svc = h.svc.WithEstatusReader(newFakeClienteEstatusReader("V"))
+		v := seedVentaConCliente(t, h)
+
+		got := h.svc.EstatusMicrosipDeCliente(t.Context(), v)
+		require.NotNil(t, got)
+		assert.Equal(t, "V", *got)
+	})
+}
