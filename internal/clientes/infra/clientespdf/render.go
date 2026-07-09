@@ -829,6 +829,14 @@ func drawPagoRows(
 				card.pageBreak(pdf, folio, drawColHdr)
 				segStartY = pdf.GetY()
 			}
+			// Pathological guard: if the row is taller than a whole usable page it
+			// still won't fit even after the break above. Cap it to the space left
+			// so it never overprints the footer (the description is clamped to
+			// match inside drawPagoRow). A broken card border on such a row is
+			// acceptable; corrupt overprint is not.
+			if avail := bottomLimit - pdf.GetY(); rh > avail {
+				rh = avail
+			}
 
 			drawPagoRow(pdf, p, bfR, bfG, bfB, cols, rh)
 
@@ -890,9 +898,41 @@ func rowHeight(nLines int, baseH float64) float64 {
 	return baseH
 }
 
+// maxLinesForRowHeight is the number of pagoLineH-tall lines that fit in a row of
+// height rh (at least 1). Pure helper: used to cap a pathological description so
+// its MultiCell never draws past the page bottom. The +epsilon absorbs float
+// noise so an exact multiple of pagoLineH counts fully.
+func maxLinesForRowHeight(rh float64) int {
+	n := int(rh/pagoLineH + 0.001)
+	if n < 1 {
+		n = 1
+	}
+	return n
+}
+
+// clampDescForHeight returns the descripcion text to draw so it never exceeds
+// maxLines lines at column width colW. Common case (text fits) returns desc
+// unchanged. Only a pathological description (taller than allowed) is shortened:
+// it keeps maxLines-1 full lines and collapses the remainder into one fitText-
+// ellipsized line, so the row never overprints the footer.
+func clampDescForHeight(pdf *fpdf.Fpdf, desc string, colW float64, maxLines int) string {
+	lines := pdf.SplitText(desc, colW)
+	if len(lines) <= maxLines {
+		return desc
+	}
+	kept := lines[: maxLines-1 : maxLines-1]
+	kept = append(kept, fitText(pdf, strings.Join(lines[maxLines-1:], " "), colW))
+	return strings.Join(kept, "\n")
+}
+
 // pagoRowHeight measures how tall a payment row must be so its descripcion cell
-// shows the full text (wrapped at the descripcion column width). It sets the
-// descripcion font as a side effect (same font drawPagoRow uses to wrap).
+// shows the full text (wrapped at the descripcion column width).
+//
+// Side effect: it activates the descripcion font (Poppins 7.5) so SplitText
+// measures with the right metrics, and intentionally does NOT restore the prior
+// font — fpdf exposes no GetFontFamily to save it cleanly. This is safe because
+// the only caller (drawPagoRows) sizes a row immediately before drawPagoRow,
+// which re-sets every font before drawing any text.
 func pagoRowHeight(pdf *fpdf.Fpdf, p outbound.ReportePago, c pagoCols) float64 {
 	pdf.SetFont("Poppins", "", 7.5)
 	lines := pdf.SplitText(sanitizeLine(p.Cobrador), c.descripcion)
@@ -929,11 +969,15 @@ func drawPagoRow(pdf *fpdf.Fpdf, p outbound.ReportePago, fillR, fillG, fillB int
 	pdf.CellFormat(c.concepto, pagoLineH, fitText(pdf, p.Concepto, c.concepto), "", 0, "L", false, 0, "")
 	x += c.concepto
 
-	// Descripcion wraps to as many lines as needed — never truncated.
+	// Descripcion wraps to as many lines as needed — never truncated in the common
+	// case. rh already reserved room for every line; the clamp only bites for a
+	// pathological description taller than a full page (capped to rh's line budget)
+	// so MultiCell can never draw past the page bottom into the footer.
 	pdf.SetFont("Poppins", "", 7.5)
 	pdf.SetTextColor(grayR, grayG, grayB)
 	pdf.SetXY(x, y)
-	pdf.MultiCell(c.descripcion, pagoLineH, sanitizeLine(p.Cobrador), "", "L", false)
+	desc := clampDescForHeight(pdf, sanitizeLine(p.Cobrador), c.descripcion, maxLinesForRowHeight(rh))
+	pdf.MultiCell(c.descripcion, pagoLineH, desc, "", "L", false)
 	x += c.descripcion
 
 	pdf.SetFont("PlexMonoMed", "", 7.5)

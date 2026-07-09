@@ -1,6 +1,7 @@
 package clientespdf
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -30,16 +31,52 @@ func TestNewPagoCols_PreservesImporteWidth(t *testing.T) {
 	require.InDelta(t, oldImporte, c.importe, 1e-9)
 }
 
-// TestRowHeight covers the max(baseH, nLines*lineH) math used for pagination.
+// TestRowHeight covers the max(baseH, nLines*pagoLineH) math used for pagination.
 func TestRowHeight(t *testing.T) {
 	t.Parallel()
 
-	const baseH = 4.5 // pagoLineH is 4.0
+	baseH := newPagoCols().rowH // derive from code so the test can't drift
 
 	require.InDelta(t, baseH, rowHeight(0, baseH), 1e-9, "0 lines clamps to at least 1 line, then baseH")
 	require.InDelta(t, baseH, rowHeight(1, baseH), 1e-9, "single line keeps base height")
-	require.InDelta(t, 8.0, rowHeight(2, baseH), 1e-9)
-	require.InDelta(t, 12.0, rowHeight(3, baseH), 1e-9)
+	require.InDelta(t, 2*pagoLineH, rowHeight(2, baseH), 1e-9)
+	require.InDelta(t, 3*pagoLineH, rowHeight(3, baseH), 1e-9)
+}
+
+// TestMaxLinesForRowHeight covers the line budget derived from a row height.
+func TestMaxLinesForRowHeight(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, 1, maxLinesForRowHeight(0), "never below one line")
+	require.Equal(t, 1, maxLinesForRowHeight(newPagoCols().rowH), "base height is a single line")
+	require.Equal(t, 2, maxLinesForRowHeight(2*pagoLineH))
+	require.Equal(t, 3, maxLinesForRowHeight(3*pagoLineH))
+	require.Equal(t, 60, maxLinesForRowHeight(60*pagoLineH))
+}
+
+// TestClampDescForHeight_TruncatesOnlyWhenNeeded verifies the descripcion clamp
+// leaves short text alone and shortens over-tall text to exactly maxLines lines
+// with an ellipsis marker.
+func TestClampDescForHeight_TruncatesOnlyWhenNeeded(t *testing.T) {
+	t.Parallel()
+
+	pdf := fpdf.New("P", "mm", "Letter", "")
+	require.NoError(t, loadFonts(pdf))
+	pdf.AddPage()
+	pdf.SetFont("Poppins", "", 7.5)
+
+	cols := newPagoCols()
+
+	// Fits within budget → returned verbatim.
+	short := "RUTA 36 - OSCAR ROQUE"
+	require.Equal(t, short, clampDescForHeight(pdf, short, cols.descripcion, 3))
+
+	// Needs many lines but capped to 2 → exactly 2 lines, last one ellipsized.
+	long := strings.Repeat("PALABRA ", 400)
+	got := clampDescForHeight(pdf, long, cols.descripcion, 2)
+	require.NotEqual(t, long, got, "over-tall text must be shortened")
+	require.Len(t, pdf.SplitText(got, cols.descripcion), 2, "clamped text must render in exactly maxLines lines")
+	require.Contains(t, got, "…", "truncation must be signalled with an ellipsis")
 }
 
 // TestPagoRowHeight_MultiLineGrowsRow verifies a long descripcion produces a
@@ -64,4 +101,38 @@ func TestPagoRowHeight_MultiLineGrowsRow(t *testing.T) {
 	require.Greater(t, long, cols.rowH, "long text must wrap to more than one line")
 	require.InDelta(t, 0.0, long-float64(int(long/pagoLineH))*pagoLineH, 1e-9,
 		"tall row height is a whole number of line heights")
+}
+
+// TestDrawPagoRows_PathologicalRowNeverOverprintsFooter guards the unbounded
+// tall-row overflow: a single payment whose descripcion wraps to more than a
+// full page must not render past bottomLimit into the footer band. If the loop's
+// height cap were removed, the cursor would end far below bottomLimit and this
+// would fail (it also asserts the render does not panic).
+func TestDrawPagoRows_PathologicalRowNeverOverprintsFooter(t *testing.T) {
+	t.Parallel()
+
+	pdf := fpdf.New("P", "mm", "Letter", "")
+	require.NoError(t, loadFonts(pdf))
+	pdf.SetAutoPageBreak(false, margin)
+	pdf.AddPage()
+
+	cols := newPagoCols()
+	drawColHdr := makePagosColumnHeader(pdf, cols)
+	drawColHdr()
+	card := newVentaCard(pdf)
+
+	tp := func(s string) time.Time { v, _ := time.Parse("2006-01-02", s); return v }
+	// A description that wraps to far more than a full page of lines (a full
+	// usable page fits ~60 lines; this is well beyond that, so the loop's cap
+	// must engage).
+	huge := strings.Repeat("PALABRA ", 2000)
+	pagos := []outbound.ReportePago{
+		{Fecha: tp("2024-03-15"), Concepto: "Cobranza", Cobrador: huge, Importe: decimal.NewFromInt(100), EsIngreso: true},
+	}
+
+	require.NotPanics(t, func() {
+		drawPagoRows(pdf, "V-1", pagos, cols, drawColHdr, card)
+	})
+	require.LessOrEqual(t, pdf.GetY(), bottomLimit+0.01,
+		"tall row must be capped so the cursor never lands past the footer limit")
 }
