@@ -49,6 +49,15 @@ func TestRenderEstatusBadge_VandC(t *testing.T) {
 		require.Greater(t, len(got), 5000, "estatus %q: pdf demasiado pequeño", estatus)
 		require.Equal(t, "%PDF", string(got[:4]), "estatus %q", estatus)
 	}
+
+	// A very long legal name with a badge exercises the second-line placement
+	// path end-to-end (badge dropped below the name); must still render cleanly.
+	long := buildSample()
+	long.Cliente.Estatus = "C"
+	long.Cliente.Nombre = "MARÍA GUADALUPE HERNÁNDEZ RODRÍGUEZ DE LA CRUZ SANTILLÁN VILLANUEVA GARCÍA MARTÍNEZ"
+	got, err := clientespdf.Render(long, gen, "Juan Pérez")
+	require.NoError(t, err)
+	require.Equal(t, "%PDF", string(got[:4]))
 }
 
 func buildSample() outbound.ReporteCliente {

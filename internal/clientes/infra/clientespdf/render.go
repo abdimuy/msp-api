@@ -193,16 +193,27 @@ func drawMasthead(pdf *fpdf.Fpdf) {
 
 // drawClienteBlock renders the client identity section.
 func drawClienteBlock(pdf *fpdf.Fpdf, c outbound.ReporteClienteDatos) {
-	// Name, with an optional red status badge (VETADO/CANCELADO) beside it.
+	// Name, with an optional red status badge (VETADO/CANCELADO). The badge sits
+	// inline to the right of the name; for a long name that would push it off the
+	// page it drops to its own line below (the full name is never truncated).
 	pdf.SetTextColor(inkR, inkG, inkB)
 	pdf.SetFont("PoppinsSB", "", 12)
 	nameY := pdf.GetY()
 	nameW := pdf.GetStringWidth(c.Nombre) + 2
-	pdf.CellFormat(nameW, 6.5, c.Nombre, "", 0, "L", false, 0, "")
+	pdf.CellFormat(nameW, nameRowH, c.Nombre, "", 0, "L", false, 0, "")
+	nextY := nameY + nameRowH
 	if label, ok := estatusBadge(c.Estatus); ok {
-		drawEstatusBadge(pdf, label, margin+nameW+1, nameY)
+		badgeW := estatusBadgeWidth(pdf, label)
+		badgeX, secondLine := placeEstatusBadge(nameW, badgeW)
+		if secondLine {
+			badgeY := nameY + nameRowH + 0.5
+			drawEstatusBadge(pdf, label, badgeX, badgeY)
+			nextY = badgeY + estatusBadgeH + 0.5
+		} else {
+			drawEstatusBadge(pdf, label, badgeX, nameY+(nameRowH-estatusBadgeH)/2)
+		}
 	}
-	pdf.SetXY(margin, nameY+6.5)
+	pdf.SetXY(margin, nextY)
 	pdf.Ln(0.5)
 
 	// 2-column key/value pairs (ID removed per Cambio 5)
@@ -270,22 +281,46 @@ func estatusBadge(estatus string) (string, bool) {
 	}
 }
 
-// drawEstatusBadge draws a small red rounded pill (red border + red text) at x,
-// vertically centered within the client-name row that starts at rowY. Mirrors
-// the venta status chips (DEBE/LIQUIDADA) but in red.
-func drawEstatusBadge(pdf *fpdf.Fpdf, label string, x, rowY float64) {
-	const h, nameRowH = 4.6, 6.5
+// Client-name row + status badge geometry.
+const (
+	nameRowH        = 6.5 // height of the client name row
+	estatusBadgeH   = 4.6 // height of the red status pill
+	estatusBadgeGap = 1.0 // gap between the name and an inline badge
+)
+
+// estatusBadgeWidth measures the badge width for label. It activates the badge
+// font (PlexMono 7) so the measurement matches what drawEstatusBadge draws.
+func estatusBadgeWidth(pdf *fpdf.Fpdf, label string) float64 {
 	pdf.SetFont("PlexMono", "", 7)
-	w := pdf.GetStringWidth(label) + 4
-	y := rowY + (nameRowH-h)/2
+	return pdf.GetStringWidth(label) + 4
+}
+
+// placeEstatusBadge decides where the client status badge goes. It fits inline
+// to the right of the name (nameW wide) when the whole badge stays within the
+// page; otherwise it drops to its own line at the left margin so a long client
+// name never pushes the badge off the page (and out of sight). Returns the badge
+// X and whether it moved to a second line.
+func placeEstatusBadge(nameW, badgeW float64) (float64, bool) {
+	inlineX := margin + nameW + estatusBadgeGap
+	if inlineX+badgeW <= pageW-margin {
+		return inlineX, false
+	}
+	return margin, true
+}
+
+// drawEstatusBadge draws a small red rounded pill (red border + red text) with
+// its top-left corner at (x, y). Mirrors the venta status chips
+// (DEBE/LIQUIDADA) but in red.
+func drawEstatusBadge(pdf *fpdf.Fpdf, label string, x, y float64) {
+	w := estatusBadgeWidth(pdf, label)
 	pdf.SetDrawColor(redR, redG, redB)
 	pdf.SetLineWidth(0.4)
-	pdf.RoundedRectExt(x, y, w, h, 1.0, 1.0, 1.0, 1.0, "D")
+	pdf.RoundedRectExt(x, y, w, estatusBadgeH, 1.0, 1.0, 1.0, 1.0, "D")
 	pdf.SetLineWidth(0.2)
 	pdf.SetDrawColor(hairR, hairG, hairB)
 	pdf.SetTextColor(redR, redG, redB)
 	pdf.SetXY(x, y)
-	pdf.CellFormat(w, h, label, "", 0, "C", false, 0, "")
+	pdf.CellFormat(w, estatusBadgeH, label, "", 0, "C", false, 0, "")
 }
 
 // drawNota renders the client's free-form note as a wrapped block with a NOTA

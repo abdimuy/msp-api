@@ -57,6 +57,40 @@ func TestEstatusBadge(t *testing.T) {
 	}
 }
 
+// TestPlaceEstatusBadge_LongNameStaysOnPage verifies the status badge never runs
+// off the page: a short name keeps the badge inline, a long legal name (exactly
+// the population that gets vetado/cancelado) drops it to a second line. In both
+// cases the badge's right edge must stay within the page. Widths are measured
+// with the real fonts, so the test is not tautological.
+func TestPlaceEstatusBadge_LongNameStaysOnPage(t *testing.T) {
+	t.Parallel()
+
+	pdf := fpdf.New("P", "mm", "Letter", "")
+	require.NoError(t, loadFonts(pdf))
+	pdf.AddPage()
+
+	label, ok := estatusBadge("V")
+	require.True(t, ok)
+	badgeW := estatusBadgeWidth(pdf, label)
+
+	// Short name → inline, badge fits on the page.
+	pdf.SetFont("PoppinsSB", "", 12)
+	shortW := pdf.GetStringWidth("JUAN PÉREZ") + 2
+	x, second := placeEstatusBadge(shortW, badgeW)
+	require.False(t, second, "un nombre corto mantiene el badge en línea")
+	require.LessOrEqual(t, x+badgeW, pageW-margin, "el badge en línea debe quedar dentro de la página")
+
+	// Very long legal name → dropped to a second line, still on the page.
+	pdf.SetFont("PoppinsSB", "", 12)
+	longName := "MARÍA GUADALUPE HERNÁNDEZ RODRÍGUEZ DE LA CRUZ SANTILLÁN VILLANUEVA GARCÍA MARTÍNEZ"
+	longW := pdf.GetStringWidth(longName) + 2
+	require.Greater(t, margin+longW+estatusBadgeGap+badgeW, pageW-margin,
+		"precondición: el nombre largo no cabe con el badge en línea")
+	x2, second2 := placeEstatusBadge(longW, badgeW)
+	require.True(t, second2, "un nombre largo debe bajar el badge a una segunda línea")
+	require.LessOrEqual(t, x2+badgeW, pageW-margin, "el badge en segunda línea debe quedar dentro de la página")
+}
+
 // TestRowHeight covers the max(baseH, nLines*pagoLineH) math used for pagination.
 func TestRowHeight(t *testing.T) {
 	t.Parallel()
