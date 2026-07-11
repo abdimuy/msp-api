@@ -65,6 +65,7 @@ func (s *Service) GenerarReporteCliente(ctx context.Context, clienteID int, vent
 			Zona:      cliente.ZonaNombre(),
 			Cobrador:  cliente.CobradorNombre(),
 			Notas:     cliente.Notas(),
+			Estatus:   cliente.Estatus(),
 		},
 		Resumen:          resumen,
 		Ventas:           reporteVentas,

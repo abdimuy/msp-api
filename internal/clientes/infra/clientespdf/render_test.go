@@ -33,6 +33,24 @@ func TestRenderSample(t *testing.T) {
 	}
 }
 
+// TestRenderEstatusBadge_VandC verifies the report renders a valid PDF for
+// vetado/cancelado clients (red badge path) and does not panic. The watermark
+// runs on every page via the header func, so this also exercises that path.
+func TestRenderEstatusBadge_VandC(t *testing.T) {
+	t.Parallel()
+
+	gen := time.Date(2026, 6, 20, 14, 30, 0, 0, time.UTC)
+	for _, estatus := range []string{"V", "C", "A", ""} {
+		sample := buildSample()
+		sample.Cliente.Estatus = estatus
+
+		got, err := clientespdf.Render(sample, gen, "Juan Pérez")
+		require.NoError(t, err, "estatus %q", estatus)
+		require.Greater(t, len(got), 5000, "estatus %q: pdf demasiado pequeño", estatus)
+		require.Equal(t, "%PDF", string(got[:4]), "estatus %q", estatus)
+	}
+}
+
 func buildSample() outbound.ReporteCliente {
 	d := func(s string) decimal.Decimal { v, _ := decimal.NewFromString(s); return v }
 	tp := func(s string) time.Time { v, _ := time.Parse("2006-01-02", s); return v }

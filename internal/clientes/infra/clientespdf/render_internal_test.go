@@ -31,6 +31,32 @@ func TestNewPagoCols_PreservesImporteWidth(t *testing.T) {
 	require.InDelta(t, oldImporte, c.importe, 1e-9)
 }
 
+// TestEstatusBadge covers the status-code → Spanish badge mapping: only V and C
+// produce a badge; A/B and unknown codes do not. Input is normalized.
+func TestEstatusBadge(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		in       string
+		wantText string
+		wantOK   bool
+	}{
+		{"V", "VETADO", true},
+		{"C", "CANCELADO", true},
+		{" v ", "VETADO", true},
+		{"c", "CANCELADO", true},
+		{"A", "", false},
+		{"B", "", false},
+		{"", "", false},
+		{"X", "", false},
+	}
+	for _, tc := range cases {
+		text, ok := estatusBadge(tc.in)
+		require.Equal(t, tc.wantOK, ok, "estatusBadge(%q) ok", tc.in)
+		require.Equal(t, tc.wantText, text, "estatusBadge(%q) text", tc.in)
+	}
+}
+
 // TestRowHeight covers the max(baseH, nLines*pagoLineH) math used for pagination.
 func TestRowHeight(t *testing.T) {
 	t.Parallel()
@@ -119,7 +145,7 @@ func TestDrawPagoRows_PathologicalRowNeverOverprintsFooter(t *testing.T) {
 	cols := newPagoCols()
 	drawColHdr := makePagosColumnHeader(pdf, cols)
 	drawColHdr()
-	card := newVentaCard(pdf)
+	card := newVentaCard(pdf, false)
 
 	tp := func(s string) time.Time { v, _ := time.Parse("2006-01-02", s); return v }
 	// A description that wraps to far more than a full page of lines (a full

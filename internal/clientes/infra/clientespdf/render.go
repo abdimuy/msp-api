@@ -122,6 +122,12 @@ func Render(rep outbound.ReporteCliente, gen time.Time, generadoPor string) ([]b
 	pdf.SetFooterFunc(func() {
 		drawFooter(pdf, gen, generadoPor, impresas, total)
 	})
+	// Header func runs before the body on every AddPage, so the watermark lands
+	// behind the content. homeMode=true returns the cursor to the top-left margin
+	// afterwards so the body starts where expected.
+	pdf.SetHeaderFuncMode(func() {
+		drawWatermark(pdf, gen, generadoPor)
+	}, true)
 
 	pdf.AddPage()
 
@@ -187,10 +193,16 @@ func drawMasthead(pdf *fpdf.Fpdf) {
 
 // drawClienteBlock renders the client identity section.
 func drawClienteBlock(pdf *fpdf.Fpdf, c outbound.ReporteClienteDatos) {
-	// Name
+	// Name, with an optional red status badge (VETADO/CANCELADO) beside it.
 	pdf.SetTextColor(inkR, inkG, inkB)
 	pdf.SetFont("PoppinsSB", "", 12)
-	pdf.CellFormat(bodyW, 6.5, c.Nombre, "", 1, "L", false, 0, "")
+	nameY := pdf.GetY()
+	nameW := pdf.GetStringWidth(c.Nombre) + 2
+	pdf.CellFormat(nameW, 6.5, c.Nombre, "", 0, "L", false, 0, "")
+	if label, ok := estatusBadge(c.Estatus); ok {
+		drawEstatusBadge(pdf, label, margin+nameW+1, nameY)
+	}
+	pdf.SetXY(margin, nameY+6.5)
 	pdf.Ln(0.5)
 
 	// 2-column key/value pairs (ID removed per Cambio 5)
@@ -243,6 +255,37 @@ func drawClienteBlock(pdf *fpdf.Fpdf, c outbound.ReporteClienteDatos) {
 	}
 
 	pdf.Ln(2)
+}
+
+// estatusBadge maps a Microsip status code to its Spanish badge label. Only V
+// (vetado) and C (cancelado) get a badge; A (activo) and B (baja) return false.
+func estatusBadge(estatus string) (string, bool) {
+	switch strings.ToUpper(strings.TrimSpace(estatus)) {
+	case "V":
+		return "VETADO", true
+	case "C":
+		return "CANCELADO", true
+	default:
+		return "", false
+	}
+}
+
+// drawEstatusBadge draws a small red rounded pill (red border + red text) at x,
+// vertically centered within the client-name row that starts at rowY. Mirrors
+// the venta status chips (DEBE/LIQUIDADA) but in red.
+func drawEstatusBadge(pdf *fpdf.Fpdf, label string, x, rowY float64) {
+	const h, nameRowH = 4.6, 6.5
+	pdf.SetFont("PlexMono", "", 7)
+	w := pdf.GetStringWidth(label) + 4
+	y := rowY + (nameRowH-h)/2
+	pdf.SetDrawColor(redR, redG, redB)
+	pdf.SetLineWidth(0.4)
+	pdf.RoundedRectExt(x, y, w, h, 1.0, 1.0, 1.0, 1.0, "D")
+	pdf.SetLineWidth(0.2)
+	pdf.SetDrawColor(hairR, hairG, hairB)
+	pdf.SetTextColor(redR, redG, redB)
+	pdf.SetXY(x, y)
+	pdf.CellFormat(w, h, label, "", 0, "C", false, 0, "")
 }
 
 // drawNota renders the client's free-form note as a wrapped block with a NOTA
@@ -372,7 +415,11 @@ const (
 	cardPadTop    = 1.5
 	cardPadBottom = 1.5
 	cardRadius    = 2.0
-	cardGap       = 3.5 // vertical air between consecutive cards
+	cardGap       = 4.5 // vertical air between consecutive cards
+	cardSpineW    = 1.2 // width of the semantic left status spine
+	// cardBorder* — a neutral border a touch more defined than hair so the card
+	// reads as a container without shouting.
+	cardBorderR, cardBorderG, cardBorderB = 209, 213, 219
 )
 
 // ventaCard tracks the current page-segment of a venta so its rounded border can
@@ -381,13 +428,15 @@ const (
 // panel across page breaks would have to be painted before content of unknown
 // height, which is fragile; a clean outline is robust and reads as a card.
 type ventaCard struct {
-	top      float64 // top Y of the content in the current page segment
-	firstSeg bool    // whether the current segment is the venta's first
+	top       float64 // top Y of the content in the current page segment
+	firstSeg  bool    // whether the current segment is the venta's first
+	liquidada bool    // drives the semantic left spine color (green vs amber)
 }
 
 // newVentaCard starts a card whose first segment begins at the current Y.
-func newVentaCard(pdf *fpdf.Fpdf) *ventaCard {
-	return &ventaCard{top: pdf.GetY(), firstSeg: true}
+// liquidada colors the left status spine: green when fully paid, amber otherwise.
+func newVentaCard(pdf *fpdf.Fpdf, liquidada bool) *ventaCard {
+	return &ventaCard{top: pdf.GetY(), firstSeg: true, liquidada: liquidada}
 }
 
 // drawSegment strokes the rounded border for the current segment, from the
@@ -408,10 +457,28 @@ func (vc *ventaCard) drawSegment(pdf *fpdf.Fpdf, bottomY float64, last bool) {
 	if last {
 		rBR, rBL = cardRadius, cardRadius
 	}
-	pdf.SetDrawColor(hairR, hairG, hairB)
+	// Semantic left spine, flush to the card's left edge, spanning the whole
+	// segment. Inset at rounded ends so it doesn't poke past the corner arc.
+	spineTop, spineBot := yTop, yBot
+	if rTL > 0 {
+		spineTop += rTL
+	}
+	if rBL > 0 {
+		spineBot -= rBL
+	}
+	if spineBot > spineTop {
+		if vc.liquidada {
+			pdf.SetFillColor(greenR, greenG, greenB)
+		} else {
+			pdf.SetFillColor(amberR, amberG, amberB)
+		}
+		pdf.Rect(x, spineTop, cardSpineW, spineBot-spineTop, "F")
+	}
+	pdf.SetDrawColor(cardBorderR, cardBorderG, cardBorderB)
 	pdf.SetLineWidth(0.3)
 	pdf.RoundedRectExt(x, yTop, w, yBot-yTop, rTL, rTR, rBR, rBL, "D")
 	pdf.SetLineWidth(0.2)
+	pdf.SetDrawColor(hairR, hairG, hairB)
 }
 
 // pageBreak closes the current segment's border at the current Y, moves to a new
@@ -452,9 +519,9 @@ func drawVenta(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
 	}
 	pdf.Ln(1.5)
 
-	card := newVentaCard(pdf)
+	card := newVentaCard(pdf, v.Liquidada)
 
-	drawVentaHeader(pdf, v)
+	drawVentaHeader(pdf, v, card)
 	drawArticulos(pdf, v.Productos)
 	if v.Credito != nil {
 		drawCredito(pdf, v.Credito)
@@ -475,7 +542,7 @@ func drawArticulos(pdf *fpdf.Fpdf, productos []outbound.ReporteProducto) {
 	nameW := bodyW - labelW - unitW - impW
 	for i, p := range productos {
 		pdf.SetFont("PlexMono", "", 6.5)
-		pdf.SetTextColor(grayR, grayG, grayB)
+		pdf.SetTextColor(slateR, slateG, slateB)
 		label := ""
 		if i == 0 {
 			label = "ARTÍCULOS"
@@ -551,7 +618,7 @@ func drawCredito(pdf *fpdf.Fpdf, c *outbound.ReporteCredito) {
 // drawGutter draws the left-column section label (only on the first row).
 func drawGutter(pdf *fpdf.Fpdf, w, rowH float64, first bool) {
 	pdf.SetFont("PlexMono", "", 6.5)
-	pdf.SetTextColor(grayR, grayG, grayB)
+	pdf.SetTextColor(slateR, slateG, slateB)
 	label := ""
 	if first {
 		label = "CRÉDITO"
@@ -562,7 +629,7 @@ func drawGutter(pdf *fpdf.Fpdf, w, rowH float64, first bool) {
 // drawCampo draws one uppercase label + value pair (no line break).
 func drawCampo(pdf *fpdf.Fpdf, label, value string, labelW, valueW float64) {
 	pdf.SetFont("PlexMono", "", 6)
-	pdf.SetTextColor(grayR, grayG, grayB)
+	pdf.SetTextColor(slateR, slateG, slateB)
 	pdf.CellFormat(labelW, 4.0, strings.ToUpper(label), "", 0, "L", false, 0, "")
 	pdf.SetFont("Poppins", "", 7.5)
 	pdf.SetTextColor(inkR, inkG, inkB)
@@ -619,20 +686,30 @@ func fitText(pdf *fpdf.Fpdf, s string, maxW float64) string {
 	return "…"
 }
 
-func drawVentaHeader(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
+func drawVentaHeader(pdf *fpdf.Fpdf, v outbound.ReporteVenta, card *ventaCard) {
 	// Top padding inside the card (the card's rounded border separates ventas,
 	// so no hairline is drawn here anymore).
 	pdf.Ln(2)
 
-	// Left side: folio + date on the same line (date beside the folio, not below).
+	// Titlebar: a light rounded-top fill spanning the card width behind the first
+	// row, so folio/fecha/total read as the card's "start". Drawn before the text.
+	const rowH = 5.5
 	startY := pdf.GetY()
+	tbX := margin - cardPadX
+	tbW := bodyW + 2*cardPadX
+	tbTop := card.top - cardPadTop
+	tbBot := startY + rowH + 1.5
+	pdf.SetFillColor(altFillR, altFillG, altFillB)
+	pdf.RoundedRectExt(tbX, tbTop, tbW, tbBot-tbTop, cardRadius, cardRadius, 0, 0, "F")
+
+	// Left side: folio + date on the same line (date beside the folio, not below).
 	pdf.SetFont("PoppinsSB", "", 9.5)
-	pdf.SetTextColor(inkR, inkG, inkB)
+	pdf.SetTextColor(slateR, slateG, slateB)
 	folioW := pdf.GetStringWidth(v.Folio) + 5
-	pdf.CellFormat(folioW, 5.5, v.Folio, "", 0, "L", false, 0, "")
+	pdf.CellFormat(folioW, rowH, v.Folio, "", 0, "L", false, 0, "")
 	pdf.SetFont("Poppins", "", 8)
 	pdf.SetTextColor(grayR, grayG, grayB)
-	pdf.CellFormat(40, 5.5, formatFecha(v.Fecha), "", 0, "L", false, 0, "")
+	pdf.CellFormat(40, rowH, formatFecha(v.Fecha), "", 0, "L", false, 0, "")
 
 	// Right side: total + status chip
 	// Determine chip text and colors
@@ -646,13 +723,18 @@ func drawVentaHeader(pdf *fpdf.Fpdf, v outbound.ReporteVenta) {
 		chipR, chipG, chipB = amberR, amberG, amberB
 	}
 
-	// Total: right-aligned in the space between the date and the chip.
+	// Total: right-aligned in the space between the date and the chip. Green when
+	// liquidada, ink otherwise (amber is already carried by the chip and spine).
 	chipW := 36.0
 	chipX := pageW - margin - chipW
 	totalW := chipX - (margin + folioW + 40) - 2
 	pdf.SetFont("PlexMonoMed", "", 9.5)
-	pdf.SetTextColor(inkR, inkG, inkB)
-	pdf.CellFormat(totalW, 5.5, formatMXN(v.Total), "", 0, "R", false, 0, "")
+	if v.Liquidada {
+		pdf.SetTextColor(greenR, greenG, greenB)
+	} else {
+		pdf.SetTextColor(inkR, inkG, inkB)
+	}
+	pdf.CellFormat(totalW, rowH, formatMXN(v.Total), "", 0, "R", false, 0, "")
 
 	// Chip: draw bordered rect + text
 	chipY := startY
@@ -1011,6 +1093,39 @@ func drawSubtotalRow(pdf *fpdf.Fpdf, labelArea, colImporte, rowH float64, label 
 	pdf.SetFont("PlexMonoMed", "", 8)
 	pdf.SetTextColor(r, g, b)
 	pdf.CellFormat(colImporte, rowH, formatMXN(total), "", 1, "R", false, 0, "")
+}
+
+// drawWatermark paints a single faint diagonal watermark centered on the page,
+// behind the body content. It reuses the report's generadoPor + gen so every
+// page is stamped with who generated it and when. Called by fpdf's header func
+// before the body of each page.
+//
+// State handling: SetAlpha is NOT restored by fpdf's post-header cleanup (unlike
+// font/color/line-width), so this resets alpha to 1 before returning. The cursor
+// is restored by header homeMode (SetHeaderFuncMode(..., true)).
+func drawWatermark(pdf *fpdf.Fpdf, gen time.Time, generadoPor string) {
+	text := strings.TrimSpace(generadoPor)
+	if text == "" {
+		text = "CONFIDENCIAL"
+	} else {
+		text += " · " + formatFechaHora(gen)
+	}
+
+	cx, cy := pageW/2, pageH/2
+	pdf.TransformBegin()
+	pdf.TransformRotate(45, cx, cy)
+	pdf.SetAlpha(0.07, "Normal")
+	pdf.SetFont("Poppins", "", 44)
+	pdf.SetTextColor(150, 150, 150)
+	w := pdf.GetStringWidth(text)
+	pdf.SetXY(cx-w/2, cy-9)
+	pdf.CellFormat(w, 18, text, "", 0, "C", false, 0, "")
+	pdf.TransformEnd()
+
+	// Restore state so the watermark never bleeds into body content.
+	pdf.SetAlpha(1, "Normal")
+	pdf.SetTextColor(inkR, inkG, inkB)
+	pdf.SetFont("Poppins", "", 8)
 }
 
 // drawFooter renders the two-line page footer (called by fpdf on every page).

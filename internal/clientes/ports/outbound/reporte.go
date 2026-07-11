@@ -36,6 +36,9 @@ type ReporteClienteDatos struct {
 	// Notas is the client's free-form note (Microsip NOTAS); may be long. Empty
 	// when there is no note.
 	Notas string
+	// Estatus is the Microsip status code (A=activo, B=baja, V=vetado,
+	// C=cancelado). Drives the red status badge next to the client name.
+	Estatus string
 }
 
 // ReporteVenta is a single sale record in the report, with its line items,

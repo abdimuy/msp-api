@@ -66,6 +66,7 @@ func TestGenerarReporteCliente_EstructuraCorrecta(t *testing.T) {
 				ZonaNombre:     "NORTE",
 				CobradorNombre: "Martínez Test",
 				Telefono:       "3312345678",
+				Estatus:        "V",
 				Direccion: domain.HydrateDireccion(domain.HydrateDireccionParams{
 					Calle:     "Av. Juárez 123",
 					Colonia:   "Centro",
@@ -99,6 +100,7 @@ func TestGenerarReporteCliente_EstructuraCorrecta(t *testing.T) {
 	assert.Equal(t, "Martínez Test", rep.Cliente.Cobrador)
 	assert.Equal(t, "3312345678", rep.Cliente.Telefono)
 	assert.Equal(t, "Av. Juárez 123, Centro, Guadalajara", rep.Cliente.Direccion)
+	assert.Equal(t, "V", rep.Cliente.Estatus)
 	assert.Equal(t, int64(10000), rep.Resumen.TotalComprado.IntPart())
 	require.Len(t, rep.Ventas, 1)
 	assert.Equal(t, 101, rep.Ventas[0].DoctoPvID)
