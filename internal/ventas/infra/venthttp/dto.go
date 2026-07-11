@@ -184,12 +184,16 @@ type CrearVentaBody struct {
 }
 
 // ActualizarHeaderBody is the JSON body for PATCH /v2/ventas/{id}.
-// Montos is intentionally absent — header totals are derived from line items;
-// to update pricing use the PUT /ventas/{id}/productos and /combos endpoints.
+// Montos is accepted but IGNORED — header totals are derived from line items
+// (see [CrearVentaBody] which keeps the same field for the same reason). It is
+// kept only so the field app, which serializes the whole venta header into the
+// PATCH body, is not rejected by Huma's additionalProperties:false. To update
+// pricing use the PUT /ventas/{id}/productos and /combos endpoints.
 type ActualizarHeaderBody struct {
 	Direccion   DireccionDTO    `json:"direccion"`
 	GPS         GPSDTO          `json:"gps"`
 	FechaVenta  string          `json:"fecha_venta"            format:"date-time"`
+	Montos      *MontosDTO      `json:"montos,omitempty"       doc:"Ignorado; los montos se derivan de los precios de línea. Se conserva por compatibilidad con la app."`
 	PlanCredito *PlanCreditoDTO `json:"plan_credito,omitempty"`
 	DiaCobranza *DiaCobranzaDTO `json:"dia_cobranza,omitempty"`
 	Nota        *string         `json:"nota,omitempty"         maxLength:"500" doc:"Nota libre, máximo 500 caracteres"`

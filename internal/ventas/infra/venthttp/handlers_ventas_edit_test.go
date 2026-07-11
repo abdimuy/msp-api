@@ -187,6 +187,46 @@ func TestActualizarHeader_RejectsCancelada(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
 }
 
+// TestActualizarHeader_ToleratesLegacyMontosField reproduces the field bug
+// where editing ANY venta failed with 422. The field app serializes the whole
+// venta header — including a `montos` object — into the PATCH body. Since the
+// domain derives montos from line items (commit 6592cef), CrearVentaBody keeps
+// `montos` as an ignored-for-compat field, but ActualizarHeaderBody dropped it,
+// so Huma's additionalProperties:false rejected the extra key and every edit
+// 422'd. The header PATCH must TOLERATE and IGNORE `montos`, exactly like
+// create does. Body below is the real payload captured from a failed intent.
+func TestActualizarHeader_ToleratesLegacyMontosField(t *testing.T) {
+	t.Parallel()
+	svc, _, _ := testService()
+	r := buildRouter(t, svc, fullPerms(uuid.New()))
+	id := seedVentaViaHTTP(t, r)
+
+	// Raw map (not the typed struct) so the extra `montos` key is actually sent
+	// — a typed ActualizarHeaderBody could never carry an unmodeled field.
+	body := map[string]any{
+		"direccion": map[string]any{
+			"calle": "ALDAMA NORTE", "numero_exterior": "S/N", "colonia": "CENTRO",
+			"poblacion": "LA GLORIA", "ciudad": "CHALCHICOMULA DE SESMA", "zona_cliente_id": 21549,
+		},
+		"gps":         map[string]any{"latitud": 18.4587599, "longitud": -97.3948003},
+		"fecha_venta": "2026-07-10T16:06:58.153Z",
+		// The extra field the field app sends — must be tolerated + ignored.
+		// (The Huma additionalProperties rejection is independent of venta type,
+		// so a CONTADO seed exercises it; plan_credito/dia_cobranza are omitted
+		// because they are not valid on the CONTADO venta this test seeds.)
+		"montos": map[string]any{"anual": "7900.00", "corto_plazo": "5800.00", "contado": "5100.00"},
+		"nota":   "Nota prueba",
+	}
+	req := jsonRequest(t, http.MethodPatch, "/ventas/"+id, body)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "edit with legacy montos field must be accepted, not 422: %s", rec.Body.String())
+	var out venthttp.VentaDTO
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	assert.Equal(t, "ALDAMA NORTE", out.Direccion.Calle)
+}
+
 // ─── ActualizarCliente (PATCH /v2/ventas/{id}/cliente) ─────────────────────
 
 func TestActualizarCliente_OK(t *testing.T) {
