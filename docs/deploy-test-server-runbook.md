@@ -323,6 +323,13 @@ curl -s -o /dev/null -w "winback %{http_code}\n"  https://apidev.loclx.io/v2/ana
 curl -s "https://apidev.loclx.io/v2/clientes/2575806" -H "Authorization: Bearer $TOKEN" | python3 -c 'import sys,json;p=json.load(sys.stdin)["pulso"];print("segmento",p["segmento"],"| narrativa?",bool(p["narrativa"]))'
 # en server: SELECT COUNT(*) FROM MSP_AN_WINBACK_CANDIDATOS;  (~45k)
 #            SELECT COUNT(*) FROM MSP_AN_CLIENTE_NARRATIVA;   (crece al abrir fichas)
+#
+# FLUJO CORE — editar una venta: en la app, abre una venta existente y guarda un cambio de
+#   header (dirección / nota) → debe responder 200. La app de campo serializa la venta completa
+#   (incluye `montos`, derivado), y el PATCH /v2/ventas/{id} debe TOLERARLO. Si ves 422
+#   "unexpected property" tras un deploy, el binario/DTO se desalineó (regresión cubierta por
+#   TestActualizarHeader_ToleratesLegacyMontosField). Verificación sin token: un PATCH sin
+#   Authorization con body de montos debe dar 401 (body aceptado), NO 422.
 ```
 
 ---
