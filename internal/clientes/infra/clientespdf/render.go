@@ -1149,28 +1149,15 @@ func drawWatermark(pdf *fpdf.Fpdf, gen time.Time, generadoPor string) {
 	cx, cy := pageW/2, pageH/2
 	pdf.TransformBegin()
 	pdf.TransformRotate(45, cx, cy)
-	// Drawn on top of the body (see the footer hook in Render), so the alpha
-	// must stay low enough that text underneath remains fully readable. The
-	// text is TILED across the whole (rotated) page so every card carries the
-	// mark, instead of a single centred line that only crosses the middle.
-	pdf.SetAlpha(0.06, "Normal")
-	pdf.SetFont("Poppins", "", 20)
+	// A SINGLE centred diagonal, drawn on top of the body (footer hook in
+	// Render) so it stays visible over cards and text. Low alpha keeps the text
+	// underneath fully readable; one mark, not a tiled pattern.
+	pdf.SetAlpha(0.08, "Normal")
+	pdf.SetFont("Poppins", "", 44)
 	pdf.SetTextColor(150, 150, 150)
-	const (
-		tileGap = "        " // space between repeats on a row
-		rowH    = 30.0       // vertical spacing between rows (mm)
-	)
-	tile := text + tileGap
-	tw := pdf.GetStringWidth(tile)
-	// Iterate in unrotated space over a region large enough that, once rotated
-	// 45° about the page centre, it fully covers the page (the rotated page's
-	// bounding box is larger than the page itself).
-	for y := -pageH; y < pageH*2; y += rowH {
-		for x := -pageW; x < pageW*2; x += tw {
-			pdf.SetXY(x, y)
-			pdf.CellFormat(tw, rowH, tile, "", 0, "L", false, 0, "")
-		}
-	}
+	w := pdf.GetStringWidth(text)
+	pdf.SetXY(cx-w/2, cy-9)
+	pdf.CellFormat(w, 18, text, "", 0, "C", false, 0, "")
 	pdf.TransformEnd()
 
 	// Restore state so the watermark never bleeds into body content.
