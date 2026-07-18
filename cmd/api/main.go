@@ -172,6 +172,10 @@ func appOptions() []fx.Option {
 			provideCobranzaRutasRepo,
 			provideCalendarioCobradorClient,
 			provideRutasService,
+			// Config module.
+			provideConfigRepo,
+			provideConfigUsuariosReader,
+			provideConfigService,
 			provideFbEventSource,
 			provideCobranzaPagosChangelogRepo,
 			provideCobranzaSaldosChangelogRepo,

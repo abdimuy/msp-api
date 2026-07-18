@@ -47,6 +47,9 @@ import (
 
 	rutasapp "github.com/abdimuy/msp-api/internal/rutas/app"
 	rutashttp "github.com/abdimuy/msp-api/internal/rutas/infra/rutashttp"
+
+	configapp "github.com/abdimuy/msp-api/internal/config/app"
+	confighttp "github.com/abdimuy/msp-api/internal/config/infra/confighttp"
 )
 
 // RootHandler is the assembled chi router exposed as an fx-typed dependency.
@@ -152,6 +155,7 @@ func provideRootHandler(
 	analyticsSvc *analyticsapp.Service,
 	clientesSvc *clientesapp.Service,
 	rutasSvc *rutasapp.Service,
+	configSvc *configapp.Service,
 	logger *slog.Logger,
 ) RootHandler {
 	r := chi.NewRouter()
@@ -254,6 +258,18 @@ func provideRootHandler(
 		r.Group(func(r chi.Router) {
 			r.Use(skipAuthForPublicDocs(authn.Handler))
 			rutashttp.MountRouter(r, rutasSvc)
+		})
+
+		// Config endpoints — vendedores administration (task 3 adds
+		// zonas/cajas to this same confighttp package). Authn only;
+		// per-route permission (config:leer / config:administrar) is
+		// enforced inside each handler. MountRouter registers bare
+		// /config/* paths, so mount on a bare Group (like rutas/clientes)
+		// — NOT r.Route("/config"), which would double the prefix.
+		// Final paths: GET/PUT/DELETE /v2/config/vendedores[...].
+		r.Group(func(r chi.Router) {
+			r.Use(skipAuthForPublicDocs(authn.Handler))
+			confighttp.MountRouter(r, configSvc)
 		})
 
 		// Cobranza endpoints — authn only. Read (saldos, pagos, sync) plus
