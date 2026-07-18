@@ -115,6 +115,12 @@ type FakeUsuarioRepo struct {
 	ListErr    error
 	AsignarErr error
 	RevocarErr error
+
+	// ListPages, when non-nil, scripts the responses returned by successive
+	// List calls (in order), overriding the default map-backed behavior.
+	// Used by tests that need to exercise cursor-based pagination loops.
+	ListPages []outbound.Page[*domain.Usuario]
+	listCall  int
 }
 
 // NewFakeUsuarioRepo constructs an empty repo.
@@ -225,6 +231,16 @@ func (f *FakeUsuarioRepo) List(_ context.Context, p outbound.ListParams) (outbou
 	defer f.mu.Unlock()
 	if f.ListErr != nil {
 		return outbound.Page[*domain.Usuario]{}, f.ListErr
+	}
+	if f.ListPages != nil {
+		// Cycles through the scripted pages, repeating the last one forever
+		// once exhausted. This lets tests script a misbehaving repo that
+		// keeps returning the same (non-advancing) cursor without needing an
+		// unbounded slice — ListarUsuarios' own stall guard is what must
+		// terminate the loop, not running out of fixtures here.
+		page := f.ListPages[f.listCall%len(f.ListPages)]
+		f.listCall++
+		return page, nil
 	}
 	items := make([]*domain.Usuario, 0, len(f.ByID))
 	for _, u := range f.ByID {

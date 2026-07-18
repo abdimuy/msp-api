@@ -128,4 +128,9 @@ const (
 
 	// PermRutasLeer — see domain.PermRutasLeer.
 	PermRutasLeer = domain.PermRutasLeer
+
+	// PermConfigLeer — see domain.PermConfigLeer.
+	PermConfigLeer = domain.PermConfigLeer
+	// PermConfigAdministrar — see domain.PermConfigAdministrar.
+	PermConfigAdministrar = domain.PermConfigAdministrar
 )

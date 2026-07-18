@@ -116,6 +116,11 @@ const (
 
 	// PermRutasLeer grants read access to the rutas listing endpoint.
 	PermRutasLeer Permission = "rutas:leer"
+
+	// PermConfigLeer grants read access to the configuración area.
+	PermConfigLeer Permission = "config:leer"
+	// PermConfigAdministrar grants write access to configuración.
+	PermConfigAdministrar Permission = "config:administrar"
 )
 
 // PermissionMeta is a catalog entry pairing a permission code with the
@@ -140,6 +145,7 @@ const (
 	categoriaInventario    = "inventario"
 	categoriaAnalytics     = "analytics"
 	categoriaClientes      = "clientes"
+	categoriaConfig        = "configuracion"
 )
 
 // AllPermissions returns every permission known to the auth module, sorted
@@ -192,6 +198,9 @@ func AllPermissions() []PermissionMeta {
 		{PermClientesReindexar, "reconstruir el índice de búsqueda de clientes", categoriaClientes},
 
 		{PermRutasLeer, "ver el listado de zonas (rutas) con cobrador, clientes y saldo", categoriaClientes},
+
+		{PermConfigLeer, "ver la configuración del sistema", categoriaConfig},
+		{PermConfigAdministrar, "administrar la configuración del sistema", categoriaConfig},
 	}
 	sort.Slice(perms, func(i, j int) bool { return perms[i].Code < perms[j].Code })
 	return perms
