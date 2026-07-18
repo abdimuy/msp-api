@@ -28,5 +28,5 @@ func provideConfigService(
 	repo *configfb.ConfigRepo,
 	usuarios configoutbound.UsuariosReader,
 ) *configapp.Service {
-	return configapp.NewService(repo, repo, usuarios)
+	return configapp.NewService(repo, repo, usuarios, repo, repo)
 }

@@ -67,6 +67,37 @@ func estadoAsignacion(n int) string {
 	}
 }
 
+// CatalogoRef is a resolved reference into a Microsip catalog table (zona,
+// caja, cajero, vendedor, or cobrador): the row's id plus its NOMBRE.
+type CatalogoRef struct {
+	ID     int
+	Nombre string
+}
+
+// ZonaCajaAsignacion is one row of the zonas/cajas administration screen: a
+// client zone (ZONAS_CLIENTES) alongside its (possibly partial) mapping to
+// caja/cajero/vendedor/cobrador. A nil ref means that slot is unmapped —
+// either the zone has no MSP_CFG_ZONA_CAJA row at all, or the row has
+// SinMapeoZonaCaja (-1) in that column.
+type ZonaCajaAsignacion struct {
+	ZonaClienteID int
+	ZonaNombre    string
+	Caja          *CatalogoRef
+	Cajero        *CatalogoRef
+	Vendedor      *CatalogoRef
+	Cobrador      *CatalogoRef
+}
+
+// OpcionesZonasCajas lists every catalog needed to populate the zonas/cajas
+// administration screen's dropdowns.
+type OpcionesZonasCajas struct {
+	Zonas      []CatalogoRef
+	Cajas      []CatalogoRef
+	Cajeros    []CatalogoRef
+	Vendedores []CatalogoRef
+	Cobradores []CatalogoRef
+}
+
 // IdentidadMicrosip is one Microsip "persona" grouped by VALOR_DESPLEGADO
 // across the three credit-vendor attributes (19985/19986/19987) — the
 // per-attribute LISTA_ATRIB_ID values an admin picks from when assigning a

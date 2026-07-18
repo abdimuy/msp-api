@@ -95,4 +95,37 @@ func registerOperations(api huma.API, h *Handlers) {
 		Security:      security,
 		DefaultStatus: http.StatusOK,
 	}, h.EliminarVendedor)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "listar-config-zonas-cajas",
+		Method:        http.MethodGet,
+		Path:          "/config/zonas-cajas",
+		Summary:       "Listar mapeo zona → caja/cajero/vendedor/cobrador",
+		Description:   "Devuelve, por cada zona de cliente, su mapeo a caja, cajero, vendedor y cobrador de Microsip.",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+	}, h.ListarZonasCajas)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "listar-config-zonas-cajas-opciones",
+		Method:        http.MethodGet,
+		Path:          "/config/zonas-cajas/opciones",
+		Summary:       "Listar catálogos de zonas/cajas",
+		Description:   "Devuelve los catálogos de Microsip (zonas, cajas, cajeros, vendedores, cobradores) para poblar los selectores de asignación.",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+	}, h.ListarOpcionesZonasCajas)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "asignar-config-zona-caja",
+		Method:        http.MethodPut,
+		Path:          "/config/zonas-cajas/{zonaClienteId}",
+		Summary:       "Asignar mapeo zona → caja/cajero/vendedor/cobrador",
+		Description:   "Crea o actualiza el mapeo de una zona de cliente a caja, cajero, vendedor y cobrador de Microsip.",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+	}, h.AsignarZonaCaja)
 }
