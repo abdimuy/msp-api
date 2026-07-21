@@ -58,6 +58,10 @@ func (r *fakeRepo) ExistingContactadoFlags(_ context.Context) (map[int]bool, err
 	return map[int]bool{}, nil
 }
 
+func (r *fakeRepo) MarcarContactado(_ context.Context, _ int, _ time.Time) error {
+	return nil
+}
+
 func buildService(reader outbound.UniversoReader, repo outbound.CohorteRepo) *reactivacionapp.Service {
 	return reactivacionapp.NewService(reader, repo, fixedClock{}, nil, reactivacionapp.Config{})
 }

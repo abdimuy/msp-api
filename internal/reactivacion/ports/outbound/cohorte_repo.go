@@ -3,6 +3,7 @@ package outbound
 
 import (
 	"context"
+	"time"
 
 	"github.com/abdimuy/msp-api/internal/reactivacion/domain"
 )
@@ -37,4 +38,9 @@ type CohorteRepo interface {
 	// currently in MSP_RX_COHORTE, so a rebuild carries forward the channel's
 	// contact flag (set by Fase 3).
 	ExistingContactadoFlags(ctx context.Context) (map[int]bool, error)
+
+	// MarcarContactado sets FUE_CONTACTADO=1 for clienteID with UPDATED_AT=now.
+	// A single point UPDATE — it must never touch EN_CONTROL or COHORTE_FECHA.
+	// Called only after a successful send (measurement integrity).
+	MarcarContactado(ctx context.Context, clienteID int, now time.Time) error
 }

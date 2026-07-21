@@ -166,6 +166,96 @@ func assembleCohorte(r *cohorteRowRaw) (*domain.CohorteCliente, error) {
 	}), nil
 }
 
+// ─── Mensaje row mapper ────────────────────────────────────────────────────────
+
+// mensajeRowRaw is the intermediate scan target for one MSP_RX_MENSAJES row.
+// The table is CHARACTER SET UTF8 (CUERPO is BLOB SUB_TYPE TEXT UTF8) — plain
+// string / sql.NullString is the correct scan target. Column order must match
+// mensajeCols exactly.
+type mensajeRowRaw struct {
+	idRaw         string
+	clienteID     int
+	segmento      string
+	telefono      sql.NullString
+	cuerpo        sql.NullString // BLOB SUB_TYPE TEXT
+	estado        string
+	senderKind    sql.NullString
+	encoladoEnRaw any // TIMESTAMP NOT NULL
+	enviadoEnRaw  any // TIMESTAMP nullable
+	errorMotivo   sql.NullString
+	createdAtRaw  any // TIMESTAMP NOT NULL
+	updatedAtRaw  any // TIMESTAMP NOT NULL
+}
+
+func (r *mensajeRowRaw) scanFrom(s rowScanner) error {
+	return s.Scan(
+		&r.idRaw,
+		&r.clienteID,
+		&r.segmento,
+		&r.telefono,
+		&r.cuerpo,
+		&r.estado,
+		&r.senderKind,
+		&r.encoladoEnRaw,
+		&r.enviadoEnRaw,
+		&r.errorMotivo,
+		&r.createdAtRaw,
+		&r.updatedAtRaw,
+	)
+}
+
+func assembleMensaje(r *mensajeRowRaw) (*domain.Mensaje, error) {
+	id, err := parseUUIDColumn("ID", r.idRaw)
+	if err != nil {
+		return nil, err
+	}
+	seg, err := domain.ParseSegmento(r.segmento)
+	if err != nil {
+		return nil, err
+	}
+	estado, err := domain.ParseEstadoMensaje(r.estado)
+	if err != nil {
+		return nil, err
+	}
+	var senderKind domain.SenderKind
+	if sk := nullStringVal(r.senderKind); sk != "" {
+		senderKind, err = domain.ParseSenderKind(sk)
+		if err != nil {
+			return nil, err
+		}
+	}
+	encoladoEn, err := firebird.ScanUTCTime(r.encoladoEnRaw)
+	if err != nil {
+		return nil, err
+	}
+	enviadoEn, err := scanNullableTime(r.enviadoEnRaw)
+	if err != nil {
+		return nil, err
+	}
+	createdAt, err := firebird.ScanUTCTime(r.createdAtRaw)
+	if err != nil {
+		return nil, err
+	}
+	updatedAt, err := firebird.ScanUTCTime(r.updatedAtRaw)
+	if err != nil {
+		return nil, err
+	}
+	return domain.HydrateMensaje(domain.HydrateMensajeParams{
+		ID:         id,
+		ClienteID:  r.clienteID,
+		Segmento:   seg,
+		Telefono:   nullStringVal(r.telefono),
+		Cuerpo:     nullStringVal(r.cuerpo),
+		Estado:     estado,
+		SenderKind: senderKind,
+		EncoladoEn: encoladoEn,
+		EnviadoEn:  enviadoEn,
+		Error:      nullStringVal(r.errorMotivo),
+		CreatedAt:  createdAt,
+		UpdatedAt:  updatedAt,
+	}), nil
+}
+
 // ─── Shared helpers ────────────────────────────────────────────────────────────
 
 // parseUUIDColumn converts a CHAR(36) column string to a uuid.UUID.
