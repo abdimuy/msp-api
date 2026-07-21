@@ -133,9 +133,25 @@ func buildServiceWithCopiloto(
 	llm outbound.CopilotoLLM,
 	factsReader outbound.ClienteFactsReader,
 ) *reactivacionapp.Service {
+	svc, _ := buildServiceWithCopilotoAndMensajeRepo(convRepo, decisionRepo, notaReader, llm, factsReader)
+	return svc
+}
+
+// buildServiceWithCopilotoAndMensajeRepo is buildServiceWithCopiloto but also
+// returns the canal's fakeMensajeRepo — tests that need to assert the
+// AprobarBorrador/EditarYAprobar enqueue-on-approve side effect (the actual
+// text queued for the cliente) use this variant instead of discarding it.
+func buildServiceWithCopilotoAndMensajeRepo(
+	convRepo outbound.ConversacionRepo,
+	decisionRepo outbound.DecisionRepo,
+	notaReader outbound.NotaReader,
+	llm outbound.CopilotoLLM,
+	factsReader outbound.ClienteFactsReader,
+) (*reactivacionapp.Service, *fakeMensajeRepo) {
 	mensajeRepo := &fakeMensajeRepo{}
-	return buildServiceWithCanal(&fakeReader{}, &fakeRepo{}, mensajeRepo, fakeSender{}, true).
+	svc := buildServiceWithCanal(&fakeReader{}, &fakeRepo{}, mensajeRepo, fakeSender{}, true).
 		WithCopiloto(convRepo, decisionRepo, notaReader, llm, factsReader)
+	return svc, mensajeRepo
 }
 
 // doJSON issues method/target with body JSON-encoded (nil = no body) and
@@ -383,7 +399,7 @@ func TestAprobarBorrador_HappyPath_200(t *testing.T) {
 	factsReader := &fakeClienteFactsReader{facts: map[int]*outbound.ClienteFacts{
 		502: {Nombre: "Cliente Prueba", Segmento: "recien_liquidado", Telefono: "238 111 2222"},
 	}}
-	svc := buildServiceWithCopiloto(convRepo, decisionRepo, &fakeNotaReader{}, &copilotofake.Generator{}, factsReader)
+	svc, mensajeRepo := buildServiceWithCopilotoAndMensajeRepo(convRepo, decisionRepo, &fakeNotaReader{}, &copilotofake.Generator{}, factsReader)
 
 	code, body := doJSON(buildRouter(svc, userWith(auth.PermReactivacionAdministrar)), http.MethodPost, "/reactivacion/conversaciones/502/aprobar", nil)
 	require.Equal(t, http.StatusOK, code)
@@ -391,6 +407,20 @@ func TestAprobarBorrador_HappyPath_200(t *testing.T) {
 	var dto reactivacionhttp.OkDTO
 	require.NoError(t, json.Unmarshal(body, &dto))
 	assert.True(t, dto.Ok)
+
+	// Assert the actual persisted effect, not just the ack body: a new
+	// aprobado Decision was appended (append-only audit log — the original
+	// propuesto stays), and the approved text was queued via the canal.
+	decisiones, err := decisionRepo.ListarPorCliente(context.Background(), 502)
+	require.NoError(t, err)
+	require.Len(t, decisiones, 2, "the propuesto original plus the new aprobado")
+	nueva := decisiones[len(decisiones)-1]
+	assert.Equal(t, domain.ResultadoAprobado, nueva.Resultado())
+	assert.Equal(t, "hola, tenemos una promo para ti", nueva.Borrador())
+
+	require.Len(t, mensajeRepo.insertados, 1, "the approved draft must be queued via the canal")
+	assert.Equal(t, 502, mensajeRepo.insertados[0].ClienteID())
+	assert.Equal(t, "hola, tenemos una promo para ti", mensajeRepo.insertados[0].Cuerpo())
 }
 
 func TestAprobarBorrador_SinBorradorPendiente_422(t *testing.T) {
@@ -409,6 +439,14 @@ func TestEditarBorrador_NoAuth_401(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, code)
 }
 
+func TestEditarBorrador_LeerPerm_403(t *testing.T) {
+	t.Parallel()
+	svc := buildServiceWithCopiloto(newFakeConversacionRepo(), newFakeDecisionRepo(), &fakeNotaReader{}, &copilotofake.Generator{}, &fakeClienteFactsReader{})
+	// reactivacion:leer is NOT enough — this is an operator action.
+	code, _ := doJSON(buildRouter(svc, userWith(auth.PermReactivacionLeer)), http.MethodPost, "/reactivacion/conversaciones/601/editar", map[string]string{"texto": "hola editado"})
+	assert.Equal(t, http.StatusForbidden, code)
+}
+
 func TestEditarBorrador_HappyPath_200(t *testing.T) {
 	t.Parallel()
 	convRepo := newFakeConversacionRepo()
@@ -424,7 +462,7 @@ func TestEditarBorrador_HappyPath_200(t *testing.T) {
 	factsReader := &fakeClienteFactsReader{facts: map[int]*outbound.ClienteFacts{
 		602: {Nombre: "Cliente Prueba", Segmento: "recien_liquidado", Telefono: "238 111 2222"},
 	}}
-	svc := buildServiceWithCopiloto(convRepo, decisionRepo, &fakeNotaReader{}, &copilotofake.Generator{}, factsReader)
+	svc, mensajeRepo := buildServiceWithCopilotoAndMensajeRepo(convRepo, decisionRepo, &fakeNotaReader{}, &copilotofake.Generator{}, factsReader)
 
 	code, body := doJSON(buildRouter(svc, userWith(auth.PermReactivacionAdministrar)), http.MethodPost, "/reactivacion/conversaciones/602/editar", map[string]string{"texto": "borrador editado por el operador"})
 	require.Equal(t, http.StatusOK, code)
@@ -432,6 +470,21 @@ func TestEditarBorrador_HappyPath_200(t *testing.T) {
 	var dto reactivacionhttp.OkDTO
 	require.NoError(t, json.Unmarshal(body, &dto))
 	assert.True(t, dto.Ok)
+
+	// Assert the actual persisted effect, not just the ack body: a new
+	// editado Decision was appended carrying the OPERATOR'S edited text (not
+	// the original draft), and that edited text — not the original — was
+	// queued via the canal.
+	decisiones, err := decisionRepo.ListarPorCliente(context.Background(), 602)
+	require.NoError(t, err)
+	require.Len(t, decisiones, 2, "the propuesto original plus the new editado")
+	nueva := decisiones[len(decisiones)-1]
+	assert.Equal(t, domain.ResultadoEditado, nueva.Resultado())
+	assert.Equal(t, "borrador editado por el operador", nueva.Borrador())
+
+	require.Len(t, mensajeRepo.insertados, 1, "the edited draft must be queued via the canal")
+	assert.Equal(t, 602, mensajeRepo.insertados[0].ClienteID())
+	assert.Equal(t, "borrador editado por el operador", mensajeRepo.insertados[0].Cuerpo())
 }
 
 func TestEditarBorrador_TextoVacio_422(t *testing.T) {
@@ -457,6 +510,14 @@ func TestDictar_NoAuth_401(t *testing.T) {
 	svc := buildServiceWithCopiloto(newFakeConversacionRepo(), newFakeDecisionRepo(), &fakeNotaReader{}, &copilotofake.Generator{}, &fakeClienteFactsReader{})
 	code, _ := doJSON(buildRouterNoAuth(svc), http.MethodPost, "/reactivacion/conversaciones/701/dictar", map[string]string{"intencion": "avisar promo"})
 	assert.Equal(t, http.StatusUnauthorized, code)
+}
+
+func TestDictar_LeerPerm_403(t *testing.T) {
+	t.Parallel()
+	svc := buildServiceWithCopiloto(newFakeConversacionRepo(), newFakeDecisionRepo(), &fakeNotaReader{}, &copilotofake.Generator{}, &fakeClienteFactsReader{})
+	// reactivacion:leer is NOT enough — this is an operator action.
+	code, _ := doJSON(buildRouter(svc, userWith(auth.PermReactivacionLeer)), http.MethodPost, "/reactivacion/conversaciones/701/dictar", map[string]string{"intencion": "avisar promo"})
+	assert.Equal(t, http.StatusForbidden, code)
 }
 
 func TestDictar_HappyPath_200(t *testing.T) {
@@ -493,6 +554,14 @@ func TestEscalar_NoAuth_401(t *testing.T) {
 	svc := buildServiceWithCopiloto(newFakeConversacionRepo(), newFakeDecisionRepo(), &fakeNotaReader{}, &copilotofake.Generator{}, &fakeClienteFactsReader{})
 	code, _ := doJSON(buildRouterNoAuth(svc), http.MethodPost, "/reactivacion/conversaciones/801/escalar", map[string]string{"asignado_a": "ana"})
 	assert.Equal(t, http.StatusUnauthorized, code)
+}
+
+func TestEscalar_LeerPerm_403(t *testing.T) {
+	t.Parallel()
+	svc := buildServiceWithCopiloto(newFakeConversacionRepo(), newFakeDecisionRepo(), &fakeNotaReader{}, &copilotofake.Generator{}, &fakeClienteFactsReader{})
+	// reactivacion:leer is NOT enough — this is an operator action.
+	code, _ := doJSON(buildRouter(svc, userWith(auth.PermReactivacionLeer)), http.MethodPost, "/reactivacion/conversaciones/801/escalar", map[string]string{"asignado_a": "ana"})
+	assert.Equal(t, http.StatusForbidden, code)
 }
 
 func TestEscalar_HappyPath_200(t *testing.T) {
