@@ -37,4 +37,43 @@ var (
 		"reactivacion_cohorte_fecha_invalida",
 		"la fecha de cohorte es obligatoria",
 	)
+
+	// ErrEstadoMensajeInvalido is returned when a string cannot be parsed as an
+	// EstadoMensaje.
+	ErrEstadoMensajeInvalido = apperror.NewValidation(
+		"reactivacion_estado_mensaje_invalido",
+		"el estado del mensaje no es válido",
+	)
+
+	// ErrSenderKindInvalido is returned when a string cannot be parsed as a
+	// SenderKind.
+	ErrSenderKindInvalido = apperror.NewValidation(
+		"reactivacion_sender_kind_invalido",
+		"el tipo de enviador no es válido",
+	)
+
+	// ErrMensajeClienteIDInvalido is returned when a Mensaje's clienteID <= 0.
+	ErrMensajeClienteIDInvalido = apperror.NewValidation(
+		"reactivacion_mensaje_cliente_id_invalido",
+		"el id de cliente del mensaje debe ser mayor a cero",
+	)
+
+	// ErrMensajeTelefonoRequerido is returned when a Mensaje's telefono is empty.
+	ErrMensajeTelefonoRequerido = apperror.NewValidation(
+		"reactivacion_mensaje_telefono_requerido",
+		"el teléfono del mensaje es obligatorio",
+	)
+
+	// ErrMensajeCuerpoRequerido is returned when a Mensaje's cuerpo is empty.
+	ErrMensajeCuerpoRequerido = apperror.NewValidation(
+		"reactivacion_mensaje_cuerpo_requerido",
+		"el cuerpo del mensaje es obligatorio",
+	)
+
+	// ErrMensajeTransicionInvalida is returned when MarcarEnviado is called on a
+	// Mensaje that is not in EstadoEncolado.
+	ErrMensajeTransicionInvalida = apperror.NewValidation(
+		"reactivacion_mensaje_transicion_invalida",
+		"el mensaje no puede marcarse como enviado desde su estado actual",
+	)
 )
