@@ -344,3 +344,243 @@ func (s *fakeSender) enviadoCount() int {
 // errFakeSenderRejected is the sentinel error returned for clienteIDs listed
 // in fakeSender.failClienteIDs.
 var errFakeSenderRejected = errors.New("fake sender: mensaje rechazado")
+
+// ─── fakeConversacionRepo ───────────────────────────────────────────────────
+
+// fakeConversacionRepo is an in-memory outbound.ConversacionRepo. It keeps one
+// Conversacion per clienteID and an append-only turno log per clienteID.
+type fakeConversacionRepo struct {
+	getErr          error
+	upsertErr       error
+	listarErr       error
+	appendTurnoErr  error
+	listarTurnosErr error
+
+	// listResult, when non-nil, is returned verbatim by Listar instead of the
+	// derived porCliente snapshot — lets ordering tests control input order.
+	listResult []*domain.Conversacion
+
+	mu               sync.Mutex
+	porCliente       map[int]*domain.Conversacion
+	turnosPorCliente map[int][]*domain.Turno
+	upsertCalls      []*domain.Conversacion
+}
+
+// newFakeConversacionRepo builds an empty fakeConversacionRepo ready to use.
+func newFakeConversacionRepo() *fakeConversacionRepo {
+	return &fakeConversacionRepo{
+		porCliente:       map[int]*domain.Conversacion{},
+		turnosPorCliente: map[int][]*domain.Turno{},
+	}
+}
+
+func (r *fakeConversacionRepo) Get(_ context.Context, clienteID int) (*domain.Conversacion, error) {
+	if r.getErr != nil {
+		return nil, r.getErr
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.porCliente[clienteID], nil
+}
+
+func (r *fakeConversacionRepo) Upsert(_ context.Context, c *domain.Conversacion) error {
+	if r.upsertErr != nil {
+		return r.upsertErr
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.porCliente[c.ClienteID()] = c
+	r.upsertCalls = append(r.upsertCalls, c)
+	return nil
+}
+
+func (r *fakeConversacionRepo) Listar(_ context.Context, _ outbound.ListarConversacionesParams) ([]*domain.Conversacion, error) {
+	if r.listarErr != nil {
+		return nil, r.listarErr
+	}
+	if r.listResult != nil {
+		return r.listResult, nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]*domain.Conversacion, 0, len(r.porCliente))
+	for _, c := range r.porCliente {
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+func (r *fakeConversacionRepo) AppendTurno(_ context.Context, t *domain.Turno) error {
+	if r.appendTurnoErr != nil {
+		return r.appendTurnoErr
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.turnosPorCliente[t.ClienteID()] = append(r.turnosPorCliente[t.ClienteID()], t)
+	return nil
+}
+
+func (r *fakeConversacionRepo) ListarTurnos(_ context.Context, clienteID int) ([]*domain.Turno, error) {
+	if r.listarTurnosErr != nil {
+		return nil, r.listarTurnosErr
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]*domain.Turno, len(r.turnosPorCliente[clienteID]))
+	copy(out, r.turnosPorCliente[clienteID])
+	return out, nil
+}
+
+// upsertCallsCount returns the number of Upsert invocations so far (thread-safe).
+func (r *fakeConversacionRepo) upsertCallsCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.upsertCalls)
+}
+
+// ─── fakeDecisionRepo ───────────────────────────────────────────────────────
+
+// fakeDecisionRepo is an in-memory outbound.DecisionRepo. Decisiones are
+// append-only per clienteID, matching the real repo's contract.
+type fakeDecisionRepo struct {
+	insertarErr error
+	listarErr   error
+
+	mu         sync.Mutex
+	porCliente map[int][]*domain.Decision
+}
+
+// newFakeDecisionRepo builds an empty fakeDecisionRepo ready to use.
+func newFakeDecisionRepo() *fakeDecisionRepo {
+	return &fakeDecisionRepo{porCliente: map[int][]*domain.Decision{}}
+}
+
+func (r *fakeDecisionRepo) Insertar(_ context.Context, d *domain.Decision) error {
+	if r.insertarErr != nil {
+		return r.insertarErr
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.porCliente[d.ClienteID()] = append(r.porCliente[d.ClienteID()], d)
+	return nil
+}
+
+func (r *fakeDecisionRepo) ListarPorCliente(_ context.Context, clienteID int) ([]*domain.Decision, error) {
+	if r.listarErr != nil {
+		return nil, r.listarErr
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]*domain.Decision, len(r.porCliente[clienteID]))
+	copy(out, r.porCliente[clienteID])
+	return out, nil
+}
+
+// allDecisiones returns every decision inserted so far, across all clientes
+// (thread-safe). Used by ListarConversaciones tests.
+func (r *fakeDecisionRepo) allDecisiones() []*domain.Decision {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []*domain.Decision
+	for _, ds := range r.porCliente {
+		out = append(out, ds...)
+	}
+	return out
+}
+
+// ─── fakeNotaReader ─────────────────────────────────────────────────────────
+
+// fakeNotaReader is an in-memory outbound.NotaReader.
+type fakeNotaReader struct {
+	notas map[int]string
+	err   error
+
+	calls atomic.Int32
+}
+
+func (r *fakeNotaReader) GetNotaCliente(_ context.Context, clienteID int) (string, error) {
+	r.calls.Add(1)
+	if r.err != nil {
+		return "", r.err
+	}
+	return r.notas[clienteID], nil
+}
+
+// callCount returns the number of GetNotaCliente invocations so far.
+func (r *fakeNotaReader) callCount() int { return int(r.calls.Load()) }
+
+// ─── fakeCopilotoLLM ────────────────────────────────────────────────────────
+
+// fakeCopilotoLLM is an in-memory outbound.CopilotoLLM. Every method returns a
+// preset value/error so tests can drive the deterministic policy (triar) with
+// controlled raw LLM output.
+type fakeCopilotoLLM struct {
+	analizarOut outbound.AnalizarOutput
+	analizarErr error
+
+	destilarOut outbound.NotaOutput
+	destilarErr error
+
+	redactarOut string
+	redactarErr error
+
+	analizarCalls atomic.Int32
+	destilarCalls atomic.Int32
+	redactarCalls atomic.Int32
+
+	mu             sync.Mutex
+	lastAnalizarIn outbound.AnalizarInput
+	lastDestilarIn outbound.NotaInput
+	lastRedactarIn outbound.RedactarInput
+}
+
+func (f *fakeCopilotoLLM) Analizar(_ context.Context, in outbound.AnalizarInput) (outbound.AnalizarOutput, error) {
+	f.analizarCalls.Add(1)
+	f.mu.Lock()
+	f.lastAnalizarIn = in
+	f.mu.Unlock()
+	if f.analizarErr != nil {
+		return outbound.AnalizarOutput{}, f.analizarErr
+	}
+	return f.analizarOut, nil
+}
+
+func (f *fakeCopilotoLLM) DestilarNota(_ context.Context, in outbound.NotaInput) (outbound.NotaOutput, error) {
+	f.destilarCalls.Add(1)
+	f.mu.Lock()
+	f.lastDestilarIn = in
+	f.mu.Unlock()
+	if f.destilarErr != nil {
+		return outbound.NotaOutput{}, f.destilarErr
+	}
+	return f.destilarOut, nil
+}
+
+func (f *fakeCopilotoLLM) Redactar(_ context.Context, in outbound.RedactarInput) (string, error) {
+	f.redactarCalls.Add(1)
+	f.mu.Lock()
+	f.lastRedactarIn = in
+	f.mu.Unlock()
+	if f.redactarErr != nil {
+		return "", f.redactarErr
+	}
+	return f.redactarOut, nil
+}
+
+// destilarCallCount returns the number of DestilarNota invocations so far.
+func (f *fakeCopilotoLLM) destilarCallCount() int { return int(f.destilarCalls.Load()) }
+
+// ─── fakeClienteFactsReader ─────────────────────────────────────────────────
+
+// fakeClienteFactsReader is an in-memory outbound.ClienteFactsReader.
+type fakeClienteFactsReader struct {
+	facts map[int]*outbound.ClienteFacts
+	err   error
+}
+
+func (r *fakeClienteFactsReader) GetFacts(_ context.Context, clienteID int) (*outbound.ClienteFacts, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	return r.facts[clienteID], nil
+}

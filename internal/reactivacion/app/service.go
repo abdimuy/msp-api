@@ -76,6 +76,14 @@ type Service struct {
 
 	// encolarRunning is the single-flight guard for EncolarEnSegundoPlano.
 	encolarRunning atomic.Bool
+
+	// ─── Copiloto (Fase 3a) — set via WithCopiloto; zero-valued in a Fase 1/2 Service ───
+
+	convRepo     outbound.ConversacionRepo
+	decisionRepo outbound.DecisionRepo
+	notaReader   outbound.NotaReader
+	copilotoLLM  outbound.CopilotoLLM
+	factsReader  outbound.ClienteFactsReader
 }
 
 // NewService builds a Service wired against the required ports. txMgr may be nil
@@ -122,6 +130,31 @@ func (s *Service) WithCanal(
 	s.opener = opener
 	s.gobernador = gobernador
 	s.autoSend = autoSend
+	return s
+}
+
+// WithCopiloto wires the Fase 3a copiloto dependencies onto an existing
+// Service, reusing its runInTx/clock/logger/txMgr. A Service built without
+// this (Fase 1/2) has these fields zero-valued — ProcesarMensajeEntrante,
+// AprobarBorrador, EditarYAprobar, Escalar, Dictar, ListarConversaciones, and
+// ObtenerConversacion must not be called until WithCopiloto has run.
+//
+// AprobarBorrador and EditarYAprobar additionally reuse the Fase 2
+// mensajeRepo (set via WithCanal) to enqueue the approved/edited draft —
+// production wiring must call both WithCanal and WithCopiloto on the same
+// Service. Returns s for chaining.
+func (s *Service) WithCopiloto(
+	convRepo outbound.ConversacionRepo,
+	decisionRepo outbound.DecisionRepo,
+	notaReader outbound.NotaReader,
+	copilotoLLM outbound.CopilotoLLM,
+	factsReader outbound.ClienteFactsReader,
+) *Service {
+	s.convRepo = convRepo
+	s.decisionRepo = decisionRepo
+	s.notaReader = notaReader
+	s.copilotoLLM = copilotoLLM
+	s.factsReader = factsReader
 	return s
 }
 

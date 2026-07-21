@@ -1,0 +1,134 @@
+//nolint:misspell // reactivación vocabulary is Spanish per project convention.
+package app
+
+import (
+	"strings"
+
+	"golang.org/x/text/unicode/norm"
+
+	"github.com/abdimuy/msp-api/internal/reactivacion/domain"
+	"github.com/abdimuy/msp-api/internal/reactivacion/ports/outbound"
+)
+
+// DecisionFinal is the app layer's final, deterministic call on one raw LLM
+// AnalizarOutput. It is what actually gets persisted as a domain.Decision —
+// the LLM only PROPOSES (via AnalizarOutput.Accion/RazonEscalamiento, which
+// triar never even reads); the app's policy governs.
+type DecisionFinal struct {
+	// Accion is the FINAL action: domain.AccionResponder or domain.AccionEscalar.
+	Accion domain.Accion
+	// Resultado mirrors Accion into the ResultadoDecision the Decision is
+	// created with: domain.ResultadoPropuesto when responding,
+	// domain.ResultadoEscalado when escalating.
+	Resultado domain.ResultadoDecision
+	// RazonEscalamiento explains why triar escalated. Empty when Accion is
+	// domain.AccionResponder.
+	RazonEscalamiento string
+}
+
+// responderFinal is the DecisionFinal for the "everything is fine, let the
+// draft go out" case — no signal fired.
+var responderFinal = DecisionFinal{Accion: domain.AccionResponder, Resultado: domain.ResultadoPropuesto}
+
+// escalarFinal builds the DecisionFinal for an escalation with razon.
+func escalarFinal(razon string) DecisionFinal {
+	return DecisionFinal{Accion: domain.AccionEscalar, Resultado: domain.ResultadoEscalado, RazonEscalamiento: razon}
+}
+
+// triar decides the FINAL action from the raw LLM output out. Pure and
+// deterministic — no I/O, no clock, no randomness — so it can be (and is)
+// exhaustively unit tested. This is the safety-critical function of the
+// copiloto: ANY escalation signal, plus the confidence guard and the
+// debt-figure guard, forces escalation regardless of what the LLM itself
+// proposed in out.Accion/out.RazonEscalamiento (deliberately never read here).
+//
+// Evaluated in this precedence — the first rule that fires wins the
+// RazonEscalamiento, but every rule below escalates, so precedence only
+// decides WHICH reason is recorded, never whether to escalate:
+//
+//  1. domain.SenalDeuda present            → razonDeuda.
+//  2. domain.SenalCompra present           → razonSenalCompra.
+//  3. domain.SenalPideHumano present       → razonPideHumano.
+//  4. domain.SenalEnojoLoop present        → razonEnojoLoop.
+//  5. domain.SenalFueraAllowlist present   → razonFueraAllowlist.
+//  6. domain.SenalConfianzaBaja present, OR out.Confianza < umbralConfianzaBaja
+//     → razonConfianzaBaja.
+//  7. borradorMencionaCifraDeuda(out.Borrador) → razonCifraDeuda (the
+//     draft itself leaks a debt figure, independent of any Senal).
+//  8. Any raw signal string that is not a recognized domain.Senal
+//     → razonFueraAllowlist (unknown is treated as suspicious, never ignored).
+//  9. None of the above → responderFinal (propose the draft as-is).
+func triar(out outbound.AnalizarOutput) DecisionFinal {
+	senales, tieneSenalDesconocida := clasificarSenales(out.Senales)
+
+	switch {
+	case senales[domain.SenalDeuda]:
+		return escalarFinal(razonDeuda)
+	case senales[domain.SenalCompra]:
+		return escalarFinal(razonSenalCompra)
+	case senales[domain.SenalPideHumano]:
+		return escalarFinal(razonPideHumano)
+	case senales[domain.SenalEnojoLoop]:
+		return escalarFinal(razonEnojoLoop)
+	case senales[domain.SenalFueraAllowlist]:
+		return escalarFinal(razonFueraAllowlist)
+	case senales[domain.SenalConfianzaBaja] || out.Confianza < umbralConfianzaBaja:
+		return escalarFinal(razonConfianzaBaja)
+	case borradorMencionaCifraDeuda(out.Borrador):
+		return escalarFinal(razonCifraDeuda)
+	case tieneSenalDesconocida:
+		return escalarFinal(razonFueraAllowlist)
+	default:
+		return responderFinal
+	}
+}
+
+// clasificarSenales splits raw LLM signal strings into the set of recognized
+// domain.Senal values present, plus whether any raw string was NOT a
+// recognized value (unknown signals are suspicious by default — see triar
+// rule 8).
+func clasificarSenales(raw []string) (map[domain.Senal]bool, bool) {
+	senales := make(map[domain.Senal]bool, len(raw))
+	tieneDesconocida := false
+	for _, s := range raw {
+		senal := domain.Senal(s)
+		if !senal.Valido() {
+			tieneDesconocida = true
+			continue
+		}
+		senales[senal] = true
+	}
+	return senales, tieneDesconocida
+}
+
+// borradorMencionaCifraDeuda reports whether borrador states a debt figure —
+// a debtKeywords hit CO-OCCURRING with a numeric or "$" token. A bare monetary
+// figure alone is NOT enough: new-purchase amounts (enganche/parcialidad) are
+// explicitly allowed by the allowlist, so "$300 de enganche" must not trip
+// this guard, but "debe $300" must.
+func borradorMencionaCifraDeuda(borrador string) bool {
+	if borrador == "" {
+		return false
+	}
+	normalizado := normalizarTexto(borrador)
+
+	tieneKeyword := false
+	for _, kw := range debtKeywords {
+		if strings.Contains(normalizado, kw) {
+			tieneKeyword = true
+			break
+		}
+	}
+	if !tieneKeyword {
+		return false
+	}
+
+	return strings.ContainsAny(borrador, "0123456789$")
+}
+
+// normalizarTexto lowercases and NFC-normalizes s for stable keyword matching
+// regardless of accent composition — calques the pattern in
+// internal/analytics/app/narrativa_validate.go.
+func normalizarTexto(s string) string {
+	return strings.ToLower(norm.NFC.String(s))
+}
