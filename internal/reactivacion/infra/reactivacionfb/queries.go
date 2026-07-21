@@ -141,3 +141,103 @@ FROM MSP_RX_COHORTE`
 const selectControlFlags = `SELECT CLIENTE_ID, EN_CONTROL FROM MSP_RX_COHORTE`
 
 const selectContactadoFlags = `SELECT CLIENTE_ID, FUE_CONTACTADO FROM MSP_RX_COHORTE`
+
+// selectClienteFacts reads the copiloto-relevant snapshot fields off
+// MSP_RX_COHORTE for outbound.ClienteFactsReader. Column order must match
+// Repo.GetFacts' Scan call exactly.
+const selectClienteFacts = `SELECT NOMBRE, SEGMENTO, TELEFONO FROM MSP_RX_COHORTE WHERE CLIENTE_ID = ?`
+
+// ─── MSP_RX_CONVERSACION queries ────────────────────────────────────────────────
+
+// conversacionCols is the canonical SELECT column list for MSP_RX_CONVERSACION.
+// The order must match conversacionRowRaw.scanFrom exactly.
+const conversacionCols = `
+	ID,
+	CLIENTE_ID,
+	ESTADO,
+	ASIGNADO_A,
+	RESUMEN_MEMORIA,
+	CONTEXTO_NOTA,
+	BANDERAS,
+	NOTA_HASH,
+	CREATED_AT,
+	UPDATED_AT`
+
+const selectConversacionBase = `SELECT` + conversacionCols + `
+FROM MSP_RX_CONVERSACION`
+
+const selectConversacionByCliente = selectConversacionBase + ` WHERE CLIENTE_ID = ?`
+
+// updateConversacion updates every mutable column matched by CLIENTE_ID. Used
+// as the first half of ConversacionRepo.Upsert's UPDATE-then-INSERT sequence
+// (never MERGE — see mensaje_repo.go's EXECUTE BLOCK comment for the driver's
+// -804 param-binding bug inside MERGE's USING clause).
+const updateConversacion = `
+	UPDATE MSP_RX_CONVERSACION SET
+		ESTADO = ?, ASIGNADO_A = ?, RESUMEN_MEMORIA = ?, CONTEXTO_NOTA = ?,
+		BANDERAS = ?, NOTA_HASH = ?, UPDATED_AT = ?
+	WHERE CLIENTE_ID = ?`
+
+const insertConversacion = `
+	INSERT INTO MSP_RX_CONVERSACION
+		(ID, CLIENTE_ID, ESTADO, ASIGNADO_A, RESUMEN_MEMORIA, CONTEXTO_NOTA,
+		 BANDERAS, NOTA_HASH, CREATED_AT, UPDATED_AT)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+// ─── MSP_RX_TURNO queries ────────────────────────────────────────────────────────
+
+// turnoCols is the canonical SELECT column list for MSP_RX_TURNO. The order
+// must match turnoRowRaw.scanFrom exactly.
+const turnoCols = `
+	ID,
+	CLIENTE_ID,
+	DIRECCION,
+	AUTOR,
+	CUERPO,
+	MENSAJE_REF,
+	CREATED_AT`
+
+const selectTurnoBase = `SELECT` + turnoCols + `
+FROM MSP_RX_TURNO`
+
+// selectTurnosByCliente orders ascending (chronological) per
+// outbound.ConversacionRepo.ListarTurnos' documented contract — the app
+// relies on this order to replay the conversation.
+const selectTurnosByCliente = selectTurnoBase + ` WHERE CLIENTE_ID = ? ORDER BY CREATED_AT`
+
+const insertTurno = `
+	INSERT INTO MSP_RX_TURNO
+		(ID, CLIENTE_ID, DIRECCION, AUTOR, CUERPO, MENSAJE_REF, CREATED_AT)
+	VALUES (?, ?, ?, ?, ?, ?, ?)`
+
+// ─── MSP_RX_DECISION queries ─────────────────────────────────────────────────────
+
+// decisionCols is the canonical SELECT column list for MSP_RX_DECISION. The
+// order must match decisionRowRaw.scanFrom exactly.
+const decisionCols = `
+	ID,
+	CLIENTE_ID,
+	TURNO_REF,
+	INTENCION,
+	CONFIANZA,
+	SENALES,
+	ACCION_PROPUESTA,
+	BORRADOR,
+	EVIDENCIA,
+	RAZON_ESCALAMIENTO,
+	RESULTADO,
+	CREATED_AT`
+
+const selectDecisionBase = `SELECT` + decisionCols + `
+FROM MSP_RX_DECISION`
+
+// selectDecisionesByCliente orders ascending (chronological) per
+// outbound.DecisionRepo.ListarPorCliente's documented contract — the app
+// treats the LAST element as the newest decision.
+const selectDecisionesByCliente = selectDecisionBase + ` WHERE CLIENTE_ID = ? ORDER BY CREATED_AT`
+
+const insertDecision = `
+	INSERT INTO MSP_RX_DECISION
+		(ID, CLIENTE_ID, TURNO_REF, INTENCION, CONFIANZA, SENALES,
+		 ACCION_PROPUESTA, BORRADOR, EVIDENCIA, RAZON_ESCALAMIENTO, RESULTADO, CREATED_AT)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`

@@ -256,6 +256,203 @@ func assembleMensaje(r *mensajeRowRaw) (*domain.Mensaje, error) {
 	}), nil
 }
 
+// ─── Conversacion row mapper ───────────────────────────────────────────────────
+
+// conversacionRowRaw is the intermediate scan target for one MSP_RX_CONVERSACION
+// row. The table is CHARACTER SET UTF8/ASCII — plain string / sql.NullString is
+// the correct scan target. Column order must match conversacionCols exactly.
+// ID is scanned as a plain string (not uuid.UUID): domain.Conversacion.id is a
+// bare string, unlike CohorteCliente.id.
+type conversacionRowRaw struct {
+	idRaw          string
+	clienteID      int
+	estado         string
+	asignadoA      sql.NullString
+	resumenMemoria sql.NullString
+	contextoNota   sql.NullString
+	banderas       sql.NullString
+	notaHash       sql.NullString
+	createdAtRaw   any // TIMESTAMP NOT NULL
+	updatedAtRaw   any // TIMESTAMP NOT NULL
+}
+
+func (r *conversacionRowRaw) scanFrom(s rowScanner) error {
+	return s.Scan(
+		&r.idRaw,
+		&r.clienteID,
+		&r.estado,
+		&r.asignadoA,
+		&r.resumenMemoria,
+		&r.contextoNota,
+		&r.banderas,
+		&r.notaHash,
+		&r.createdAtRaw,
+		&r.updatedAtRaw,
+	)
+}
+
+func assembleConversacion(r *conversacionRowRaw) (*domain.Conversacion, error) {
+	estado, err := domain.ParseEstadoConversacion(r.estado)
+	if err != nil {
+		return nil, err
+	}
+	banderas, err := scanJSONSlice(r.banderas)
+	if err != nil {
+		return nil, err
+	}
+	createdAt, err := firebird.ScanUTCTime(r.createdAtRaw)
+	if err != nil {
+		return nil, err
+	}
+	updatedAt, err := firebird.ScanUTCTime(r.updatedAtRaw)
+	if err != nil {
+		return nil, err
+	}
+	return domain.HydrateConversacion(domain.HydrateConversacionParams{
+		ID:             r.idRaw,
+		ClienteID:      r.clienteID,
+		Estado:         estado,
+		AsignadoA:      nullStringVal(r.asignadoA),
+		ResumenMemoria: nullStringVal(r.resumenMemoria),
+		ContextoNota:   nullStringVal(r.contextoNota),
+		Banderas:       banderas,
+		NotaHash:       nullStringVal(r.notaHash),
+		CreatedAt:      createdAt,
+		UpdatedAt:      updatedAt,
+	}), nil
+}
+
+// ─── Turno row mapper ──────────────────────────────────────────────────────────
+
+// turnoRowRaw is the intermediate scan target for one MSP_RX_TURNO row. Column
+// order must match turnoCols exactly. ID is a plain string, matching
+// domain.Turno.id.
+type turnoRowRaw struct {
+	idRaw        string
+	clienteID    int
+	direccion    string
+	autor        string
+	cuerpo       sql.NullString // BLOB SUB_TYPE TEXT
+	mensajeRef   sql.NullString
+	createdAtRaw any // TIMESTAMP NOT NULL
+}
+
+func (r *turnoRowRaw) scanFrom(s rowScanner) error {
+	return s.Scan(
+		&r.idRaw,
+		&r.clienteID,
+		&r.direccion,
+		&r.autor,
+		&r.cuerpo,
+		&r.mensajeRef,
+		&r.createdAtRaw,
+	)
+}
+
+func assembleTurno(r *turnoRowRaw) (*domain.Turno, error) {
+	direccion, err := domain.ParseDireccionTurno(r.direccion)
+	if err != nil {
+		return nil, err
+	}
+	autor, err := domain.ParseAutor(r.autor)
+	if err != nil {
+		return nil, err
+	}
+	createdAt, err := firebird.ScanUTCTime(r.createdAtRaw)
+	if err != nil {
+		return nil, err
+	}
+	return domain.HydrateTurno(domain.HydrateTurnoParams{
+		ID:         r.idRaw,
+		ClienteID:  r.clienteID,
+		Direccion:  direccion,
+		Autor:      autor,
+		Cuerpo:     nullStringVal(r.cuerpo),
+		MensajeRef: nullStringVal(r.mensajeRef),
+		CreatedAt:  createdAt,
+	}), nil
+}
+
+// ─── Decision row mapper ───────────────────────────────────────────────────────
+
+// decisionRowRaw is the intermediate scan target for one MSP_RX_DECISION row.
+// Column order must match decisionCols exactly. ID is a plain string, matching
+// domain.Decision.id. TURNO_REF/INTENCION/ACCION_PROPUESTA/BORRADOR/
+// RAZON_ESCALAMIENTO/RESULTADO/CONFIANZA are all nullable per the migration
+// (even though Insertar always populates them for a valid domain.Decision).
+type decisionRowRaw struct {
+	idRaw             string
+	clienteID         int
+	turnoRef          sql.NullString
+	intencion         sql.NullString
+	confianza         sql.NullInt16
+	senales           sql.NullString
+	accionPropuesta   sql.NullString
+	borrador          sql.NullString
+	evidencia         sql.NullString
+	razonEscalamiento sql.NullString
+	resultado         sql.NullString
+	createdAtRaw      any // TIMESTAMP NOT NULL
+}
+
+func (r *decisionRowRaw) scanFrom(s rowScanner) error {
+	return s.Scan(
+		&r.idRaw,
+		&r.clienteID,
+		&r.turnoRef,
+		&r.intencion,
+		&r.confianza,
+		&r.senales,
+		&r.accionPropuesta,
+		&r.borrador,
+		&r.evidencia,
+		&r.razonEscalamiento,
+		&r.resultado,
+		&r.createdAtRaw,
+	)
+}
+
+func assembleDecision(r *decisionRowRaw) (*domain.Decision, error) {
+	senales, err := scanJSONSlice(r.senales)
+	if err != nil {
+		return nil, err
+	}
+	evidencia, err := scanJSONSlice(r.evidencia)
+	if err != nil {
+		return nil, err
+	}
+	accion, err := domain.ParseAccion(nullStringVal(r.accionPropuesta))
+	if err != nil {
+		return nil, err
+	}
+	resultado, err := domain.ParseResultadoDecision(nullStringVal(r.resultado))
+	if err != nil {
+		return nil, err
+	}
+	createdAt, err := firebird.ScanUTCTime(r.createdAtRaw)
+	if err != nil {
+		return nil, err
+	}
+	confianza := 0
+	if r.confianza.Valid {
+		confianza = int(r.confianza.Int16)
+	}
+	return domain.HydrateDecision(domain.HydrateDecisionParams{
+		ID:                r.idRaw,
+		ClienteID:         r.clienteID,
+		TurnoRef:          nullStringVal(r.turnoRef),
+		Intencion:         nullStringVal(r.intencion),
+		Confianza:         confianza,
+		Senales:           senales,
+		AccionPropuesta:   accion,
+		Borrador:          nullStringVal(r.borrador),
+		Evidencia:         evidencia,
+		RazonEscalamiento: nullStringVal(r.razonEscalamiento),
+		Resultado:         resultado,
+		CreatedAt:         createdAt,
+	}), nil
+}
+
 // ─── Shared helpers ────────────────────────────────────────────────────────────
 
 // parseUUIDColumn converts a CHAR(36) column string to a uuid.UUID.

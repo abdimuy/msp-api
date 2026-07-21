@@ -26,10 +26,19 @@ func NewRepo(pool *firebird.Pool) *Repo {
 	return &Repo{pool: pool}
 }
 
-// Compile-time checks: Repo must satisfy both outbound interfaces.
+// Compile-time checks: Repo must satisfy every outbound interface it
+// implements. MensajeRepo/NotaReader/ClienteFactsReader are asserted again
+// in their own files (mensaje_repo.go, nota_repo.go, cliente_facts_repo.go)
+// — repeating the assertion next to each file's methods makes each file
+// independently self-checking.
+//
+// ConversacionRepo and DecisionRepo are NOT implemented by Repo — see
+// CopilotoRepo in copiloto_repo.go for why they live on a separate struct.
 var (
-	_ outbound.CohorteRepo    = (*Repo)(nil)
-	_ outbound.UniversoReader = (*Repo)(nil)
+	_ outbound.CohorteRepo        = (*Repo)(nil)
+	_ outbound.UniversoReader     = (*Repo)(nil)
+	_ outbound.NotaReader         = (*Repo)(nil)
+	_ outbound.ClienteFactsReader = (*Repo)(nil)
 )
 
 // ─── UniversoReader ─────────────────────────────────────────────────────────────
@@ -235,6 +244,8 @@ func nullableWallClockArg(t *time.Time) any {
 // ─── CohorteRepo — reads ─────────────────────────────────────────────────────────
 
 // ListarCohorte returns cohorte rows matching p, ordered by CLIENTE_ID ASC.
+//
+//nolint:dupl // structurally mirrors CopilotoRepo.Listar; differs in query + row type + return type — abstraction not worth it
 func (r *Repo) ListarCohorte(ctx context.Context, p outbound.ListarCohorteParams) ([]*domain.CohorteCliente, error) {
 	where, args := buildCohorteWhere(p)
 	var result []*domain.CohorteCliente
