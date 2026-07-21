@@ -69,3 +69,65 @@ type ConstruirOutput struct {
 		Mensaje string `json:"mensaje" doc:"Descripción legible del estado de la construcción"`
 	}
 }
+
+// ─── POST /reactivacion/envios/encolar ──────────────────────────────────────
+
+// EncolarInput has no body — the encolado reads the cohorte de tratamiento.
+type EncolarInput struct{}
+
+// EncolarOutput wraps the 202 response body for POST /reactivacion/envios/encolar.
+type EncolarOutput struct {
+	Body struct {
+		Status  string `json:"status"  doc:"aceptado o en_progreso"`
+		Mensaje string `json:"mensaje" doc:"Descripción legible del estado del encolado"`
+	}
+}
+
+// ─── POST /reactivacion/envios/drenar ───────────────────────────────────────
+
+// DrenarInput has no body — the batch size is a fixed server-side default.
+type DrenarInput struct{}
+
+// DrenarOutput wraps the response body for POST /reactivacion/envios/drenar.
+type DrenarOutput struct {
+	Body DrenarResultDTO
+}
+
+// DrenarResultDTO is the wire representation of one drain batch's outcome.
+type DrenarResultDTO struct {
+	Enviados   int `json:"enviados"   doc:"Mensajes enviados en esta tanda"`
+	Fallidos   int `json:"fallidos"   doc:"Mensajes que el enviador rechazó"`
+	Bloqueados int `json:"bloqueados" doc:"Mensajes pausados por el circuit-breaker del gobernador"`
+	Saltados   int `json:"saltados"   doc:"Mensajes pendientes que no se procesaron esta tanda"`
+}
+
+// ─── GET /reactivacion/envios ────────────────────────────────────────────────
+
+// ListEnviosInput carries the optional query filters for the mensajes listing.
+type ListEnviosInput struct {
+	Estado   string `query:"estado"   doc:"Filtra por estado: encolado, enviado, fallido o bloqueado. Vacío = todos."`
+	Segmento string `query:"segmento" doc:"Filtra por segmento: recien_liquidado o por_liquidar_hueco. Vacío = todos."`
+	Limit    int    `query:"limit"    doc:"Máximo de filas a devolver. 0 = sin límite explícito."`
+}
+
+// ListEnviosOutput wraps the response body for GET /reactivacion/envios.
+type ListEnviosOutput struct {
+	Body struct {
+		Items []MensajeDTO `json:"items"`
+	}
+}
+
+// MensajeDTO is the wire representation of one MSP_RX_MENSAJES row. Dates are
+// RFC3339 UTC; enviado_en and error are nullable — absent until the mensaje
+// is sent (or fails).
+type MensajeDTO struct {
+	ClienteID  int     `json:"cliente_id"           doc:"ID del cliente en Microsip"`
+	Segmento   string  `json:"segmento"             doc:"recien_liquidado o por_liquidar_hueco"`
+	Telefono   string  `json:"telefono"             doc:"Teléfono destino"`
+	Cuerpo     string  `json:"cuerpo"               doc:"Cuerpo del mensaje"`
+	Estado     string  `json:"estado"               doc:"encolado, enviado, fallido o bloqueado"`
+	SenderKind string  `json:"sender_kind"          doc:"simulado o real; vacío hasta que se envía"`
+	EncoladoEn string  `json:"encolado_en"          doc:"Fecha de encolado (RFC3339 UTC)"`
+	EnviadoEn  *string `json:"enviado_en,omitempty" doc:"Fecha de envío (RFC3339 UTC). Nulo hasta que se envía."`
+	Error      *string `json:"error,omitempty"      doc:"Motivo de fallido/bloqueado. Nulo en otro caso."`
+}

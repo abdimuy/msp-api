@@ -84,4 +84,35 @@ func registerOperations(api huma.API, h *Handlers) {
 		Security:      security,
 		DefaultStatus: http.StatusAccepted,
 	}, h.Construir)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "encolar-envios-reactivacion",
+		Method:        http.MethodPost,
+		Path:          "/reactivacion/envios/encolar",
+		Summary:       "Encolar los mensajes de apertura del canal",
+		Description:   "Genera y encola el mensaje de apertura (MSP_RX_MENSAJES) para cada cliente de la cohorte de tratamiento que aún no tiene mensaje, en segundo plano. Idempotente.",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusAccepted,
+	}, h.Encolar)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "drenar-envios-reactivacion",
+		Method:      http.MethodPost,
+		Path:        "/reactivacion/envios/drenar",
+		Summary:     "Drenar una tanda de la cola de envíos",
+		Description: "Procesa hasta el tope de la tanda de mensajes pendientes respetando el gobernador anti-baneo y el flag auto_send. Útil para demo/operación manual — el EnvioWorker automático corre esta misma lógica en el ciclo de vida de la app.",
+		Tags:        tags,
+		Security:    security,
+	}, h.Drenar)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "listar-envios-reactivacion",
+		Method:      http.MethodGet,
+		Path:        "/reactivacion/envios",
+		Summary:     "Listar los mensajes del canal de reactivación",
+		Description: "Devuelve los mensajes de MSP_RX_MENSAJES, filtrables por estado y segmento, para inspeccionar el flujo del canal.",
+		Tags:        tags,
+		Security:    security,
+	}, h.ListEnvios)
 }
