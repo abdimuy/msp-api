@@ -17,17 +17,30 @@ const razonEscaladoPorOperador = "escalado por el operador"
 // Decisiones are an append-only audit log: every operator action below
 // APPENDS a new Decision row, never mutates an existing one.
 
-// newestDecisionPorClienteID returns the decision with the latest CreatedAt
-// among decisiones, or nil when decisiones is empty. Defensive against a
-// repository that does not (or cannot be trusted to) return rows in
-// CreatedAt order.
+// newestDecisionPorClienteID returns the "newest" decision among decisiones,
+// or nil when decisiones is empty.
+//
+// Contract: decisiones is assumed to already be in ascending CreatedAt/
+// insertion order, per DecisionRepo.ListarPorCliente's documented contract
+// ("ordered by CreatedAt ascending") — so "newest" means the LAST element.
+//
+// On a CreatedAt TIE (legacy Firebird's TIMESTAMP has second-level
+// resolution, so two decisions written moments apart in the same operator
+// action — e.g. a propuesto immediately followed by its aprobado — can share
+// a wall-clock value), the scan must resolve the tie by keeping the
+// LATER-in-the-list element, i.e. the LAST-inserted among the tied rows.
+// This is why the comparison below is "!Before" (later-OR-EQUAL wins) rather
+// than a strict "After": a strict After would keep the FIRST element of a
+// tied group, silently resurrecting an already-superseded propuesto and
+// breaking AprobarBorrador/EditarYAprobar's idempotency guarantee (a second
+// approve would find that stale propuesto and re-enqueue the message).
 func newestDecisionPorClienteID(decisiones []*domain.Decision) *domain.Decision {
 	if len(decisiones) == 0 {
 		return nil
 	}
 	newest := decisiones[0]
 	for _, d := range decisiones[1:] {
-		if d.CreatedAt().After(newest.CreatedAt()) {
+		if !d.CreatedAt().Before(newest.CreatedAt()) {
 			newest = d
 		}
 	}

@@ -87,6 +87,36 @@ func TestAprobarBorrador_Idempotent_SecondCallIsNoOp(t *testing.T) {
 	assert.Equal(t, 1, deps.mensajeRepo.insertadosCount(), "second approve must NOT re-enqueue")
 }
 
+func TestAprobarBorrador_Idempotent_TiedCreatedAt_SecondCallIsStillNoOp(t *testing.T) {
+	t.Parallel()
+	// Regression test for the tie-break bug: seed the pending draft at EXACTLY
+	// the service clock's fixed "now", so the aprobado decision AprobarBorrador
+	// appends shares an IDENTICAL CreatedAt with the propuesto it supersedes —
+	// reproducing legacy Firebird's second-resolution TIMESTAMP colliding on
+	// two decisions written moments apart in the same operator action. Before
+	// the fix, newestDecisionPorClienteID's strict ".After()" scan returned the
+	// FIRST (propuesto) of the tied pair, so a 2nd AprobarBorrador would find a
+	// "pending draft" again and re-enqueue the message.
+	deps := newCopilotoDeps()
+	seedPendingDraft(deps, accionesClienteID, "borrador original", accionesNow)
+	deps.factsReader.facts = map[int]*outbound.ClienteFacts{
+		accionesClienteID: factsFor("Juan Pérez", "recien_liquidado", "238 111 2222"),
+	}
+	svc := newCopilotoService(deps, accionesNow)
+
+	require.NoError(t, svc.AprobarBorrador(context.Background(), accionesClienteID))
+	assert.Equal(t, 1, deps.mensajeRepo.insertadosCount())
+
+	decisiones, err := deps.decisionRepo.ListarPorCliente(context.Background(), accionesClienteID)
+	require.NoError(t, err)
+	require.Len(t, decisiones, 2)
+	require.True(t, decisiones[0].CreatedAt().Equal(decisiones[1].CreatedAt()), "test setup must produce a genuine CreatedAt tie")
+
+	err = svc.AprobarBorrador(context.Background(), accionesClienteID)
+	require.ErrorIs(t, err, app.ErrNoHayBorradorPendiente)
+	assert.Equal(t, 1, deps.mensajeRepo.insertadosCount(), "second approve must NOT re-enqueue, even with a tied CreatedAt")
+}
+
 func TestAprobarBorrador_DecisionListError_Fails(t *testing.T) {
 	t.Parallel()
 	deps := newCopilotoDeps()

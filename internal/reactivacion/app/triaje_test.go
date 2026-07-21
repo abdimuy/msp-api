@@ -96,6 +96,12 @@ func TestTriar_DebtFigureGuard_KeywordAndFigure_Escala(t *testing.T) {
 		"Todavía debe 500 pesos.",
 		"Le resta abonar $300 de su adeudo.",
 		"Su deuda asciende a 2000.",
+		"Tiene un pago vencido de $500.",
+		"Está atrasado con $500 de su cuenta.",
+		"El cliente aparece como moroso por $500.",
+		"Le quedan $500 por cubrir.",
+		"Tiene un abono pendiente de $500.",
+		"Esto es lo que resta: $500.",
 	}
 	for _, borrador := range cases {
 		t.Run(borrador, func(t *testing.T) {
@@ -128,6 +134,18 @@ func TestTriar_DebtFigureGuard_FigureOnlyNoKeyword_NoEscala(t *testing.T) {
 	out := cleanOutput()
 	out.Senales = nil
 	out.Borrador = "$300 de enganche y el resto en 3 parcialidades de $150."
+	df := triar(out)
+	assert.Equal(t, domain.AccionResponder, df.Accion)
+}
+
+func TestTriar_DebtFigureGuard_PrestamoWordCollision_NoEscala(t *testing.T) {
+	t.Parallel()
+	// Whole-word matching regression: "resta" must NOT match embedded inside
+	// "préstamo" (a loan OFFER, not a debt) — a naive substring scan would
+	// false-positive here.
+	out := cleanOutput()
+	out.Senales = nil
+	out.Borrador = "$5000 de préstamo"
 	df := triar(out)
 	assert.Equal(t, domain.AccionResponder, df.Accion)
 }
@@ -222,4 +240,44 @@ func TestBorradorMencionaCifraDeuda_CaseAndAccentInsensitive(t *testing.T) {
 func TestBorradorMencionaCifraDeuda_EmptyBorrador(t *testing.T) {
 	t.Parallel()
 	assert.False(t, borradorMencionaCifraDeuda(""))
+}
+
+func TestBorradorMencionaCifraDeuda_WholeWordVsSubstringCollision(t *testing.T) {
+	t.Parallel()
+	// "resta" must not match embedded mid-word inside "préstamo"/"prestamo" — a
+	// loan OFFER, not a debt. Whole-word (\b-bounded) matching fixes what a
+	// naive strings.Contains scan would false-positive on.
+	assert.False(t, borradorMencionaCifraDeuda("$5000 de préstamo"))
+	assert.False(t, borradorMencionaCifraDeuda("$5000 de prestamo"))
+	// But the standalone word "resta" (and "restante") must still match.
+	assert.True(t, borradorMencionaCifraDeuda("esto es lo que resta: $500"))
+	assert.True(t, borradorMencionaCifraDeuda("el monto restante es $500"))
+}
+
+func TestBorradorMencionaCifraDeuda_ExpandedKeywords(t *testing.T) {
+	t.Parallel()
+	cases := map[string]bool{
+		"tiene un pago vencido de $500":    true,
+		"está atrasado con $500":           true,
+		"lleva un atraso de $500":          true,
+		"aparece como moroso por $500":     true,
+		"le quedan $500 por cubrir":        true,
+		"tiene un abono pendiente de $500": true,
+		"esto es lo que resta: $500":       true,
+		"saldo pendiente de $300":          true,
+		"$300 de enganche":                 false,
+		"$5000 de préstamo":                false,
+	}
+	for borrador, want := range cases {
+		t.Run(borrador, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, want, borradorMencionaCifraDeuda(borrador))
+		})
+	}
+}
+
+func TestDebtKeywordPatterns_CompiledOnePerKeyword(t *testing.T) {
+	t.Parallel()
+	// Guards against debtKeywords/debtKeywordPatterns drifting out of sync.
+	assert.Len(t, debtKeywordPatterns, len(debtKeywords))
 }

@@ -2,6 +2,7 @@
 package app
 
 import (
+	"regexp"
 	"strings"
 
 	"golang.org/x/text/unicode/norm"
@@ -101,11 +102,30 @@ func clasificarSenales(raw []string) (map[domain.Senal]bool, bool) {
 	return senales, tieneDesconocida
 }
 
+// debtKeywordPatterns compiles debtKeywords once into WHOLE-WORD/PHRASE
+// regexes (\b-bounded) matched against normalizarTexto's output. Whole-word
+// matching avoids the substring-collision false positive a plain
+// strings.Contains scan would produce — e.g. the single-word keyword "resta"
+// must NOT match inside "prestamo" ("préstamo", a loan OFFER, not a debt);
+// \b requires a word boundary on both sides of the match, which "resta"
+// embedded mid-word in "prestamo" does not have. Multi-word keywords (e.g.
+// "lo que resta") match as a \b-bounded phrase, spaces included literally.
+var debtKeywordPatterns = compileDebtKeywordPatterns()
+
+// compileDebtKeywordPatterns builds debtKeywordPatterns from debtKeywords.
+func compileDebtKeywordPatterns() []*regexp.Regexp {
+	patterns := make([]*regexp.Regexp, len(debtKeywords))
+	for i, kw := range debtKeywords {
+		patterns[i] = regexp.MustCompile(`\b` + regexp.QuoteMeta(normalizarTexto(kw)) + `\b`)
+	}
+	return patterns
+}
+
 // borradorMencionaCifraDeuda reports whether borrador states a debt figure —
-// a debtKeywords hit CO-OCCURRING with a numeric or "$" token. A bare monetary
-// figure alone is NOT enough: new-purchase amounts (enganche/parcialidad) are
-// explicitly allowed by the allowlist, so "$300 de enganche" must not trip
-// this guard, but "debe $300" must.
+// a debtKeywords WHOLE-WORD hit CO-OCCURRING with a numeric or "$" token. A
+// bare monetary figure alone is NOT enough: new-purchase amounts (enganche/
+// parcialidad) are explicitly allowed by the allowlist, so "$300 de
+// enganche" must not trip this guard, but "debe $300" must.
 func borradorMencionaCifraDeuda(borrador string) bool {
 	if borrador == "" {
 		return false
@@ -113,8 +133,8 @@ func borradorMencionaCifraDeuda(borrador string) bool {
 	normalizado := normalizarTexto(borrador)
 
 	tieneKeyword := false
-	for _, kw := range debtKeywords {
-		if strings.Contains(normalizado, kw) {
+	for _, pattern := range debtKeywordPatterns {
+		if pattern.MatchString(normalizado) {
 			tieneKeyword = true
 			break
 		}

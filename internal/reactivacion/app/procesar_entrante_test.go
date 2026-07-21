@@ -370,4 +370,16 @@ func TestProcesarMensajeEntrante_AlreadyEscalado_InboundStillRecordedNoConversan
 	conv, err := deps.convRepo.Get(context.Background(), procesarClienteID)
 	require.NoError(t, err)
 	assert.Equal(t, domain.EstadoEscalado, conv.Estado(), "must stay escalado, not regress to conversando")
+
+	// By design: a human owns the conversation (estado stays escalado above),
+	// but a clean triar "responder" read still produces a PENDING draft turno
+	// for that human to review/approve — the estado ownership and the
+	// draft-generation are independent concerns.
+	assert.Equal(t, "todo bien", res.Borrador, "a pending draft must still be produced even though a human owns the conversation")
+	turnos, err := deps.convRepo.ListarTurnos(context.Background(), procesarClienteID)
+	require.NoError(t, err)
+	require.Len(t, turnos, 2, "entrante turno + PENDING saliente draft turno, even though conv is already escalado")
+	assert.Equal(t, domain.DireccionSaliente, turnos[1].Direccion())
+	assert.Equal(t, domain.AutorIA, turnos[1].Autor())
+	assert.Equal(t, "todo bien", turnos[1].Cuerpo())
 }

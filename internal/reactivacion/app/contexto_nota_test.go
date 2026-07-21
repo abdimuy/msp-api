@@ -76,7 +76,7 @@ func TestAsegurarContextoNota_EmptyNota_NoOp(t *testing.T) {
 	svc := newContextoNotaService(internalNotaReader{nota: ""}, llm)
 	conv := newTestConversacion(t)
 
-	svc.asegurarContextoNota(context.Background(), conv, "Juan Pérez", "recien_liquidado")
+	svc.asegurarContextoNota(context.Background(), conv, "Juan Pérez", "recien_liquidado", contextoNotaNow)
 	assert.Empty(t, conv.ContextoNota())
 	assert.Empty(t, conv.NotaHash())
 	assert.Zero(t, llm.destilarCalls)
@@ -92,7 +92,7 @@ func TestAsegurarContextoNota_DistillsOnce_ThenCacheHits(t *testing.T) {
 	svc := newContextoNotaService(notaReader, llm)
 	conv := newTestConversacion(t)
 
-	svc.asegurarContextoNota(context.Background(), conv, "Juan Pérez", "recien_liquidado")
+	svc.asegurarContextoNota(context.Background(), conv, "Juan Pérez", "recien_liquidado", contextoNotaNow)
 	assert.Equal(t, "cliente prefiere pagos los viernes", conv.ContextoNota())
 	assert.Equal(t, []string{"prefiere_viernes"}, conv.Banderas())
 	assert.NotEmpty(t, conv.NotaHash())
@@ -102,7 +102,7 @@ func TestAsegurarContextoNota_DistillsOnce_ThenCacheHits(t *testing.T) {
 
 	// Second call with the SAME nota (identical hash) must be a cache hit — no
 	// second DestilarNota call, and the cached contexto/banderas are untouched.
-	svc.asegurarContextoNota(context.Background(), conv, "Juan Pérez", "recien_liquidado")
+	svc.asegurarContextoNota(context.Background(), conv, "Juan Pérez", "recien_liquidado", contextoNotaNow)
 	assert.Equal(t, 1, llm.destilarCalls, "cache hit must not call DestilarNota again")
 	assert.Equal(t, hashAfterFirst, conv.NotaHash())
 }
@@ -114,13 +114,13 @@ func TestAsegurarContextoNota_NotaChanged_RedistillsAndUpdatesHash(t *testing.T)
 	svc := newContextoNotaService(notaReader, llm)
 	conv := newTestConversacion(t)
 
-	svc.asegurarContextoNota(context.Background(), conv, "", "")
+	svc.asegurarContextoNota(context.Background(), conv, "", "", contextoNotaNow)
 	firstHash := conv.NotaHash()
 
 	llm.destilarOut = outbound.NotaOutput{Contexto: "segunda destilación"}
 	svc.notaReader = internalNotaReader{nota: "nota cambió"}
 
-	svc.asegurarContextoNota(context.Background(), conv, "", "")
+	svc.asegurarContextoNota(context.Background(), conv, "", "", contextoNotaNow)
 	assert.Equal(t, 2, llm.destilarCalls)
 	assert.Equal(t, "segunda destilación", conv.ContextoNota())
 	assert.NotEqual(t, firstHash, conv.NotaHash())
@@ -132,7 +132,7 @@ func TestAsegurarContextoNota_NotaReaderError_DegradesSilently(t *testing.T) {
 	svc := newContextoNotaService(internalNotaReader{err: errors.New("boom")}, llm)
 	conv := newTestConversacion(t)
 
-	svc.asegurarContextoNota(context.Background(), conv, "", "")
+	svc.asegurarContextoNota(context.Background(), conv, "", "", contextoNotaNow)
 	assert.Empty(t, conv.ContextoNota())
 	assert.Zero(t, llm.destilarCalls)
 }
@@ -144,7 +144,28 @@ func TestAsegurarContextoNota_LLMError_DegradesWithoutUpdatingHash(t *testing.T)
 	svc := newContextoNotaService(notaReader, llm)
 	conv := newTestConversacion(t)
 
-	svc.asegurarContextoNota(context.Background(), conv, "", "")
+	svc.asegurarContextoNota(context.Background(), conv, "", "", contextoNotaNow)
 	assert.Empty(t, conv.ContextoNota())
 	assert.Empty(t, conv.NotaHash(), "hash must NOT update on LLM error, so a later retry re-attempts distillation")
+}
+
+func TestAsegurarContextoNota_UsesProvidedNow_NotClock(t *testing.T) {
+	t.Parallel()
+	// Regression: asegurarContextoNota must stamp SetContextoNota with the
+	// EXPLICIT now argument threaded in by the caller, not a second,
+	// independent s.clock.Now() read — one point-in-time snapshot per
+	// ProcesarMensajeEntrante call. The service's clock is fixed at
+	// contextoNotaNow; we pass a DIFFERENT explicit now to prove which one
+	// wins.
+	llm := &internalCopilotoLLM{destilarOut: outbound.NotaOutput{Contexto: "algo"}}
+	svc := newContextoNotaService(internalNotaReader{nota: "una nota"}, llm)
+	conv := newTestConversacion(t)
+
+	explicitNow := contextoNotaNow.Add(48 * time.Hour)
+	svc.asegurarContextoNota(context.Background(), conv, "", "", explicitNow)
+
+	assert.True(t, conv.UpdatedAt().Equal(explicitNow),
+		"UpdatedAt must equal the explicit now argument, not the service clock's fixed value")
+	assert.False(t, conv.UpdatedAt().Equal(contextoNotaNow),
+		"UpdatedAt must NOT come from a second, independent s.clock.Now() read")
 }

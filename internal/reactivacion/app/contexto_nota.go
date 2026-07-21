@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"log/slog"
+	"time"
 
 	"github.com/abdimuy/msp-api/internal/reactivacion/domain"
 	"github.com/abdimuy/msp-api/internal/reactivacion/ports/outbound"
@@ -24,8 +25,11 @@ import (
 // instead of silently giving up forever (e.g. once LLM_ENABLED flips back on).
 //
 // conv is mutated in place; the caller is responsible for persisting it
-// (Upsert) inside its own transaction.
-func (s *Service) asegurarContextoNota(ctx context.Context, conv *domain.Conversacion, nombre, segmento string) {
+// (Upsert) inside its own transaction. now is threaded in by the caller
+// (rather than read via s.clock.Now() here) so the whole
+// ProcesarMensajeEntrante call uses a single point-in-time snapshot instead
+// of two independent clock reads.
+func (s *Service) asegurarContextoNota(ctx context.Context, conv *domain.Conversacion, nombre, segmento string, now time.Time) {
 	clienteID := conv.ClienteID()
 
 	nota, err := s.notaReader.GetNotaCliente(ctx, clienteID)
@@ -51,7 +55,7 @@ func (s *Service) asegurarContextoNota(ctx context.Context, conv *domain.Convers
 		return
 	}
 
-	conv.SetContextoNota(out.Contexto, out.Banderas, hash, s.clock.Now())
+	conv.SetContextoNota(out.Contexto, out.Banderas, hash, now)
 }
 
 // hashNota returns the SHA-256 hex digest of nota — the invalidation key

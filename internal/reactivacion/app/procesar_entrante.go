@@ -49,7 +49,7 @@ func (s *Service) ProcesarMensajeEntrante(ctx context.Context, clienteID int, me
 	}
 
 	nombre, segmento := s.resolveFactsNombreSegmento(ctx, clienteID)
-	s.asegurarContextoNota(ctx, conv, nombre, segmento)
+	s.asegurarContextoNota(ctx, conv, nombre, segmento, now)
 	resumen := s.construirResumenActual(ctx, clienteID)
 
 	in := outbound.AnalizarInput{
@@ -207,6 +207,10 @@ func (s *Service) persistirTurnoEntranteYDecision(
 
 	var borradorGuardado string
 	if df.Accion == domain.AccionResponder {
+		// By design, this runs even when conv is already EstadoEscalado (triar
+		// did not escalate THIS turn, but a human already owns the conversation
+		// per transicionarEstado above): the human keeps ownership of the estado,
+		// but a suggested draft is still useful for them to review/approve.
 		turnoSaliente, err := domain.CrearTurno(domain.CrearTurnoParams{
 			ClienteID: clienteID,
 			Direccion: domain.DireccionSaliente,

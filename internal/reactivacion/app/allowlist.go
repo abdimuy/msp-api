@@ -24,25 +24,50 @@ const (
 	razonCopilotoNoDisponible = "copiloto no disponible"
 )
 
-// debtKeywords lists the lowercased, accent-normalized Spanish words that
-// signal the cliente's outstanding balance is being discussed — used by
-// borradorMencionaCifraDeuda (triaje.go) to guard against the LLM ever
-// stating a debt figure. Curated deliberately narrow (false negatives are
-// safer here than false positives that would over-escalate innocuous drafts):
+// debtKeywords lists the lowercased, accent-normalized (see normalizarTexto)
+// Spanish words/phrases that signal the cliente's outstanding balance is
+// being discussed — used by borradorMencionaCifraDeuda (triaje.go) as the
+// LAST-LINE BACKSTOP against the LLM ever stating a debt figure to the
+// cliente.
 //
-//   - deuda, debe, debes, adeudo: direct references to owing money.
-//   - saldo, pendiente, restante, resta: references to an outstanding balance.
-//   - abonar: a payment made against a balance (implies one exists).
+// Safety direction — read this before "cleaning up" the list: this guard is
+// a backstop, not a classifier. A FALSE NEGATIVE (a real debt phrasing this
+// list fails to catch) is the DANGEROUS direction — it lets a debt figure
+// slip straight through to the cliente, which is exactly what this guard
+// exists to prevent. A false positive only triggers an unnecessary human
+// handoff (razonCifraDeuda), which is always safe. When in doubt, ADD a
+// keyword; never prune one "to reduce over-escalation" — that trade is
+// backwards for a last-line safety guard.
+//
+// Matched as WHOLE WORDS/PHRASES (see debtKeywordPatterns) — bounded by word
+// edges so e.g. "resta" does not false-positive-match inside "préstamo"
+// ("prestamo"), which is a loan OFFER, not a debt.
+//
+//   - deuda, debe, debes, adeuda, adeudo: direct references to owing money.
+//   - saldo, pendiente, restante, resta, "lo que resta": references to an
+//     outstanding balance.
+//   - abonar, "abono pendiente": a payment made against a balance (implies
+//     one exists).
+//   - vencido, atrasado, atraso, moroso: overdue/delinquent framing.
+//   - "por cubrir": an amount still owed/needing to be covered.
 var debtKeywords = []string{
 	"deuda",
 	"debe",
 	"debes",
+	"adeuda",
 	"adeudo",
 	"saldo",
 	"pendiente",
 	"restante",
 	"resta",
+	"lo que resta",
 	"abonar",
+	"abono pendiente",
+	"vencido",
+	"atrasado",
+	"atraso",
+	"moroso",
+	"por cubrir",
 }
 
 // allowlistText is the Spanish description of what the copiloto bot may say,
