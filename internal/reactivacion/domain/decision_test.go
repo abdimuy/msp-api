@@ -71,6 +71,16 @@ func TestCrearDecision_Invariants(t *testing.T) {
 		wantErr error
 	}{
 		{
+			name:    "cliente_id_zero",
+			mutate:  func(p *domain.CrearDecisionParams) { p.ClienteID = 0 },
+			wantErr: domain.ErrDecisionClienteIDInvalido,
+		},
+		{
+			name:    "cliente_id_negative",
+			mutate:  func(p *domain.CrearDecisionParams) { p.ClienteID = -1 },
+			wantErr: domain.ErrDecisionClienteIDInvalido,
+		},
+		{
 			name:    "accion_invalida",
 			mutate:  func(p *domain.CrearDecisionParams) { p.Accion = domain.Accion("x") },
 			wantErr: domain.ErrAccionInvalido,

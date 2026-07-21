@@ -80,39 +80,39 @@ var (
 	// ErrEstadoConversacionInvalido is returned when a string cannot be parsed
 	// as an EstadoConversacion.
 	ErrEstadoConversacionInvalido = apperror.NewValidation(
-		"estado_conversacion_invalido",
+		"reactivacion_estado_conversacion_invalido",
 		"estado de conversación inválido",
 	)
 
 	// ErrSenalInvalido is returned when a string cannot be parsed as a Senal.
 	ErrSenalInvalido = apperror.NewValidation(
-		"senal_invalido",
+		"reactivacion_senal_invalido",
 		"la señal no es válida",
 	)
 
 	// ErrAccionInvalido is returned when a string cannot be parsed as an Accion.
 	ErrAccionInvalido = apperror.NewValidation(
-		"accion_invalido",
+		"reactivacion_accion_invalido",
 		"la acción no es válida",
 	)
 
 	// ErrAutorInvalido is returned when a string cannot be parsed as an Autor.
 	ErrAutorInvalido = apperror.NewValidation(
-		"autor_invalido",
+		"reactivacion_autor_invalido",
 		"el autor no es válido",
 	)
 
 	// ErrDireccionTurnoInvalido is returned when a string cannot be parsed as a
 	// DireccionTurno.
 	ErrDireccionTurnoInvalido = apperror.NewValidation(
-		"direccion_turno_invalido",
+		"reactivacion_direccion_turno_invalido",
 		"la dirección del turno no es válida",
 	)
 
 	// ErrResultadoDecisionInvalido is returned when a string cannot be parsed
 	// as a ResultadoDecision.
 	ErrResultadoDecisionInvalido = apperror.NewValidation(
-		"resultado_decision_invalido",
+		"reactivacion_resultado_decision_invalido",
 		"el resultado de la decisión no es válido",
 	)
 
@@ -120,20 +120,40 @@ var (
 	// transition method is called from a state that does not allow it
 	// (including any transition attempted from a terminal state).
 	ErrConversacionTransicionInvalida = apperror.NewValidation(
-		"conversacion_transicion_invalida",
+		"reactivacion_conversacion_transicion_invalida",
 		"la conversación no puede transicionar desde su estado actual",
 	)
 
-	// ErrTurnoCuerpoRequerido is returned when CrearTurno's cuerpo is empty.
+	// ErrTurnoCuerpoRequerido is returned when CrearTurno's cuerpo is empty or
+	// whitespace-only.
 	ErrTurnoCuerpoRequerido = apperror.NewValidation(
-		"turno_cuerpo_requerido",
+		"reactivacion_turno_cuerpo_requerido",
 		"el cuerpo del turno es obligatorio",
 	)
 
 	// ErrDecisionConfianzaInvalida is returned when CrearDecision's confianza
 	// is outside [0, 100].
 	ErrDecisionConfianzaInvalida = apperror.NewValidation(
-		"decision_confianza_invalida",
+		"reactivacion_decision_confianza_invalida",
 		"la confianza debe estar entre 0 y 100",
+	)
+
+	// ErrConversacionClienteIDInvalido is returned when a Conversacion's
+	// clienteID <= 0.
+	ErrConversacionClienteIDInvalido = apperror.NewValidation(
+		"reactivacion_conversacion_cliente_id_invalido",
+		"el id de cliente de la conversación debe ser mayor a cero",
+	)
+
+	// ErrTurnoClienteIDInvalido is returned when a Turno's clienteID <= 0.
+	ErrTurnoClienteIDInvalido = apperror.NewValidation(
+		"reactivacion_turno_cliente_id_invalido",
+		"el id de cliente del turno debe ser mayor a cero",
+	)
+
+	// ErrDecisionClienteIDInvalido is returned when a Decision's clienteID <= 0.
+	ErrDecisionClienteIDInvalido = apperror.NewValidation(
+		"reactivacion_decision_cliente_id_invalido",
+		"el id de cliente de la decisión debe ser mayor a cero",
 	)
 )

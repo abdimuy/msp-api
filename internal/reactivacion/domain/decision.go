@@ -53,12 +53,16 @@ type CrearDecisionParams struct {
 // fresh Decision ready to be persisted.
 //
 // Invariants:
+//   - ClienteID > 0
 //   - Accion must be one of the canonical values
 //   - Resultado must be one of the canonical values
 //   - Confianza must be in [0, 100]
 //
 // Senales and Evidencia default to a non-nil empty slice when nil.
 func CrearDecision(p CrearDecisionParams) (*Decision, error) {
+	if p.ClienteID <= 0 {
+		return nil, ErrDecisionClienteIDInvalido
+	}
 	if !p.Accion.Valido() {
 		return nil, ErrAccionInvalido
 	}

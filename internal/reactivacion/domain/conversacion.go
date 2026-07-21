@@ -33,18 +33,26 @@ type Conversacion struct {
 
 // ─── Crear constructor ────────────────────────────────────────────────────────
 
-// CrearConversacion returns a fresh Conversacion for clienteID in
-// EstadoContactado — the state a cliente starts in once the Fase 2 channel
-// reaches them. now is passed explicitly so the constructor is deterministic
-// and unit-testable (domain code must never call time.Now() internally).
-func CrearConversacion(clienteID int, now time.Time) *Conversacion {
+// CrearConversacion validates clienteID and returns a fresh Conversacion for
+// it in EstadoContactado — the state a cliente starts in once the Fase 2
+// channel reaches them. now is passed explicitly so the constructor is
+// deterministic and unit-testable (domain code must never call time.Now()
+// internally).
+//
+// Invariants:
+//   - ClienteID > 0
+func CrearConversacion(clienteID int, now time.Time) (*Conversacion, error) {
+	if clienteID <= 0 {
+		return nil, ErrConversacionClienteIDInvalido
+	}
+
 	return &Conversacion{
 		id:         uuid.New().String(),
 		clienteID:  clienteID,
 		estado:     EstadoContactado,
 		banderas:   []string{},
 		timestamps: audit.NewTimestamped(now),
-	}
+	}, nil
 }
 
 // ─── Hydrate constructor ──────────────────────────────────────────────────────

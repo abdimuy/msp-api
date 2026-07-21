@@ -2,6 +2,7 @@
 package domain
 
 import (
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,17 +43,21 @@ type CrearTurnoParams struct {
 // fresh Turno ready to be persisted.
 //
 // Invariants:
+//   - ClienteID > 0
 //   - Direccion must be one of the canonical values
 //   - Autor must be one of the canonical values
-//   - Cuerpo must not be empty
+//   - Cuerpo must not be empty or whitespace-only
 func CrearTurno(p CrearTurnoParams) (*Turno, error) {
+	if p.ClienteID <= 0 {
+		return nil, ErrTurnoClienteIDInvalido
+	}
 	if !p.Direccion.Valido() {
 		return nil, ErrDireccionTurnoInvalido
 	}
 	if !p.Autor.Valido() {
 		return nil, ErrAutorInvalido
 	}
-	if p.Cuerpo == "" {
+	if strings.TrimSpace(p.Cuerpo) == "" {
 		return nil, ErrTurnoCuerpoRequerido
 	}
 

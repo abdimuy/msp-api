@@ -45,6 +45,16 @@ func TestCrearTurno_Invariants(t *testing.T) {
 		wantErr error
 	}{
 		{
+			name:    "cliente_id_zero",
+			mutate:  func(p *domain.CrearTurnoParams) { p.ClienteID = 0 },
+			wantErr: domain.ErrTurnoClienteIDInvalido,
+		},
+		{
+			name:    "cliente_id_negative",
+			mutate:  func(p *domain.CrearTurnoParams) { p.ClienteID = -1 },
+			wantErr: domain.ErrTurnoClienteIDInvalido,
+		},
+		{
 			name:    "direccion_invalida",
 			mutate:  func(p *domain.CrearTurnoParams) { p.Direccion = domain.DireccionTurno("x") },
 			wantErr: domain.ErrDireccionTurnoInvalido,
@@ -57,6 +67,11 @@ func TestCrearTurno_Invariants(t *testing.T) {
 		{
 			name:    "cuerpo_vacio",
 			mutate:  func(p *domain.CrearTurnoParams) { p.Cuerpo = "" },
+			wantErr: domain.ErrTurnoCuerpoRequerido,
+		},
+		{
+			name:    "cuerpo_solo_espacios",
+			mutate:  func(p *domain.CrearTurnoParams) { p.Cuerpo = "   \t\n  " },
 			wantErr: domain.ErrTurnoCuerpoRequerido,
 		},
 	}

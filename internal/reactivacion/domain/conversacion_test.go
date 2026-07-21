@@ -16,9 +16,21 @@ var (
 	conversacionFixedNow2 = time.Date(2026, 7, 21, 9, 5, 0, 0, time.UTC)
 )
 
-func TestCrearConversacion(t *testing.T) {
+// mustCrearConversacion is a test helper that fails the test immediately if
+// CrearConversacion returns an error, so the many transition tests below
+// (which only care about a valid starting conversation) don't each repeat
+// the same error check.
+func mustCrearConversacion(t *testing.T, clienteID int, now time.Time) *domain.Conversacion {
+	t.Helper()
+	c, err := domain.CrearConversacion(clienteID, now)
+	require.NoError(t, err)
+	return c
+}
+
+func TestCrearConversacion_Success(t *testing.T) {
 	t.Parallel()
-	c := domain.CrearConversacion(24037, conversacionFixedNow)
+	c, err := domain.CrearConversacion(24037, conversacionFixedNow)
+	require.NoError(t, err)
 
 	assert.NotEmpty(t, c.ID())
 	assert.Equal(t, 24037, c.ClienteID())
@@ -35,14 +47,33 @@ func TestCrearConversacion(t *testing.T) {
 
 func TestCrearConversacion_UniqueIDs(t *testing.T) {
 	t.Parallel()
-	a := domain.CrearConversacion(1, conversacionFixedNow)
-	b := domain.CrearConversacion(1, conversacionFixedNow)
+	a := mustCrearConversacion(t, 1, conversacionFixedNow)
+	b := mustCrearConversacion(t, 1, conversacionFixedNow)
 	assert.NotEqual(t, a.ID(), b.ID())
+}
+
+func TestCrearConversacion_Invariants(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		clienteID int
+	}{
+		{"cliente_id_zero", 0},
+		{"cliente_id_negative", -1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c, err := domain.CrearConversacion(tc.clienteID, conversacionFixedNow)
+			require.ErrorIs(t, err, domain.ErrConversacionClienteIDInvalido)
+			assert.Nil(t, c)
+		})
+	}
 }
 
 func TestConversacion_MarcarRespondio(t *testing.T) {
 	t.Parallel()
-	c := domain.CrearConversacion(1, conversacionFixedNow)
+	c := mustCrearConversacion(t, 1, conversacionFixedNow)
 	err := c.MarcarRespondio(conversacionFixedNow2)
 	require.NoError(t, err)
 	assert.Equal(t, domain.EstadoRespondio, c.Estado())
@@ -75,7 +106,7 @@ func TestConversacion_MarcarRespondio_InvalidFrom(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			c := domain.CrearConversacion(1, conversacionFixedNow)
+			c := mustCrearConversacion(t, 1, conversacionFixedNow)
 			tc.setup(c)
 			err := c.MarcarRespondio(conversacionFixedNow2.Add(time.Minute))
 			require.ErrorIs(t, err, domain.ErrConversacionTransicionInvalida)
@@ -86,7 +117,7 @@ func TestConversacion_MarcarRespondio_InvalidFrom(t *testing.T) {
 func TestConversacion_MarcarConversando_FromRespondioOrConversando(t *testing.T) {
 	t.Parallel()
 
-	c := domain.CrearConversacion(1, conversacionFixedNow)
+	c := mustCrearConversacion(t, 1, conversacionFixedNow)
 	require.NoError(t, c.MarcarRespondio(conversacionFixedNow2))
 	require.NoError(t, c.MarcarConversando(conversacionFixedNow2.Add(time.Minute)))
 	assert.Equal(t, domain.EstadoConversando, c.Estado())
@@ -98,7 +129,7 @@ func TestConversacion_MarcarConversando_FromRespondioOrConversando(t *testing.T)
 
 func TestConversacion_MarcarConversando_InvalidFromContactado(t *testing.T) {
 	t.Parallel()
-	c := domain.CrearConversacion(1, conversacionFixedNow)
+	c := mustCrearConversacion(t, 1, conversacionFixedNow)
 	err := c.MarcarConversando(conversacionFixedNow2)
 	require.ErrorIs(t, err, domain.ErrConversacionTransicionInvalida)
 }
@@ -124,7 +155,7 @@ func TestConversacion_MarcarEscalada_AllowedStates(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			c := domain.CrearConversacion(1, conversacionFixedNow)
+			c := mustCrearConversacion(t, 1, conversacionFixedNow)
 			tc.setup(c)
 			when := conversacionFixedNow2.Add(time.Hour)
 			err := c.MarcarEscalada("op2", when)
@@ -148,21 +179,30 @@ func TestConversacion_MarcarEscalada_InvalidFromTerminal(t *testing.T) {
 		{"desde_descartado", func(c *domain.Conversacion) {
 			require.NoError(t, c.MarcarDescartado(conversacionFixedNow2))
 		}},
-		{"desde_interesado", func(c *domain.Conversacion) {
-			require.NoError(t, c.MarcarRespondio(conversacionFixedNow2))
-			require.NoError(t, c.MarcarConversando(conversacionFixedNow2))
-			require.NoError(t, c.MarcarInteresado(conversacionFixedNow2))
-		}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			c := domain.CrearConversacion(1, conversacionFixedNow)
+			c := mustCrearConversacion(t, 1, conversacionFixedNow)
 			tc.setup(c)
 			err := c.MarcarEscalada("op1", conversacionFixedNow2.Add(time.Minute))
 			require.ErrorIs(t, err, domain.ErrConversacionTransicionInvalida)
 		})
 	}
+}
+
+// TestConversacion_MarcarEscalada_InvalidFromInteresado covers a business-rule
+// exclusion, NOT a terminal state — interesado is a perfectly normal
+// non-terminal estado, it simply isn't in MarcarEscalada's allowed-from set.
+func TestConversacion_MarcarEscalada_InvalidFromInteresado(t *testing.T) {
+	t.Parallel()
+	c := mustCrearConversacion(t, 1, conversacionFixedNow)
+	require.NoError(t, c.MarcarRespondio(conversacionFixedNow2))
+	require.NoError(t, c.MarcarConversando(conversacionFixedNow2))
+	require.NoError(t, c.MarcarInteresado(conversacionFixedNow2))
+
+	err := c.MarcarEscalada("op1", conversacionFixedNow2.Add(time.Minute))
+	require.ErrorIs(t, err, domain.ErrConversacionTransicionInvalida)
 }
 
 func TestConversacion_MarcarEscalada_InvalidFromUnknownEstado(t *testing.T) {
@@ -199,7 +239,7 @@ func TestConversacion_MarcarInteresado_AllowedStates(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			c := domain.CrearConversacion(1, conversacionFixedNow)
+			c := mustCrearConversacion(t, 1, conversacionFixedNow)
 			tc.setup(c)
 			when := conversacionFixedNow2.Add(time.Hour)
 			require.NoError(t, c.MarcarInteresado(when))
@@ -211,7 +251,7 @@ func TestConversacion_MarcarInteresado_AllowedStates(t *testing.T) {
 
 func TestConversacion_MarcarInteresado_InvalidFromContactado(t *testing.T) {
 	t.Parallel()
-	c := domain.CrearConversacion(1, conversacionFixedNow)
+	c := mustCrearConversacion(t, 1, conversacionFixedNow)
 	err := c.MarcarInteresado(conversacionFixedNow2)
 	require.ErrorIs(t, err, domain.ErrConversacionTransicionInvalida)
 }
@@ -219,19 +259,19 @@ func TestConversacion_MarcarInteresado_InvalidFromContactado(t *testing.T) {
 func TestConversacion_MarcarEnganche_FromAnyNonTerminal(t *testing.T) {
 	t.Parallel()
 	estados := []func() *domain.Conversacion{
-		func() *domain.Conversacion { return domain.CrearConversacion(1, conversacionFixedNow) },
+		func() *domain.Conversacion { return mustCrearConversacion(t, 1, conversacionFixedNow) },
 		func() *domain.Conversacion {
-			c := domain.CrearConversacion(1, conversacionFixedNow)
+			c := mustCrearConversacion(t, 1, conversacionFixedNow)
 			require.NoError(t, c.MarcarRespondio(conversacionFixedNow2))
 			return c
 		},
 		func() *domain.Conversacion {
-			c := domain.CrearConversacion(1, conversacionFixedNow)
+			c := mustCrearConversacion(t, 1, conversacionFixedNow)
 			require.NoError(t, c.MarcarEscalada("op1", conversacionFixedNow2))
 			return c
 		},
 		func() *domain.Conversacion {
-			c := domain.CrearConversacion(1, conversacionFixedNow)
+			c := mustCrearConversacion(t, 1, conversacionFixedNow)
 			require.NoError(t, c.MarcarRespondio(conversacionFixedNow2))
 			require.NoError(t, c.MarcarConversando(conversacionFixedNow2))
 			require.NoError(t, c.MarcarInteresado(conversacionFixedNow2))
@@ -249,7 +289,7 @@ func TestConversacion_MarcarEnganche_FromAnyNonTerminal(t *testing.T) {
 
 func TestConversacion_MarcarEnganche_InvalidFromTerminal(t *testing.T) {
 	t.Parallel()
-	c := domain.CrearConversacion(1, conversacionFixedNow)
+	c := mustCrearConversacion(t, 1, conversacionFixedNow)
 	require.NoError(t, c.MarcarDescartado(conversacionFixedNow2))
 	err := c.MarcarEnganche(conversacionFixedNow2.Add(time.Minute))
 	require.ErrorIs(t, err, domain.ErrConversacionTransicionInvalida)
@@ -257,7 +297,7 @@ func TestConversacion_MarcarEnganche_InvalidFromTerminal(t *testing.T) {
 
 func TestConversacion_MarcarDescartado_FromAnyNonTerminal(t *testing.T) {
 	t.Parallel()
-	c := domain.CrearConversacion(1, conversacionFixedNow)
+	c := mustCrearConversacion(t, 1, conversacionFixedNow)
 	when := conversacionFixedNow2.Add(time.Hour)
 	require.NoError(t, c.MarcarDescartado(when))
 	assert.Equal(t, domain.EstadoDescartado, c.Estado())
@@ -266,7 +306,7 @@ func TestConversacion_MarcarDescartado_FromAnyNonTerminal(t *testing.T) {
 
 func TestConversacion_MarcarDescartado_InvalidFromTerminal(t *testing.T) {
 	t.Parallel()
-	c := domain.CrearConversacion(1, conversacionFixedNow)
+	c := mustCrearConversacion(t, 1, conversacionFixedNow)
 	require.NoError(t, c.MarcarEnganche(conversacionFixedNow2))
 	err := c.MarcarDescartado(conversacionFixedNow2.Add(time.Minute))
 	require.ErrorIs(t, err, domain.ErrConversacionTransicionInvalida)
@@ -274,7 +314,7 @@ func TestConversacion_MarcarDescartado_InvalidFromTerminal(t *testing.T) {
 
 func TestConversacion_SetResumenMemoria(t *testing.T) {
 	t.Parallel()
-	c := domain.CrearConversacion(1, conversacionFixedNow)
+	c := mustCrearConversacion(t, 1, conversacionFixedNow)
 	c.SetResumenMemoria("resumen breve", conversacionFixedNow2)
 	assert.Equal(t, "resumen breve", c.ResumenMemoria())
 	assert.Equal(t, conversacionFixedNow2, c.UpdatedAt())
@@ -282,7 +322,7 @@ func TestConversacion_SetResumenMemoria(t *testing.T) {
 
 func TestConversacion_SetContextoNota(t *testing.T) {
 	t.Parallel()
-	c := domain.CrearConversacion(1, conversacionFixedNow)
+	c := mustCrearConversacion(t, 1, conversacionFixedNow)
 	c.SetContextoNota("cliente puntual", []string{"vip"}, "hash123", conversacionFixedNow2)
 	assert.Equal(t, "cliente puntual", c.ContextoNota())
 	assert.Equal(t, []string{"vip"}, c.Banderas())
@@ -292,7 +332,7 @@ func TestConversacion_SetContextoNota(t *testing.T) {
 
 func TestConversacion_Banderas_DefensiveCopy(t *testing.T) {
 	t.Parallel()
-	c := domain.CrearConversacion(1, conversacionFixedNow)
+	c := mustCrearConversacion(t, 1, conversacionFixedNow)
 	c.SetContextoNota("", []string{"vip"}, "", conversacionFixedNow2)
 
 	got := c.Banderas()
