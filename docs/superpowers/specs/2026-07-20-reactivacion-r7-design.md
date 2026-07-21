@@ -24,6 +24,11 @@ atribuido treatment vs. control, ventana 1-2 meses.
 
 - **Segmento de arranque:** recién-liquidado y por-liquidar-con-hueco (tibios: te conocen, responden →
   anti-baneo + convierten rápido). NO dormidos profundos primero.
+- **Geografía del piloto: SOLO Tehuacán.** El universo se filtra a clientes de Tehuacán (zona/ciudad). Alinea
+  con el chip local (LADA 238) y acota el demo.
+- **Habla en la parcialidad real, no en "mensualidad":** el pago puede ser **semanal, quincenal o mensual** —
+  el enganche y la parcialidad **ya viven en la DB (Microsip)**. La IA lee los términos reales del cliente y le
+  habla en *su* cadencia y montos, no en rangos inventados.
 - **Canal:** `whatsmeow` (WhatsApp no oficial) con **chip prepago dedicado — nunca el número del negocio** —
   para el demo → API oficial (BSP) después. La API oficial requiere documentos fiscales del dueño (Constancia
   de Situación Fiscal, acta constitutiva, comprobante de domicilio) → es conversación con él, no tarea técnica.
@@ -136,15 +141,16 @@ que pedir ayuda). **Los `[POR CONFIRMAR]` los llenas tú con datos reales del ne
 - Productos/categorías del catálogo Microsip que **tienen existencia confirmada** (la IA consulta stock; sin
   stock → no ofrece ese ítem).
 - Next-best-product derivado del historial del cliente + canasta de mercado.
-- Planes de pago dentro del rango estándar: `[POR CONFIRMAR: rango de mensualidad, p. ej. $400–$1,500]`,
-  enganche estándar `[POR CONFIRMAR: % o monto típico]`.
-- Promos **vigentes y pre-cargadas**: `[POR CONFIRMAR: lista de promos reales activas]`.
+- Planes de pago **leídos de la DB (Microsip)**: la IA usa el **enganche** y la **parcialidad real** del
+  cliente (**semanal / quincenal / mensual**) — nunca rangos inventados. Habla en su cadencia y montos reales.
+- Promos: **ninguna por ahora.** No ofrece promociones hasta que el usuario cargue una lista de promos
+  vigentes. (Mientras tanto, "promo" pedida por el cliente → escala.)
 
 ### ✅ Puede AFIRMAR
-- "Manejamos crédito / pagos en mensualidades."
-- Plazo de entrega estándar: `[POR CONFIRMAR: X días hábiles]`.
+- "Manejamos crédito / pagos en parcialidades (semanal, quincenal o mensual)."
+- **Entrega: 1 a 2 días** (piloto). *(Más adelante: mismo día según la hora — se activa cuando se defina la regla.)*
 - "Por tu buen historial de pago tienes [beneficio]" (solo si el dato de historial lo respalda).
-- Ubicación/horario de la tienda: `[POR CONFIRMAR]`.
+- Ubicación/horario de la tienda: `[POR CONFIRMAR: dirección + horario de la tienda de Tehuacán]`.
 
 ### ⚠️ Debe ESCALAR (no decide sola)
 - Precios/mensualidades fuera del rango estándar; cualquier **descuento**.
@@ -171,11 +177,12 @@ que pedir ayuda). **Los `[POR CONFIRMAR]` los llenas tú con datos reales del ne
 
 ## 10. Contenido / prompt del copiloto
 
-- **Vende la mensualidad, no el precio** (enganche + pago mensual).
+- **Vende la parcialidad, no el precio** — enganche + pago en la cadencia real del cliente (semanal /
+  quincenal / mensual), leídos de la DB. Ej. "con $X de enganche y $Y a la semana".
 - **Opener por segmento:** recién-liquidado = felicitar + siguiente compra con beneficio; por-liquidar =
   completar el juego con pago que cabe, con tacto (no lidera con "compra más").
-- **Objeciones (5 tipos):** precio→reframe a mensualidad; autoridad ("le pregunto a mi esposo/a")→incluir al
-  que decide; tiempo→siguiente paso chico. Respuestas **cortas**, tono cercano.
+- **Objeciones (5 tipos):** precio→reframe a la parcialidad (semanal/quincenal/mensual); autoridad ("le
+  pregunto a mi esposo/a")→incluir al que decide; tiempo→siguiente paso chico. Respuestas **cortas**, tono cercano.
 - **Memoria por cliente:** nada de "¿quién eres?" en el segundo mensaje.
 
 ## 11. Medición
