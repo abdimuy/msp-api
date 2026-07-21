@@ -76,4 +76,64 @@ var (
 		"reactivacion_mensaje_transicion_invalida",
 		"el mensaje no puede marcarse como enviado desde su estado actual",
 	)
+
+	// ErrEstadoConversacionInvalido is returned when a string cannot be parsed
+	// as an EstadoConversacion.
+	ErrEstadoConversacionInvalido = apperror.NewValidation(
+		"estado_conversacion_invalido",
+		"estado de conversación inválido",
+	)
+
+	// ErrSenalInvalido is returned when a string cannot be parsed as a Senal.
+	ErrSenalInvalido = apperror.NewValidation(
+		"senal_invalido",
+		"la señal no es válida",
+	)
+
+	// ErrAccionInvalido is returned when a string cannot be parsed as an Accion.
+	ErrAccionInvalido = apperror.NewValidation(
+		"accion_invalido",
+		"la acción no es válida",
+	)
+
+	// ErrAutorInvalido is returned when a string cannot be parsed as an Autor.
+	ErrAutorInvalido = apperror.NewValidation(
+		"autor_invalido",
+		"el autor no es válido",
+	)
+
+	// ErrDireccionTurnoInvalido is returned when a string cannot be parsed as a
+	// DireccionTurno.
+	ErrDireccionTurnoInvalido = apperror.NewValidation(
+		"direccion_turno_invalido",
+		"la dirección del turno no es válida",
+	)
+
+	// ErrResultadoDecisionInvalido is returned when a string cannot be parsed
+	// as a ResultadoDecision.
+	ErrResultadoDecisionInvalido = apperror.NewValidation(
+		"resultado_decision_invalido",
+		"el resultado de la decisión no es válido",
+	)
+
+	// ErrConversacionTransicionInvalida is returned when a Conversacion
+	// transition method is called from a state that does not allow it
+	// (including any transition attempted from a terminal state).
+	ErrConversacionTransicionInvalida = apperror.NewValidation(
+		"conversacion_transicion_invalida",
+		"la conversación no puede transicionar desde su estado actual",
+	)
+
+	// ErrTurnoCuerpoRequerido is returned when CrearTurno's cuerpo is empty.
+	ErrTurnoCuerpoRequerido = apperror.NewValidation(
+		"turno_cuerpo_requerido",
+		"el cuerpo del turno es obligatorio",
+	)
+
+	// ErrDecisionConfianzaInvalida is returned when CrearDecision's confianza
+	// is outside [0, 100].
+	ErrDecisionConfianzaInvalida = apperror.NewValidation(
+		"decision_confianza_invalida",
+		"la confianza debe estar entre 0 y 100",
+	)
 )
