@@ -143,11 +143,18 @@ que pedir ayuda). **Los `[POR CONFIRMAR]` los llenas tú con datos reales del ne
 - Next-best-product derivado del historial del cliente + canasta de mercado.
 - Planes de pago **leídos de la DB (Microsip)**: la IA usa el **enganche** y la **parcialidad real** del
   cliente (**semanal / quincenal / mensual**) — nunca rangos inventados. Habla en su cadencia y montos reales.
-- **Regla de precio para una oferta NUEVA:** ancla en el **pago redondo que el cliente ya conoce** (ej. $150
-  a la semana), **mantiene ese pago**, y **estira el plazo** para que quepa el precio del producto nuevo.
-  Enganche y parcialidad **SIEMPRE en múltiplos de $50** (así opera el negocio; nada de montos "raros").
-  Algoritmo: `plazo = ceil((precio − enganche) / parcialidad)` con la parcialidad habitual del cliente.
-  Contexto real (base): enganche típico 5-10% del precio (23% sin enganche), plazo 27+ pagos común.
+- **Regla de precio para una oferta NUEVA** (cálculo DETERMINISTA en Go — la IA NO hace aritmética, solo lee
+  y dice el resultado). Datos base: enganche ~8-10% del precio (constante por rango), la parcialidad sube con
+  el precio (no es pago fijo), 23% de ventas "sin enganche" (= promo del dueño).
+  - **Plazo = 1 año** para todo lo ofrecido (≈ 52 semanas / 26 quincenas / 12 meses, según la **cadencia del
+    cliente** inferida de su historial).
+  - **Piso de precio:** solo se ofrecen productos ≥ `[POR CONFIRMAR: ~$3,000]`. Abajo del piso → no se ofrece
+    (no justifica crédito a 1 año ni la reactivación).
+  - **Enganche** = `redondear_a_50(0.10 × precio)`.
+  - **Parcialidad** = `redondear_a_50((precio − enganche) / periodos_del_año)`.
+  - Todo en **múltiplos de $50** (así opera el negocio; nada de montos "raros").
+  - **Guardrail:** si la parcialidad calculada queda muy por encima de la parcialidad histórica del cliente →
+    la IA sugiere algo más barato (sobre el piso) o **escala** (no le empuja algo que no puede pagar).
 - Promos / descuentos / **enganche perdonado** / plazo fuera de lo normal: **ninguno por ahora → escala.**
   Perdonar el enganche es regalar la principal palanca de efectivo del negocio → **decisión del dueño, nunca
   la IA sola** (gateado por flag; off por default).
