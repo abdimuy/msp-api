@@ -290,6 +290,16 @@ linters:
           alias: configfb
         - pkg: github.com/abdimuy/msp-api/internal/config/infra/confighttp
           alias: confighttp
+        - pkg: github.com/abdimuy/msp-api/internal/reactivacion/app
+          alias: reactivacionapp
+        - pkg: github.com/abdimuy/msp-api/internal/reactivacion/domain
+          alias: reactivaciondomain
+        - pkg: github.com/abdimuy/msp-api/internal/reactivacion/ports/outbound
+          alias: reactivacionoutbound
+        - pkg: github.com/abdimuy/msp-api/internal/reactivacion/infra/reactivacionfb
+          alias: reactivacionfb
+        - pkg: github.com/abdimuy/msp-api/internal/reactivacion/infra/reactivacionhttp
+          alias: reactivacionhttp
         - pkg: github.com/abdimuy/msp-api/internal/clientes/infra/clientessearch
           alias: clientessearchmeili
         - pkg: github.com/abdimuy/msp-api/internal/ventas/infra/ventsearch
@@ -361,6 +371,7 @@ linters:
             - github.com/abdimuy/msp-api/internal/clientes/domain
             - github.com/abdimuy/msp-api/internal/rutas/domain
             - github.com/abdimuy/msp-api/internal/config/domain
+            - github.com/abdimuy/msp-api/internal/reactivacion/domain
 
         app-no-infra:
           list-mode: lax

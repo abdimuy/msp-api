@@ -176,6 +176,13 @@ func appOptions() []fx.Option {
 			provideConfigRepo,
 			provideConfigUsuariosReader,
 			provideConfigService,
+			// Reactivación module (R7).
+			provideReactivacionRepo,
+			provideReactivacionCohorteRepo,
+			provideReactivacionUniversoReader,
+			provideReactivacionClock,
+			provideReactivacionTxRunner,
+			provideReactivacionService,
 			provideFbEventSource,
 			provideCobranzaPagosChangelogRepo,
 			provideCobranzaSaldosChangelogRepo,

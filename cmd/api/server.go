@@ -50,6 +50,9 @@ import (
 
 	configapp "github.com/abdimuy/msp-api/internal/config/app"
 	confighttp "github.com/abdimuy/msp-api/internal/config/infra/confighttp"
+
+	reactivacionapp "github.com/abdimuy/msp-api/internal/reactivacion/app"
+	reactivacionhttp "github.com/abdimuy/msp-api/internal/reactivacion/infra/reactivacionhttp"
 )
 
 // RootHandler is the assembled chi router exposed as an fx-typed dependency.
@@ -156,6 +159,7 @@ func provideRootHandler(
 	clientesSvc *clientesapp.Service,
 	rutasSvc *rutasapp.Service,
 	configSvc *configapp.Service,
+	reactivacionSvc *reactivacionapp.Service,
 	logger *slog.Logger,
 ) RootHandler {
 	r := chi.NewRouter()
@@ -270,6 +274,18 @@ func provideRootHandler(
 		r.Group(func(r chi.Router) {
 			r.Use(skipAuthForPublicDocs(authn.Handler))
 			confighttp.MountRouter(r, configSvc)
+		})
+
+		// Reactivación endpoints (R7) — read-only cohorte/atribución plus an admin
+		// build POST. Authn only; per-route permission (reactivacion:leer /
+		// reactivacion:administrar) is enforced inside each handler. MountRouter
+		// registers bare /reactivacion/* paths, so mount on a bare Group (like
+		// rutas/config) — NOT r.Route("/reactivacion"), which would double the
+		// prefix. Final paths: GET /v2/reactivacion/cohorte,
+		// GET /v2/reactivacion/atribucion, POST /v2/reactivacion/cohorte/construir.
+		r.Group(func(r chi.Router) {
+			r.Use(skipAuthForPublicDocs(authn.Handler))
+			reactivacionhttp.MountRouter(r, reactivacionSvc)
 		})
 
 		// Cobranza endpoints — authn only. Read (saldos, pagos, sync) plus

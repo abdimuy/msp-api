@@ -121,6 +121,13 @@ const (
 	PermConfigLeer Permission = "config:leer"
 	// PermConfigAdministrar grants write access to configuración.
 	PermConfigAdministrar Permission = "config:administrar"
+
+	// PermReactivacionLeer grants read access to the reactivación piloto:
+	// cohorte listing and attribution measurement.
+	PermReactivacionLeer Permission = "reactivacion:leer"
+	// PermReactivacionAdministrar grants triggering a rebuild of the
+	// reactivación cohorte snapshot.
+	PermReactivacionAdministrar Permission = "reactivacion:administrar"
 )
 
 // PermissionMeta is a catalog entry pairing a permission code with the
@@ -146,6 +153,7 @@ const (
 	categoriaAnalytics     = "analytics"
 	categoriaClientes      = "clientes"
 	categoriaConfig        = "configuracion"
+	categoriaReactivacion  = "reactivacion"
 )
 
 // AllPermissions returns every permission known to the auth module, sorted
@@ -201,6 +209,9 @@ func AllPermissions() []PermissionMeta {
 
 		{PermConfigLeer, "ver la configuración del sistema", categoriaConfig},
 		{PermConfigAdministrar, "administrar la configuración del sistema", categoriaConfig},
+
+		{PermReactivacionLeer, "ver la cohorte y atribución del piloto de reactivación", categoriaReactivacion},
+		{PermReactivacionAdministrar, "reconstruir la cohorte del piloto de reactivación", categoriaReactivacion},
 	}
 	sort.Slice(perms, func(i, j int) bool { return perms[i].Code < perms[j].Code })
 	return perms

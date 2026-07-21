@@ -133,4 +133,9 @@ const (
 	PermConfigLeer = domain.PermConfigLeer
 	// PermConfigAdministrar — see domain.PermConfigAdministrar.
 	PermConfigAdministrar = domain.PermConfigAdministrar
+
+	// PermReactivacionLeer — see domain.PermReactivacionLeer.
+	PermReactivacionLeer = domain.PermReactivacionLeer
+	// PermReactivacionAdministrar — see domain.PermReactivacionAdministrar.
+	PermReactivacionAdministrar = domain.PermReactivacionAdministrar
 )
