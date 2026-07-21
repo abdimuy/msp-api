@@ -3,18 +3,20 @@ package main
 
 import (
 	"log/slog"
+	"math/rand"
+	"time"
 
 	reactivacionapp "github.com/abdimuy/msp-api/internal/reactivacion/app"
 	reactivacionfb "github.com/abdimuy/msp-api/internal/reactivacion/infra/reactivacionfb"
+	reactivacionsender "github.com/abdimuy/msp-api/internal/reactivacion/infra/reactivacionsender"
 	reactivacionoutbound "github.com/abdimuy/msp-api/internal/reactivacion/ports/outbound"
 
+	"github.com/abdimuy/msp-api/internal/platform/config"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
-)
+	"github.com/abdimuy/msp-api/internal/platform/lifecycle"
 
-// pilotoControlPct is the control-group share for the reactivación piloto. The
-// channel (not the universe) is the bottleneck, so a large control group is free
-// and tightens the attribution estimate.
-const pilotoControlPct = 50
+	"go.uber.org/fx"
+)
 
 // provideReactivacionRepo builds the Firebird-backed Repo that implements both
 // CohorteRepo and UniversoReader. A single concrete instance is created here; it
@@ -33,6 +35,12 @@ func provideReactivacionUniversoReader(r *reactivacionfb.Repo) reactivacionoutbo
 	return r
 }
 
+// provideReactivacionMensajeRepo exposes the concrete Repo as the MensajeRepo
+// port (Fase 2 canal queue, MSP_RX_MENSAJES).
+func provideReactivacionMensajeRepo(r *reactivacionfb.Repo) reactivacionoutbound.MensajeRepo {
+	return r
+}
+
 // provideReactivacionClock returns the production UTC clock for the reactivación module.
 func provideReactivacionClock() reactivacionoutbound.Clock {
 	return reactivacionoutbound.ProductionClock{}
@@ -44,15 +52,77 @@ func provideReactivacionTxRunner(m *firebird.TxManager) reactivacionapp.TxRunner
 	return m
 }
 
-// provideReactivacionService assembles the reactivación query and command service.
+// provideReactivacionSender selects the MessageSender implementation by
+// REACTIVACION_SENDER: "fake" (default) never touches a real number;
+// "whatsmeow" is a stub that fails until Fase 3 wires the real channel.
+// Any other value falls back to the fake sender — the safer default.
+func provideReactivacionSender(cfg *config.Config, logger *slog.Logger) reactivacionoutbound.MessageSender {
+	if cfg.Reactivacion.Sender == "whatsmeow" {
+		return reactivacionsender.NewWhatsmeowSender()
+	}
+	return reactivacionsender.NewFakeSender(logger)
+}
+
+// provideReactivacionRand builds the *rand.Rand backing the gobernador's
+// jitter draws. Time-seeded in production — tests inject their own seeded
+// *rand.Rand directly, bypassing this provider entirely.
+func provideReactivacionRand() *rand.Rand {
+	//nolint:gosec // jitter timing does not need cryptographic randomness.
+	return rand.New(rand.NewSource(time.Now().UnixNano()))
+}
+
+// provideReactivacionGobernador builds the anti-baneo pacing engine from the
+// configured perfil (REACTIVACION_PERFIL_ENVIO: produccion|demo).
+func provideReactivacionGobernador(cfg *config.Config, rng *rand.Rand) *reactivacionapp.Gobernador {
+	perfil := reactivacionapp.PerfilProduccion
+	if cfg.Reactivacion.PerfilEnvio == string(reactivacionapp.PerfilDemo) {
+		perfil = reactivacionapp.PerfilDemo
+	}
+	return reactivacionapp.NewGobernador(reactivacionapp.PerfilConfig(perfil), rng)
+}
+
+// provideReactivacionOpener builds the opener template generator.
+func provideReactivacionOpener() reactivacionapp.Opener {
+	return reactivacionapp.NewOpener()
+}
+
+// provideReactivacionService assembles the reactivación query and command
+// service, wiring the Fase 2 canal dependencies (MensajeRepo, MessageSender,
+// Opener, Gobernador, auto_send) onto the Fase 1 base via WithCanal.
 func provideReactivacionService(
 	reader reactivacionoutbound.UniversoReader,
 	repo reactivacionoutbound.CohorteRepo,
 	clock reactivacionoutbound.Clock,
 	txRunner reactivacionapp.TxRunner,
+	mensajeRepo reactivacionoutbound.MensajeRepo,
+	sender reactivacionoutbound.MessageSender,
+	opener reactivacionapp.Opener,
+	gobernador *reactivacionapp.Gobernador,
+	cfg *config.Config,
 	logger *slog.Logger,
 ) *reactivacionapp.Service {
 	return reactivacionapp.NewService(reader, repo, clock, txRunner, reactivacionapp.Config{
-		ControlPct: pilotoControlPct,
-	}).WithLogger(logger)
+		ControlPct: cfg.Reactivacion.ControlPct,
+	}).
+		WithLogger(logger).
+		WithCanal(mensajeRepo, sender, opener, gobernador, cfg.Reactivacion.AutoSend)
+}
+
+// provideReactivacionEnvioWorker builds the background worker that drains the
+// canal queue on a ticker when auto_send is on (a no-op tick otherwise).
+func provideReactivacionEnvioWorker(
+	svc *reactivacionapp.Service,
+	clock reactivacionoutbound.Clock,
+	cfg *config.Config,
+	logger *slog.Logger,
+) *reactivacionapp.EnvioWorker {
+	return reactivacionapp.NewEnvioWorker(svc, clock, reactivacionapp.EnvioWorkerConfig{
+		Interval: time.Duration(cfg.Reactivacion.WorkerIntervalSeg) * time.Second,
+	}, cfg.Reactivacion.AutoSend, logger)
+}
+
+// registerReactivacionEnvioWorkerLifecycle hooks the envío worker into the fx
+// lifecycle so it starts/stops with the app.
+func registerReactivacionEnvioWorkerLifecycle(lc fx.Lifecycle, w *reactivacionapp.EnvioWorker) {
+	lifecycle.Append(lc, "reactivacion-envio-worker", w)
 }

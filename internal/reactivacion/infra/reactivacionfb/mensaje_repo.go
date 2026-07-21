@@ -1,9 +1,4 @@
-// mensaje_repo.go implements outbound.MensajeRepo (MSP_RX_MENSAJES) on top of
-// the shared *Repo, and adds CohorteRepo.MarcarContactado (which writes to
-// MSP_RX_COHORTE, not MSP_RX_MENSAJES — it lives here because it is the
-// channel's write, not the cohort builder's).
-//
-//nolint:misspell // Spanish domain vocabulary (mensaje, segmento) by convention.
+//nolint:misspell // Spanish domain vocabulary (mensaje, segmento) by project convention.
 package reactivacionfb
 
 import (
@@ -17,7 +12,11 @@ import (
 	"github.com/abdimuy/msp-api/internal/reactivacion/ports/outbound"
 )
 
-// Compile-time check: Repo must satisfy outbound.MensajeRepo.
+// Compile-time check: Repo must satisfy outbound.MensajeRepo. This file
+// implements that interface (MSP_RX_MENSAJES) on top of the shared *Repo, and
+// also adds CohorteRepo.MarcarContactado (which writes to MSP_RX_COHORTE, not
+// MSP_RX_MENSAJES — it lives here because it is the channel's write, not the
+// cohort builder's).
 var _ outbound.MensajeRepo = (*Repo)(nil)
 
 // insertChunkSize is the number of mensaje rows sent per EXECUTE BLOCK call.

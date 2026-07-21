@@ -70,6 +70,7 @@ type Config struct {
 	MicrosipVenta  MicrosipVenta
 	FailedIntent   FailedIntent
 	Inventario     Inventario
+	Reactivacion   Reactivacion
 }
 
 // Inventario holds the Microsip configuration knobs used by the inventario
@@ -186,6 +187,29 @@ type Cobranza struct {
 	// comment. Clients and proxies silently drop the ping; it only exists to
 	// keep the TCP connection alive through idle timeouts.
 	SSEPingEvery time.Duration `env:"COBRANZA_SSE_PING_INTERVAL" envDefault:"25s"`
+}
+
+// Reactivacion holds runtime knobs for the reactivación (R7) module's canal
+// de envío — Fase 2. See docs/superpowers/specs/2026-07-20-reactivacion-r7-fase2-canal-design.md.
+type Reactivacion struct {
+	// Sender selects the MessageSender implementation: "fake" (default, always
+	// succeeds, never touches a real number) or "whatsmeow" (stub until Fase 3
+	// wires the real channel — Enviar always fails with a clear error).
+	Sender string `env:"REACTIVACION_SENDER" envDefault:"fake"`
+	// PerfilEnvio selects the gobernador's pacing preset — see
+	// reactivacionapp.PerfilProduccion (real anti-baneo pacing) and
+	// reactivacionapp.PerfilDemo (relaxed knobs for a fast end-to-end demo).
+	PerfilEnvio string `env:"REACTIVACION_PERFIL_ENVIO" envDefault:"demo"`
+	// AutoSend gates whether the channel actually sends: true drains the queue
+	// automatically (worker + governed pacing); false leaves every mensaje
+	// encolado awaiting the Fase 3 approval action.
+	AutoSend bool `env:"REACTIVACION_AUTO_SEND" envDefault:"false"`
+	// ControlPct is the percentage of the cohorte assigned to the control
+	// group (see reactivacionapp.Config.ControlPct).
+	ControlPct int `env:"REACTIVACION_CONTROL_PCT" envDefault:"50"`
+	// WorkerIntervalSeg is how often (in seconds) the EnvioWorker wakes to
+	// drain a batch of the queue when AutoSend is true.
+	WorkerIntervalSeg int `env:"REACTIVACION_WORKER_INTERVAL_SEG" envDefault:"30"`
 }
 
 // ImageProcessor holds the runtime knobs for the

@@ -23,11 +23,11 @@ const (
 
 // Default GobernadorConfig knobs per perfil (spec §7 / §9).
 const (
-	produccionTopeDiario = 30
-	produccionJitterMin  = 90 * time.Second
-	produccionJitterMax  = 8 * time.Minute
-	produccionHoraInicio = 9
-	produccionHoraFin    = 18
+	produccionTopeDiario  = 30
+	produccionJitterFloor = 90 * time.Second
+	produccionJitterCeil  = 8 * time.Minute
+	produccionHoraInicio  = 9
+	produccionHoraFin     = 18
 
 	demoTopeDiario = 100000
 	demoHoraInicio = 0
@@ -79,8 +79,8 @@ func PerfilConfig(p PerfilEnvio) GobernadorConfig {
 	}
 	return GobernadorConfig{
 		TopeDiario: produccionTopeDiario,
-		JitterMin:  produccionJitterMin,
-		JitterMax:  produccionJitterMax,
+		JitterMin:  produccionJitterFloor,
+		JitterMax:  produccionJitterCeil,
 		HoraInicio: produccionHoraInicio,
 		HoraFin:    produccionHoraFin,
 		Zona:       zona,

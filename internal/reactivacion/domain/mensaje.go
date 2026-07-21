@@ -15,6 +15,12 @@ import (
 //
 // Type classification: Type B pipeline (state-machine entity) — embeds
 // audit.Timestamped, no per-user audit trail (the channel is system-driven).
+//
+// Mensaje is a domain entity, not an error type: its Error() getter
+// (failure/block reason) happens to satisfy the built-in error interface,
+// which is incidental — nothing constructs *Mensaje as an error.
+//
+//nolint:errname // see above
 type Mensaje struct {
 	id          uuid.UUID
 	clienteID   int

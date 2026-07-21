@@ -1,11 +1,9 @@
-// mensaje_queries.go holds the SQL fragments for MSP_RX_MENSAJES (the Fase 2
-// outbound channel queue).
-//
-//nolint:misspell // Spanish domain vocabulary (mensaje, segmento) by convention.
+//nolint:misspell // Spanish domain vocabulary (mensaje, segmento) by project convention.
 package reactivacionfb
 
-// mensajeCols is the canonical SELECT column list for MSP_RX_MENSAJES.
-// The order must match mensajeRowRaw.scanFrom exactly.
+// mensajeCols is the canonical SELECT column list for MSP_RX_MENSAJES (the
+// Fase 2 outbound channel queue). The order must match mensajeRowRaw.scanFrom
+// exactly.
 const mensajeCols = `
 	ID,
 	CLIENTE_ID,
