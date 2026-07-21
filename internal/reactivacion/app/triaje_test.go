@@ -2,6 +2,7 @@
 package app
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,6 +28,29 @@ func TestTriar_CleanCase_Responde(t *testing.T) {
 	assert.Equal(t, domain.AccionResponder, df.Accion)
 	assert.Equal(t, domain.ResultadoPropuesto, df.Resultado)
 	assert.Empty(t, df.RazonEscalamiento)
+}
+
+func TestTriar_CleanCase_EmptyBorrador_DefensiveEscala(t *testing.T) {
+	t.Parallel()
+	// Every other rule resolves to "respond" (no signal, high confidence, no
+	// debt figure), but the LLM handed back an empty/whitespace draft — that
+	// must be treated as an LLM hiccup and DEFENSIVELY escalated, never
+	// silently sent as a blank message or allowed through to
+	// persistirTurnoEntranteYDecision (which would fail building the saliente
+	// Turno and roll back the whole inbound turn).
+	cases := []string{"", "   ", "\n\t "}
+	for _, borrador := range cases {
+		t.Run(fmt.Sprintf("borrador=%q", borrador), func(t *testing.T) {
+			t.Parallel()
+			out := cleanOutput()
+			out.Senales = nil
+			out.Borrador = borrador
+			df := triar(out)
+			assert.Equal(t, domain.AccionEscalar, df.Accion)
+			assert.Equal(t, domain.ResultadoEscalado, df.Resultado)
+			assert.Equal(t, razonBorradorVacio, df.RazonEscalamiento)
+		})
+	}
 }
 
 func TestTriar_EachSenalEscalates(t *testing.T) {
@@ -229,6 +253,15 @@ func TestTriar_PrecedenceOrder_DebtFigureGuardBeatsUnknownSenal(t *testing.T) {
 	out.Borrador = "Su saldo pendiente es de $500."
 	df := triar(out)
 	assert.Equal(t, razonCifraDeuda, df.RazonEscalamiento)
+}
+
+func TestTriar_PrecedenceOrder_UnknownSenalBeatsEmptyBorradorGuard(t *testing.T) {
+	t.Parallel()
+	out := cleanOutput()
+	out.Senales = []string{"algo_no_reconocido"}
+	out.Borrador = "" // would ALSO trip the empty-borrador guard on its own
+	df := triar(out)
+	assert.Equal(t, razonFueraAllowlist, df.RazonEscalamiento)
 }
 
 func TestBorradorMencionaCifraDeuda_CaseAndAccentInsensitive(t *testing.T) {

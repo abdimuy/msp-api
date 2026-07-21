@@ -92,7 +92,7 @@ func TestAprobarBorrador_Idempotent_TiedCreatedAt_SecondCallIsStillNoOp(t *testi
 	// Regression test for the tie-break bug: seed the pending draft at EXACTLY
 	// the service clock's fixed "now", so the aprobado decision AprobarBorrador
 	// appends shares an IDENTICAL CreatedAt with the propuesto it supersedes —
-	// reproducing legacy Firebird's second-resolution TIMESTAMP colliding on
+	// reproducing legacy Firebird's ~100µs-resolution TIMESTAMP colliding on
 	// two decisions written moments apart in the same operator action. Before
 	// the fix, newestDecisionPorClienteID's strict ".After()" scan returned the
 	// FIRST (propuesto) of the tied pair, so a 2nd AprobarBorrador would find a

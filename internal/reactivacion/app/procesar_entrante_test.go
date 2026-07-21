@@ -112,6 +112,44 @@ func TestProcesarMensajeEntrante_Clean_PendingDraftCreated(t *testing.T) {
 	assert.Zero(t, deps.mensajeRepo.insertadosCount())
 }
 
+func TestProcesarMensajeEntrante_CleanButEmptyBorrador_DefensiveEscalate_NoDataLoss(t *testing.T) {
+	t.Parallel()
+	// Regression: an LLM read that resolves to "respond" per every OTHER rule
+	// (no signal, high confidence, no debt figure) but hands back an
+	// empty/whitespace Borrador used to fail domain.CrearTurno (cuerpo
+	// required) INSIDE the runInTx closure, rolling back the WHOLE inbound
+	// turn — including the entrante Turno — and surfacing as a 500 to the
+	// caller. triar's defensive empty-borrador guard now escalates BEFORE the
+	// tx runs, so the entrante turno and an escalated Decision are always
+	// recorded, and ProcesarMensajeEntrante never errors on this input.
+	deps := newCopilotoDeps()
+	deps.copilotoLLM.analizarOut = outbound.AnalizarOutput{
+		Intencion: "pregunta ambigua",
+		Confianza: 92,
+		Borrador:  "   ",
+	}
+	svc := newCopilotoService(deps, procesarNow)
+
+	res, err := svc.ProcesarMensajeEntrante(context.Background(), procesarClienteID, "algo")
+	require.NoError(t, err, "must not fail/500 on a clean-but-empty-borrador LLM read")
+	assert.True(t, res.Escalada)
+	assert.Empty(t, res.Borrador)
+	require.NotNil(t, res.Decision)
+	assert.Equal(t, domain.AccionEscalar, res.Decision.AccionPropuesta())
+	assert.Equal(t, domain.ResultadoEscalado, res.Decision.Resultado())
+	assert.Equal(t, "borrador vacío", res.Decision.RazonEscalamiento())
+
+	turnos, err := deps.convRepo.ListarTurnos(context.Background(), procesarClienteID)
+	require.NoError(t, err)
+	require.Len(t, turnos, 1, "the entrante turno must still be recorded — no data loss")
+	assert.Equal(t, domain.DireccionEntrante, turnos[0].Direccion())
+	assert.Equal(t, "algo", turnos[0].Cuerpo())
+
+	decisiones, err := deps.decisionRepo.ListarPorCliente(context.Background(), procesarClienteID)
+	require.NoError(t, err)
+	require.Len(t, decisiones, 1, "the escalated decision must still be recorded")
+}
+
 func TestProcesarMensajeEntrante_EstadoTransitions_ContactadoToRespondioToConversando(t *testing.T) {
 	t.Parallel()
 	// A single "responder" turn moves contactado straight through respondio to

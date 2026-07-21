@@ -10,9 +10,9 @@ const umbralConfianzaBaja = 65
 
 // Escalation-reason strings (Spanish, lowercase, no trailing period) — the
 // human-readable RazonEscalamiento a DecisionFinal carries when triar
-// escalates. One per policy rule in triar, plus the two escalation paths that
-// do not come from a raw LLM Senal (the debt-figure guard and the
-// copiloto-unavailable safe fallback).
+// escalates. One per policy rule in triar, plus the escalation paths that do
+// not come from a raw LLM Senal (the debt-figure guard, the empty-borrador
+// defensive guard, and the copiloto-unavailable safe fallback).
 const (
 	razonDeuda                = "deuda"
 	razonSenalCompra          = "señal de compra"
@@ -21,6 +21,7 @@ const (
 	razonFueraAllowlist       = "fuera del allowlist"
 	razonConfianzaBaja        = "confianza baja"
 	razonCifraDeuda           = "el borrador menciona una cifra de deuda"
+	razonBorradorVacio        = "borrador vacío"
 	razonCopilotoNoDisponible = "copiloto no disponible"
 )
 

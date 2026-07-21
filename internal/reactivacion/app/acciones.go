@@ -24,10 +24,10 @@ const razonEscaladoPorOperador = "escalado por el operador"
 // insertion order, per DecisionRepo.ListarPorCliente's documented contract
 // ("ordered by CreatedAt ascending") — so "newest" means the LAST element.
 //
-// On a CreatedAt TIE (legacy Firebird's TIMESTAMP has second-level
-// resolution, so two decisions written moments apart in the same operator
-// action — e.g. a propuesto immediately followed by its aprobado — can share
-// a wall-clock value), the scan must resolve the tie by keeping the
+// On a CreatedAt TIE (legacy Firebird's TIMESTAMP has ~100µs resolution, so
+// two decisions written moments apart in the same operator action — e.g. a
+// propuesto immediately followed by its aprobado — can share a wall-clock
+// value), the scan must resolve the tie by keeping the
 // LATER-in-the-list element, i.e. the LAST-inserted among the tied rows.
 // This is why the comparison below is "!Before" (later-OR-EQUAL wins) rather
 // than a strict "After": a strict After would keep the FIRST element of a

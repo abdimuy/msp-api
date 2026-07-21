@@ -41,7 +41,7 @@ func TestNewestDecisionPorClienteID_StrictlyLater_Wins(t *testing.T) {
 
 func TestNewestDecisionPorClienteID_TiedCreatedAt_ReturnsSecondInserted(t *testing.T) {
 	t.Parallel()
-	// Legacy Firebird TIMESTAMP has second-level resolution — a propuesto and
+	// Legacy Firebird TIMESTAMP has ~100µs resolution — a propuesto and
 	// its aprobado (written moments apart in the same operator action) can
 	// share an identical CreatedAt. Per ListarPorCliente's ascending-order
 	// contract, "newest" must mean the LAST element of a tied group — the

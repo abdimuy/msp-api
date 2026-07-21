@@ -10,7 +10,7 @@ import (
 
 // Turno is one message exchanged in a copiloto conversation — entrante (from
 // the cliente) or saliente (to the cliente, from ia or humano). It maps 1:1
-// to a row in MSP_RX_TURNOS and is append-only: once created, only
+// to a row in MSP_RX_TURNO and is append-only: once created, only
 // MensajeRef may change (linking it to the Fase 2 send record once the
 // saliente turno is actually enqueued/sent).
 //

@@ -8,7 +8,7 @@ import (
 )
 
 // DecisionRepo persists and retrieves the copiloto's LLM decision audit
-// trail (MSP_RX_DECISIONES).
+// trail (MSP_RX_DECISION).
 type DecisionRepo interface {
 	// Insertar appends a newly produced decision. Every row is a fresh INSERT
 	// — never an upsert.

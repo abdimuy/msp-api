@@ -7,7 +7,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/reactivacion/domain"
 )
 
-// ListarConversacionesParams controls which MSP_RX_CONVERSACIONES rows
+// ListarConversacionesParams controls which MSP_RX_CONVERSACION rows
 // ConversacionRepo.Listar returns.
 type ListarConversacionesParams struct {
 	// Estado restricts results to one estado. Empty string = no filter.
@@ -18,7 +18,7 @@ type ListarConversacionesParams struct {
 }
 
 // ConversacionRepo persists and retrieves the copiloto's conversation state
-// (MSP_RX_CONVERSACIONES) and its turn log (MSP_RX_TURNOS).
+// (MSP_RX_CONVERSACION) and its turn log (MSP_RX_TURNO).
 type ConversacionRepo interface {
 	// Get returns the Conversacion for clienteID, or (nil, nil) when the
 	// cliente has no conversation yet.

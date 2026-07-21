@@ -9,7 +9,7 @@ import (
 
 // Decision is one copiloto LLM analysis of an inbound Turno, together with
 // the outcome once an operator (or the auto-send policy) acts on it. It maps
-// 1:1 to a row in MSP_RX_DECISIONES — an audit trail of what the LLM
+// 1:1 to a row in MSP_RX_DECISION — an audit trail of what the LLM
 // proposed and what actually happened.
 //
 // Type classification: append-only log entry with a single post-creation
@@ -169,8 +169,11 @@ func (d *Decision) Senales() []string {
 // AccionPropuesta returns what the LLM proposed to do.
 func (d *Decision) AccionPropuesta() Accion { return d.accionPropuesta }
 
-// Borrador returns the LLM's drafted reply, empty when AccionPropuesta is
-// AccionEscalar.
+// Borrador returns the LLM's drafted reply. Typically empty when
+// AccionPropuesta is AccionEscalar (the app layer usually has nothing to
+// draft when escalating), but this is NOT an enforced invariant: the raw
+// LLM draft is sometimes stored on an escalated Decision too, for audit
+// purposes only — it is never sent in that case.
 func (d *Decision) Borrador() string { return d.borrador }
 
 // Evidencia returns a defensive copy of the evidence snippets backing this

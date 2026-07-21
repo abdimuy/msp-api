@@ -10,7 +10,7 @@ import (
 )
 
 // Conversacion is the copiloto's per-cliente conversation state machine. It
-// maps 1:1 to a row in MSP_RX_CONVERSACIONES and tracks where the
+// maps 1:1 to a row in MSP_RX_CONVERSACION and tracks where the
 // cliente/IA/humano exchange sits (see EstadoConversacion), plus the memory
 // cache the LLM needs on every turn (ResumenMemoria, ContextoNota, Banderas,
 // NotaHash — set by the app layer in Slice B after reading the cobrador's

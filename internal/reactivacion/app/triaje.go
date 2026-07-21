@@ -58,7 +58,15 @@ func escalarFinal(razon string) DecisionFinal {
 //     draft itself leaks a debt figure, independent of any Senal).
 //  8. Any raw signal string that is not a recognized domain.Senal
 //     → razonFueraAllowlist (unknown is treated as suspicious, never ignored).
-//  9. None of the above → responderFinal (propose the draft as-is).
+//  9. strings.TrimSpace(out.Borrador) == "" → razonBorradorVacio (a DEFENSIVE
+//     escalate: every rule above resolved to "respond", but the LLM handed
+//     back an empty/whitespace draft — an LLM hiccup, not a real reply. This
+//     guard is centralized HERE, not in the caller, precisely so
+//     persistirTurnoEntranteYDecision never attempts to build a saliente
+//     Turno with an empty Cuerpo — domain.CrearTurno would reject it
+//     (ErrTurnoCuerpoRequerido) and roll back the WHOLE inbound turn,
+//     including the entrante Turno that must always be recorded).
+//  10. None of the above → responderFinal (propose the draft as-is).
 func triar(out outbound.AnalizarOutput) DecisionFinal {
 	senales, tieneSenalDesconocida := clasificarSenales(out.Senales)
 
@@ -79,6 +87,8 @@ func triar(out outbound.AnalizarOutput) DecisionFinal {
 		return escalarFinal(razonCifraDeuda)
 	case tieneSenalDesconocida:
 		return escalarFinal(razonFueraAllowlist)
+	case strings.TrimSpace(out.Borrador) == "":
+		return escalarFinal(razonBorradorVacio)
 	default:
 		return responderFinal
 	}
