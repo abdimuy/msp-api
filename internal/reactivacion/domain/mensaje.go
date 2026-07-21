@@ -15,12 +15,6 @@ import (
 //
 // Type classification: Type B pipeline (state-machine entity) — embeds
 // audit.Timestamped, no per-user audit trail (the channel is system-driven).
-//
-// Mensaje is a domain entity, not an error type: its Error() getter
-// (failure/block reason) happens to satisfy the built-in error interface,
-// which is incidental — nothing constructs *Mensaje as an error.
-//
-//nolint:errname // see above
 type Mensaje struct {
 	id          uuid.UUID
 	clienteID   int
@@ -191,9 +185,10 @@ func (m *Mensaje) EncoladoEn() time.Time { return m.encoladoEn }
 // EnviadoEn returns when the message was sent. Zero until MarcarEnviado runs.
 func (m *Mensaje) EnviadoEn() time.Time { return m.enviadoEn }
 
-// Error returns the failure/block reason. Empty unless Estado is fallido or
-// bloqueado.
-func (m *Mensaje) Error() string { return m.errorMotivo }
+// Motivo returns the failure/block reason. Empty unless Estado is fallido or
+// bloqueado. Named Motivo (not Error) so *Mensaje never satisfies the built-in
+// error interface by accident.
+func (m *Mensaje) Motivo() string { return m.errorMotivo }
 
 // CreatedAt returns the UTC timestamp when the message row was first created.
 func (m *Mensaje) CreatedAt() time.Time { return m.timestamps.CreatedAt() }

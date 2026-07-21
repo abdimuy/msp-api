@@ -42,7 +42,7 @@ func TestCrearMensaje_Success(t *testing.T) {
 	assert.Empty(t, m.SenderKind().String())
 	assert.Equal(t, mensajeFixedNow, m.EncoladoEn())
 	assert.True(t, m.EnviadoEn().IsZero())
-	assert.Empty(t, m.Error())
+	assert.Empty(t, m.Motivo())
 	assert.Equal(t, mensajeFixedNow, m.CreatedAt())
 	assert.Equal(t, mensajeFixedNow, m.UpdatedAt())
 }
@@ -125,7 +125,7 @@ func TestMensaje_MarcarFallido(t *testing.T) {
 	m.MarcarFallido("número no válido en whatsapp", when)
 
 	assert.Equal(t, domain.EstadoFallido, m.Estado())
-	assert.Equal(t, "número no válido en whatsapp", m.Error())
+	assert.Equal(t, "número no válido en whatsapp", m.Motivo())
 	assert.Equal(t, when, m.UpdatedAt())
 	// A failed send must never claim a sender kind or a sent timestamp.
 	assert.Empty(t, m.SenderKind().String())
@@ -141,7 +141,7 @@ func TestMensaje_MarcarBloqueado(t *testing.T) {
 	m.MarcarBloqueado("tope diario alcanzado", when)
 
 	assert.Equal(t, domain.EstadoBloqueado, m.Estado())
-	assert.Equal(t, "tope diario alcanzado", m.Error())
+	assert.Equal(t, "tope diario alcanzado", m.Motivo())
 	assert.Equal(t, when, m.UpdatedAt())
 }
 
@@ -175,7 +175,7 @@ func TestHydrateMensaje(t *testing.T) {
 	assert.Equal(t, domain.SenderReal, m.SenderKind())
 	assert.Equal(t, mensajeFixedEncolado, m.EncoladoEn())
 	assert.Equal(t, mensajeFixedEnviado, m.EnviadoEn())
-	assert.Empty(t, m.Error())
+	assert.Empty(t, m.Motivo())
 	assert.Equal(t, created, m.CreatedAt())
 	assert.Equal(t, updated, m.UpdatedAt())
 }
@@ -196,7 +196,7 @@ func TestHydrateMensaje_WithError(t *testing.T) {
 		UpdatedAt:  mensajeFixedEncolado,
 	})
 	assert.Equal(t, domain.EstadoFallido, m.Estado())
-	assert.Equal(t, "canal no configurado", m.Error())
+	assert.Equal(t, "canal no configurado", m.Motivo())
 	assert.Empty(t, m.SenderKind().String())
 	assert.True(t, m.EnviadoEn().IsZero())
 }

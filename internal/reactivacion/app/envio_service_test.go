@@ -249,7 +249,7 @@ func TestDrenarCola_SenderFalla_MensajeFallido_NoContactado(t *testing.T) {
 	assert.Equal(t, 0, res.Enviados)
 	assert.Equal(t, 1, res.Fallidos)
 	assert.Equal(t, domain.EstadoFallido, m1.Estado())
-	assert.NotEmpty(t, m1.Error())
+	assert.NotEmpty(t, m1.Motivo())
 	assert.Equal(t, 0, cohorteRepo.contactadosCount(), "a failed send must never mark FUE_CONTACTADO")
 	assert.Empty(t, m1.SenderKind().String())
 }

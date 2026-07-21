@@ -192,8 +192,8 @@ func toMensajeDTOs(mensajes []*reactivaciondomain.Mensaje) []MensajeDTO {
 			s := m.EnviadoEn().UTC().Format(time.RFC3339)
 			dto.EnviadoEn = &s
 		}
-		if m.Error() != "" {
-			e := m.Error()
+		if m.Motivo() != "" {
+			e := m.Motivo()
 			dto.Error = &e
 		}
 		dtos = append(dtos, dto)

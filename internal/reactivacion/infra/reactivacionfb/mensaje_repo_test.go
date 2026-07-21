@@ -84,7 +84,7 @@ func TestMensajeRepo_InsertarAndListar_RoundTrip(t *testing.T) {
 		assert.Equal(t, domain.EstadoEncolado, got.Estado())
 		assert.Empty(t, got.SenderKind().String(), "sender_kind must be NULL until sent")
 		assert.True(t, got.EnviadoEn().IsZero())
-		assert.Empty(t, got.Error())
+		assert.Empty(t, got.Motivo())
 		assert.WithinDuration(t, mensajeFixedEncolado, got.EncoladoEn(), time.Second)
 		assert.WithinDuration(t, mensajeFixedEncolado, got.CreatedAt(), time.Second)
 	})
@@ -140,7 +140,7 @@ func TestMensajeRepo_Actualizar_MarcaEnviado(t *testing.T) {
 		assert.Equal(t, domain.EstadoEnviado, got.Estado())
 		assert.Equal(t, domain.SenderSimulado, got.SenderKind())
 		assert.WithinDuration(t, mensajeFixedNow, got.EnviadoEn(), time.Second)
-		assert.Empty(t, got.Error())
+		assert.Empty(t, got.Motivo())
 	})
 }
 
@@ -167,7 +167,7 @@ func TestMensajeRepo_Actualizar_MarcaFallido(t *testing.T) {
 		require.NotNil(t, got)
 
 		assert.Equal(t, domain.EstadoFallido, got.Estado())
-		assert.Equal(t, "número no válido en whatsapp", got.Error())
+		assert.Equal(t, "número no válido en whatsapp", got.Motivo())
 		assert.Empty(t, got.SenderKind().String())
 		assert.True(t, got.EnviadoEn().IsZero())
 	})

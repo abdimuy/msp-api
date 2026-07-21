@@ -165,7 +165,7 @@ func (r *Repo) Actualizar(ctx context.Context, m *domain.Mensaje) error {
 		m.Estado().String(),
 		nullableSenderKindArg(m.SenderKind()),
 		nullableWallClockArg(wallClockPtrFromTime(m.EnviadoEn())),
-		nullableStringArg(m.Error()),
+		nullableStringArg(m.Motivo()),
 		firebird.ToWallClock(m.UpdatedAt()),
 		m.ID().String(),
 	)
