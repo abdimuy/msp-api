@@ -300,6 +300,8 @@ linters:
           alias: reactivacionfb
         - pkg: github.com/abdimuy/msp-api/internal/reactivacion/infra/reactivacionhttp
           alias: reactivacionhttp
+        - pkg: github.com/abdimuy/msp-api/internal/reactivacion/infra/reactivacionsender
+          alias: reactivacionsender
         - pkg: github.com/abdimuy/msp-api/internal/clientes/infra/clientessearch
           alias: clientessearchmeili
         - pkg: github.com/abdimuy/msp-api/internal/ventas/infra/ventsearch
