@@ -65,6 +65,17 @@ type Service struct {
 
 	// construirRunning is the single-flight guard for ConstruirEnSegundoPlano.
 	construirRunning atomic.Bool
+
+	// ─── Canal (Fase 2) — set via WithCanal; zero-valued in a Fase 1 Service ───
+
+	mensajeRepo outbound.MensajeRepo
+	sender      outbound.MessageSender
+	opener      Opener
+	gobernador  *Gobernador
+	autoSend    bool
+
+	// encolarRunning is the single-flight guard for EncolarEnSegundoPlano.
+	encolarRunning atomic.Bool
 }
 
 // NewService builds a Service wired against the required ports. txMgr may be nil
@@ -92,6 +103,25 @@ func (s *Service) WithLogger(l *slog.Logger) *Service {
 	if l != nil {
 		s.logger = l
 	}
+	return s
+}
+
+// WithCanal wires the Fase 2 channel dependencies onto an existing Service,
+// reusing its runInTx/clock/logger/txMgr. A Service built with NewService
+// alone (Fase 1) has these fields zero-valued — EncolarCohorte/DrenarCola
+// must not be called until WithCanal has run. Returns s for chaining.
+func (s *Service) WithCanal(
+	mensajeRepo outbound.MensajeRepo,
+	sender outbound.MessageSender,
+	opener Opener,
+	gobernador *Gobernador,
+	autoSend bool,
+) *Service {
+	s.mensajeRepo = mensajeRepo
+	s.sender = sender
+	s.opener = opener
+	s.gobernador = gobernador
+	s.autoSend = autoSend
 	return s
 }
 
