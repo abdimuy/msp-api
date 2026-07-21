@@ -8,12 +8,14 @@ import (
 
 	reactivacionapp "github.com/abdimuy/msp-api/internal/reactivacion/app"
 	reactivacionfb "github.com/abdimuy/msp-api/internal/reactivacion/infra/reactivacionfb"
+	reactivacionllm "github.com/abdimuy/msp-api/internal/reactivacion/infra/reactivacionllm"
 	reactivacionsender "github.com/abdimuy/msp-api/internal/reactivacion/infra/reactivacionsender"
 	reactivacionoutbound "github.com/abdimuy/msp-api/internal/reactivacion/ports/outbound"
 
 	"github.com/abdimuy/msp-api/internal/platform/config"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 	"github.com/abdimuy/msp-api/internal/platform/lifecycle"
+	platformllm "github.com/abdimuy/msp-api/internal/platform/llm"
 
 	"go.uber.org/fx"
 )
@@ -86,9 +88,57 @@ func provideReactivacionOpener() reactivacionapp.Opener {
 	return reactivacionapp.NewOpener()
 }
 
+// provideReactivacionCopilotoRepo builds the Firebird-backed CopilotoRepo that
+// implements both ConversacionRepo and DecisionRepo. It is a SEPARATE struct
+// from Repo — not an addition to it — because Insertar/Listar collide by name
+// with MensajeRepo's methods of the same names but different signatures (Go
+// does not support overloading by parameter type). See
+// internal/reactivacion/infra/reactivacionfb/copiloto_repo.go for the full
+// rationale. It shares Repo's *firebird.Pool — no new connection lifecycle.
+func provideReactivacionCopilotoRepo(p *firebird.Pool) *reactivacionfb.CopilotoRepo {
+	return reactivacionfb.NewCopilotoRepo(p)
+}
+
+// provideReactivacionConversacionRepo exposes the concrete CopilotoRepo as
+// the ConversacionRepo port.
+func provideReactivacionConversacionRepo(r *reactivacionfb.CopilotoRepo) reactivacionoutbound.ConversacionRepo {
+	return r
+}
+
+// provideReactivacionDecisionRepo exposes the concrete CopilotoRepo as the
+// DecisionRepo port.
+func provideReactivacionDecisionRepo(r *reactivacionfb.CopilotoRepo) reactivacionoutbound.DecisionRepo {
+	return r
+}
+
+// provideReactivacionNotaReader exposes the concrete Repo as the NotaReader
+// port (GetNotaCliente has no name collision with MensajeRepo, so it stays on
+// the original Repo alongside CohorteRepo/UniversoReader/MensajeRepo).
+func provideReactivacionNotaReader(r *reactivacionfb.Repo) reactivacionoutbound.NotaReader {
+	return r
+}
+
+// provideReactivacionClienteFactsReader exposes the concrete Repo as the
+// ClienteFactsReader port (GetFacts has no name collision either).
+func provideReactivacionClienteFactsReader(r *reactivacionfb.Repo) reactivacionoutbound.ClienteFactsReader {
+	return r
+}
+
+// provideReactivacionCopilotoLLM builds the copiloto's LLM adapter, reusing
+// the SHARED platform LLM client (platformllm.Client, wired once in
+// llm_wiring.go and already shared with analytics) — no per-feature LLM
+// config. When LLM_ENABLED=false (the default), every call degrades per
+// ProcesarMensajeEntrante's documented ErrLLMDisabled fallback (synthetic
+// escalate), never panics or blocks.
+func provideReactivacionCopilotoLLM(client platformllm.Client, cfg *config.Config) reactivacionoutbound.CopilotoLLM {
+	return reactivacionllm.NewGenerator(client, cfg.LLM.Model)
+}
+
 // provideReactivacionService assembles the reactivación query and command
 // service, wiring the Fase 2 canal dependencies (MensajeRepo, MessageSender,
-// Opener, Gobernador, auto_send) onto the Fase 1 base via WithCanal.
+// Opener, Gobernador, auto_send) onto the Fase 1 base via WithCanal, then the
+// Fase 3a copiloto dependencies via WithCopiloto. AprobarBorrador/
+// EditarYAprobar reuse the canal's mensajeRepo, so WithCanal must run first.
 func provideReactivacionService(
 	reader reactivacionoutbound.UniversoReader,
 	repo reactivacionoutbound.CohorteRepo,
@@ -98,6 +148,11 @@ func provideReactivacionService(
 	sender reactivacionoutbound.MessageSender,
 	opener reactivacionapp.Opener,
 	gobernador *reactivacionapp.Gobernador,
+	convRepo reactivacionoutbound.ConversacionRepo,
+	decisionRepo reactivacionoutbound.DecisionRepo,
+	notaReader reactivacionoutbound.NotaReader,
+	copilotoLLM reactivacionoutbound.CopilotoLLM,
+	factsReader reactivacionoutbound.ClienteFactsReader,
 	cfg *config.Config,
 	logger *slog.Logger,
 ) *reactivacionapp.Service {
@@ -105,7 +160,8 @@ func provideReactivacionService(
 		ControlPct: cfg.Reactivacion.ControlPct,
 	}).
 		WithLogger(logger).
-		WithCanal(mensajeRepo, sender, opener, gobernador, cfg.Reactivacion.AutoSend)
+		WithCanal(mensajeRepo, sender, opener, gobernador, cfg.Reactivacion.AutoSend).
+		WithCopiloto(convRepo, decisionRepo, notaReader, copilotoLLM, factsReader)
 }
 
 // provideReactivacionEnvioWorker builds the background worker that drains the

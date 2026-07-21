@@ -115,4 +115,83 @@ func registerOperations(api huma.API, h *Handlers) {
 		Tags:        tags,
 		Security:    security,
 	}, h.ListEnvios)
+
+	registerCopilotoOperations(api, h, security, tags)
+}
+
+// registerCopilotoOperations registers the seven Fase 3a copiloto endpoints
+// (conversaciones + operator actions). Split out of registerOperations to
+// stay under the funlen limit, mirroring
+// internal/analytics/infra/analyticshttp/routes.go's registerCarteraOperations.
+func registerCopilotoOperations(api huma.API, h *Handlers, security []map[string][]string, tags []string) {
+	huma.Register(api, huma.Operation{
+		OperationID:   "mensaje-entrante-reactivacion",
+		Method:        http.MethodPost,
+		Path:          "/reactivacion/conversaciones/{cliente_id}/mensaje-entrante",
+		Summary:       "Procesar un mensaje entrante simulado del cliente",
+		Description:   "Simula la llegada de un mensaje de WhatsApp del cliente (Fase 3a no tiene canal entrante real): registra el turno, pide al copiloto que lo analice, aplica la política determinista de triage y persiste la decisión más un borrador pendiente (o un escalamiento).",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+	}, h.MensajeEntrante)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "listar-conversaciones-reactivacion",
+		Method:      http.MethodGet,
+		Path:        "/reactivacion/conversaciones",
+		Summary:     "Listar la bandeja de conversaciones del copiloto",
+		Description: "Devuelve las conversaciones filtrables por estado o solo escaladas, ordenadas para que las que necesitan atención humana aparezcan primero.",
+		Tags:        tags,
+		Security:    security,
+	}, h.ListConversaciones)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "obtener-conversacion-reactivacion",
+		Method:      http.MethodGet,
+		Path:        "/reactivacion/conversaciones/{cliente_id}",
+		Summary:     "Obtener el detalle de una conversación",
+		Description: "Devuelve el encabezado de la conversación, el hilo completo de turnos y la bitácora de decisiones de un cliente.",
+		Tags:        tags,
+		Security:    security,
+	}, h.ObtenerConversacion)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "aprobar-borrador-reactivacion",
+		Method:      http.MethodPost,
+		Path:        "/reactivacion/conversaciones/{cliente_id}/aprobar",
+		Summary:     "Aprobar el borrador pendiente de un cliente",
+		Description: "Encola el borrador pendiente más reciente del cliente tal cual, vía el canal de envío, y registra la aprobación en la bitácora de decisiones.",
+		Tags:        tags,
+		Security:    security,
+	}, h.AprobarBorrador)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "editar-borrador-reactivacion",
+		Method:      http.MethodPost,
+		Path:        "/reactivacion/conversaciones/{cliente_id}/editar",
+		Summary:     "Editar y aprobar el borrador pendiente de un cliente",
+		Description: "Encola la versión editada por el operador del borrador pendiente más reciente, vía el canal de envío, y registra la edición en la bitácora de decisiones.",
+		Tags:        tags,
+		Security:    security,
+	}, h.EditarBorrador)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "dictar-reactivacion",
+		Method:      http.MethodPost,
+		Path:        "/reactivacion/conversaciones/{cliente_id}/dictar",
+		Summary:     "Dictar un mensaje al copiloto",
+		Description: "Redacta un borrador nuevo a partir de la intención dictada por el operador (no reacciona a un mensaje del cliente) y lo deja pendiente de aprobación.",
+		Tags:        tags,
+		Security:    security,
+	}, h.Dictar)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "escalar-reactivacion",
+		Method:      http.MethodPost,
+		Path:        "/reactivacion/conversaciones/{cliente_id}/escalar",
+		Summary:     "Escalar una conversación a un operador humano",
+		Description: "Marca la conversación como escalada (opcionalmente asignada a un operador) y registra el escalamiento en la bitácora de decisiones.",
+		Tags:        tags,
+		Security:    security,
+	}, h.Escalar)
 }
