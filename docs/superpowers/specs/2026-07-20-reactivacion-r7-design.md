@@ -143,8 +143,14 @@ que pedir ayuda). **Los `[POR CONFIRMAR]` los llenas tú con datos reales del ne
 - Next-best-product derivado del historial del cliente + canasta de mercado.
 - Planes de pago **leídos de la DB (Microsip)**: la IA usa el **enganche** y la **parcialidad real** del
   cliente (**semanal / quincenal / mensual**) — nunca rangos inventados. Habla en su cadencia y montos reales.
-- Promos: **ninguna por ahora.** No ofrece promociones hasta que el usuario cargue una lista de promos
-  vigentes. (Mientras tanto, "promo" pedida por el cliente → escala.)
+- **Regla de precio para una oferta NUEVA:** ancla en el **pago redondo que el cliente ya conoce** (ej. $150
+  a la semana), **mantiene ese pago**, y **estira el plazo** para que quepa el precio del producto nuevo.
+  Enganche y parcialidad **SIEMPRE en múltiplos de $50** (así opera el negocio; nada de montos "raros").
+  Algoritmo: `plazo = ceil((precio − enganche) / parcialidad)` con la parcialidad habitual del cliente.
+  Contexto real (base): enganche típico 5-10% del precio (23% sin enganche), plazo 27+ pagos común.
+- Promos / descuentos / **enganche perdonado** / plazo fuera de lo normal: **ninguno por ahora → escala.**
+  Perdonar el enganche es regalar la principal palanca de efectivo del negocio → **decisión del dueño, nunca
+  la IA sola** (gateado por flag; off por default).
 
 ### ✅ Puede AFIRMAR
 - "Manejamos crédito / pagos en parcialidades (semanal, quincenal o mensual)."
