@@ -70,6 +70,9 @@ type ConversacionResumenDTO struct {
 	AsignadoA      string             `json:"asignado_a"      doc:"Operador asignado; vacío si no está escalada"`
 	UpdatedAt      string             `json:"updated_at"      doc:"Fecha de la última transición o actualización (RFC3339 UTC)"`
 	UltimaDecision *UltimaDecisionDTO `json:"ultima_decision" doc:"Decisión más reciente del cliente; nulo si aún no hay ninguna"`
+	Nombre         string             `json:"nombre"          doc:"Nombre del cliente; vacío si no está en la cohorte"`
+	Segmento       string             `json:"segmento"        doc:"Segmento del cliente en la cohorte; vacío si no está en la cohorte"`
+	UltimoMensaje  string             `json:"ultimo_mensaje"  doc:"Vista previa del último mensaje entrante del cliente (máx. 120 caracteres); vacío si aún no hay ninguno"`
 }
 
 // UltimaDecisionDTO is the condensed decision shown in the bandeja queue —
@@ -116,6 +119,9 @@ type ConversacionDTO struct {
 	ResumenMemoria string   `json:"resumen_memoria" doc:"Resumen de la conversación acumulado hasta ahora"`
 	CreatedAt      string   `json:"created_at"      doc:"Fecha de creación de la conversación (RFC3339 UTC)"`
 	UpdatedAt      string   `json:"updated_at"      doc:"Fecha de la última transición o actualización (RFC3339 UTC)"`
+	Nombre         string   `json:"nombre"          doc:"Nombre del cliente; vacío si no está en la cohorte"`
+	Segmento       string   `json:"segmento"        doc:"Segmento del cliente en la cohorte; vacío si no está en la cohorte"`
+	Telefono       string   `json:"telefono"        doc:"Teléfono del cliente; vacío si no está en la cohorte"`
 }
 
 // TurnoDTO is the wire representation of one message in the conversation

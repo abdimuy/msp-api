@@ -11,6 +11,7 @@ import (
 
 	"github.com/abdimuy/msp-api/internal/reactivacion/app"
 	"github.com/abdimuy/msp-api/internal/reactivacion/domain"
+	"github.com/abdimuy/msp-api/internal/reactivacion/ports/outbound"
 )
 
 func TestObtenerConversacion_ConvRepoGetError_Fails(t *testing.T) {
@@ -75,4 +76,49 @@ func TestObtenerConversacion_Absent_Error(t *testing.T) {
 
 	_, err := svc.ObtenerConversacion(context.Background(), obtenerConvClienteID)
 	require.ErrorIs(t, err, app.ErrConversacionNoEncontrada)
+}
+
+// ─── bandeja enrichment (Fase 3c): nombre/segmento/telefono ─────────────────
+
+func TestObtenerConversacion_HydratesFacts(t *testing.T) {
+	t.Parallel()
+	deps := newCopilotoDeps()
+	putConversacion(deps.convRepo, obtenerConvClienteID, domain.EstadoConversando, obtenerConvNow)
+	deps.factsReader.facts = map[int]*outbound.ClienteFacts{
+		obtenerConvClienteID: factsFor("María López", "recien_liquidado", "238 100 4521"),
+	}
+	svc := newCopilotoService(deps, obtenerConvNow)
+
+	detalle, err := svc.ObtenerConversacion(context.Background(), obtenerConvClienteID)
+	require.NoError(t, err)
+	assert.Equal(t, "María López", detalle.Nombre)
+	assert.Equal(t, "recien_liquidado", detalle.Segmento)
+	assert.Equal(t, "238 100 4521", detalle.Telefono)
+}
+
+func TestObtenerConversacion_FactsNil_CamposVacios(t *testing.T) {
+	t.Parallel()
+	deps := newCopilotoDeps()
+	putConversacion(deps.convRepo, obtenerConvClienteID, domain.EstadoConversando, obtenerConvNow)
+	svc := newCopilotoService(deps, obtenerConvNow)
+
+	detalle, err := svc.ObtenerConversacion(context.Background(), obtenerConvClienteID)
+	require.NoError(t, err)
+	assert.Empty(t, detalle.Nombre)
+	assert.Empty(t, detalle.Segmento)
+	assert.Empty(t, detalle.Telefono)
+}
+
+func TestObtenerConversacion_DegradaSinFallarCuandoFactsReaderFalla(t *testing.T) {
+	t.Parallel()
+	deps := newCopilotoDeps()
+	putConversacion(deps.convRepo, obtenerConvClienteID, domain.EstadoConversando, obtenerConvNow)
+	deps.factsReader.err = assert.AnError
+	svc := newCopilotoService(deps, obtenerConvNow)
+
+	detalle, err := svc.ObtenerConversacion(context.Background(), obtenerConvClienteID)
+	require.NoError(t, err)
+	assert.Empty(t, detalle.Nombre)
+	assert.Empty(t, detalle.Segmento)
+	assert.Empty(t, detalle.Telefono)
 }

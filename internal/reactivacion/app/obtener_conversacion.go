@@ -3,6 +3,7 @@ package app
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/abdimuy/msp-api/internal/platform/apperror"
 	"github.com/abdimuy/msp-api/internal/reactivacion/domain"
@@ -15,6 +16,14 @@ type ConversacionDetalle struct {
 	Conversacion *domain.Conversacion
 	Turnos       []*domain.Turno
 	Decisiones   []*domain.Decision
+
+	// ─── Fase 3c bandeja enrichment — hydrated from ClienteFactsReader. Empty
+	// when the cliente has no facts yet or when hydration degrades (see
+	// hydrateDetalleFacts).
+
+	Nombre   string
+	Segmento string
+	Telefono string
 }
 
 // ObtenerConversacion returns clienteID's full conversation detail. Returns
@@ -43,5 +52,26 @@ func (s *Service) ObtenerConversacion(ctx context.Context, clienteID int) (Conve
 			WithSource(source).WithError(err)
 	}
 
-	return ConversacionDetalle{Conversacion: conv, Turnos: turnos, Decisiones: decisiones}, nil
+	det := ConversacionDetalle{Conversacion: conv, Turnos: turnos, Decisiones: decisiones}
+	s.hydrateDetalleFacts(ctx, &det, clienteID)
+	return det, nil
+}
+
+// hydrateDetalleFacts fills det's Nombre/Segmento/Telefono from
+// ClienteFactsReader. A reader error, or the cliente not being in the
+// cohorte snapshot (nil facts), degrades to empty fields (logged, not
+// fatal) — the ficha view still renders without them.
+func (s *Service) hydrateDetalleFacts(ctx context.Context, det *ConversacionDetalle, clienteID int) {
+	facts, err := s.factsReader.GetFacts(ctx, clienteID)
+	if err != nil {
+		s.logger.WarnContext(ctx, "reactivacion_bandeja.facts_reader_failed",
+			slog.Int("cliente_id", clienteID), slog.String("error", err.Error()))
+		return
+	}
+	if facts == nil {
+		return
+	}
+	det.Nombre = facts.Nombre
+	det.Segmento = facts.Segmento
+	det.Telefono = facts.Telefono
 }

@@ -289,6 +289,40 @@ func TestListConversaciones_HappyPath_OrdenaEscaladasPrimero(t *testing.T) {
 	assert.Equal(t, 301, body.Items[1].ClienteID)
 }
 
+func TestListConversaciones_HappyPath_IncluyeBandejaEnrichment(t *testing.T) {
+	t.Parallel()
+	convRepo := newFakeConversacionRepo()
+	decisionRepo := newFakeDecisionRepo()
+
+	conv, err := domain.CrearConversacion(303, fixedNow)
+	require.NoError(t, err)
+	require.NoError(t, convRepo.Upsert(context.Background(), conv))
+
+	turno, err := domain.CrearTurno(domain.CrearTurnoParams{
+		ClienteID: 303, Direccion: domain.DireccionEntrante, Autor: domain.AutorCliente,
+		Cuerpo: "¿qué tienen de comedores?", Now: fixedNow,
+	})
+	require.NoError(t, err)
+	require.NoError(t, convRepo.AppendTurno(context.Background(), turno))
+
+	factsReader := &fakeClienteFactsReader{facts: map[int]*outbound.ClienteFacts{
+		303: {Nombre: "María López", Segmento: "recien_liquidado", Telefono: "238 100 4521"},
+	}}
+
+	svc := buildServiceWithCopiloto(convRepo, decisionRepo, &fakeNotaReader{}, &copilotofake.Generator{}, factsReader)
+	rec := do(buildRouter(svc, userWith(auth.PermReactivacionLeer)), http.MethodGet, "/reactivacion/conversaciones")
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body struct {
+		Items []reactivacionhttp.ConversacionResumenDTO `json:"items"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Items, 1)
+	assert.Equal(t, "María López", body.Items[0].Nombre)
+	assert.Equal(t, "recien_liquidado", body.Items[0].Segmento)
+	assert.Equal(t, "¿qué tienen de comedores?", body.Items[0].UltimoMensaje)
+}
+
 func TestListConversaciones_SoloEscaladas_IgnoraEstadoConflictivo(t *testing.T) {
 	t.Parallel()
 	convRepo := newFakeConversacionRepo()
@@ -351,7 +385,10 @@ func TestObtenerConversacion_HappyPath_200(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, decisionRepo.Insertar(context.Background(), d))
 
-	svc := buildServiceWithCopiloto(convRepo, decisionRepo, &fakeNotaReader{}, &copilotofake.Generator{}, &fakeClienteFactsReader{})
+	factsReader := &fakeClienteFactsReader{facts: map[int]*outbound.ClienteFacts{
+		402: {Nombre: "María López", Segmento: "recien_liquidado", Telefono: "238 100 4521"},
+	}}
+	svc := buildServiceWithCopiloto(convRepo, decisionRepo, &fakeNotaReader{}, &copilotofake.Generator{}, factsReader)
 	rec := do(buildRouter(svc, userWith(auth.PermReactivacionLeer)), http.MethodGet, "/reactivacion/conversaciones/402")
 	require.Equal(t, http.StatusOK, rec.Code)
 
@@ -360,6 +397,9 @@ func TestObtenerConversacion_HappyPath_200(t *testing.T) {
 	assert.Equal(t, 402, dto.Conversacion.ClienteID)
 	assert.Equal(t, "cliente prefiere tardes", dto.Conversacion.ContextoNota)
 	assert.Contains(t, dto.Conversacion.Banderas, "prefiere_tarde")
+	assert.Equal(t, "María López", dto.Conversacion.Nombre)
+	assert.Equal(t, "recien_liquidado", dto.Conversacion.Segmento)
+	assert.Equal(t, "238 100 4521", dto.Conversacion.Telefono)
 	require.Len(t, dto.Turnos, 1)
 	assert.Equal(t, "entrante", dto.Turnos[0].Direccion)
 	assert.Equal(t, "hola", dto.Turnos[0].Cuerpo)

@@ -190,10 +190,13 @@ func toConversacionResumenDTOs(resumenes []reactivacionapp.ConversacionResumen) 
 	dtos := make([]ConversacionResumenDTO, 0, len(resumenes))
 	for _, r := range resumenes {
 		dto := ConversacionResumenDTO{
-			ClienteID: r.Conversacion.ClienteID(),
-			Estado:    r.Conversacion.Estado().String(),
-			AsignadoA: r.Conversacion.AsignadoA(),
-			UpdatedAt: r.Conversacion.UpdatedAt().UTC().Format(time.RFC3339),
+			ClienteID:     r.Conversacion.ClienteID(),
+			Estado:        r.Conversacion.Estado().String(),
+			AsignadoA:     r.Conversacion.AsignadoA(),
+			UpdatedAt:     r.Conversacion.UpdatedAt().UTC().Format(time.RFC3339),
+			Nombre:        r.Nombre,
+			Segmento:      r.Segmento,
+			UltimoMensaje: r.UltimoMensaje,
 		}
 		if r.UltimaDecision != nil {
 			d := r.UltimaDecision
@@ -212,14 +215,20 @@ func toConversacionResumenDTOs(resumenes []reactivacionapp.ConversacionResumen) 
 
 // toConversacionDetalleDTO maps a ConversacionDetalle to its wire representation.
 func toConversacionDetalleDTO(det reactivacionapp.ConversacionDetalle) ConversacionDetalleDTO {
+	dto := toConversacionDTO(det.Conversacion)
+	dto.Nombre = det.Nombre
+	dto.Segmento = det.Segmento
+	dto.Telefono = det.Telefono
 	return ConversacionDetalleDTO{
-		Conversacion: toConversacionDTO(det.Conversacion),
+		Conversacion: dto,
 		Turnos:       toTurnoDTOs(det.Turnos),
 		Decisiones:   toDecisionDTOs(det.Decisiones),
 	}
 }
 
 // toConversacionDTO maps a Conversacion header to its wire representation.
+// Nombre/Segmento/Telefono are NOT set here — they come from
+// ConversacionDetalle's bandeja enrichment, filled in by the caller.
 func toConversacionDTO(c *reactivaciondomain.Conversacion) ConversacionDTO {
 	return ConversacionDTO{
 		ClienteID:      c.ClienteID(),

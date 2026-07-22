@@ -4,8 +4,10 @@ package app_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -82,4 +84,103 @@ func TestListarConversaciones_DecisionRepoError(t *testing.T) {
 
 	_, err := svc.ListarConversaciones(context.Background(), outbound.ListarConversacionesParams{})
 	require.Error(t, err)
+}
+
+// ─── bandeja enrichment (Fase 3c): nombre/segmento/ultimo_mensaje ───────────
+
+func TestListarConversaciones_HydratesFactsAndUltimoMensaje(t *testing.T) {
+	t.Parallel()
+	deps := newCopilotoDeps()
+	putConversacion(deps.convRepo, 1, domain.EstadoConversando, listarConvNow)
+	deps.factsReader.facts = map[int]*outbound.ClienteFacts{
+		1: factsFor("María López", "recien_liquidado", "238 100 4521"),
+	}
+	require.NoError(t, deps.convRepo.AppendTurno(context.Background(),
+		mustTurno(1, domain.DireccionSaliente, domain.AutorIA, "hola, ¿cómo estás?", listarConvNow)))
+	require.NoError(t, deps.convRepo.AppendTurno(context.Background(),
+		mustTurno(1, domain.DireccionEntrante, domain.AutorCliente, "¿qué tienen de comedores?", listarConvNow)))
+
+	svc := newCopilotoService(deps, listarConvNow)
+	got, err := svc.ListarConversaciones(context.Background(), outbound.ListarConversacionesParams{})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "María López", got[0].Nombre)
+	assert.Equal(t, "recien_liquidado", got[0].Segmento)
+	assert.Equal(t, "¿qué tienen de comedores?", got[0].UltimoMensaje)
+}
+
+func TestListarConversaciones_NoFactsNoTurnoEntrante_CamposVacios(t *testing.T) {
+	t.Parallel()
+	deps := newCopilotoDeps()
+	putConversacion(deps.convRepo, 1, domain.EstadoConversando, listarConvNow)
+
+	svc := newCopilotoService(deps, listarConvNow)
+	got, err := svc.ListarConversaciones(context.Background(), outbound.ListarConversacionesParams{})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Empty(t, got[0].Nombre)
+	assert.Empty(t, got[0].Segmento)
+	assert.Empty(t, got[0].UltimoMensaje)
+}
+
+func TestListarConversaciones_UltimoMensaje_SoloTomaTurnosEntrantes(t *testing.T) {
+	t.Parallel()
+	deps := newCopilotoDeps()
+	putConversacion(deps.convRepo, 1, domain.EstadoConversando, listarConvNow)
+	require.NoError(t, deps.convRepo.AppendTurno(context.Background(),
+		mustTurno(1, domain.DireccionEntrante, domain.AutorCliente, "primer mensaje", listarConvNow)))
+	require.NoError(t, deps.convRepo.AppendTurno(context.Background(),
+		mustTurno(1, domain.DireccionSaliente, domain.AutorHumano, "respuesta del operador", listarConvNow)))
+
+	svc := newCopilotoService(deps, listarConvNow)
+	got, err := svc.ListarConversaciones(context.Background(), outbound.ListarConversacionesParams{})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "primer mensaje", got[0].UltimoMensaje, "must ignore the trailing saliente turno")
+}
+
+func TestListarConversaciones_UltimoMensaje_TruncadoA120Runas(t *testing.T) {
+	t.Parallel()
+	deps := newCopilotoDeps()
+	putConversacion(deps.convRepo, 1, domain.EstadoConversando, listarConvNow)
+	largo := strings.Repeat("á", 200)
+	require.NoError(t, deps.convRepo.AppendTurno(context.Background(),
+		mustTurno(1, domain.DireccionEntrante, domain.AutorCliente, largo, listarConvNow)))
+
+	svc := newCopilotoService(deps, listarConvNow)
+	got, err := svc.ListarConversaciones(context.Background(), outbound.ListarConversacionesParams{})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, 120, utf8.RuneCountInString(got[0].UltimoMensaje))
+}
+
+func TestListarConversaciones_DegradaSinFallarCuandoFactsReaderFalla(t *testing.T) {
+	t.Parallel()
+	deps := newCopilotoDeps()
+	putConversacion(deps.convRepo, 1, domain.EstadoConversando, listarConvNow)
+	deps.factsReader.err = errors.New("boom")
+
+	svc := newCopilotoService(deps, listarConvNow)
+	got, err := svc.ListarConversaciones(context.Background(), outbound.ListarConversacionesParams{})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Empty(t, got[0].Nombre)
+	assert.Empty(t, got[0].Segmento)
+}
+
+func TestListarConversaciones_DegradaSinFallarCuandoListarTurnosFalla(t *testing.T) {
+	t.Parallel()
+	deps := newCopilotoDeps()
+	putConversacion(deps.convRepo, 1, domain.EstadoConversando, listarConvNow)
+	deps.factsReader.facts = map[int]*outbound.ClienteFacts{
+		1: factsFor("María López", "recien_liquidado", "238 100 4521"),
+	}
+	deps.convRepo.listarTurnosErr = errors.New("boom")
+
+	svc := newCopilotoService(deps, listarConvNow)
+	got, err := svc.ListarConversaciones(context.Background(), outbound.ListarConversacionesParams{})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "María López", got[0].Nombre, "facts hydration must still succeed independently")
+	assert.Empty(t, got[0].UltimoMensaje)
 }
