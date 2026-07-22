@@ -61,7 +61,7 @@ func TestTriar_EachSenalEscalates(t *testing.T) {
 		razon string
 	}{
 		{"deuda", string(domain.SenalDeuda), razonDeuda},
-		{"senal_compra", string(domain.SenalCompra), razonSenalCompra},
+		{"senal_cierre", string(domain.SenalCierre), razonCierre},
 		{"pide_humano", string(domain.SenalPideHumano), razonPideHumano},
 		{"enojo_loop", string(domain.SenalEnojoLoop), razonEnojoLoop},
 		{"fuera_allowlist", string(domain.SenalFueraAllowlist), razonFueraAllowlist},
@@ -78,6 +78,73 @@ func TestTriar_EachSenalEscalates(t *testing.T) {
 			assert.Equal(t, tc.razon, df.RazonEscalamiento)
 		})
 	}
+}
+
+// ─── senal_compra (interés) es INFORMATIVA: no escala (taxonomía B) ──────────
+
+func TestTriar_SenalCompra_Informational_Responde(t *testing.T) {
+	t.Parallel()
+	// A lone senal_compra (buying INTEREST) is the copiloto's job to sell to —
+	// it must RESPOND, never escalate. This is the core of taxonomía B: only
+	// senal_cierre escalates the sale, interest does not.
+	out := cleanOutput()
+	out.Senales = []string{string(domain.SenalCompra)}
+	df := triar(out)
+	assert.Equal(t, domain.AccionResponder, df.Accion)
+	assert.Equal(t, domain.ResultadoPropuesto, df.Resultado)
+	assert.Empty(t, df.RazonEscalamiento)
+}
+
+func TestTriar_SenalCompra_WithEscalatingSenal_Escala(t *testing.T) {
+	t.Parallel()
+	// senal_compra never BLOCKS an escalation: paired with any real escalation
+	// signal, the escalation still fires with the other signal's reason.
+	cases := []struct {
+		name  string
+		otra  string
+		razon string
+	}{
+		{"compra+deuda", string(domain.SenalDeuda), razonDeuda},
+		{"compra+cierre", string(domain.SenalCierre), razonCierre},
+		{"compra+pide_humano", string(domain.SenalPideHumano), razonPideHumano},
+		{"compra+enojo_loop", string(domain.SenalEnojoLoop), razonEnojoLoop},
+		{"compra+fuera_allowlist", string(domain.SenalFueraAllowlist), razonFueraAllowlist},
+		{"compra+confianza_baja", string(domain.SenalConfianzaBaja), razonConfianzaBaja},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out := cleanOutput()
+			out.Senales = []string{string(domain.SenalCompra), tc.otra}
+			df := triar(out)
+			assert.Equal(t, domain.AccionEscalar, df.Accion)
+			assert.Equal(t, tc.razon, df.RazonEscalamiento)
+		})
+	}
+}
+
+func TestTriar_SenalCompra_EmptyBorrador_DefensiveEscala(t *testing.T) {
+	t.Parallel()
+	// Interest but the LLM handed back no draft → the empty-borrador defensive
+	// guard still fires (senal_compra does not suppress it).
+	out := cleanOutput()
+	out.Senales = []string{string(domain.SenalCompra)}
+	out.Borrador = "   "
+	df := triar(out)
+	assert.Equal(t, domain.AccionEscalar, df.Accion)
+	assert.Equal(t, razonBorradorVacio, df.RazonEscalamiento)
+}
+
+func TestTriar_SenalCompra_LowConfidence_Escala(t *testing.T) {
+	t.Parallel()
+	// Interest but low confidence → the confidence guard still escalates
+	// (ambiguous read is never auto-sent, even on an interest turn).
+	out := cleanOutput()
+	out.Senales = []string{string(domain.SenalCompra)}
+	out.Confianza = umbralConfianzaBaja - 1
+	df := triar(out)
+	assert.Equal(t, domain.AccionEscalar, df.Accion)
+	assert.Equal(t, razonConfianzaBaja, df.RazonEscalamiento)
 }
 
 func TestTriar_ConfianzaBaja_ByThreshold_NoSenal(t *testing.T) {
@@ -195,20 +262,20 @@ func TestTriar_UnknownSenal_MixedWithKnownButNotConfidenceGuard(t *testing.T) {
 	assert.Equal(t, razonDeuda, df.RazonEscalamiento)
 }
 
-func TestTriar_PrecedenceOrder_DeudaBeatsCompra(t *testing.T) {
+func TestTriar_PrecedenceOrder_DeudaBeatsCierre(t *testing.T) {
 	t.Parallel()
 	out := cleanOutput()
-	out.Senales = []string{string(domain.SenalCompra), string(domain.SenalDeuda)}
+	out.Senales = []string{string(domain.SenalCierre), string(domain.SenalDeuda)}
 	df := triar(out)
 	assert.Equal(t, razonDeuda, df.RazonEscalamiento)
 }
 
-func TestTriar_PrecedenceOrder_CompraBeatsPideHumano(t *testing.T) {
+func TestTriar_PrecedenceOrder_CierreBeatsPideHumano(t *testing.T) {
 	t.Parallel()
 	out := cleanOutput()
-	out.Senales = []string{string(domain.SenalPideHumano), string(domain.SenalCompra)}
+	out.Senales = []string{string(domain.SenalPideHumano), string(domain.SenalCierre)}
 	df := triar(out)
-	assert.Equal(t, razonSenalCompra, df.RazonEscalamiento)
+	assert.Equal(t, razonCierre, df.RazonEscalamiento)
 }
 
 func TestTriar_PrecedenceOrder_PideHumanoBeatsEnojoLoop(t *testing.T) {

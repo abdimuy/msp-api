@@ -13,6 +13,7 @@ import (
 func TestSenal_String(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, "senal_compra", domain.SenalCompra.String())
+	assert.Equal(t, "senal_cierre", domain.SenalCierre.String())
 	assert.Equal(t, "deuda", domain.SenalDeuda.String())
 	assert.Equal(t, "confianza_baja", domain.SenalConfianzaBaja.String())
 	assert.Equal(t, "pide_humano", domain.SenalPideHumano.String())
@@ -24,6 +25,7 @@ func TestSenal_Valido(t *testing.T) {
 	t.Parallel()
 	validos := []domain.Senal{
 		domain.SenalCompra,
+		domain.SenalCierre,
 		domain.SenalDeuda,
 		domain.SenalConfianzaBaja,
 		domain.SenalPideHumano,
@@ -40,7 +42,7 @@ func TestSenal_Valido(t *testing.T) {
 func TestParseSenal_Valid(t *testing.T) {
 	t.Parallel()
 	for _, raw := range []string{
-		"senal_compra", "deuda", "confianza_baja",
+		"senal_compra", "senal_cierre", "deuda", "confianza_baja",
 		"pide_humano", "enojo_loop", "fuera_allowlist",
 	} {
 		s, err := domain.ParseSenal(raw)

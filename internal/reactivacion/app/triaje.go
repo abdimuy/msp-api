@@ -39,16 +39,21 @@ func escalarFinal(razon string) DecisionFinal {
 // triar decides the FINAL action from the raw LLM output out. Pure and
 // deterministic — no I/O, no clock, no randomness — so it can be (and is)
 // exhaustively unit tested. This is the safety-critical function of the
-// copiloto: ANY escalation signal, plus the confidence guard and the
+// copiloto: any ESCALATION signal, plus the confidence guard and the
 // debt-figure guard, forces escalation regardless of what the LLM itself
 // proposed in out.Accion/out.RazonEscalamiento (deliberately never read here).
+//
+// domain.SenalCompra (buying INTEREST) is deliberately NOT an escalation
+// trigger: interest is the copiloto's job to sell to, so it falls through to
+// responderFinal. Only domain.SenalCierre (ready-to-close) escalates the sale
+// to a human — the "escalamiento invertido" that hands off at the good moment.
 //
 // Evaluated in this precedence — the first rule that fires wins the
 // RazonEscalamiento, but every rule below escalates, so precedence only
 // decides WHICH reason is recorded, never whether to escalate:
 //
 //  1. domain.SenalDeuda present            → razonDeuda.
-//  2. domain.SenalCompra present           → razonSenalCompra.
+//  2. domain.SenalCierre present           → razonCierre.
 //  3. domain.SenalPideHumano present       → razonPideHumano.
 //  4. domain.SenalEnojoLoop present        → razonEnojoLoop.
 //  5. domain.SenalFueraAllowlist present   → razonFueraAllowlist.
@@ -66,15 +71,15 @@ func escalarFinal(razon string) DecisionFinal {
 //     Turno with an empty Cuerpo — domain.CrearTurno would reject it
 //     (ErrTurnoCuerpoRequerido) and roll back the WHOLE inbound turn,
 //     including the entrante Turno that must always be recorded).
-//  10. None of the above → responderFinal (propose the draft as-is).
+//  10. None of the above (incl. a lone domain.SenalCompra) → responderFinal.
 func triar(out outbound.AnalizarOutput) DecisionFinal {
 	senales, tieneSenalDesconocida := clasificarSenales(out.Senales)
 
 	switch {
 	case senales[domain.SenalDeuda]:
 		return escalarFinal(razonDeuda)
-	case senales[domain.SenalCompra]:
-		return escalarFinal(razonSenalCompra)
+	case senales[domain.SenalCierre]:
+		return escalarFinal(razonCierre)
 	case senales[domain.SenalPideHumano]:
 		return escalarFinal(razonPideHumano)
 	case senales[domain.SenalEnojoLoop]:

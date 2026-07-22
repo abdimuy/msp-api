@@ -61,6 +61,45 @@ func TestGenerator_Analizar_HappyParse(t *testing.T) {
 	assert.Contains(t, captured.Messages[1].Content, "María López")
 }
 
+func TestGenerator_Analizar_ConfianzaScale(t *testing.T) {
+	t.Parallel()
+
+	// Some providers return "confianza" on a 0-1 scale (e.g. 0.85) instead of
+	// the 0-100 the prompt asks for. Before the fix, `Confianza int` failed to
+	// unmarshal a float and the WHOLE Analizar call errored. Analizar must now
+	// normalize the 0-1 case to 0-100 and take integers at face value.
+	cases := []struct {
+		name     string
+		rawConf  string
+		expected int
+	}{
+		{"int_0_100", "72", 72},
+		{"float_0_1", "0.85", 85},
+		{"float_half", "0.5", 50},
+		{"float_high", "0.99", 99},
+		{"float_one_is_certain", "1.0", 100},
+		{"int_one_is_low", "1", 1},
+		{"float_already_0_100", "85.0", 85},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			response := `{"intencion":"interesado","confianza":` + tc.rawConf + `,"senales":[],` +
+				`"accion":"responder","borrador":"¡Claro!","evidencia":[],"razon_escalamiento":""}`
+			stub := &stubClient{ChatFunc: func(_ context.Context, _ platformllm.ChatReq) (string, error) {
+				return response, nil
+			}}
+			gen := reactivacionllm.NewGenerator(stub, "test-model")
+			out, err := gen.Analizar(context.Background(), outbound.AnalizarInput{
+				Nombre: "Ana", Segmento: "recien_liquidado",
+			})
+			require.NoError(t, err, "confianza %q debe parsear sin error", tc.rawConf)
+			assert.Equal(t, tc.expected, out.Confianza)
+		})
+	}
+}
+
 func TestGenerator_Analizar_ThinkWrapped(t *testing.T) {
 	t.Parallel()
 

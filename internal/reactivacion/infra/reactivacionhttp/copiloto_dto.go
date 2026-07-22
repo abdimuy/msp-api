@@ -33,7 +33,7 @@ type MensajeEntranteOutput struct {
 type DecisionResultDTO struct {
 	Intencion         string   `json:"intencion"          doc:"Lectura del LLM sobre la intención del cliente"`
 	Confianza         int      `json:"confianza"          doc:"Confianza del LLM en su lectura, 0-100"`
-	Senales           []string `json:"senales"            doc:"Señales detectadas por el LLM (deuda, senal_compra, pide_humano, ...)"`
+	Senales           []string `json:"senales"            doc:"Señales detectadas por el LLM (deuda, senal_compra, senal_cierre, pide_humano, ...)"`
 	Accion            string   `json:"accion"             doc:"Acción final tras la política determinista: responder o escalar"`
 	Borrador          string   `json:"borrador"           doc:"Borrador de respuesta guardado como pendiente; vacío si se escaló"`
 	Evidencia         []string `json:"evidencia"          doc:"Fragmentos del mensaje que respaldan la lectura del LLM"`

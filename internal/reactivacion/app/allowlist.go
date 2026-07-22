@@ -15,7 +15,7 @@ const umbralConfianzaBaja = 65
 // defensive guard, and the copiloto-unavailable safe fallback).
 const (
 	razonDeuda                = "deuda"
-	razonSenalCompra          = "señal de compra"
+	razonCierre               = "intención de cierre"
 	razonPideHumano           = "solicitud de humano"
 	razonEnojoLoop            = "enojo o repetición"
 	razonFueraAllowlist       = "fuera del allowlist"
@@ -79,9 +79,11 @@ var debtKeywords = []string{
 func allowlistText() string {
 	return "Puede OFRECER productos del catálogo con stock confirmado, el siguiente mejor producto, " +
 		"y planes de pago (enganche y parcialidad) leídos de la base de datos. Puede AFIRMAR el estatus " +
-		"de una compra completada, en tono positivo. Debe ESCALAR (no responder) ante: una señal de compra, " +
-		"cualquier cifra de deuda, una solicitud de hablar con un humano, contenido fuera de este allowlist, " +
-		"o confianza baja en su propia lectura. Nunca debe: mencionar cifras de deuda o saldo pendiente, " +
-		"inventar precios o fechas, hablar de cobranza, ni citar la nota del cobrador directamente. " +
-		"Los únicos montos permitidos son los de la compra nueva que se está ofreciendo."
+		"de una compra completada, en tono positivo. Debe RESPONDER y vender cuando el cliente muestra " +
+		"interés o pregunta por productos, precios o planes (eso es tu trabajo, no del humano). " +
+		"Debe ESCALAR (no responder) solo ante: intención de cierre (el cliente ya decidió comprar y quiere " +
+		"concretar), cualquier cifra de deuda, una solicitud de hablar con un humano, enojo o reclamo repetido, " +
+		"contenido fuera de este allowlist, o confianza baja en su propia lectura. Nunca debe: mencionar cifras " +
+		"de deuda o saldo pendiente, inventar precios o fechas, hablar de cobranza, ni citar la nota del cobrador " +
+		"directamente. Los únicos montos permitidos son los de la compra nueva que se está ofreciendo."
 }

@@ -187,18 +187,45 @@ func TestMensajeEntrante_LeerPerm_403(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, code)
 }
 
-func TestMensajeEntrante_BuySignal_Escala(t *testing.T) {
+func TestMensajeEntrante_BuyInterest_Responde(t *testing.T) {
 	t.Parallel()
+	// Taxonomía B: senal_compra is buying INTEREST — the copiloto sells to it,
+	// it does NOT escalate. The turn responds with a pending draft.
 	llm := &copilotofake.Generator{AnalizarOut: outbound.AnalizarOutput{
-		Intencion: "quiere comprar otro juego de sala",
+		Intencion: "muestra interés en un juego de sala",
 		Confianza: 90,
 		Senales:   []string{"senal_compra"},
+		Accion:    "responder",
+		Borrador:  "¡Claro! Le cuento del comedor con su plan de pagos.",
+	}}
+	svc := buildServiceWithCopiloto(newFakeConversacionRepo(), newFakeDecisionRepo(), &fakeNotaReader{}, llm, &fakeClienteFactsReader{})
+
+	code, body := doJSON(buildRouter(svc, userWith(auth.PermReactivacionAdministrar)), http.MethodPost, "/reactivacion/conversaciones/201/mensaje-entrante", map[string]string{"mensaje": "me interesa una sala, ¿qué tienen?"})
+	require.Equal(t, http.StatusOK, code)
+
+	var dto reactivacionhttp.DecisionResultDTO
+	require.NoError(t, json.Unmarshal(body, &dto))
+	assert.False(t, dto.Escalada, "buying interest must NOT escalate")
+	assert.Equal(t, "responder", dto.Accion)
+	assert.Equal(t, "propuesto", dto.Resultado)
+	assert.Equal(t, "¡Claro! Le cuento del comedor con su plan de pagos.", dto.Borrador)
+	assert.Contains(t, dto.Senales, "senal_compra")
+}
+
+func TestMensajeEntrante_Cierre_Escala(t *testing.T) {
+	t.Parallel()
+	// Taxonomía B: senal_cierre is ready-to-buy — it escalates to a human
+	// closer (escalamiento invertido) and carries no auto-sent draft.
+	llm := &copilotofake.Generator{AnalizarOut: outbound.AnalizarOutput{
+		Intencion: "quiere concretar la compra ahora",
+		Confianza: 95,
+		Senales:   []string{"senal_cierre"},
 		Accion:    "responder",
 		Borrador:  "aquí tienes un mensaje",
 	}}
 	svc := buildServiceWithCopiloto(newFakeConversacionRepo(), newFakeDecisionRepo(), &fakeNotaReader{}, llm, &fakeClienteFactsReader{})
 
-	code, body := doJSON(buildRouter(svc, userWith(auth.PermReactivacionAdministrar)), http.MethodPost, "/reactivacion/conversaciones/201/mensaje-entrante", map[string]string{"mensaje": "quiero comprar otra sala"})
+	code, body := doJSON(buildRouter(svc, userWith(auth.PermReactivacionAdministrar)), http.MethodPost, "/reactivacion/conversaciones/204/mensaje-entrante", map[string]string{"mensaje": "sí le entro, ¿cómo le hago?"})
 	require.Equal(t, http.StatusOK, code)
 
 	var dto reactivacionhttp.DecisionResultDTO
@@ -207,7 +234,7 @@ func TestMensajeEntrante_BuySignal_Escala(t *testing.T) {
 	assert.Empty(t, dto.Borrador, "an escalated turn must not carry a saved pending draft")
 	assert.Equal(t, "escalar", dto.Accion)
 	assert.Equal(t, "escalado", dto.Resultado)
-	assert.Contains(t, dto.Senales, "senal_compra")
+	assert.Contains(t, dto.Senales, "senal_cierre")
 }
 
 func TestMensajeEntrante_CleanOutput_BorradorPendiente(t *testing.T) {

@@ -2,13 +2,22 @@
 package domain
 
 // Senal is the value object identifying one signal the copiloto LLM detected
-// in a cliente's inbound turn. It is a closed set of six canonical values;
+// in a cliente's inbound turn. It is a closed set of seven canonical values;
 // any other string is invalid. A Decision may carry zero or more senales.
 type Senal string
 
 const (
-	// SenalCompra marks buying intent in the cliente's message.
+	// SenalCompra marks buying INTEREST — the cliente is interested in or asks
+	// about products, prices or plans. The copiloto RESPONDS and sells; this
+	// signal does NOT escalate (it is informational, useful for funnel
+	// telemetry). Contrast with SenalCierre.
 	SenalCompra Senal = "senal_compra"
+	// SenalCierre marks the cliente being READY TO BUY / close now (e.g. "lo
+	// quiero", "¿cómo le hago?", "¿cómo pago?", "sí le entro"). Distinct from
+	// SenalCompra (mere interest): a cierre ESCALATES to a human closer
+	// (escalamiento invertido — the human closes at the good moment), interest
+	// does not.
+	SenalCierre Senal = "senal_cierre"
 	// SenalDeuda marks the cliente raising an outstanding-balance concern.
 	SenalDeuda Senal = "deuda"
 	// SenalConfianzaBaja marks a low-confidence LLM read of the message.
@@ -27,7 +36,7 @@ func (s Senal) String() string { return string(s) }
 // Valido reports whether s is one of the canonical senal values.
 func (s Senal) Valido() bool {
 	switch s {
-	case SenalCompra, SenalDeuda, SenalConfianzaBaja, SenalPideHumano,
+	case SenalCompra, SenalCierre, SenalDeuda, SenalConfianzaBaja, SenalPideHumano,
 		SenalEnojoLoop, SenalFueraAllowlist:
 		return true
 	default:

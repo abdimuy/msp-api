@@ -40,12 +40,20 @@ Reglas estrictas que debes seguir siempre:
 - Puedes AFIRMAR en positivo el estatus de pago cuando el dato lo confirme (por ejemplo "ya terminó de pagar su compra"), pero JAMÁS menciones un monto de deuda o saldo pendiente, ni en positivo ni en negativo.
 - JAMÁS menciones la palabra "cobranza" ni sugieras que este mensaje es un recordatorio de pago.
 - JAMÁS cites ni repitas la nota del cobrador; solo puedes usar el CONTEXTO DE VENTA ya destilado que se te entrega.
-- Los montos de enganche y parcialidad, si se te dan, son los ÚNICOS montos que puedes mencionar — nunca inventes otros.
-- Tú PROPONES: intención, señales, una acción (responder o escalar), un borrador de respuesta (si propones responder) y evidencia que respalde tu lectura. Una capa de política determinista en el sistema decide si tu propuesta se envía o se escala — tú nunca decides el envío final.
+- Los montos de enganche y parcialidad, si se te dan, son los ÚNICOS montos que puedes mencionar — nunca inventes otros ni HAGAS ARITMÉTICA con ellos (no calcules un "total al mes", no sumes ni multipliques): enuncia solo el enganche y la parcialidad tal como se te dieron.
+- Tú PROPONES: intención, señales, una acción (responder o escalar), un borrador de respuesta (si propones responder) y evidencia que respalde tu lectura. Una capa de política determinista en el sistema decide si tu propuesta se envía o se escala — tú nunca decides el envío final. Cuando el cliente solo muestra interés o pregunta por productos, precios o planes, PROPÓN responder con un borrador que venda (ofrece el producto y el plan de pago permitidos). PROPÓN escalar únicamente ante intención de cierre, deuda, solicitud de humano, enojo, algo fuera del allowlist, o confianza baja.
+
+Cómo redactar el "borrador" cuando vendes (español de México, cálido y cercano pero profesional, sin coloquialismos forzados):
+- Vende la PARCIALIDAD, no el precio: el pago pequeño y frecuente ("desde $X a la semana") es la cifra protagonista y el enganche es el paso de entrada; NUNCA lideres con el precio total ni con una cifra grande.
+- Ofrece UN solo producto dirigido (el siguiente mejor producto que se te indique), no una lista larga; solo si el cliente pide otras opciones, ofrécele alternativas.
+- Mensajes cortos (2 a 4 líneas), con calidez, con un solo objetivo o una sola pregunta por mensaje; usa el nombre del cliente; evita el tono corporativo o de notificación automática.
+- Maneja las objeciones sin presionar: si dice que está caro, reencuadra a la parcialidad accesible (no bajes el precio ni inventes descuentos); si dice que lo consulta con su pareja, respeta e incluye a quien decide y deja un seguimiento suave; si duda o dice que no es el momento, propón un siguiente paso chico y deja la puerta abierta.
+- Sé cálido y humano en el tono, pero no prometas ni exageres nada que no se te haya dado.
 
 Debes levantar, en el arreglo "senales", exactamente los siguientes valores en snake_case cuando apliquen (puedes levantar varios o ninguno):
 - "deuda": el cliente pregunta por su saldo, monto que debe, o menciona pagos pendientes.
-- "senal_compra": el cliente muestra interés en comprar o preguntar por productos.
+- "senal_compra": el cliente muestra interés o pregunta por productos, precios o planes. TÚ le respondes y vendes; esto NO se escala.
+- "senal_cierre": el cliente ya decidió comprar y quiere concretar la compra ahora (por ejemplo "lo quiero", "¿cómo le hago?", "¿cómo pago?", "sí le entro"). Esto SÍ se escala a un humano para cerrar.
 - "pide_humano": el cliente pide explícitamente hablar con una persona.
 - "enojo_loop": el cliente muestra enojo o está repitiendo el mismo reclamo sin resolución.
 - "fuera_allowlist": el cliente pregunta por algo fuera del catálogo permitido que se te dio.
@@ -70,13 +78,16 @@ func (g *Generator) Analizar(ctx context.Context, in outbound.AnalizarInput) (ou
 	}
 
 	var parsed struct {
-		Intencion         string   `json:"intencion"`
-		Confianza         int      `json:"confianza"`
-		Senales           []string `json:"senales"`
-		Accion            string   `json:"accion"`
-		Borrador          string   `json:"borrador"`
-		Evidencia         []string `json:"evidencia"`
-		RazonEscalamiento string   `json:"razon_escalamiento"`
+		Intencion string `json:"intencion"`
+		// Confianza is json.Number (not int) so a provider that returns the
+		// confidence on a 0-1 scale (e.g. 0.85) does not fail to unmarshal and
+		// abort the whole call. normalizarConfianza maps it back to 0-100.
+		Confianza         json.Number `json:"confianza"`
+		Senales           []string    `json:"senales"`
+		Accion            string      `json:"accion"`
+		Borrador          string      `json:"borrador"`
+		Evidencia         []string    `json:"evidencia"`
+		RazonEscalamiento string      `json:"razon_escalamiento"`
 	}
 	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
 		return outbound.AnalizarOutput{}, fmt.Errorf("reactivacionllm: parse analizar response: %w", err)
@@ -84,13 +95,32 @@ func (g *Generator) Analizar(ctx context.Context, in outbound.AnalizarInput) (ou
 
 	return outbound.AnalizarOutput{
 		Intencion:         parsed.Intencion,
-		Confianza:         parsed.Confianza,
+		Confianza:         normalizarConfianza(parsed.Confianza),
 		Senales:           parsed.Senales,
 		Accion:            parsed.Accion,
 		Borrador:          parsed.Borrador,
 		Evidencia:         parsed.Evidencia,
 		RazonEscalamiento: parsed.RazonEscalamiento,
 	}, nil
+}
+
+// normalizarConfianza maps the LLM's raw confidence onto the 0-100 scale the
+// domain expects (triar compares it against umbralConfianzaBaja). Some
+// providers answer on a 0-1 scale despite the prompt; a fractional value ≤ 1
+// (e.g. 0.85, or 1.0 meaning "certain") is scaled ×100, while an integer is
+// taken at face value. A non-numeric value yields 0 (which triar treats as
+// low confidence → escala, the safe default).
+func normalizarConfianza(raw json.Number) int {
+	f, err := raw.Float64()
+	if err != nil {
+		return 0
+	}
+	// Only a value written with a decimal point AND ≤ 1 is a 0-1 scale reading;
+	// a bare integer like "1" is taken as 1/100, never rescaled to 100.
+	if strings.Contains(raw.String(), ".") && f <= 1.0 {
+		f *= 100
+	}
+	return int(f + 0.5)
 }
 
 // buildAnalizarUserMessage assembles the structured Spanish prompt from in.
