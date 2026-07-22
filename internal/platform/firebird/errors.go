@@ -1,6 +1,7 @@
 package firebird
 
 import (
+	"context"
 	"errors"
 	"io"
 
@@ -12,16 +13,18 @@ import (
 // Firebird GDS codes we explicitly recognize. Numbers come from the driver's
 // errmsgs.go and Firebird's documented isc_* error catalog.
 const (
-	gdsUniquePrimary = 335544665 // violation of PRIMARY or UNIQUE KEY constraint
-	gdsUniqueDup     = 335544349 // attempt to store duplicate value in unique index
-	gdsForeignKey    = 335544466 // violation of FOREIGN KEY constraint
-	gdsCheck         = 335544558 // operation violates CHECK constraint
-	gdsDeadlock      = 335544336 // deadlock
-	gdsLockNoWait    = 335544345 // lock conflict on no wait transaction
-	gdsLockTimeout   = 335544510 // lock time-out on wait transaction
-	gdsIOError       = 335544344 // I/O error during "@1" operation
-	gdsConnLostPipe  = 335544648 // connection lost to pipe server
-	gdsConnLostDB    = 335544741 // connection lost to database
+	gdsUniquePrimary  = 335544665 // violation of PRIMARY or UNIQUE KEY constraint
+	gdsUniqueDup      = 335544349 // attempt to store duplicate value in unique index
+	gdsForeignKey     = 335544466 // violation of FOREIGN KEY constraint
+	gdsCheck          = 335544558 // operation violates CHECK constraint
+	gdsDeadlock       = 335544336 // deadlock
+	gdsLockNoWait     = 335544345 // lock conflict on no wait transaction
+	gdsLockTimeout    = 335544510 // lock time-out on wait transaction
+	gdsIOError        = 335544344 // I/O error during "@1" operation
+	gdsConnLostPipe   = 335544648 // connection lost to pipe server
+	gdsConnLostDB     = 335544741 // connection lost to database
+	gdsAttStmtTimeout = 335545128 // attachment level timeout expired
+	gdsReqStmtTimeout = 335545129 // statement level timeout expired
 )
 
 // MapError translates a Firebird driver error into a domain apperror.Error.
@@ -32,6 +35,14 @@ func MapError(err error) error {
 	}
 	var fbErr *firebirdsql.FbError
 	if !errors.As(err, &fbErr) {
+		// A deadline or cancellation on the caller's side means the query never
+		// produced an answer: surface it as 503 so the client retries instead of
+		// reading a raw context error it cannot classify.
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return apperror.NewServiceUnavailable("firebird_timeout",
+				"la base de datos no respondió a tiempo").
+				WithSource("firebird").WithError(err)
+		}
 		// Connection-shaped non-FbError: net errors, io.EOF, etc.
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 			return apperror.NewInternal("firebird_connection_lost",
@@ -57,6 +68,13 @@ func MapError(err error) error {
 		case gdsDeadlock, gdsLockNoWait, gdsLockTimeout:
 			return apperror.NewConflict("firebird_lock_conflict",
 				"operación bloqueada, intente de nuevo").
+				WithSource("firebird").WithError(err)
+		case gdsAttStmtTimeout, gdsReqStmtTimeout:
+			// The server cut the statement at its configured ceiling. Not a
+			// lock conflict: retrying the same slow query would only burn the
+			// same budget again.
+			return apperror.NewServiceUnavailable("firebird_timeout",
+				"la base de datos no respondió a tiempo").
 				WithSource("firebird").WithError(err)
 		case gdsIOError:
 			return apperror.NewInternal("firebird_io_error",

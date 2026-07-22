@@ -5,7 +5,9 @@ package firebird
 // These tests are pure unit tests: no FIREBIRD=1 gate required, no TestMain.
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 
@@ -114,6 +116,44 @@ func TestMapError(t *testing.T) {
 			wantKind: apperror.KindInternal,
 		},
 		{
+			name:     "gds_attachment_statement_timeout",
+			input:    makeFbErr(gdsAttStmtTimeout),
+			wantCode: "firebird_timeout",
+			wantKind: apperror.KindServiceUnavailable,
+		},
+		{
+			name:     "gds_request_statement_timeout",
+			input:    makeFbErr(gdsReqStmtTimeout),
+			wantCode: "firebird_timeout",
+			wantKind: apperror.KindServiceUnavailable,
+		},
+		{
+			// Real shape observed on the wire: the server pairs the timeout
+			// code with isc_cancelled (335544794).
+			name:     "gds_cancelled_plus_attachment_timeout",
+			input:    makeFbErr(335544794, gdsAttStmtTimeout),
+			wantCode: "firebird_timeout",
+			wantKind: apperror.KindServiceUnavailable,
+		},
+		{
+			name:     "context_deadline_exceeded",
+			input:    context.DeadlineExceeded,
+			wantCode: "firebird_timeout",
+			wantKind: apperror.KindServiceUnavailable,
+		},
+		{
+			name:     "context_canceled",
+			input:    context.Canceled,
+			wantCode: "firebird_timeout",
+			wantKind: apperror.KindServiceUnavailable,
+		},
+		{
+			name:     "wrapped_context_deadline_exceeded",
+			input:    fmt.Errorf("query clientes: %w", context.DeadlineExceeded),
+			wantCode: "firebird_timeout",
+			wantKind: apperror.KindServiceUnavailable,
+		},
+		{
 			name:        "plain_error_passes_through",
 			input:       errors.New("random error"),
 			passThrough: true,
@@ -179,6 +219,13 @@ func TestIsTransient(t *testing.T) {
 		{
 			name:  "raw_fb_error_unique_not_transient",
 			input: makeFbErr(gdsUniquePrimary),
+			want:  false,
+		},
+		{
+			// A server-side statement timeout means the query is too slow for
+			// the configured budget; spinning on it would only burn it again.
+			name:  "mapped_statement_timeout_not_transient",
+			input: MapError(makeFbErr(gdsAttStmtTimeout)),
 			want:  false,
 		},
 		{name: "io_eof_is_transient", input: io.EOF, want: true},

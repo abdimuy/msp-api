@@ -76,6 +76,7 @@ func appOptions() []fx.Option {
 			config.Load,
 			provideLogger,
 			provideFirebirdPool,
+			provideFirebirdPoolWatchdog,
 			provideFirebirdTxManager,
 			provideHealthService,
 			provideOutboxRegistry,
@@ -223,6 +224,7 @@ func appOptions() []fx.Option {
 		),
 		fx.Invoke(
 			registerFirebirdLifecycle,
+			registerFirebirdPoolWatchdogLifecycle,
 			registerAuthOutboxHandlers,
 			registerVentasOutboxHandlers,
 			registerOutboxLifecycle,
@@ -264,6 +266,12 @@ func provideFirebirdPool(cfg *config.Config) (*firebird.Pool, error) {
 	return firebird.New(cfg.Firebird)
 }
 
+// provideFirebirdPoolWatchdog builds the background sampler that warns when
+// the Firebird pool runs out of connections.
+func provideFirebirdPoolWatchdog(p *firebird.Pool, log *slog.Logger) *firebird.PoolWatchdog {
+	return firebird.NewPoolWatchdog(p, 0, log)
+}
+
 // provideFirebirdTxManager wraps the Firebird pool with a transaction manager.
 func provideFirebirdTxManager(p *firebird.Pool) *firebird.TxManager {
 	return firebird.NewTxManager(p.DB)
@@ -290,6 +298,12 @@ func provideOutboxDispatcher(p *firebird.Pool, reg *outboxfb.HandlerRegistry) *o
 // registerFirebirdLifecycle hooks the Firebird pool into the fx lifecycle.
 func registerFirebirdLifecycle(lc fx.Lifecycle, p *firebird.Pool) {
 	lifecycle.Append(lc, "firebird", p)
+}
+
+// registerFirebirdPoolWatchdogLifecycle hooks the pool watchdog into the fx
+// lifecycle.
+func registerFirebirdPoolWatchdogLifecycle(lc fx.Lifecycle, w *firebird.PoolWatchdog) {
+	lifecycle.Append(lc, "firebird-pool-watchdog", w)
 }
 
 // registerOutboxLifecycle hooks the dispatcher into the fx lifecycle.
