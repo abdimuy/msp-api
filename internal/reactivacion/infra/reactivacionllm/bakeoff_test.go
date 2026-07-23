@@ -688,6 +688,108 @@ func TestBakeoffVentaProactiva(t *testing.T) {
 	t.Logf("\nLlamadas totales: %d", calls)
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// OPENER — el PRIMER mensaje de reactivación (NBP-dirigido, no menú).
+// Diseño a validar antes de promoverlo al Generator/puerto. Salida = texto
+// plano (un solo mensaje), no JSON.
+// ─────────────────────────────────────────────────────────────────────────
+
+const openerSystemPrompt = `Eres el copiloto de VENTAS de una mueblería en Tehuacán. Escribes el PRIMER mensaje de WhatsApp para reactivar a un cliente que ya te compró antes. NO eres cobranza.
+
+Objetivo: reabrir la conversación con calidez y sembrar UNA sugerencia de producto, sin presionar.
+
+Estructura del mensaje:
+- Saludo cálido y personal usando su nombre de pila o el trato respetuoso que se indique (por ejemplo "Doña Carmen"), NUNCA el nombre completo.
+- Un reconocimiento breve según su situación (se te indica el segmento).
+- Ofrece UN SOLO producto (el siguiente mejor producto que se te da), con un beneficio concreto y su plan de pago.
+- Vende la PARCIALIDAD, no el precio: "desde $X a la semana" es la cifra protagonista. MENCIONA LA PARCIALIDAD ANTES que el enganche; el enganche va después, como el paso de entrada. NUNCA lideres con el precio total.
+- Cierra con UNA sola pregunta suave (CTA), sin presión.
+
+Reglas duras:
+- Solo puedes mencionar el producto y los montos (enganche, parcialidad) que se te dan; nunca inventes productos, precios, fechas ni HAGAS ARITMÉTICA (no calcules un total al mes).
+- Puedes AFIRMAR en positivo que ya terminó de pagar su compra anterior; JAMÁS menciones una cifra de deuda o saldo.
+- Nunca hables de "cobranza" ni de recordatorios de pago.
+- Tono: español de México, cálido y cercano pero profesional, breve (2 a 4 líneas), sin coloquialismos forzados y SIN EMOJIS.
+
+Segmentos:
+- "recien_liquidado": felicítalo por terminar de pagar y preséntale su siguiente compra como un logro/beneficio.
+- "por_liquidar_hueco": con tacto, invítalo a completar o complementar lo que ya tiene; NO lideres con "compra más".
+
+Responde ÚNICAMENTE con el texto del mensaje para el cliente, sin comillas, sin JSON, sin explicaciones.`
+
+func buildOpenerUserMessage(nombre, segmento, nbp, enganche, parcialidad, cadencia string) string {
+	var sb strings.Builder
+	_, _ = fmt.Fprintf(&sb, "=== CLIENTE ===\nNombre: %s  |  Segmento: %s\n", nombre, segmento)
+	_, _ = fmt.Fprintf(&sb, "Producto sugerido: %s\n", nbp)
+	_, _ = fmt.Fprintf(&sb, "Enganche: %s  |  Parcialidad: %s  |  Cadencia: %s\n", enganche, parcialidad, cadencia)
+	return sb.String()
+}
+
+type openerFixture struct {
+	nombre, segmento, nbp, enganche, parcialidad, cadencia string
+}
+
+var openerFixtures = []openerFixture{
+	{"María Elena Vázquez", "recien_liquidado", "Comedor 'Puebla' de 6 sillas", "$1,200", "$350 a la semana", "semanal"},
+	{"José Guadalupe Ramírez", "recien_liquidado", "Refrigerador de 11 pies", "$900", "$300 a la semana", "semanal"},
+	{"Rosa Martínez Cruz", "por_liquidar_hueco", "Colchón matrimonial para completar su base de cama", "$900", "$300 a la semana", "semanal"},
+	{"Doña Carmen Reséndiz", "por_liquidar_hueco", "Ropero a juego con su recámara", "$1,500", "$400 a la semana", "semanal"},
+}
+
+// TestBakeoffOpener genera el primer mensaje de reactivación con cada proveedor
+// para leer el tono, el NBP dirigido y el frame de parcialidad. Env-gated + serial.
+//
+//nolint:paralleltest // intentionally serial to control real API spend
+func TestBakeoffOpener(t *testing.T) {
+	anyKey := false
+	for _, p := range bakeoffProviders {
+		if os.Getenv(p.apiKeyEnv) != "" {
+			anyKey = true
+			break
+		}
+	}
+	if !anyKey {
+		t.Skip("bakeoff: no provider API key set; skipping — no spend")
+	}
+
+	calls := 0
+	for _, p := range bakeoffProviders {
+		apiKey := os.Getenv(p.apiKeyEnv)
+		if apiKey == "" {
+			continue
+		}
+		client := platformllm.NewClient(config.LLM{
+			Enabled: true, BaseURL: p.baseURL, Model: p.model, APIKey: apiKey, Timeout: 60 * time.Second,
+		})
+		t.Run(p.nombre, func(t *testing.T) {
+			t.Logf("========== OPENER — %s (%s) ==========", p.nombre, p.model)
+			for _, fx := range openerFixtures {
+				req := platformllm.ChatReq{
+					Messages: []platformllm.Message{
+						{Role: "system", Content: openerSystemPrompt},
+						{Role: "user", Content: buildOpenerUserMessage(fx.nombre, fx.segmento, fx.nbp, fx.enganche, fx.parcialidad, fx.cadencia)},
+					},
+				}
+				if !p.noTemperature {
+					req.Temperature = platformllm.Float64(0)
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+				raw, err := client.Chat(ctx, req)
+				cancel()
+				calls++
+
+				t.Logf("\n─── [%s · %s] NBP: %s", fx.nombre, fx.segmento, fx.nbp)
+				if err != nil {
+					t.Logf("   ⚠️  ERROR: %v", err)
+					continue
+				}
+				t.Logf("🤖 OPENER: %s", strings.TrimSpace(raw))
+			}
+		})
+	}
+	t.Logf("\nLlamadas totales: %d", calls)
+}
+
 // truncar shortens s for log output without splitting a UTF-8 rune.
 func truncar(s string, limit int) string {
 	r := []rune(s)
