@@ -157,5 +157,35 @@ Para el objetivo "la IA conduce la venta", **el modelo pesa MENOS que la políti
 
 ---
 
-## 8. Estado y próximos pasos
-Ver la sección de conversación con el usuario; este documento es la referencia consolidada al 2026-07-22. Pendientes principales: (1) escribir el system prompt real desde estas reglas; (2) recalibrar `triar` (escalar solo cierre/sensibles, no todo interés) + blindar parser de confianza; (3) pipeline de imágenes + set héroe; (4) re-correr el bake-off alineado; (5) definir defaults de piloto §4 y el plan de A/B en sombra.
+## 8. Decisión de modelo LLM + modelo de costos (2026-07-23)
+
+### 8.1 Modelo elegido: **Claude Haiku 4.5** (`claude-haiku-4-5`)
+Decidido tras el scorecard sobre escenarios realistas (prompt de producción con B). Gana en las tres dimensiones que importan:
+- **Seguridad:** empate perfecto con OpenAI GPT-5.6-Luna (0 fugas de cifra de deuda, 0 montos inventados, 0 emojis, 100% JSON). El único "miss" de Claude (no etiquetar `confianza_baja` en "???") lo ataja `triar` de forma determinista (dio confianza=0 → escala igual).
+- **Tono:** con el mismo prompt profesional aplicado a ambos, Claude sale más cálido/humano — y la evidencia (Crolic 2022, Luo 2019) **premia la calidez** en contexto de promoción/cliente neutral. Es determinista a temp 0 (OpenAI GPT-5.x no acepta temp 0).
+- **Precio:** input idéntico ($1/1M), caché idéntico ($0.10/1M), **output más barato** ($5 vs $6/1M).
+
+### 8.2 Gotcha de cableado (RESUELTO)
+El endpoint OpenAI-compat de Anthropic **rechaza `response_format: "json_object"`** (400: "Input should be 'json_schema'"). El `Generator.chatJSON` lo mandaba siempre. **Fix:** se quitó `response_format`; el contrato JSON lo garantizan el system prompt ("responde ÚNICAMENTE con un objeto JSON") + `extractJSON` (100% fiable en el bakeoff). El Generator quedó agnóstico del endpoint. Verificado con `TestClaudeRutaProduccion` (ruta real de producción contra Anthropic, verde).
+
+### 8.3 Cableado (`.env`, dev)
+`LLM_ENABLED=true`, `LLM_BASE_URL=https://api.anthropic.com/v1`, `LLM_MODEL=claude-haiku-4-5`, `LLM_TIMEOUT=60s`, `LLM_API_KEY=<llave Anthropic>`. En Docker requiere `docker compose up -d --force-recreate api` (el `.env` se evalúa al crear; ver [[reference_dev_env_change_requires_recreate]]).
+
+### 8.4 Modelo de costos (Claude Haiku 4.5, $1 input / $5 output por 1M)
+Puntos de llamada por cliente: **opener** (~1K in + 150 out), **destilar nota** (~1.5K in + 150 out, 1 vez/cliente), **cada respuesta del cliente** (`Analizar`, ~2K in + 300 out).
+
+| Escenario | Volumen | Costo estimado |
+|---|---|---|
+| **Demo** | ~20-30 conversaciones simuladas (~200 llamadas) | **~$1-2** (centavos) |
+| **Piloto** | 500 clientes | **~$4-5** |
+| **Campaña completa** | ~6,700 clientes (universo Tehuacán c/tel), ~20% responde (~1,340 conversaciones ×5 msgs), 2 toques | **~$57** (≈ **$35-45 con prompt caching**) |
+| **Ongoing** | ~2,000 clientes nuevos/mes | **~$15-20/mes** |
+
+**Unidad:** ~4 centavos USD por conversación real; ~1 centavo por cliente contactado. Supuestos (response rate 20%, ~5 mensajes/conversación) los afina el piloto. Palancas para bajarlo: templatear el opener (−$19), prompt caching (−40%), destilar nota solo de quien responde (−$12) → campaña completa a ~$20-25.
+
+**Perspectiva:** la campaña completa cuesta menos que una comida; una sola venta de mueble (~$5,000) paga ~100× toda la operación de IA. El costo de LLM **nunca es el cuello de botella** — lo son las imágenes y la conversión.
+
+---
+
+## 9. Estado y próximos pasos
+Este documento es la referencia consolidada. **HECHO:** taxonomía B + parser de confianza + prompt de venta + opener (validados con modelos reales); modelo elegido (Claude Haiku 4.5) y **cableado en dev** (fix de response_format incluido). Pendientes: (1) opener a producción (Generator+puerto+endpoint); (2) pipeline de imágenes + set héroe (tras actualizar la DB); (3) smoke end-to-end en dev (Fase 2); (4) defaults de piloto §4 y A/B en sombra.
