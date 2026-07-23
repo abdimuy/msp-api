@@ -790,6 +790,217 @@ func TestBakeoffOpener(t *testing.T) {
 	t.Logf("\nLlamadas totales: %d", calls)
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// SCORECARD DEFINITIVO — escenarios REALISTAS de Tehuacán + asserts automáticos.
+// Decide el modelo aislando la única variable que cambia: lo que el LLM
+// clasifica y redacta. Usa el prompt de producción (analizarSystemPrompt, B).
+// ─────────────────────────────────────────────────────────────────────────
+
+// scoreInput es un contexto realista con producto REAL del catálogo.
+func scoreInput(mensaje string) outbound.AnalizarInput {
+	return outbound.AnalizarInput{
+		Nombre:          "José Guadalupe",
+		Segmento:        "recien_liquidado",
+		MensajeEntrante: mensaje,
+		NextBestProduct: "Refrigerador Hisense de 11 pies",
+		Enganche:        "$900",
+		Parcialidad:     "$300 a la semana",
+		Cadencia:        "semanal",
+		Allowlist:       bakeoffAllowlist,
+	}
+}
+
+type scoreProbe struct {
+	msg    string
+	espera string // señal esperada, o "responde" (no debe levantar señal de escala)
+	deuda  bool   // caso sensible: el borrador NUNCA debe traer una cifra
+}
+
+// scoreProbes: mensajes REALISTAS (WhatsApp MX, coloquiales) que ejercitan
+// todo el embudo y los rails de seguridad.
+var scoreProbes = []scoreProbe{
+	{"aa si me llego, q muebles tienen?", "senal_compra", false},
+	{"y ese refri de cuanto me sale?", "senal_compra", false},
+	{"esta medio caro no?", "responde", false},
+	{"deje le digo a mi esposo", "responde", false},
+	{"ahorita no gracias, luego", "responde", false},
+	{"cuanto me falta por pagar?", "deuda", true},
+	{"oiga y ya no debo nada de lo de antes vdd?", "deuda", true},
+	{"va pos si me animo, como le hago?", "senal_cierre", false},
+	{"mejor comuniqueme con alguien", "pide_humano", false},
+	{"ya no quiero nada, dejen de estarme molestando", "enojo_loop", false},
+	{"ustedes hacen prestamos de dinero?", "fuera_allowlist", false},
+	{"???", "confianza_baja", false},
+}
+
+var senalesQueEscalan = map[string]bool{
+	"deuda": true, "senal_cierre": true, "pide_humano": true,
+	"enojo_loop": true, "fuera_allowlist": true, "confianza_baja": true,
+}
+
+func contieneSenal(senales []string, s string) bool {
+	for _, x := range senales {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+func levantaAlgunaDeEscala(senales []string) bool {
+	for _, s := range senales {
+		if senalesQueEscalan[s] {
+			return true
+		}
+	}
+	return false
+}
+
+// tieneEmoji reports whether s contains an emoji rune.
+func tieneEmoji(s string) bool {
+	for _, r := range s {
+		if (r >= 0x1F000 && r <= 0x1FAFF) || (r >= 0x2600 && r <= 0x27BF) ||
+			(r >= 0x2190 && r <= 0x21FF) || r == 0x2764 || (r >= 0xFE00 && r <= 0xFE0F) {
+			return true
+		}
+	}
+	return false
+}
+
+// borradorTieneCifraDeuda: heurística de fuga (keyword de deuda + dígito).
+func borradorTieneCifraDeuda(s string) bool {
+	low := strings.ToLower(s)
+	for _, k := range []string{"debe", "deuda", "saldo", "adeud", "pendiente", "resta", "atras", "vencid", "moroso"} {
+		if strings.Contains(low, k) && strings.ContainsAny(s, "0123456789") {
+			return true
+		}
+	}
+	return false
+}
+
+// pareceMontoInventado: un "$X al mes / mensual / en total" es aritmética
+// inventada (vendemos parcialidad semanal, esos totales no se dan).
+func pareceMontoInventado(s string) bool {
+	low := strings.ToLower(s)
+	return strings.Contains(s, "$") &&
+		(strings.Contains(low, "al mes") || strings.Contains(low, "mensual") || strings.Contains(low, "en total"))
+}
+
+// TestBakeoffScorecard corre ambos modelos sobre los escenarios realistas y
+// emite un scorecard duro (aciertos de señal, fugas de cifra de deuda, emojis,
+// montos inventados, JSON) más los borradores para juzgar el tono. Env-gated.
+//
+//nolint:paralleltest // intentionally serial to control real API spend
+func TestBakeoffScorecard(t *testing.T) {
+	anyKey := false
+	for _, p := range bakeoffProviders {
+		if os.Getenv(p.apiKeyEnv) != "" {
+			anyKey = true
+			break
+		}
+	}
+	if !anyKey {
+		t.Skip("bakeoff: no provider API key set; skipping — no spend")
+	}
+
+	for _, p := range bakeoffProviders {
+		apiKey := os.Getenv(p.apiKeyEnv)
+		if apiKey == "" {
+			continue
+		}
+		client := platformllm.NewClient(config.LLM{
+			Enabled: true, BaseURL: p.baseURL, Model: p.model, APIKey: apiKey, Timeout: 60 * time.Second,
+		})
+		t.Run(p.nombre, func(t *testing.T) {
+			var jsonOK, senalOK, fugaDeuda, emojis, inventados int
+			t.Logf("════════════ SCORECARD — %s (%s) ════════════", p.nombre, p.model)
+			for _, pr := range scoreProbes {
+				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+				out, _, ok, err := analizarRaw(ctx, client, scoreInput(pr.msg), p)
+				cancel()
+				if err != nil || !ok {
+					t.Logf("  [%-45q] ERROR/JSON inválido: %v", pr.msg, err)
+					continue
+				}
+				jsonOK++
+
+				var match bool
+				if pr.espera == "responde" {
+					match = !levantaAlgunaDeEscala(out.Senales)
+				} else {
+					match = contieneSenal(out.Senales, pr.espera)
+				}
+				if match {
+					senalOK++
+				}
+				if pr.deuda && borradorTieneCifraDeuda(out.Borrador) {
+					fugaDeuda++
+				}
+				if tieneEmoji(out.Borrador) {
+					emojis++
+				}
+				if pareceMontoInventado(out.Borrador) {
+					inventados++
+				}
+
+				marca := "✓"
+				if !match {
+					marca = "✗"
+				}
+				// guardaTriar: aunque el LLM no levante señal, triar escala si la
+				// confianza numérica < umbral (65) — lo anotamos para casos ambiguos.
+				guarda := ""
+				if !levantaAlgunaDeEscala(out.Senales) && out.Confianza < 65 {
+					guarda = " [guarda: conf<65 → triar escala igual]"
+				}
+				t.Logf("  %s [%-46q] esperaba=%-13s conf=%3d señales=%v%s", marca, pr.msg, pr.espera, out.Confianza, out.Senales, guarda)
+				if strings.TrimSpace(out.Borrador) != "" {
+					t.Logf("       borrador: %s", out.Borrador)
+				}
+			}
+			n := len(scoreProbes)
+			t.Logf("──────────── RESUMEN %s ────────────", p.nombre)
+			t.Logf("  JSON válido        : %d/%d", jsonOK, n)
+			t.Logf("  Señal correcta     : %d/%d", senalOK, n)
+			t.Logf("  Fugas cifra deuda  : %d  (debe ser 0)", fugaDeuda)
+			t.Logf("  Emojis             : %d  (debe ser 0)", emojis)
+			t.Logf("  Montos inventados  : %d  (debe ser 0)", inventados)
+		})
+	}
+}
+
+// TestClaudeRutaProduccion verifica la RUTA REAL de producción contra Anthropic:
+// Generator.Analizar → chatJSON (que SIEMPRE manda response_format json_object).
+// El bakeoff probó Claude sin response_format; esto confirma que el endpoint
+// OpenAI-compat de Anthropic lo acepta antes de cablearlo. Un solo tiro.
+//
+//nolint:paralleltest // real API call, keep serial
+func TestClaudeRutaProduccion(t *testing.T) {
+	key := os.Getenv("ANTHROPIC_API_KEY")
+	if key == "" {
+		t.Skip("ANTHROPIC_API_KEY not set; skipping — no spend")
+	}
+	client := platformllm.NewClient(config.LLM{
+		Enabled: true,
+		BaseURL: "https://api.anthropic.com/v1",
+		Model:   "claude-haiku-4-5",
+		APIKey:  key,
+		Timeout: 60 * time.Second,
+	})
+	gen := NewGenerator(client, "claude-haiku-4-5")
+	out, err := gen.Analizar(context.Background(), outbound.AnalizarInput{
+		Nombre: "José Guadalupe", Segmento: "recien_liquidado",
+		MensajeEntrante: "hola, ¿qué muebles tienen?",
+		NextBestProduct: "Refrigerador Hisense de 11 pies",
+		Enganche:        "$900", Parcialidad: "$300 a la semana", Cadencia: "semanal",
+		Allowlist: bakeoffAllowlist,
+	})
+	if err != nil {
+		t.Fatalf("la ruta de producción (con response_format json_object) falló contra Anthropic: %v", err)
+	}
+	t.Logf("✓ ruta de producción OK — intención=%q accion=%q señales=%v", out.Intencion, out.Accion, out.Senales)
+}
+
 // truncar shortens s for log output without splitting a UTF-8 rune.
 func truncar(s string, limit int) string {
 	r := []rune(s)

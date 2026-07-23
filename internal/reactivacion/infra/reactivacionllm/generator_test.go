@@ -26,8 +26,10 @@ func assertDeterministicJSONReq(t *testing.T, req platformllm.ChatReq) {
 	t.Helper()
 	require.NotNil(t, req.Temperature, "Temperature must be explicit (pointer), not the zero value")
 	assert.InDelta(t, 0.0, *req.Temperature, 0, "Temperature must be 0 for determinism")
-	require.NotNil(t, req.ResponseFormat)
-	assert.Equal(t, "json_object", req.ResponseFormat.Type)
+	// ResponseFormat is deliberately NOT set: the JSON contract is enforced by
+	// the system prompt + extractJSON, keeping the Generator endpoint-agnostic
+	// (Anthropic's OpenAI-compat endpoint 400s on response_format:"json_object").
+	assert.Nil(t, req.ResponseFormat, "ResponseFormat must NOT be set (Anthropic compat rejects json_object)")
 }
 
 // ─── Analizar ───────────────────────────────────────────────────────────────────

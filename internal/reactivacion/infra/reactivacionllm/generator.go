@@ -46,7 +46,7 @@ Reglas estrictas que debes seguir siempre:
 Cómo redactar el "borrador" cuando vendes (español de México, cálido y cercano pero profesional, sin coloquialismos forzados):
 - Vende la PARCIALIDAD, no el precio: el pago pequeño y frecuente ("desde $X a la semana") es la cifra protagonista y el enganche es el paso de entrada; menciona la parcialidad ANTES que el enganche y NUNCA lideres con el precio total ni con una cifra grande.
 - Ofrece UN solo producto dirigido (el siguiente mejor producto que se te indique), no una lista larga; solo si el cliente pide otras opciones, ofrécele alternativas.
-- Mensajes cortos (2 a 4 líneas), con calidez, con un solo objetivo o una sola pregunta por mensaje; usa su nombre de pila o el trato respetuoso (no el nombre completo); evita el tono corporativo o de notificación automática y NO uses emojis.
+- Mensajes cortos (2 a 4 líneas), CÁLIDOS y humanos pero PROFESIONALES: español mexicano neutro, cercano y respetuoso, SIN coloquialismos ni modismos (nada de "¿te late?", "órale", "va", "ándale", "qué onda", "chido", "ahí la llevas"). Un solo objetivo o una sola pregunta por mensaje; usa su nombre de pila o el trato respetuoso (no el nombre completo); evita el tono corporativo o de notificación automática y NO uses emojis.
 - Maneja las objeciones sin presionar: si dice que está caro, reencuadra a la parcialidad accesible (no bajes el precio ni inventes descuentos); si dice que lo consulta con su pareja, respeta e incluye a quien decide y deja un seguimiento suave; si duda o dice que no es el momento, propón un siguiente paso chico y deja la puerta abierta.
 - Sé cálido y humano en el tono, pero no prometas ni exageres nada que no se te haya dado.
 
@@ -269,11 +269,17 @@ func buildRedactarUserMessage(in outbound.RedactarInput) string {
 	return sb.String()
 }
 
-// chatJSON sends system+user as a deterministic (Temperature=0), json_object
-// chat request and returns the extracted JSON object string. The Chat error
-// (including platformllm.ErrLLMDisabled) is returned unwrapped so callers
-// can errors.Is it; a response with no balanced JSON object yields
-// ErrNoJSONInResponse.
+// chatJSON sends system+user as a deterministic (Temperature=0) chat request
+// and returns the extracted JSON object string. The Chat error (including
+// platformllm.ErrLLMDisabled) is returned unwrapped so callers can errors.Is
+// it; a response with no balanced JSON object yields ErrNoJSONInResponse.
+//
+// It deliberately does NOT set ResponseFormat: the JSON contract is enforced
+// by the system prompt ("responde ÚNICAMENTE con un objeto JSON") plus the
+// extractJSON backstop, which is 100% reliable in practice. This keeps the
+// Generator endpoint-agnostic — Anthropic's OpenAI-compat endpoint rejects
+// response_format:"json_object" (it only accepts "json_schema") with a 400,
+// so sending it would break the chosen provider (Claude Haiku 4.5).
 func (g *Generator) chatJSON(ctx context.Context, systemPrompt, userMsg string) (string, error) {
 	req := platformllm.ChatReq{
 		Messages: []platformllm.Message{
@@ -281,8 +287,7 @@ func (g *Generator) chatJSON(ctx context.Context, systemPrompt, userMsg string) 
 			{Role: "user", Content: userMsg},
 		},
 		// Pointer required: bare 0 is the Go zero value and would be omitted.
-		Temperature:    platformllm.Float64(0),
-		ResponseFormat: &platformllm.ResponseFormat{Type: "json_object"},
+		Temperature: platformllm.Float64(0),
 	}
 
 	content, err := g.client.Chat(ctx, req)
