@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/abdimuy/msp-api/internal/microsip"
 	microsipapp "github.com/abdimuy/msp-api/internal/microsip/app"
 	"github.com/abdimuy/msp-api/internal/microsip/infra/microsipfb"
 	microsipoutbound "github.com/abdimuy/msp-api/internal/microsip/ports/outbound"
@@ -25,4 +26,10 @@ func provideMicrosipService(
 	zonas microsipoutbound.ZonaClienteRepo,
 ) *microsipapp.Service {
 	return microsipapp.NewService(almacenes, zonas)
+}
+
+// provideMicrosipCatalogo exposes the microsip service as the cross-module
+// Catalogo contract (consumed by the reactivación next-best-product reader).
+func provideMicrosipCatalogo(svc *microsipapp.Service) microsip.Catalogo {
+	return microsip.NewServiceAdapter(svc)
 }

@@ -210,6 +210,20 @@ type Reactivacion struct {
 	// WorkerIntervalSeg is how often (in seconds) the EnvioWorker wakes to
 	// drain a batch of the queue when AutoSend is true.
 	WorkerIntervalSeg int `env:"REACTIVACION_WORKER_INTERVAL_SEG" envDefault:"30"`
+
+	// ─── Copiloto next-best-product (Fase 3a) ───────────────────────────────
+
+	// NBPAlmacenID is the Microsip ALMACEN_ID whose in-stock catalog the
+	// copiloto draws next-best-product suggestions from.
+	NBPAlmacenID int `env:"REACTIVACION_NBP_ALMACEN_ID" envDefault:"19"`
+	// NBPPisoPrecio is the minimum credit-list price (whole pesos) a product
+	// must reach to be offered as a next-best-product. [POR CONFIRMAR ~3000].
+	NBPPisoPrecio int `env:"REACTIVACION_NBP_PISO_PRECIO" envDefault:"3000"`
+	// NBPListaCredito is the PRECIOS_EMPRESA name whose price funds the payment
+	// plan. It must match a PRECIOS_EMPRESA.NOMBRE among MICROSIP_PRICE_LIST_IDS:
+	// list 42 (the base list the legacy code nicknamed "MUEBLERIAS") is named
+	// "Precio de lista" in Microsip — that verbatim name is the default.
+	NBPListaCredito string `env:"REACTIVACION_NBP_LISTA_CREDITO" envDefault:"Precio de lista"`
 }
 
 // ImageProcessor holds the runtime knobs for the

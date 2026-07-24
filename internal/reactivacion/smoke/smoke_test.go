@@ -25,6 +25,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/abdimuy/msp-api/internal/microsip"
+	microsipapp "github.com/abdimuy/msp-api/internal/microsip/app"
+	"github.com/abdimuy/msp-api/internal/microsip/infra/microsipfb"
 	"github.com/abdimuy/msp-api/internal/platform/config"
 	"github.com/abdimuy/msp-api/internal/platform/fbtestutil"
 	platformllm "github.com/abdimuy/msp-api/internal/platform/llm"
@@ -32,16 +35,9 @@ import (
 	"github.com/abdimuy/msp-api/internal/reactivacion/domain"
 	"github.com/abdimuy/msp-api/internal/reactivacion/infra/reactivacionfb"
 	"github.com/abdimuy/msp-api/internal/reactivacion/infra/reactivacionllm"
+	"github.com/abdimuy/msp-api/internal/reactivacion/infra/reactivacionmicrosip"
 	"github.com/abdimuy/msp-api/internal/reactivacion/ports/outbound"
 )
-
-// stubNBP is a fixed next-best-product reader for the smoke — it stands in for
-// the production Microsip/association-rules NBP source (a later slice).
-type stubNBP struct{ nbp *outbound.NextBestProduct }
-
-func (s stubNBP) GetNBP(context.Context, int) (*outbound.NextBestProduct, error) {
-	return s.nbp, nil
-}
 
 //nolint:paralleltest // integration smoke: real shared dev DB + real API, must run serially
 func TestSmokeCopilotoEndToEnd(t *testing.T) {
@@ -86,13 +82,37 @@ func TestSmokeCopilotoEndToEnd(t *testing.T) {
 		gen := reactivacionllm.NewGenerator(llmClient, "claude-haiku-4-5")
 
 		copRepo := reactivacionfb.NewCopilotoRepo(pool) // ConversacionRepo + DecisionRepo
-		// NBP inyectado (producto+precio reales del catálogo) — demuestra la venta
-		// DIRIGIDA: el copiloto ofrece este producto con su plan de pago calculado
-		// en Go. En producción esto lo dará un reader Microsip / motor de NBP.
-		nbp := stubNBP{&outbound.NextBestProduct{
-			Nombre: "Refrigerador Hisense de 11 pies",
-			Precio: decimal.RequireFromString("8500"),
-		}}
+
+		// REAL next-best-product reader: the microsip catalog contract (in-stock
+		// articles + parsed prices) composed with the cliente's purchased
+		// categorías (reactivacionfb.Repo). It suggests a real, in-stock product
+		// above the price floor in a line the cliente does not already own —
+		// demuestra la venta DIRIGIDA personalizada, con su plan calculado en Go.
+		// Price lists 42/8437/6925 are the config default (MICROSIP_PRICE_LIST_IDS);
+		// list 42's Microsip NOMBRE is "Precio de lista" — the base list the plan
+		// funds (legacy code nicknamed it "MUEBLERIAS").
+		catalogo := microsip.NewServiceAdapter(
+			microsipapp.NewService(
+				microsipfb.NewAlmacenRepo(pool, []int{42, 8437, 6925}),
+				microsipfb.NewZonaRepo(pool),
+			),
+		)
+		nbp := reactivacionmicrosip.NewNBPReader(catalogo, repo, reactivacionmicrosip.NBPConfig{
+			AlmacenID:    19,
+			PisoPrecio:   decimal.NewFromInt(3000),
+			ListaCredito: "Precio de lista",
+		}, nil)
+
+		// Exercise the real reader directly first: proves it resolves a product
+		// from the live catalog. Skip cleanly if almacén 19 has nothing offerable
+		// in this dev snapshot (the copiloto would just degrade, no product).
+		sugerido, err := nbp.GetNBP(ctx, clienteID)
+		require.NoError(t, err, "el reader NBP real no debe fallar")
+		if sugerido == nil {
+			t.Skip("sin producto ofertable en almacén 19 (dev snapshot) — nada que demostrar")
+		}
+		t.Logf("✓ NBP real → %q precio=%s", sugerido.Nombre, sugerido.Precio)
+
 		svc := app.NewService(nil, nil, outbound.ProductionClock{}, nil, app.Config{}).
 			WithCopiloto(copRepo, copRepo, repo, gen, repo).
 			WithNBP(nbp)

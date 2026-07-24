@@ -147,6 +147,21 @@ const selectContactadoFlags = `SELECT CLIENTE_ID, FUE_CONTACTADO FROM MSP_RX_COH
 // Repo.GetFacts' Scan call exactly.
 const selectClienteFacts = `SELECT NOMBRE, SEGMENTO, TELEFONO FROM MSP_RX_COHORTE WHERE CLIENTE_ID = ?`
 
+// selectCategoriasCompradas returns the DISTINCT product lines
+// (LINEA_ARTICULO_ID) a cliente has ever bought, over the SAME canonical
+// venta join analytics uses for NBP (DOCTOS_PV → DOCTOS_PV_DET → ARTICULOS,
+// TIPO_DOCTO IN ('V','P'), ESTATUS='N'). It powers outbound.CategoriasClienteReader:
+// the copiloto suggests a product in a line the cliente does NOT already own.
+const selectCategoriasCompradas = `
+SELECT DISTINCT a.LINEA_ARTICULO_ID
+FROM DOCTOS_PV pv
+JOIN DOCTOS_PV_DET det ON det.DOCTO_PV_ID = pv.DOCTO_PV_ID
+JOIN ARTICULOS a        ON a.ARTICULO_ID   = det.ARTICULO_ID
+WHERE pv.CLIENTE_ID = ?
+  AND pv.TIPO_DOCTO IN ('V', 'P')
+  AND pv.ESTATUS = 'N'
+  AND a.LINEA_ARTICULO_ID IS NOT NULL`
+
 // ─── MSP_RX_CONVERSACION queries ────────────────────────────────────────────────
 
 // conversacionCols is the canonical SELECT column list for MSP_RX_CONVERSACION.

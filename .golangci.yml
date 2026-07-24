@@ -234,6 +234,8 @@ linters:
           alias: cobranzamicrosip
         - pkg: github.com/abdimuy/msp-api/internal/cobranza/ports/outbound
           alias: cobranzaoutbound
+        - pkg: github.com/abdimuy/msp-api/internal/microsip
+          alias: microsip
         - pkg: github.com/abdimuy/msp-api/internal/microsip/app
           alias: microsipapp
         - pkg: github.com/abdimuy/msp-api/internal/microsip/ports/outbound
@@ -304,6 +306,8 @@ linters:
           alias: reactivacionsender
         - pkg: github.com/abdimuy/msp-api/internal/reactivacion/infra/reactivacionllm
           alias: reactivacionllm
+        - pkg: github.com/abdimuy/msp-api/internal/reactivacion/infra/reactivacionmicrosip
+          alias: reactivacionmicrosip
         - pkg: github.com/abdimuy/msp-api/internal/clientes/infra/clientessearch
           alias: clientessearchmeili
         - pkg: github.com/abdimuy/msp-api/internal/ventas/infra/ventsearch

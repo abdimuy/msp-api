@@ -6,9 +6,13 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/shopspring/decimal"
+
+	"github.com/abdimuy/msp-api/internal/microsip"
 	reactivacionapp "github.com/abdimuy/msp-api/internal/reactivacion/app"
 	reactivacionfb "github.com/abdimuy/msp-api/internal/reactivacion/infra/reactivacionfb"
 	reactivacionllm "github.com/abdimuy/msp-api/internal/reactivacion/infra/reactivacionllm"
+	reactivacionmicrosip "github.com/abdimuy/msp-api/internal/reactivacion/infra/reactivacionmicrosip"
 	reactivacionsender "github.com/abdimuy/msp-api/internal/reactivacion/infra/reactivacionsender"
 	reactivacionoutbound "github.com/abdimuy/msp-api/internal/reactivacion/ports/outbound"
 
@@ -124,6 +128,31 @@ func provideReactivacionClienteFactsReader(r *reactivacionfb.Repo) reactivaciono
 	return r
 }
 
+// provideReactivacionCategoriasClienteReader exposes the concrete Repo as the
+// CategoriasClienteReader port (reads the cliente's purchased product lines
+// off the Microsip venta history — no name collision with MensajeRepo).
+func provideReactivacionCategoriasClienteReader(r *reactivacionfb.Repo) reactivacionoutbound.CategoriasClienteReader {
+	return r
+}
+
+// provideReactivacionNBPReader builds the personalized next-best-product reader
+// by composing the microsip catalog contract with the cliente's purchased
+// categorías. It suggests an in-stock product above the price floor in a line
+// the cliente does not already own (global fallback otherwise). Exposed as the
+// OPTIONAL NextBestProductReader port wired via WithNBP.
+func provideReactivacionNBPReader(
+	cat microsip.Catalogo,
+	categorias reactivacionoutbound.CategoriasClienteReader,
+	cfg *config.Config,
+	logger *slog.Logger,
+) reactivacionoutbound.NextBestProductReader {
+	return reactivacionmicrosip.NewNBPReader(cat, categorias, reactivacionmicrosip.NBPConfig{
+		AlmacenID:    cfg.Reactivacion.NBPAlmacenID,
+		PisoPrecio:   decimal.NewFromInt(int64(cfg.Reactivacion.NBPPisoPrecio)),
+		ListaCredito: cfg.Reactivacion.NBPListaCredito,
+	}, logger)
+}
+
 // provideReactivacionCopilotoLLM builds the copiloto's LLM adapter, reusing
 // the SHARED platform LLM client (platformllm.Client, wired once in
 // llm_wiring.go and already shared with analytics) — no per-feature LLM
@@ -153,6 +182,7 @@ func provideReactivacionService(
 	notaReader reactivacionoutbound.NotaReader,
 	copilotoLLM reactivacionoutbound.CopilotoLLM,
 	factsReader reactivacionoutbound.ClienteFactsReader,
+	nbpReader reactivacionoutbound.NextBestProductReader,
 	cfg *config.Config,
 	logger *slog.Logger,
 ) *reactivacionapp.Service {
@@ -161,7 +191,8 @@ func provideReactivacionService(
 	}).
 		WithLogger(logger).
 		WithCanal(mensajeRepo, sender, opener, gobernador, cfg.Reactivacion.AutoSend).
-		WithCopiloto(convRepo, decisionRepo, notaReader, copilotoLLM, factsReader)
+		WithCopiloto(convRepo, decisionRepo, notaReader, copilotoLLM, factsReader).
+		WithNBP(nbpReader)
 }
 
 // provideReactivacionEnvioWorker builds the background worker that drains the
