@@ -5,8 +5,11 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/shopspring/decimal"
 
 	"github.com/abdimuy/msp-api/internal/platform/apperror"
 	"github.com/abdimuy/msp-api/internal/platform/llm"
@@ -49,6 +52,7 @@ func (s *Service) ProcesarMensajeEntrante(ctx context.Context, clienteID int, me
 	}
 
 	nombre, segmento := s.resolveFactsNombreSegmento(ctx, clienteID)
+	nbpNombre, enganche, parcialidad, cadencia := s.resolveNBP(ctx, clienteID)
 	s.asegurarContextoNota(ctx, conv, nombre, segmento, now)
 	resumen := s.construirResumenActual(ctx, clienteID)
 
@@ -57,6 +61,10 @@ func (s *Service) ProcesarMensajeEntrante(ctx context.Context, clienteID int, me
 		MensajeEntrante: mensaje,
 		Nombre:          nombre,
 		Segmento:        segmento,
+		NextBestProduct: nbpNombre,
+		Enganche:        enganche,
+		Parcialidad:     parcialidad,
+		Cadencia:        cadencia,
 		ContextoNota:    conv.ContextoNota(),
 		Banderas:        conv.Banderas(),
 		Allowlist:       allowlistText(),
@@ -98,6 +106,80 @@ func (s *Service) obtenerOCrearConversacion(ctx context.Context, clienteID int, 
 		return conv, nil
 	}
 	return domain.CrearConversacion(clienteID, now)
+}
+
+// planPeriodosDefault / planCadenciaDefault: hasta que se lea la cadencia real
+// del historial de crédito del cliente, el plan por defecto es semanal a 1 año
+// (52 parcialidades). TODO: derivar cadencia/periodos reales de Microsip.
+const (
+	planPeriodosDefault = 52
+	planCadenciaDefault = "semanal"
+)
+
+// resolveNBP reads clienteID's suggested next-best-product (optional reader),
+// turns its price into a DETERMINISTIC PlanPago (enganche + parcialidad), and
+// returns the prompt-ready strings. Every failure mode — no reader, nil
+// suggestion, reader error, or an unpriceable product — degrades to empty
+// strings (logged, not fatal): the copiloto still responds, just without
+// offering a specific product/plan. The LLM never sees a product it cannot
+// price (all-or-nothing), so it can never enunciate a montoless offer.
+func (s *Service) resolveNBP(ctx context.Context, clienteID int) (string, string, string, string) {
+	if s.nbpReader == nil {
+		return "", "", "", ""
+	}
+	nbp, err := s.nbpReader.GetNBP(ctx, clienteID)
+	if err != nil {
+		s.logger.WarnContext(ctx, "reactivacion_copiloto.nbp_reader_failed",
+			slog.Int("cliente_id", clienteID), slog.String("error", err.Error()))
+		return "", "", "", ""
+	}
+	if nbp == nil {
+		return "", "", "", ""
+	}
+	plan, err := domain.CalcularPlanPago(nbp.Precio, planPeriodosDefault, planCadenciaDefault)
+	if err != nil {
+		s.logger.WarnContext(ctx, "reactivacion_copiloto.nbp_plan_invalido",
+			slog.Int("cliente_id", clienteID), slog.String("error", err.Error()))
+		return "", "", "", ""
+	}
+	return nbp.Nombre,
+		formatoPesos(plan.Enganche()),
+		formatoPesos(plan.Parcialidad()) + " " + adverbioCadencia(plan.Cadencia()),
+		plan.Cadencia()
+}
+
+// formatoPesos formats a whole-peso amount as "$1,200" (thousands separator).
+func formatoPesos(d decimal.Decimal) string {
+	n := d.Round(0).IntPart()
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	digitos := strconv.FormatInt(n, 10)
+	var b strings.Builder
+	for i, c := range digitos {
+		if i > 0 && (len(digitos)-i)%3 == 0 {
+			_ = b.WriteByte(',')
+		}
+		_, _ = b.WriteRune(c)
+	}
+	out := "$" + b.String()
+	if neg {
+		out = "-" + out
+	}
+	return out
+}
+
+// adverbioCadencia turns a cadence label into its Spanish adverbial phrase.
+func adverbioCadencia(cadencia string) string {
+	switch cadencia {
+	case "quincenal":
+		return "cada quincena"
+	case "mensual":
+		return "al mes"
+	default:
+		return "a la semana"
+	}
 }
 
 // resolveFactsNombreSegmento reads clienteID's ClienteFacts for the LLM

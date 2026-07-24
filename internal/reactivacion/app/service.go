@@ -84,6 +84,10 @@ type Service struct {
 	notaReader   outbound.NotaReader
 	copilotoLLM  outbound.CopilotoLLM
 	factsReader  outbound.ClienteFactsReader
+
+	// nbpReader is OPTIONAL (set via WithNBP): when nil, the copiloto responds
+	// without offering a specific next-best-product/plan (graceful degrade).
+	nbpReader outbound.NextBestProductReader
 }
 
 // NewService builds a Service wired against the required ports. txMgr may be nil
@@ -155,6 +159,15 @@ func (s *Service) WithCopiloto(
 	s.notaReader = notaReader
 	s.copilotoLLM = copilotoLLM
 	s.factsReader = factsReader
+	return s
+}
+
+// WithNBP wires the OPTIONAL next-best-product reader onto an existing Service.
+// When it is not set, ProcesarMensajeEntrante still works — it just does not
+// offer a specific product or payment plan (graceful degrade). Returns s for
+// chaining.
+func (s *Service) WithNBP(nbpReader outbound.NextBestProductReader) *Service {
+	s.nbpReader = nbpReader
 	return s
 }
 

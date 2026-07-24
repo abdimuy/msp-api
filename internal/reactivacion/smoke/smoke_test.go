@@ -35,6 +35,14 @@ import (
 	"github.com/abdimuy/msp-api/internal/reactivacion/ports/outbound"
 )
 
+// stubNBP is a fixed next-best-product reader for the smoke — it stands in for
+// the production Microsip/association-rules NBP source (a later slice).
+type stubNBP struct{ nbp *outbound.NextBestProduct }
+
+func (s stubNBP) GetNBP(context.Context, int) (*outbound.NextBestProduct, error) {
+	return s.nbp, nil
+}
+
 //nolint:paralleltest // integration smoke: real shared dev DB + real API, must run serially
 func TestSmokeCopilotoEndToEnd(t *testing.T) {
 	if os.Getenv("FB_DATABASE") == "" || os.Getenv("ANTHROPIC_API_KEY") == "" {
@@ -78,8 +86,16 @@ func TestSmokeCopilotoEndToEnd(t *testing.T) {
 		gen := reactivacionllm.NewGenerator(llmClient, "claude-haiku-4-5")
 
 		copRepo := reactivacionfb.NewCopilotoRepo(pool) // ConversacionRepo + DecisionRepo
+		// NBP inyectado (producto+precio reales del catálogo) — demuestra la venta
+		// DIRIGIDA: el copiloto ofrece este producto con su plan de pago calculado
+		// en Go. En producción esto lo dará un reader Microsip / motor de NBP.
+		nbp := stubNBP{&outbound.NextBestProduct{
+			Nombre: "Refrigerador Hisense de 11 pies",
+			Precio: decimal.RequireFromString("8500"),
+		}}
 		svc := app.NewService(nil, nil, outbound.ProductionClock{}, nil, app.Config{}).
-			WithCopiloto(copRepo, copRepo, repo, gen, repo)
+			WithCopiloto(copRepo, copRepo, repo, gen, repo).
+			WithNBP(nbp)
 
 		// ── The whole flow: real Claude Analizar → deterministic triar → persist ──
 		res, err := svc.ProcesarMensajeEntrante(ctx, clienteID,
