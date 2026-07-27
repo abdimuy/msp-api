@@ -150,12 +150,22 @@ Escribir el reporte en `docs/superpowers/plans/garantias-task-1-report.md`, con:
 - Qué se copió de la implementación de `ventas` y qué se cambió, con el motivo de cada cambio.
 - Confirmación explícita de que ningún archivo importa otro módulo.
 
-## Commit
+## Rama y commit
 
-En la rama `feat/garantias`, con mensaje convencional:
+Trabajar en una rama propia, sacada de `feat/garantias`:
+
+```sh
+git fetch origin
+git checkout feat/garantias
+git checkout -b feat/garantias-storage
+```
+
+Commitear ahí, con mensaje convencional:
 
 ```
 feat(garantias): almacenamiento de evidencia en filesystem local
 ```
 
-Sin `--no-verify`. Sin pie de atribución a ninguna herramienta de IA en el mensaje del commit.
+Al terminar, `git push -u origin feat/garantias-storage` y avisar. **No commitear en `feat/garantias`.**
+
+Sin `--no-verify` bajo ninguna circunstancia. Sin pie de atribución a ninguna herramienta de IA en el mensaje del commit.
