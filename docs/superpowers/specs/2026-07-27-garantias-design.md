@@ -119,12 +119,15 @@ El domicilio es un **snapshot al abrir**, no una copia perezosa: si el cliente s
 | `ETAPA_DESDE` | `VARCHAR(28)` ASCII | |
 | `ETAPA_HASTA` | `VARCHAR(28)` ASCII | |
 | `USUARIO` | `VARCHAR(64)` UTF8 | |
+| `ROL_DECISOR` | `VARCHAR(16)` ASCII | `carpinteria` \| `oficina` \| `tecnica`. Nullable; solo en eventos de decisión |
 | `GPS_LAT`, `GPS_LON` | `DOUBLE PRECISION` | Posición del agente al guardar |
 | `DEVICE_CREATED_AT` | `TIMESTAMP` | Reloj del teléfono (offline-first) |
 | `CREATED_AT` | `TIMESTAMP` | Reloj del servidor al recibir |
 | `CLAVE_IDEMPOTENCIA` | `CHAR(36)` ASCII | UNIQUE |
 
 **Sin `UPDATED_AT`, sin `UPDATED_BY`, sin columna de borrado lógico.** Un evento de auditoría no se edita; si algo salió mal se agrega un evento de corrección. En un expediente que puede acabar en una reclamación del cliente, la línea de tiempo tiene que ser evidencia y no una opinión editable.
+
+**`ROL_DECISOR` existe porque quien decide no es fijo.** La decisión de si una reparación es rápida puede tomarla carpintería, oficina o el área técnica, según la situación; y la autorización de un cambio físico la toma quien tenga el permiso, que puede ser cualquiera de las tres. El permiso (`garantias:actualizar`, `garantias:autorizar`) controla **si puede**; `ROL_DECISOR` registra **desde qué rol lo hizo**. Son cosas distintas y por eso no se colapsan: sin el rol, dentro de seis meses no hay forma de saber si un cambio caro lo autorizó oficina o lo decidió el carpintero.
 
 `ETAPA_DESDE` / `ETAPA_HASTA` se guardan explícitamente. Sin ellas, reconstruir en qué estado estaba un artículo en una fecha dada obliga a recalcular desde el origen, y basta con que una etapa cambie de nombre para que el histórico mienta.
 
@@ -203,11 +206,14 @@ orden_generada → enviado_proveedor → dictamen_recibido
         │                                 │                          │
   reparado_proveedor              listo_entrega            espera_respuesta_cliente
         │                     (DESENLACE=devuelto,                   │
-  listo_entrega                se devuelve sin reparar)   ┌──────────┴──────────┐
-                                                       acepta              no acepta
-                                                          │                    │
-                                                   listo_entrega      cambio_autorizado
+  listo_entrega                se lo queda el cliente)   ┌───────────┼───────────┐
+                                                      acepta    no acepta   no se pudo
+                                                         │           │       devolver
+                                                  listo_entrega      │          │
+                                                          cambio_autorizado  standby
 ```
+
+La rama `no se pudo devolver` cubre el caso excepcional en que el cliente nunca responde o se niega a recibir el producto funcional. El camino normal es devolvérselo; esta salida existe para que el artículo no quede atorado en `espera_respuesta_cliente` indefinidamente.
 
 **Ruta taller**
 
@@ -334,15 +340,19 @@ Los tests de integración se envuelven en `fbtestutil.WithTestTransaction` para 
 
 ## 9. Supuestos a validar en campo
 
-Este diseño se construye sobre el documento de proceso, que describe el flujo ideal. Cuatro cosas están supuestas y solo el levantamiento en taller y oficina las confirma:
+### 9.1 Confirmado
 
-1. **La redistribución del catálogo del documento.** Los diecinueve valores de estado del documento se repartieron en tres ejes distintos — estado de folio (§4.1), etapa de artículo (§4.2) y ubicación física (§4.3) — fusionando los que parecen el mismo momento visto desde áreas distintas y añadiendo los que el proceso implica pero no nombra (`standby`, `registrado`). Que la repartición sea la correcta es lo primero a confirmar en taller.
-2. **Qué ocurre físicamente con un artículo de dictamen `rechazada`.** El documento dice que se cierra como rechazo definitivo por política de marca, pero no dice si el artículo vuelve al cliente. Aquí se supone que sí: pasa a `listo_entrega` con `DESENLACE='devuelto'` y se entrega sin reparar. Si en la práctica se queda en la empresa, la transición cambia a `standby`.
-3. **`espera_respuesta_cliente` no tiene plazo.** El documento no dice qué ocurre si el cliente nunca responde; hoy el artículo quedaría ahí indefinidamente.
-4. **La decisión de "reparación rápida" no tiene dueño asignado.** Si la toma el carpintero o la autoriza oficina cambia qué permiso se exige.
-5. **El cambio físico se autoriza sin condición ni tope.** El documento dice que oficina lo autoriza por política comercial, sin límite explícito.
+- **Dictamen `rechazada`:** el artículo se lo queda el cliente. Va a `listo_entrega` con `DESENLACE='devuelto'` y se entrega sin reparar.
+- **Dictamen `sin_falla` sin respuesta del cliente:** el camino normal es devolverlo. La salida a `standby` cubre el caso excepcional en que no se pudo entregar.
+- **Quién decide la reparación rápida:** varía — carpintería, oficina o técnica, según la situación. Por eso el rol se registra como dato (`ROL_DECISOR`) en vez de codificarse como permiso único.
+- **Autorización del cambio físico:** siempre se autoriza, pero únicamente por quien tenga el permiso. `garantias:autorizar` queda como permiso separado.
 
-Ninguno bloquea la construcción, y los cinco se resuelven editando `transiciones.go` y el mapa de permisos. Esa es precisamente la razón del diseño de §4.5.
+### 9.2 Pendiente de confirmar
+
+1. **La redistribución del catálogo del documento.** Los diecinueve valores de estado se repartieron en tres ejes — estado de folio (§4.1), etapa de artículo (§4.2) y ubicación física (§4.3) — fusionando los que parecen el mismo momento visto desde áreas distintas y añadiendo los que el proceso implica pero no nombra (`standby`, `registrado`). Los estados de origen son reales, pero se espera que algunos se fusionen por redundancia al contrastarlos con el taller.
+2. **Vigencia de la garantía.** Es variada; falta el plazo por tipo de producto y quién lo define. Se guarda como `VIGENCIA_HASTA` calculada en Go al abrir el folio, de modo que la regla puede cambiar sin migración.
+
+Ninguno bloquea la construcción: el primero se resuelve editando `transiciones.go` y el segundo, la función que calcula la vigencia. Esa es precisamente la razón del diseño de §4.5.
 
 ## 10. Descomposición del trabajo
 
