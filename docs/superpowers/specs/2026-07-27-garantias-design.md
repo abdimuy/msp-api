@@ -71,7 +71,7 @@ Cuatro tablas. La decisión estructural es que **el artículo es una entidad con
 | `ESTADO_CUENTA` | `VARCHAR(20)` ASCII | `liquidada` \| `saldo_pendiente`. NULL si `piso` |
 | `ESTADO` | `VARCHAR(24)` ASCII | Estado del folio (§4.1) |
 | `DESCRIPCION` | `BLOB SUB_TYPE TEXT` UTF8 | La falla reportada |
-| `VIGENCIA_HASTA` | `DATE` | Calculada en Go al abrir |
+| `VIGENCIA_HASTA` | `DATE` | Nullable. **Capturada por el operador**, no calculada (§9.2) |
 | `CALLE` | `VARCHAR(300)` UTF8 | Snapshot del domicilio al abrir |
 | `NUMERO_EXTERIOR` | `VARCHAR(20)` UTF8 | |
 | `COLONIA` | `VARCHAR(100)` UTF8 | |
@@ -350,9 +350,9 @@ Los tests de integración se envuelven en `fbtestutil.WithTestTransaction` para 
 ### 9.2 Pendiente de confirmar
 
 1. **La redistribución del catálogo del documento.** Los diecinueve valores de estado se repartieron en tres ejes — estado de folio (§4.1), etapa de artículo (§4.2) y ubicación física (§4.3) — fusionando los que parecen el mismo momento visto desde áreas distintas y añadiendo los que el proceso implica pero no nombra (`standby`, `registrado`). Los estados de origen son reales, pero se espera que algunos se fusionen por redundancia al contrastarlos con el taller.
-2. **Vigencia de la garantía.** Es variada; falta el plazo por tipo de producto y quién lo define. Se guarda como `VIGENCIA_HASTA` calculada en Go al abrir el folio, de modo que la regla puede cambiar sin migración.
+2. **Vigencia de la garantía — fuera de alcance por ahora, por decisión.** El plazo varía y no hay regla escrita. `VIGENCIA_HASTA` es un campo **que captura el operador**: el sistema acepta la fecha que se le indique y no valida ninguna política. No hay cálculo, no hay tabla de plazos por tipo de producto, y abrir un folio fuera de vigencia no se bloquea. Cuando exista la regla, se añade la validación en el comando de apertura sin tocar el esquema.
 
-Ninguno bloquea la construcción: el primero se resuelve editando `transiciones.go` y el segundo, la función que calcula la vigencia. Esa es precisamente la razón del diseño de §4.5.
+Ninguno bloquea la construcción: el primero se resuelve editando `transiciones.go` y el segundo, agregando una validación en el comando de apertura. Esa es precisamente la razón del diseño de §4.5.
 
 ## 10. Descomposición del trabajo
 
