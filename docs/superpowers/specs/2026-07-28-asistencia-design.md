@@ -36,7 +36,7 @@ Aplicación directa de ADR-0009, que se escribió para este módulo.
 - Tablas `MSP_AS_*` sin llave foránea hacia afuera.
 - `internal/asistencia/module.go` expone un `fx.Option` que el composition root incluye en una línea.
 - Firebird queda detrás de los repositorios.
-- Verificado por `make check-sealed asistencia` — el mismo target parametrizable que necesita garantías.
+- Verificado por `make check-sealed`, que recorre los módulos de `SEALED_MODULES` y omite los que aún no existen. La regla estática `asistencia-sealed` de `.golangci.yml` rechaza el import antes de que compile. Ambos ya están en `main` (`f6c53ab`), verificados contra una fuga real, y `make check-sealed` corre en `pre-push`.
 
 ### 2.2 La frontera de confianza
 
@@ -441,7 +441,7 @@ Y cuatro pruebas específicas que son las que sostienen el módulo:
 
 **Barrido de seguridad cruzado.** Además del habitual por permiso: un token de equipo recibe 403 en toda ruta de administración, y un token de usuario recibe 403 en `POST /marcajes`.
 
-Más `make check-sealed asistencia`, corriendo en cada entrega y no al final.
+Más `make check-sealed`, que corre en cada entrega vía `pre-push` y no al final.
 
 Los tests de integración se envuelven en `fbtestutil.WithTestTransaction`.
 
