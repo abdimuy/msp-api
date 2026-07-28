@@ -120,6 +120,14 @@ pre-push:
       glob: "*.go"
       run: golangci-lint run ./...
 
+    check-sealed:
+      glob: "*.go"
+      # ADR 0009: sealed modules must not depend on any other module.
+      # depguard catches the import statically; this catches it through the
+      # transitive dependency graph, which is where a leak actually shows up.
+      # Skips modules that do not exist yet, so it is a no-op until they do.
+      run: make check-sealed
+
     test-unit:
       glob: "*.go"
       # -short skips integration tests (those that need a real DB).
