@@ -380,6 +380,8 @@ linters:
             - github.com/abdimuy/msp-api/internal/rutas/domain
             - github.com/abdimuy/msp-api/internal/config/domain
             - github.com/abdimuy/msp-api/internal/reactivacion/domain
+            - github.com/abdimuy/msp-api/internal/asistencia/domain
+            - github.com/abdimuy/msp-api/internal/garantias/domain
 
         app-no-infra:
           list-mode: lax
@@ -388,6 +390,41 @@ linters:
           deny:
             - pkg: "github.com/abdimuy/msp-api/internal/*/infra"
               desc: "app layer must not import infra — depend on ports instead"
+
+        # ── Sealed modules (ADR 0009) ────────────────────────────────
+        # Stricter than the repo-wide rule: a sealed module may not import
+        # ANY other module, not even its contracts package. That is what makes
+        # extraction to another codebase a directory copy instead of
+        # archaeology. One rule per module on purpose — a shared rule would
+        # let the sealed modules import each other.
+        # Runtime counterpart: `make check-sealed`.
+        asistencia-sealed:
+          list-mode: lax
+          files:
+            - "**/internal/asistencia/**/*.go"
+          deny:
+            - pkg: "github.com/abdimuy/msp-api/internal"
+              desc: "asistencia is sealed (ADR 0009): only internal/asistencia and internal/platform are allowed — not even another module's contracts"
+          allow:
+            - $gostd
+            - github.com/google/uuid
+            - github.com/shopspring/decimal
+            - github.com/abdimuy/msp-api/internal/platform
+            - github.com/abdimuy/msp-api/internal/asistencia
+
+        garantias-sealed:
+          list-mode: lax
+          files:
+            - "**/internal/garantias/**/*.go"
+          deny:
+            - pkg: "github.com/abdimuy/msp-api/internal"
+              desc: "garantias is sealed (ADR 0009): only internal/garantias and internal/platform are allowed — not even another module's contracts"
+          allow:
+            - $gostd
+            - github.com/google/uuid
+            - github.com/shopspring/decimal
+            - github.com/abdimuy/msp-api/internal/platform
+            - github.com/abdimuy/msp-api/internal/garantias
 
         no-cross-module-internals:
           list-mode: lax
