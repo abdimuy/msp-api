@@ -1,4 +1,4 @@
-.PHONY: help setup build run dev test test-unit test-mutation test-mutation-domain test-mutation-app test-mutation-ventas test-mutation-ventas-domain test-mutation-ventas-app test-mutation-cobranza test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-cobranza-eventbus test-mutation-httpdispatch lint lint-fix fmt generate clean test-firebird test-firebird-all test-firebird-ventas coverage-auth coverage-auth-full coverage-ventas coverage-ventas-full precommit-strict fb-migrate-up fb-migrate-down fb-migrate-status fb-seed-admin fb-snapshot fb-snapshot-list fb-restore fb-snapshot-delete fb-emu-up fb-emu-down fb-emu-logs meilisearch-up meilisearch-down test-meilisearch
+.PHONY: help setup build run dev test test-unit test-mutation test-mutation-domain test-mutation-app test-mutation-ventas test-mutation-ventas-domain test-mutation-ventas-app test-mutation-cobranza test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-cobranza-eventbus test-mutation-httpdispatch lint lint-fix check-sealed fmt generate clean test-firebird test-firebird-all test-firebird-ventas coverage-auth coverage-auth-full coverage-ventas coverage-ventas-full precommit-strict fb-migrate-up fb-migrate-down fb-migrate-status fb-seed-admin fb-snapshot fb-snapshot-list fb-restore fb-snapshot-delete fb-emu-up fb-emu-down fb-emu-logs meilisearch-up meilisearch-down test-meilisearch
 
 # ── Config ───────────────────────────────────────────────────────────
 APP_NAME      := msp-api
@@ -7,6 +7,12 @@ SYNC_BIN      := bin/microsip-sync
 GO            := go
 GOFLAGS       := -trimpath
 LDFLAGS       := -s -w -X main.version=$(shell git rev-parse --short HEAD 2>/dev/null || echo dev) -X main.buildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# Modules sealed per ADR 0009: they may import only their own packages and
+# internal/platform — not even another module's contracts. Verified by
+# `make check-sealed`; also enforced statically by depguard in .golangci.yml.
+# Adding a module here without its matching depguard rule leaves half the gate.
+SEALED_MODULES := asistencia garantias
 
 # Load .env if present (FB_* and other vars consumed by Go binaries + targets).
 ifneq (,$(wildcard .env))
@@ -65,6 +71,28 @@ lint: ## Run golangci-lint
 
 lint-fix: ## Run golangci-lint with --fix
 	golangci-lint run --fix ./...
+
+check-sealed: ## Verify sealed modules import nothing but themselves + platform (ADR 0009). Narrow with MODULE=asistencia
+	@modules="$(or $(MODULE),$(SEALED_MODULES))"; \
+	failed=0; \
+	for m in $$modules; do \
+		if [ ! -d "internal/$$m" ]; then \
+			echo "· internal/$$m does not exist yet — skipped"; \
+			continue; \
+		fi; \
+		leaked=$$(go list -deps ./internal/$$m/... 2>/dev/null \
+			| grep 'msp-api/internal/' \
+			| grep -v "msp-api/internal/$$m\|msp-api/internal/platform" \
+			| sort -u); \
+		if [ -n "$$leaked" ]; then \
+			echo "✘ $$m is no longer sealed — it depends on (ADR 0009):"; \
+			echo "$$leaked" | sed 's/^/    /'; \
+			failed=1; \
+		else \
+			echo "✔ $$m is sealed"; \
+		fi; \
+	done; \
+	exit $$failed
 
 fmt: ## Format code (gofumpt + goimports)
 	gofumpt -l -w .
