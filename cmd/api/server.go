@@ -194,6 +194,24 @@ func provideRootHandler(
 	})
 	capture := failedintent.CaptureMiddleware(fiCaptureCfg)
 
+	// cobranzaCapture is a second capture instance scoped to the cobranza pago
+	// WRITE path. Pagos are real money: a POST /v2/cobranza/pagos that the
+	// server rejects (422 pago_cargo_no_encontrado / pago_fecha_muy_antigua /
+	// importe_excede_saldo, etc.) must leave a durable audit row a human can
+	// inspect, correct via /replay-with-multipart, and re-dispatch — never a
+	// silently-lost payment. The default fiCaptureCfg is pinned to /v2/ventas,
+	// so cobranza needs its own path/method filter. Reuses the same Store, Blob
+	// and size cap; only POST is captured (GET reads and the streaming imagen
+	// downloads never match). Idempotency stays at the repo layer (body.id), so
+	// no idem middleware is added here.
+	cobranzaCapture := failedintent.CaptureMiddleware(failedintent.Config{
+		Store:             fiCaptureCfg.Store,
+		Blob:              fiCaptureCfg.Blob,
+		MaxMultipartBytes: fiCaptureCfg.MaxMultipartBytes,
+		PathPrefixes:      []string{"/v2/cobranza/pagos"},
+		Methods:           []string{http.MethodPost},
+	})
+
 	// API surface. Module routers mount under /v2.
 	r.Route("/v2", func(r chi.Router) {
 		authhttp.MountRouter(r, authSvc, authFirebase, authUsuarios, idemStore)
@@ -294,7 +312,10 @@ func provideRootHandler(
 		// the canonical key (the repo INSERT trips DUPLICATE_KEY on retry and
 		// the handler falls back to the idempotent fast-path).
 		r.Route("/cobranza", func(r chi.Router) {
-			r.Use(authn.Handler)
+			// cobranzaCapture runs INSIDE authn so the captured intent carries
+			// the planted CurrentUser (UsuarioID) — required for /me scoping and
+			// for /replay-with-multipart to rebuild the original requester.
+			r.Use(authn.Handler, cobranzaCapture)
 			cobranzahttp.MountReadRouter(r, cobranzaSvc, cobranzaBus, cfg.Cobranza, logger, cobranzaPagosRepo, cobranzaVentasRepo)
 		})
 
