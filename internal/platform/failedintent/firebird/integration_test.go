@@ -668,7 +668,21 @@ func TestPurgeOlderThan_RemovesAndReturnsCount_PlusBlobPaths(t *testing.T) {
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		s := failedintentfb.New(pool)
+		q := firebird.GetQuerier(ctx, pool.DB)
 		now := time.Now().UTC()
+		cutoff := now.Add(-60 * time.Minute) // cuts off the 3 older rows
+
+		// PurgeOlderThan deletes by RECEIVED_AT globally (no marker column),
+		// so on the shared dev DB it also sweeps any committed rows older than
+		// the cutoff. A bare RowsDeleted==3 assertion is therefore flaky. We
+		// measure the pre-existing committed population inside this same
+		// rollback tx and assert our 3 seeded rows *on top of* that baseline,
+		// and that our seeded blob paths are a SUBSET of the purged paths.
+		var baselineOld int64
+		require.NoError(t, q.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM MSP_FAILED_INTENTS WHERE RECEIVED_AT < ?`,
+			firebird.ToWallClock(cutoff),
+		).Scan(&baselineOld))
 
 		oldest := newIntent(uuid.New(), now.Add(-3*time.Hour), failedintent.StatusNew)
 		oldest.BodyBlobPath = fmt.Sprintf("/tmp/fi-%s.bin", uuid.New())
@@ -685,11 +699,12 @@ func TestPurgeOlderThan_RemovesAndReturnsCount_PlusBlobPaths(t *testing.T) {
 		newer := newIntent(uuid.New(), now, failedintent.StatusNew)
 		require.NoError(t, s.Save(ctx, newer))
 
-		cutoff := now.Add(-60 * time.Minute) // cuts off the 3 older rows
 		result, err := s.PurgeOlderThan(ctx, cutoff)
 		require.NoError(t, err)
-		assert.Equal(t, int64(3), result.RowsDeleted)
-		assert.ElementsMatch(t, []string{oldest.BodyBlobPath, middle.BodyBlobPath}, result.BlobPaths)
+		assert.Equal(t, baselineOld+3, result.RowsDeleted,
+			"our 3 seeded old rows on top of the pre-existing committed population")
+		assert.Subset(t, result.BlobPaths, []string{oldest.BodyBlobPath, middle.BodyBlobPath},
+			"seeded blob paths must be among the purged set")
 
 		// Older rows must be gone.
 		gotOldest, err := s.Get(ctx, oldest.ID)
