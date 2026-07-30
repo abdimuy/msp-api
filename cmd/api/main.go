@@ -212,6 +212,10 @@ func appOptions() []fx.Option {
 			provideFailedIntentUsuarioLookup,
 			provideFailedIntentHTTPService,
 			provideFailedIntentJanitor,
+			// Visitas module.
+			provideVisitasClock,
+			provideVisitasRepo,
+			provideVisitasService,
 			provideRootHandler,
 			provideHTTPServer,
 		),

@@ -318,6 +318,14 @@ linters:
           alias: meili
         - pkg: github.com/go-playground/validator/v10
           alias: pv
+        - pkg: github.com/abdimuy/msp-api/internal/visitas/app
+          alias: visitasapp
+        - pkg: github.com/abdimuy/msp-api/internal/visitas/ports/outbound
+          alias: visitasoutbound
+        - pkg: github.com/abdimuy/msp-api/internal/visitas/infra/visitasfb
+          alias: visitasfb
+        - pkg: github.com/abdimuy/msp-api/internal/visitas/infra/visitashttp
+          alias: visitashttp
         - pkg: firebase.google.com/go/v4
           alias: firebasesdk
 
