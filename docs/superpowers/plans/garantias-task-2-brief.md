@@ -245,15 +245,6 @@ Criterios, todos obligatorios:
 
 **No corras las migraciones contra la base.**
 
-## Sobre el push mientras no tengas la base de datos
-
-El hook de `pre-push` corre la suite de integración contra Firebird. Mientras no la tengas, usa la escotilla que documenta `lefthook.yml`:
-
-```sh
-LEFTHOOK_EXCLUDE=test-firebird-all git push
-```
-
-Conserva lint, tests unitarios y `check-sealed`, y solo salta la suite que necesita Firebird. **No es lo mismo que `--no-verify`, que sigue prohibido.** Esta tarea no toca base de datos, así que no pierdes cobertura real.
 
 ## Si te atoras
 
@@ -272,4 +263,7 @@ feat(garantias): migración 000050 con las tablas del módulo
 feat(garantias): value objects y errores del dominio
 ```
 
-Al terminar: `git push`. Sin `--no-verify` y sin pie de atribución a ninguna herramienta de IA.
+**No hagas `git push`.** Por ahora no hay acceso de escritura al remoto: tus commits se quedan en tu rama local. Al terminar, avisa y coordinamos cómo se integra tu trabajo.
+
+Sin `--no-verify` bajo ninguna circunstancia, y sin pie de atribución a ninguna herramienta de IA en el mensaje del commit.
+
