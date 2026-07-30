@@ -93,4 +93,11 @@ var (
 		"visita_ya_existe",
 		"la visita con ese id ya existe",
 	)
+
+	// ErrVisitaNoEncontrada is returned by the repo's FindByID (Task 2) when no
+	// row matches the given ID.
+	ErrVisitaNoEncontrada = apperror.NewNotFound(
+		"visita_not_found",
+		"no se encontró la visita",
+	)
 )
