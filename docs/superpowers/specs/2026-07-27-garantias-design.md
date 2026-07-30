@@ -3,7 +3,8 @@
 - **Fecha:** 2026-07-27
 - **Estado:** aprobado, listo para plan de implementación
 - **Módulo:** `internal/garantias`
-- **Migración:** `000047_create_msp_ga_garantias`
+- **Migración:** `000050_create_msp_ga_garantias`
+- **Nota:** la `000047` se reasignó a `MSP_VISITAS` (rama `feat/visitas`), que ya tiene código escrito. La `000048` la reserva asistencia y la `000049` comprobantes. **Antes de escribir la migración, correr `ls migrations-firebird/` y confirmar que la 50 sigue libre** — con varios módulos en vuelo el número es donde chocan.
 - **Prefijo de tablas:** `MSP_GA_*`
 
 ## 1. Objetivo
@@ -362,7 +363,7 @@ Dos reglas gobiernan el corte: los contratos se fijan antes que nada, y **dos ta
 
 **Tanda 0 — el molde (secuencial, bloquea todo)**
 1. ~~Generalizar `make check-sealed` + regla `garantias-sealed`~~ — **hecho** en `main` (`f6c53ab`). Basta con sacar la rama de `main` al día.
-2. Migración `000047` — las cuatro tablas y el generador de folio.
+2. Migración `000050` — las cuatro tablas y el generador de folio. Confirmar antes que el número siga libre.
 3. `domain/` — value objects, catálogos, entidades, `transiciones.go`, errores centinela.
 4. `ports/outbound/` + `garantias_contracts.go`.
 
