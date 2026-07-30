@@ -248,4 +248,7 @@ feat(comprobantes): migración 000049 con las tablas del módulo
 feat(comprobantes): modelos de contenido de los comprobantes
 ```
 
-Al terminar: `git push`. Sin `--no-verify` y sin pie de atribución a ninguna herramienta de IA.
+**No hagas `git push`.** Por ahora no hay acceso de escritura al remoto: tus commits se quedan en tu rama local. Al terminar, avisa y coordinamos cómo se integra tu trabajo.
+
+Sin `--no-verify` bajo ninguna circunstancia, y sin pie de atribución a ninguna herramienta de IA en el mensaje del commit.
+

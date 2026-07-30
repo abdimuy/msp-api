@@ -248,15 +248,6 @@ Criterios, todos obligatorios:
 
 Si algún comando falla, la tarea no está terminada. No la entregues para que alguien la revise: entrégala cuando pase.
 
-## Sobre el push mientras no tengas la base de datos
-
-El hook de `pre-push` corre la suite de integración contra Firebird. Mientras no tengas la base configurada, usa la escotilla que el propio repositorio documenta en `lefthook.yml`:
-
-```sh
-LEFTHOOK_EXCLUDE=test-firebird-all git push
-```
-
-Eso conserva lint, tests unitarios y `check-sealed`, y solo salta la suite que necesita Firebird. **No es lo mismo que `--no-verify`, que sigue prohibido.** Esta tarea no toca base de datos, así que no pierdes cobertura real al usarlo.
 
 ## Si te atoras
 
@@ -275,4 +266,7 @@ feat(comprobantes): almacenamiento de comprobantes en filesystem local
 feat(comprobantes): canal local para pruebas de envío
 ```
 
-Al terminar: `git push`. Sin `--no-verify` y sin pie de atribución a ninguna herramienta de IA.
+**No hagas `git push`.** Por ahora no hay acceso de escritura al remoto: tus commits se quedan en tu rama local. Al terminar, avisa y coordinamos cómo se integra tu trabajo.
+
+Sin `--no-verify` bajo ninguna circunstancia, y sin pie de atribución a ninguna herramienta de IA en el mensaje del commit.
+
