@@ -313,7 +313,7 @@ Cerca de **985 mensajes diarios, unos 30,000 al mes.**
 
 No hay tarifa verificada para plantillas *utility* en México en este documento — Meta la ha movido varias veces y no se cotizó. **Es una pregunta concreta y cotizable: "treinta mil mensajes de plantilla *utility* al mes en México".** Debe responderse antes de comprometer la función, no después.
 
-**Reparo sobre los datos:** en 2026 la base de desarrollo trae 15 ventas y 298 pagos diarios, un tercio de 2025. No se determinó si es caída real del negocio o un respaldo incompleto. Se planea con 2025 porque es el año completo y el escenario caro; conviene confirmar contra producción.
+**Resuelto (2026-07-30):** el aparente desplome de 2026 era un artefacto del respaldo, no del negocio. Los datos reales de la base de desarrollo **terminan en febrero de 2026**; marzo y abril están vacíos y de mayo en adelante solo hay artefactos de pruebas. El volumen mensual hasta febrero venía en 29–33 mil documentos, consistente con el promedio de 2025 (~28.6 mil). **No hay caída: las cifras de 2025 son la base de planeación correcta.**
 
 ### 10.1 Dos consecuencias de diseño
 
