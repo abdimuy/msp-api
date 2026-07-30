@@ -30,7 +30,9 @@ Atiende dos módulos —`ventas` y `cobranza`— así que vivir dentro de uno de
 
 ### Nota sobre el número de migración
 
-`000047` está reservada por el spec de garantías y `000048` por el de asistencia. Ninguna tiene código escrito y asistencia está en pausa, pero se respetan las reservas para que no haya dos documentos reclamando el mismo número — el error exacto que ya ocurrió una vez. Comprobantes toma `000049`.
+La `000047` la tomó `MSP_VISITAS` (rama `feat/visitas`), que ya tiene código escrito. La `000048` la reserva asistencia, que está en pausa. Comprobantes toma la `000049`, y garantías se movió a la `000050`.
+
+Con cuatro módulos en vuelo el número de migración es donde chocan las ramas — ya pasó una vez. **Antes de escribir la migración: `ls migrations-firebird/` y confirmar que la 49 sigue libre.**
 
 ## 2. Los dos disparadores
 
