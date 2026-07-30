@@ -465,3 +465,55 @@ func TestRehydrateVisita_RoundTripsFieldsAndZeroesAudit(t *testing.T) {
 		t.Errorf("Audit().UpdatedBy() = %v, want uuid.Nil", got)
 	}
 }
+
+// TestNewVisita_CamposEnElLimiteExacto_Aceptados exercises the exact-length
+// boundary (== maxLen, not maxLen+1) for every bounded string field. Without
+// this, a mutant that flips ">" to ">=" in requireBounded/trimOptionalBounded
+// (safe_string.go) would silently reject a value at the legitimate maximum
+// and no test would notice — the existing "too long" cases only probe
+// maxLen+1.
+func TestNewVisita_CamposEnElLimiteExacto_Aceptados(t *testing.T) {
+	t.Parallel()
+
+	t.Run("cobrador con exactamente 150 caracteres se acepta", func(t *testing.T) {
+		t.Parallel()
+
+		p := validParams()
+		p.Cobrador = strings.Repeat("a", 150)
+		v, err := domain.NewVisita(p)
+		if err != nil {
+			t.Fatalf("NewVisita() unexpected error at cobrador length boundary: %v", err)
+		}
+		if got := v.Cobrador(); got != p.Cobrador {
+			t.Errorf("Cobrador() = %q (len %d), want len 150", got, len(got))
+		}
+	})
+
+	t.Run("tipo_visita con exactamente 100 caracteres se acepta", func(t *testing.T) {
+		t.Parallel()
+
+		p := validParams()
+		p.TipoVisita = strings.Repeat("b", 100)
+		v, err := domain.NewVisita(p)
+		if err != nil {
+			t.Fatalf("NewVisita() unexpected error at tipo_visita length boundary: %v", err)
+		}
+		if got := v.TipoVisita(); got != p.TipoVisita {
+			t.Errorf("TipoVisita() = %q (len %d), want len 100", got, len(got))
+		}
+	})
+
+	t.Run("nota con exactamente 10000 caracteres se acepta", func(t *testing.T) {
+		t.Parallel()
+
+		p := validParams()
+		p.Nota = strings.Repeat("c", 10000)
+		v, err := domain.NewVisita(p)
+		if err != nil {
+			t.Fatalf("NewVisita() unexpected error at nota length boundary: %v", err)
+		}
+		if got := v.Nota(); got != p.Nota {
+			t.Errorf("Nota() = %q (len %d), want len 10000", got, len(got))
+		}
+	})
+}
