@@ -1,10 +1,10 @@
 # Base de datos de pruebas — cómo se genera y cómo se usa
 
 - **Fecha:** 2026-07-31
-- **Artefacto:** `msp-test-db.fbk.gz` (~16 MB comprimido, 158 MB restaurado)
+- **Artefacto:** `msp-test-db.fbk.gz` (~15 MB comprimido, 139 MB restaurado)
 - **Origen:** `MUEBLERA.FDB` del contenedor `mueblera-firebird` (3.9 GB)
 
-La base de desarrollo pesa 3.9 GB y contiene datos reales de clientes. Ni una cosa ni la otra sirve para repartirla entre desarrolladores. Este documento describe cómo se produce una versión de 16 MB con la que **pasa la suite de integración completa**.
+La base de desarrollo pesa 3.9 GB y contiene datos reales de clientes. Ni una cosa ni la otra sirve para repartirla entre desarrolladores. Este documento describe cómo se produce una versión de 15 MB con la que **pasa la suite de integración completa**.
 
 ---
 
@@ -45,7 +45,11 @@ make test-firebird-all
 | `MSP_CFG_PLAZO_CREDITO` · `MSP_CFG_VENDEDOR_MICROSIP` · `MSP_CFG_APLICAR` | 8 |
 | `SALDOS_IN` | existencias de inventario |
 
-**Omite** los movimientos (4.5 millones de filas entre cuentas por cobrar y punto de venta), las bitácoras, el rastreo GPS del sistema legado, las cachés derivadas y **todas las imágenes**.
+**Omite** los movimientos (4.5 millones de filas entre cuentas por cobrar y punto de venta), **la lista de precios** (`PRECIOS_ARTICULOS`, 97,071 renglones), las bitácoras, el rastreo GPS del sistema legado, las cachés derivadas y **todas las imágenes**.
+
+> La lista de precios se omite y la suite pasa igual: **la API no consulta `PRECIOS_ARTICULOS` al aplicar una venta.** El precio viaja en la petición desde la app del cobrador. Es la pieza de información comercial más sensible que había y no hace falta para probar.
+
+`ARTICULOS` se conserva porque `SALDOS_IN` la referencia. No trae costos ni márgenes — solo claves, descripciones y cuentas contables.
 
 ---
 
@@ -151,3 +155,18 @@ Pesan poco —2,728 y 1,384 páginas— así que quitarlos no es cuestión de ta
 Este artefacto es una foto del esquema y los catálogos al 2026-07-31. Hay que regenerarlo cuando se agreguen migraciones que cambien el esquema, o cuando cambien catálogos de los que dependan los tests.
 
 El procedimiento completo toma unos **quince minutos**, casi todos de espera.
+
+---
+
+## Qué se probó y qué no
+
+Cada recorte se validó corriendo los siete paquetes de integración contra la base resultante, y el artefacto final se verificó **descomprimiéndolo y restaurándolo a una base nueva**, no sobre la base desde la que se generó.
+
+Dos recortes se intentaron y se revirtieron porque rompían tests:
+
+| Tabla | Qué pasó |
+|---|---|
+| `SALDOS_IN` | Sin ella fallan seis tests de combos y juegos que verifican la descarga de inventario. Cuesta 8 MB; se queda |
+| `PRECIOS_ARTICULOS` | Se probó quitarla y **la suite pasa completa**. Se queda fuera |
+
+**Piso teórico: 12 MB.** Es el tamaño del respaldo con el esquema vacío. El artefacto pesa 15 MB, así que todos los catálogos juntos cuestan 3 MB comprimidos. No hay margen relevante para seguir recortando por tamaño.
