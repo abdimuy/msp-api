@@ -3,7 +3,7 @@
 # ── Config ───────────────────────────────────────────────────────────
 APP_NAME      := msp-api
 API_BIN       := bin/api
-SYNC_BIN      := bin/microsip-sync
+
 GO            := go
 GOFLAGS       := -trimpath
 LDFLAGS       := -s -w -X main.version=$(shell git rev-parse --short HEAD 2>/dev/null || echo dev) -X main.buildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -31,17 +31,17 @@ setup: ## First-time setup (install lefthook hooks, copy .env)
 	@echo "✔ Setup complete. Edit .env with your local values."
 
 # ── Build ────────────────────────────────────────────────────────────
-build: build-api build-sync ## Build all binaries
+# Antes este target dependía de un `build-sync` que compilaba
+# ./cmd/microsip-sync. Ese directorio no existe ni existió nunca en el
+# historial, así que `make build` fallaba siempre. Nadie lo notó porque el
+# hook build-check corre `go build ./...`, no `make build`.
+build: build-api ## Build all binaries
 
 build-api: ## Build API server (current OS)
 	$(GO) build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o $(API_BIN) ./cmd/api
 
-build-sync: ## Build microsip sync worker
-	$(GO) build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o $(SYNC_BIN) ./cmd/microsip-sync
-
 build-windows: ## Cross-compile all binaries to Windows amd64 (.exe)
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o $(API_BIN).exe ./cmd/api
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o $(SYNC_BIN).exe ./cmd/microsip-sync
 	@echo "✔ Built Windows binaries in bin/"
 
 # ── Run ──────────────────────────────────────────────────────────────
