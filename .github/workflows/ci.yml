@@ -1,0 +1,99 @@
+# Quality gate for pull requests.
+#
+# Runs the same checks as the lefthook hooks, but where they cannot be skipped:
+# a local `git push --no-verify` bypasses the hooks entirely, and with several
+# people pushing that is the one real hole. This workflow is the backstop.
+#
+# What this does NOT cover: the ~25 packages that need a real Firebird DB.
+# FB_DATABASE is deliberately absent here, so those tests skip themselves —
+# exactly as they do in the `test-unit` pre-push step. Integration coverage
+# still runs on a developer machine via `make test-firebird-all`.
+# See docs/base-de-datos-de-pruebas.md.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# A new push to the same branch cancels the previous run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.25.0"
+
+jobs:
+  quality:
+    name: Lint, build y tests unitarios
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::Archivos sin formatear (corre 'make fmt'):"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go mod tidy sin cambios
+        run: |
+          go mod tidy
+          if ! git diff --quiet go.mod go.sum; then
+            echo "::error::go.mod/go.sum quedaron desactualizados — corre 'go mod tidy'"
+            git diff go.mod go.sum
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      # Se instala la versión exacta que corre en las máquinas de desarrollo en
+      # lugar de usar golangci-lint-action: esa acción v6 está pensada para
+      # golangci-lint v1, y aquí usamos v2. Fijar la versión evita además que
+      # un linter nuevo tumbe la rama sin que nadie haya tocado código.
+      - name: golangci-lint
+        env:
+          GOLANGCI_VERSION: v2.11.3
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
+            | sh -s -- -b "$(go env GOPATH)/bin" "$GOLANGCI_VERSION"
+          "$(go env GOPATH)/bin/golangci-lint" run ./... --timeout 10m
+
+      - name: Módulos sellados (ADR 0009)
+        run: make check-sealed
+
+      # `go build ./...`, no `make build`: el target del Makefile apunta a
+      # cmd/microsip-sync, que no existe en el repositorio. Este es además el
+      # mismo comando que corre el hook build-check.
+      - name: Build
+        run: go build ./...
+
+      # Producción es Windows Server 2016 (CLAUDE.md §5). Compilar para el
+      # objetivo real evita descubrir en el despliegue que algo no cruza.
+      - name: Cross-compile a Windows
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+        run: go build ./...
+
+      # Sin FB_DATABASE: los tests de integración se saltan solos.
+      - name: Tests unitarios
+        run: go test ./... -race -count=1 -short -timeout 300s
