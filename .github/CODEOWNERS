@@ -1,0 +1,20 @@
+# Propietarios del código de msp-api.
+#
+# Por qué existe este archivo:
+#   La protección de `main` exige 1 aprobación, pero esa aprobación la puede
+#   dar CUALQUIER colaborador. Con dos personas con permiso `write`, eso
+#   significa que pueden aprobarse los PR entre ellas y mergear a main sin
+#   que el dueño del repositorio intervenga.
+#
+#   Con este archivo + "Require review from Code Owners" activado en la
+#   protección de rama, esa aprobación tiene que venir de un propietario.
+#
+# Notas:
+#   - Solo surte efecto la versión que está en la rama por defecto (main).
+#   - Gana la ÚLTIMA regla que coincida, no la más específica.
+#   - GitHub no deja que un propietario apruebe su propio PR. Para los PR de
+#     @abdimuy el merge sale por la vía de administrador, que está permitida
+#     porque enforce_admins está desactivado.
+
+# Todo el repositorio.
+*   @abdimuy
