@@ -29,6 +29,14 @@ make test-firebird-all
 
 > ⚠️ **`go test` a secas no ve `FB_DATABASE`.** El target del Makefile carga `.env` con `include`; una invocación manual de `go test` no. Sin esa variable los tests de integración **se saltan en silencio** y el paquete reporta `ok`. Es un falso verde que cuesta una tarde.
 
+> ⚠️ **Para correr contra otra base, `export` no basta.** El `include .env` del Makefile pisa la variable del entorno, así que `export FB_DATABASE=... && make test-firebird-all` corre contra la base del `.env`, no contra la que se pidió — en silencio. La forma que sí funciona es pasarla como argumento, que gana sobre todo lo demás:
+>
+> ```sh
+> make FB_DATABASE=/firebird/data/DEVTEST.FDB test-firebird-all
+> ```
+
+> ⚠️ **`go test ./...` necesita `-timeout` amplio.** El paquete `internal/analytics/infra/analyticsfb` tarda **~11 minutos** contra la base completa (`TestRepo_LeerAnclasDesde_Regression` solo ya son ~1m20s). El default de Go son 10 minutos, así que la suite completa **truena por timeout, no por una aserción**. Usar `-timeout 1800s`. Contra la base reducida el problema no aparece porque esos tests no tienen datos que recorrer.
+
 ---
 
 ## Qué contiene y qué no
@@ -147,6 +155,92 @@ La base conserva `CLIENTES` (43,834 filas) y `DIRS_CLIENTES` con **nombres, domi
 Pesan poco —2,728 y 1,384 páginas— así que quitarlos no es cuestión de tamaño sino de no repartir datos personales entre máquinas de desarrollo. Los tests crean sus propios clientes con identificadores sintéticos (`900000001`, `777001`), aunque al menos uno busca un cliente existente.
 
 **Decisión pendiente.** Si se omiten, hay que calcular su cierre transitivo —es amplio— y sembrar unos clientes sintéticos para el test que los necesita.
+
+---
+
+## Levantar la API contra esta base
+
+Pasar los tests y servir como entorno de desarrollo son dos cosas distintas. Esto es lo segundo.
+
+```sh
+export FB_DATABASE=/firebird/data/DEVTEST.FDB
+export FIREBASE_DEV_MODE=true
+export APP_PORT=3099          # o el que se prefiera
+go run ./cmd/api serve
+```
+
+Arranca en unos 6 segundos. Verificado: `/healthz` responde 200, `/v2/zonas-cliente` responde 200.
+
+### El primer arranque deja al usuario sin permisos
+
+Con `FIREBASE_DEV_MODE=true` el token es literal, sin Firebase de por medio:
+
+```
+Authorization: Bearer dev:<firebase_uid>:<email>
+```
+
+El primer `GET /v2/me` **da de alta al usuario automáticamente**, pero **sin rol**. La respuesta trae `"permisos":[]` y a partir de ahí casi todo contesta 403. No es una falla: falta asignarle el rol.
+
+La base ya trae el rol `super_admin` con sus 40 permisos, así que no hay que crearlo — solo asignarlo. **`make fb-seed-admin` no sirve para esto**: ese seed crea un rol `ADMIN` aparte, pensado para una base vacía, y aquí duplicaría la configuración.
+
+Después del primer `/v2/me`, con el correo que se usó en el token:
+
+```sql
+INSERT INTO MSP_USUARIOS_ROLES (USUARIO_ID, ROL_ID, CREATED_AT, CREATED_BY)
+SELECT u.ID, r.ID, CURRENT_TIMESTAMP, u.ID
+  FROM MSP_USUARIOS u CROSS JOIN MSP_ROLES r
+ WHERE u.EMAIL = '<tu-correo>' AND r.NOMBRE = 'super_admin';
+COMMIT;
+```
+
+Volver a llamar `/v2/me`: debe devolver los 40 permisos.
+
+### Qué se puede desarrollar y qué no
+
+La base conserva los catálogos y **omite los movimientos**. Conteos reales del artefacto:
+
+| Tabla | Filas |
+|---|---|
+| `CLIENTES` | 43,834 |
+| `SALDOS_IN` (inventario) | 94,073 |
+| `ARTICULOS` | 6,113 |
+| `ZONAS_CLIENTES` | 46 |
+| **`DOCTOS_PV`** (ventas) | **0** |
+| **`DOCTOS_CC`** (crédito) | **0** |
+| `MSP_SALDOS_VENTAS` | 88 |
+| `MSP_PAGOS_VENTAS` | 18 |
+
+**Ventas funciona bien.** Hay catálogos e inventario, y la suite prueba el flujo de aplicar una venta de principio a fin. Quien trabaje ahí crea sus propios datos y avanza.
+
+**Cobranza, reportes, analítica y el Cliente 360 van a ver pantallas vacías**, porque leen los movimientos que se omitieron. No es coincidencia que los diez tests frágiles de abajo sean justamente de `clientes` y `cobranza`.
+
+---
+
+## Limitaciones conocidas
+
+Dos cosas quedan sin resolver a propósito. Están documentadas aquí para que quien las encuentre sepa que ya se conocían y no crea que las rompió.
+
+### Diez tests leen filas de producción por identificador fijo
+
+En `internal/clientes` e `internal/cobranza` hay tests que traen filas reales por identificadores escritos a mano —`clienteID = 24037`, `doctoPVID = 4070523`— y verifican cantidades exactas. Contra la base reducida fallan los diez, porque esas filas viven en los movimientos que `-skip_data` omite.
+
+**La base reducida los expuso; no los causó.** Son frágiles desde que se escribieron: dependen de que la base compartida conserve una fila concreta. Ya hay un comentario en el código dejando constancia de que un fixture se rompió antes al resembrar la base.
+
+No bloquean a nadie: el paso `test-unit` del `pre-push` corre `go test` directo, sin `make`, así que no carga `.env` y estos paquetes se saltan solos. Solo aparecen si alguien exporta `FB_DATABASE` a mano.
+
+Arreglarlos de verdad significa sembrar datos sintéticos y reescribir todos los identificadores. Es un trabajo propio, no un parche.
+
+### El target de integración cubre 9 de 25 paquetes
+
+`make test-firebird-all` corre nueve paquetes. Veinticinco dependen de `FB_DATABASE`.
+
+Ampliarlo parece lo correcto y hoy **rompería el push de los tres desarrolladores**, porque arrastraría los tests de arriba, que necesitan datos reales que la base de 15 MB no trae. El orden es: primero quitarles la dependencia de filas de producción, después ampliar el target.
+
+### Cómo no volver a plantar una bomba de tiempo
+
+Un tercer caso ya se corrigió. Dos tests de `analyticsfb` insertaban instantáneas con fecha del día y las buscaban en `ListRecentSnapshots(100)`, que ordena por `FECHA_CORTE DESC`. Pasaron hasta que el job diario acumuló más de cien instantáneas más recientes; ese día empezaron a fallar solos, sin que nadie tocara código.
+
+La regla que dejan: **un test afirma sobre el código, no sobre el estado de la base compartida.** Si un fixture tiene que caer dentro de una ventana ordenada, su clave debe garantizarlo por construcción —una fecha que ningún corte real alcanza— y no por el tamaño que la tabla tenga hoy.
 
 ---
 
