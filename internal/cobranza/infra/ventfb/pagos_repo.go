@@ -187,6 +187,15 @@ func (r *PagosRepo) SyncPorZona(
 // sobre una conexión FB_CHARSET=UTF8 hace que el driver truene en filas con
 // acentos (firebird_error). El CAST a WIN1252 fuerza a Firebird a transcodificar
 // a UTF8 válido en el wire. CLIENTES.NOMBRE (ISO8859_1) no necesita el cast.
+//
+// La última columna expone el UUID original de MSP_PAGOS_RECIBIDOS que la app
+// móvil generó al capturar el pago, resuelto vía SUBQUERY ESCALAR
+// correlacionada (NO un JOIN) — ver la nota en pagoFromClause sobre por qué.
+// MIN(pr.ID) colapsa a un solo valor (o NULL) incluso si algún día existiera
+// más de una fila de MSP_PAGOS_RECIBIDOS con el mismo IMPTE_DOCTO_CC_ID,
+// haciendo el fan-out estructuralmente imposible en vez de simplemente
+// improbable. El índice IDX_MSP_PAGOS_RECIB_IMPTE (migración 000054) vuelve
+// esta subquery un lookup indexado por fila, no un scan.
 const selectPagoColsP = `
 	p.IMPTE_DOCTO_CC_ID,
 	p.DOCTO_CC_ID,
@@ -206,7 +215,8 @@ const selectPagoColsP = `
 	COALESCE(CAST(dc.DESCRIPCION AS VARCHAR(200) CHARACTER SET WIN1252), ''),
 	COALESCE(c.NOMBRE, ''),
 	dc.COBRADOR_ID,
-	fcd.FORMA_COBRO_ID`
+	fcd.FORMA_COBRO_ID,
+	(SELECT MIN(pr.ID) FROM MSP_PAGOS_RECIBIDOS pr WHERE pr.IMPTE_DOCTO_CC_ID = p.IMPTE_DOCTO_CC_ID)`
 
 // queryPagoSyncPage es la variante del helper generico con JOIN contra
 // MSP_SALDOS_VENTAS para filtrar solo pagos de ventas activas. Misma
@@ -233,6 +243,19 @@ const selectPagoColsP = `
 // (87327, 27969) — cobranza en ruta y abono mostrador. El cache pre-incluye
 // otros conceptos (155, 11, 27968...) que no son cobranza activa y
 // confundirian al cobrador. Lo filtramos a nivel del query del sync.
+//
+// NOTA sobre pago_recibido_id: MSP_PAGOS_RECIBIDOS NO se agrega aquí como
+// JOIN. Si el predicado pr.IMPTE_DOCTO_CC_ID = p.IMPTE_DOCTO_CC_ID alguna vez
+// dejara de ser 1:1 (no hay UNIQUE constraint que lo garantice — solo un
+// índice, migración 000054), un LEFT JOIN provocaría fan-out: la misma fila
+// de MSP_PAGOS_VENTAS se duplicaría una vez por cada MSP_PAGOS_RECIBIDOS que
+// matcheé, y el cliente móvil recibiría pagos repetidos. En vez de eso,
+// selectPagoColsP resuelve pago_recibido_id con una SUBQUERY ESCALAR
+// correlacionada (MIN(pr.ID) ...) que por construcción SQL solo puede
+// devolver cero o un valor por fila externa — el fan-out es estructuralmente
+// imposible, no simplemente improbable. pagoFromClause se mantiene sin
+// cambios (ni un JOIN más) precisamente para que esta garantía cubra tanto el
+// sync/by-ids como el digest/ListIDs, que comparten esta misma constante.
 const pagoFromClause = `
 FROM MSP_PAGOS_VENTAS p
 JOIN MSP_SALDOS_VENTAS s        ON s.DOCTO_CC_ID = p.DOCTO_CC_ACR_ID
@@ -498,14 +521,16 @@ func scanPagoRows(rows *sql.Rows) ([]domain.Pago, error) {
 	return result, nil
 }
 
-// pagoEnrichedRowScan extiende pagoRowScan con los 4 campos resueltos via
-// JOIN para el endpoint /sync/pagos (cobrador, cliente, forma_cobro).
+// pagoEnrichedRowScan extiende pagoRowScan con los campos resueltos via JOIN
+// para el endpoint /sync/pagos (cobrador, cliente, forma_cobro, pago_recibido
+// UUID).
 type pagoEnrichedRowScan struct {
 	pagoRowScan
-	cobradorRaw      sql.NullString
-	nombreClienteRaw sql.NullString
-	cobradorIDRaw    sql.NullInt64
-	formaCobroIDRaw  sql.NullInt64
+	cobradorRaw       sql.NullString
+	nombreClienteRaw  sql.NullString
+	cobradorIDRaw     sql.NullInt64
+	formaCobroIDRaw   sql.NullInt64
+	pagoRecibidoIDRaw sql.NullString
 }
 
 func (p *pagoEnrichedRowScan) scanFrom(rows *sql.Rows) error {
@@ -517,6 +542,7 @@ func (p *pagoEnrichedRowScan) scanFrom(rows *sql.Rows) error {
 		&p.cancelado, &p.aplicado, &p.updatedAtRaw,
 		&p.cobradorRaw, &p.nombreClienteRaw,
 		&p.cobradorIDRaw, &p.formaCobroIDRaw,
+		&p.pagoRecibidoIDRaw,
 	)
 }
 
@@ -545,6 +571,7 @@ func (p *pagoEnrichedRowScan) hydrate() (domain.Pago, error) {
 		CobradorID:     nullableInt(p.cobradorIDRaw),
 		NombreCliente:  nullableString(p.nombreClienteRaw),
 		FormaCobroID:   nullableInt(p.formaCobroIDRaw),
+		PagoRecibidoID: nullableStringPtr(p.pagoRecibidoIDRaw),
 	}), nil
 }
 
@@ -596,4 +623,16 @@ func nullableString(v sql.NullString) string {
 		return ""
 	}
 	return v.String
+}
+
+// nullableStringPtr returns nil when v is SQL NULL, otherwise a pointer to
+// the value. Distinct from nullableString (which collapses NULL to "") — used
+// for fields where "absent" and "empty string" are meaningfully different
+// (e.g. pago_recibido_id, where nil signals "no MSP_PAGOS_RECIBIDOS row").
+func nullableStringPtr(v sql.NullString) *string {
+	if !v.Valid {
+		return nil
+	}
+	s := v.String
+	return &s
 }
