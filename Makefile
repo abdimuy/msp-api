@@ -1,9 +1,9 @@
-.PHONY: help setup build run dev test test-unit test-mutation test-mutation-domain test-mutation-app test-mutation-ventas test-mutation-ventas-domain test-mutation-ventas-app test-mutation-cobranza test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-cobranza-eventbus test-mutation-httpdispatch lint lint-fix check-sealed fmt generate clean test-firebird test-firebird-all test-firebird-ventas coverage-auth coverage-auth-full coverage-ventas coverage-ventas-full precommit-strict fb-migrate-up fb-migrate-down fb-migrate-status fb-seed-admin fb-snapshot fb-snapshot-list fb-restore fb-snapshot-delete fb-emu-up fb-emu-down fb-emu-logs meilisearch-up meilisearch-down test-meilisearch
+.PHONY: help setup build run dev test test-unit test-mutation test-mutation-domain test-mutation-app test-mutation-ventas test-mutation-ventas-domain test-mutation-ventas-app test-mutation-cobranza test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-cobranza-eventbus test-mutation-visitas test-mutation-visitas-domain test-mutation-visitas-app test-mutation-httpdispatch lint lint-fix check-sealed fmt generate clean test-firebird test-firebird-all test-firebird-ventas coverage-auth coverage-auth-full coverage-ventas coverage-ventas-full precommit-strict fb-migrate-up fb-migrate-down fb-migrate-status fb-seed-admin fb-snapshot fb-snapshot-list fb-restore fb-snapshot-delete fb-emu-up fb-emu-down fb-emu-logs meilisearch-up meilisearch-down test-meilisearch
 
 # ── Config ───────────────────────────────────────────────────────────
 APP_NAME      := msp-api
 API_BIN       := bin/api
-SYNC_BIN      := bin/microsip-sync
+
 GO            := go
 GOFLAGS       := -trimpath
 LDFLAGS       := -s -w -X main.version=$(shell git rev-parse --short HEAD 2>/dev/null || echo dev) -X main.buildTime=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -31,17 +31,17 @@ setup: ## First-time setup (install lefthook hooks, copy .env)
 	@echo "✔ Setup complete. Edit .env with your local values."
 
 # ── Build ────────────────────────────────────────────────────────────
-build: build-api build-sync ## Build all binaries
+# Antes este target dependía de un `build-sync` que compilaba
+# ./cmd/microsip-sync. Ese directorio no existe ni existió nunca en el
+# historial, así que `make build` fallaba siempre. Nadie lo notó porque el
+# hook build-check corre `go build ./...`, no `make build`.
+build: build-api ## Build all binaries
 
 build-api: ## Build API server (current OS)
 	$(GO) build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o $(API_BIN) ./cmd/api
 
-build-sync: ## Build microsip sync worker
-	$(GO) build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o $(SYNC_BIN) ./cmd/microsip-sync
-
 build-windows: ## Cross-compile all binaries to Windows amd64 (.exe)
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o $(API_BIN).exe ./cmd/api
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o $(SYNC_BIN).exe ./cmd/microsip-sync
 	@echo "✔ Built Windows binaries in bin/"
 
 # ── Run ──────────────────────────────────────────────────────────────
@@ -257,6 +257,7 @@ test-firebird-all: ## Run ALL Firebird-backed tests including module repos (auth
 	          ./internal/auth/infra/firebird/... \
 	          ./internal/ventas/infra/ventfb/... ./internal/ventas/infra/venthttp/... \
 	          ./internal/cobranza/infra/ventfb/... ./internal/cobranza/infra/cobranzahttp/... \
+	          ./internal/visitas/infra/visitasfb/... ./internal/visitas/infra/visitashttp/... \
 	          -race -count=1 -timeout 240s
 
 test-firebird-ventas: ## Run Firebird-backed tests for the venta creation flow (platform + ventas)
@@ -304,7 +305,7 @@ precommit-strict: ## Full local quality gate before opening a PR — equivalent 
 # high business value (domain, app) where false negatives in tests are
 # most costly. Config in .gremlins.yaml. Install with:
 #   go install github.com/go-gremlins/gremlins/cmd/gremlins@latest
-test-mutation: test-mutation-domain test-mutation-app test-mutation-ventas-domain test-mutation-ventas-app test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-httpdispatch ## Run mutation testing on critical packages
+test-mutation: test-mutation-domain test-mutation-app test-mutation-ventas-domain test-mutation-ventas-app test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-visitas-domain test-mutation-visitas-app test-mutation-httpdispatch ## Run mutation testing on critical packages
 
 test-mutation-domain: ## Run mutation testing on auth/domain only
 	gremlins unleash ./internal/auth/domain
@@ -337,6 +338,20 @@ test-mutation-cobranza-app: ## Run mutation testing on cobranza/app only (gate 8
 
 test-mutation-cobranza-eventbus: ## Run mutation testing on cobranza/app/eventbus only (gate 80%)
 	TMPDIR=/Volumes/M2-1TB/.go-cache/tmp gremlins unleash --threshold-efficacy 80 ./internal/cobranza/app/eventbus
+
+test-mutation-visitas: test-mutation-visitas-domain test-mutation-visitas-app ## Run mutation testing on the visitas module (domain + app) with 80% kill-ratio gate
+
+# Visitas writes MSP_VISITAS (legacy, ~226k prod rows) via the same
+# idempotency-key contract as pagos: kill-ratio 80% (vs default 75%) because a
+# surviving mutant here could accept/reject a visita write incorrectly.
+#
+# TMPDIR redirige los workdirs de gremlins al SSD externo (ver comentario en
+# test-mutation-cobranza-domain — mismo incidente, mismo fix).
+test-mutation-visitas-domain: ## Run mutation testing on visitas/domain only (gate 80%)
+	TMPDIR=/Volumes/M2-1TB/.go-cache/tmp gremlins unleash --threshold-efficacy 80 ./internal/visitas/domain
+
+test-mutation-visitas-app: ## Run mutation testing on visitas/app only (gate 80%)
+	TMPDIR=/Volumes/M2-1TB/.go-cache/tmp gremlins unleash --threshold-efficacy 80 ./internal/visitas/app
 
 test-mutation-httpdispatch: ## Run mutation testing on platform/httpdispatch
 	gremlins unleash ./internal/platform/httpdispatch

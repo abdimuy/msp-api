@@ -98,3 +98,26 @@ func TestInternalContext_PreservesOtherValues(t *testing.T) {
 	rctx, _ := child.Value(chi.RouteCtxKey).(*chi.Context)
 	assert.Nil(t, rctx, "chi route key must be typed-nil so chi re-routes from scratch")
 }
+
+// TestIsInternal covers the unforgeable internal-dispatch marker that handlers
+// (e.g. cobranza CrearPago) use to relax client-facing transport guards for a
+// trusted server-side replay. A plain context is never internal; only one
+// derived via InternalContext reports true — and there is no exported key or
+// header a caller could set to fake it.
+func TestIsInternal(t *testing.T) {
+	t.Parallel()
+
+	assert.False(t, httpdispatch.IsInternal(context.Background()),
+		"a plain context must not be internal")
+
+	internal := httpdispatch.InternalContext(context.Background())
+	assert.True(t, httpdispatch.IsInternal(internal),
+		"InternalContext must mark the context as internal")
+
+	// The marker survives further wrapping — a middleware planting more values
+	// downstream of the replay dispatch must not lose the internal signal.
+	type k string
+	wrapped := context.WithValue(internal, k("x"), "y")
+	assert.True(t, httpdispatch.IsInternal(wrapped),
+		"the internal marker must survive downstream context wrapping")
+}

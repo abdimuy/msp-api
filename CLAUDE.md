@@ -76,16 +76,24 @@ Image uploads (cobranza receipts, INE photos, evidencia de venta) live on the AP
 
 If a future module ever needs cloud storage, add a new concrete implementation alongside `FilesystemProvider` and wire it at the composition root. Do not reintroduce a configurable selector "just in case".
 
-### 7. Everything runs locally — no remote CI/CD
+### 7. Two gates: lefthook locally, GitHub Actions on PRs
 
-This project does **not** use GitHub Actions, GitLab CI, or any other remote CI provider. The full quality gate runs on the developer's machine via lefthook hooks:
+The quality gate runs in two places, and they cover different failure modes.
+
+**Locally, via lefthook** — fast feedback, full coverage including the DB:
 
 - `pre-commit`: gofmt, go vet, golangci-lint (on staged), build, secrets check, no-debug, mod tidy.
-- `pre-push`: full `golangci-lint run ./...` + `go test -race -short ./...`.
+- `pre-push`: full `golangci-lint run ./...` + `go test -race -short ./...` + `make test-firebird-all`.
 
-Integration tests (`make test-firebird-all`) run on demand on the developer's machine — they require the local `mueblera-firebird` container reachable via `FB_DATABASE`. Each test is wrapped in `fbtestutil.WithTestTransaction` so writes roll back at the end and the shared dev DB never accumulates state. Do not write GitHub Actions workflows, do not add `.github/`, do not document CI badges.
+**In CI, via `.github/workflows/ci.yml`** — the same checks where they cannot be skipped, plus a cross-compile to the Windows target from §5. It exists because `git push --no-verify` bypasses the hooks entirely; with several people pushing, that is the one hole a local-only gate cannot close.
 
-If we ever add coverage gates, mutation testing, or scheduled benchmarks, they go into Make targets and lefthook hooks, not into a remote pipeline.
+CI deliberately runs **without** `FB_DATABASE`, so the ~25 packages that need a real Firebird DB skip themselves. Integration coverage stays on the developer's machine via `make test-firebird-all`, against the local `mueblera-firebird` container. Each test is wrapped in `fbtestutil.WithTestTransaction` so writes roll back and the shared dev DB never accumulates state.
+
+Running the integration suite in CI is not off the table, but it is blocked on two things first: stripping the personal data from the test DB (the repo is public — see `docs/base-de-datos-de-pruebas.md`), and fixing the tests that read production rows by hardcoded ID.
+
+Coverage gates, mutation testing and benchmarks stay in Make targets and lefthook — CI runs the fast, non-negotiable checks, not everything.
+
+> Historical note: this rule used to forbid remote CI outright. That was a stop-gap for the period when no CI existed, not an architectural position. It no longer applies.
 
 ## Architecture summary
 

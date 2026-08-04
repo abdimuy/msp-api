@@ -20,6 +20,7 @@ import (
 
 	"pgregory.net/rapid"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	cobranzaventfb "github.com/abdimuy/msp-api/internal/cobranza/infra/ventfb"
@@ -245,13 +246,25 @@ func TestPropD_MaxSeqID_GteMaxSince(t *testing.T) {
 	})
 }
 
-// ─── Property E: DeleteOlderThan never deletes rows with COMMIT_AT >= cutoff ─
+// ─── DeleteOlderThan never deletes rows with COMMIT_AT >= cutoff ─────────────
 
-// TestPropE_DeleteOlderThan_RespectsCommitAt verifica que DeleteOlderThan solo
+// TestDeleteOlderThan_RespectsCommitAt verifica que DeleteOlderThan solo
 // elimine filas con COMMIT_AT < cutoff y deje intactas las filas recientes.
 //
+// Antes se llamaba TestPropE_* y corría dentro de rapid.Check, pero el cuerpo
+// no invocaba un solo generador: los offsets de tiempo y los conteos de filas
+// eran constantes. Las 100 iteraciones por omisión de rapid ejecutaban el
+// escenario idéntico cien veces —unas 1300 idas y vueltas a Firebird— y
+// tardaban ~264 s contra el límite de 240 s del target de integración, así que
+// el paquete completo expiraba y bloqueaba todo push con código Go.
+//
+// Correr una vez verifica exactamente lo mismo en ~2.5 s. Si algún día se
+// quiere una propiedad de verdad, hay que generar los conteos y los offsets
+// (incluido el caso de borde: una fila con COMMIT_AT exactamente en el cutoff,
+// que este escenario no cubre).
+//
 //nolint:paralleltest
-func TestPropE_DeleteOlderThan_RespectsCommitAt(t *testing.T) {
+func TestDeleteOlderThan_RespectsCommitAt(t *testing.T) {
 	requireFBEnv(t)
 	requireMigration000022(t)
 
@@ -259,48 +272,43 @@ func TestPropE_DeleteOlderThan_RespectsCommitAt(t *testing.T) {
 	repo := cobranzaventfb.NewPagosChangelogRepo(pool)
 	ctx := context.Background()
 
-	rapid.Check(t, func(rt *rapid.T) {
-		pastAt := time.Now().UTC().Add(-48 * time.Hour)
-		futureAt := time.Now().UTC().Add(24 * time.Hour)
+	pastAt := time.Now().UTC().Add(-48 * time.Hour)
+	futureAt := time.Now().UTC().Add(24 * time.Hour)
 
-		// Insertar filas pasadas (deben eliminarse) y futuras (deben sobrevivir).
-		// Se pasa t (no rt) porque insertPagosChangelogRows registra t.Cleanup.
-		pastSeqs := insertPagosChangelogRows(t, pool, 3, 1, pastAt)
-		futureSeqs := insertPagosChangelogRows(t, pool, 3, 1, futureAt)
+	// Insertar filas pasadas (deben eliminarse) y futuras (deben sobrevivir).
+	pastSeqs := insertPagosChangelogRows(t, pool, 3, 1, pastAt)
+	futureSeqs := insertPagosChangelogRows(t, pool, 3, 1, futureAt)
 
-		cutoff := time.Now().UTC()
+	cutoff := time.Now().UTC()
 
-		_, err := repo.DeleteOlderThan(ctx, cutoff, 1000)
-		if err != nil {
-			rt.Fatalf("DeleteOlderThan error: %v", err)
-		}
+	_, err := repo.DeleteOlderThan(ctx, cutoff, 1000)
+	require.NoError(t, err, "DeleteOlderThan")
 
-		// Filas futuras deben seguir existiendo.
-		for _, seq := range futureSeqs {
-			var count int
-			if err := pool.QueryRowContext(
+	// Filas futuras deben seguir existiendo.
+	for _, seq := range futureSeqs {
+		var count int
+		require.NoError(t,
+			pool.QueryRowContext(
 				ctx,
 				`SELECT COUNT(*) FROM MSP_PAGOS_CHANGELOG WHERE SEQ_ID = ?`, seq,
-			).Scan(&count); err != nil {
-				rt.Fatalf("verificar fila futura SEQ_ID=%d: %v", seq, err)
-			}
-			if count == 0 {
-				rt.Fatalf("DeleteOlderThan borró fila futura SEQ_ID=%d (COMMIT_AT > cutoff)", seq)
-			}
-		}
+			).Scan(&count),
+			"verificar fila futura SEQ_ID=%d", seq,
+		)
+		assert.NotZero(t, count,
+			"DeleteOlderThan borró fila futura SEQ_ID=%d (COMMIT_AT > cutoff)", seq)
+	}
 
-		// Filas pasadas deben haber sido eliminadas.
-		for _, seq := range pastSeqs {
-			var count int
-			if err := pool.QueryRowContext(
+	// Filas pasadas deben haber sido eliminadas.
+	for _, seq := range pastSeqs {
+		var count int
+		require.NoError(t,
+			pool.QueryRowContext(
 				ctx,
 				`SELECT COUNT(*) FROM MSP_PAGOS_CHANGELOG WHERE SEQ_ID = ?`, seq,
-			).Scan(&count); err != nil {
-				rt.Fatalf("verificar fila pasada SEQ_ID=%d: %v", seq, err)
-			}
-			if count != 0 {
-				rt.Fatalf("DeleteOlderThan dejó fila pasada SEQ_ID=%d (COMMIT_AT < cutoff)", seq)
-			}
-		}
-	})
+			).Scan(&count),
+			"verificar fila pasada SEQ_ID=%d", seq,
+		)
+		assert.Zero(t, count,
+			"DeleteOlderThan dejó fila pasada SEQ_ID=%d (COMMIT_AT < cutoff)", seq)
+	}
 }

@@ -130,8 +130,14 @@ pre-push:
 
     test-unit:
       glob: "*.go"
-      # -short skips integration tests (those that need a real DB).
-      # Run integration tests manually: INTEGRATION=1 go test ./...
+      # What actually skips the integration tests here is the ABSENCE of
+      # FB_DATABASE, not -short: nothing in this repo calls testing.Short().
+      # This command runs go test directly (not through make), so .env is never
+      # loaded and the ~25 packages that need a real DB skip themselves.
+      #
+      # Caveat: if FB_DATABASE is exported in your shell, they DO run here —
+      # under this 180s limit rather than the dedicated target's timeout.
+      # The real integration run is the test-firebird-all step below.
       run: go test ./... -race -count=1 -short -timeout 180s
 
     test-firebird-all:

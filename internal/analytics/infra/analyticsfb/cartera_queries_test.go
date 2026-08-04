@@ -472,6 +472,27 @@ func TestCarteraRepo_ColeccionCEI_ExcludesOutOfRange(t *testing.T) {
 
 // ─── SaveCarteraSnapshot / ListRecentSnapshots ────────────────────────────────
 
+// snapshotFechaCorteYear is the year every snapshot fixture below writes into
+// FECHA_CORTE, and it is deliberately far in the future.
+//
+// ListRecentSnapshots orders by FECHA_CORTE DESC and caps the result at the
+// requested limit. MSP_AN_CARTERA_SNAPSHOT grows by one batch per day (the
+// MaterializarCarteraSnapshot job), so a fixture dated "today" silently falls
+// past the cap once enough real snapshots accumulate — the assertions then fail
+// with no code change, on a date nobody can predict. A year no real corte can
+// reach keeps these rows in the first positions no matter how large the table
+// gets, which is what makes these tests assert about the repository instead of
+// about the state of the shared dev DB.
+//
+// Do not "fix" these dates back to the present: that reintroduces the failure.
+const snapshotFechaCorteYear = 2099
+
+// syntheticZonaSnapshot is the base ZONA_CLIENTE_ID for snapshot fixtures. Same
+// intent as syntheticZona above — a value no real ZONAS_CLIENTES row holds, far
+// from anything a prior run might have left committed — but positive, because
+// domain.NewCarteraSnapshot rejects zonaClienteID <= 0.
+const syntheticZonaSnapshot = 970101
+
 // makeSnapshot is a test helper that creates a valid CarteraSnapshot.
 func makeSnapshot(
 	t *testing.T,
@@ -507,8 +528,8 @@ func TestCarteraRepo_SnapshotRoundTrip(t *testing.T) {
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		repo := analyticsfb.NewRepo(pool)
 
-		fechaCorte := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-		const zonaSnap = 9901
+		fechaCorte := time.Date(snapshotFechaCorteYear, 1, 1, 0, 0, 0, 0, time.UTC)
+		const zonaSnap = syntheticZonaSnapshot
 		cobradorID := 42
 
 		s1 := makeSnapshot(t, fechaCorte, zonaSnap, nil, domain.BucketAgingDias0_30, 1000.00, 5)
@@ -565,8 +586,8 @@ func TestCarteraRepo_SnapshotNullCobradorIdempotency(t *testing.T) {
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		repo := analyticsfb.NewRepo(pool)
 
-		fechaCorte := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
-		const zonaSnap2 = 9902
+		fechaCorte := time.Date(snapshotFechaCorteYear, 1, 2, 0, 0, 0, 0, time.UTC)
+		const zonaSnap2 = syntheticZonaSnapshot + 1
 
 		s1 := makeSnapshot(t, fechaCorte, zonaSnap2, nil, domain.BucketAgingDias90Plus, 5000.00, 10)
 		err := repo.SaveCarteraSnapshot(ctx, []domain.CarteraSnapshot{s1})
@@ -591,14 +612,14 @@ func TestCarteraRepo_SnapshotNullCobradorIdempotency(t *testing.T) {
 			}
 		}
 
-		assert.Len(t, matchingRows, 1, "null-cobrador upsert must produce exactly 1 row, not %d", len(matchingRows))
-		if len(matchingRows) == 1 {
-			assert.True(t, decimal.NewFromFloat(9999.00).Equal(matchingRows[0].Saldo()),
-				"second save must update saldo: want 9999.00 got %s", matchingRows[0].Saldo())
-			assert.Equal(t, 20, matchingRows[0].Conteo(),
-				"second save must update conteo")
-			assert.Nil(t, matchingRows[0].CobradorID(), "CobradorID must remain nil")
-		}
+		// require, not assert: everything below indexes matchingRows[0], and a
+		// panic here would abort the whole package and hide the other tests.
+		require.Len(t, matchingRows, 1, "null-cobrador upsert must produce exactly 1 row, not %d", len(matchingRows))
+		assert.True(t, decimal.NewFromFloat(9999.00).Equal(matchingRows[0].Saldo()),
+			"second save must update saldo: want 9999.00 got %s", matchingRows[0].Saldo())
+		assert.Equal(t, 20, matchingRows[0].Conteo(),
+			"second save must update conteo")
+		assert.Nil(t, matchingRows[0].CobradorID(), "CobradorID must remain nil")
 		t.Logf("NullCobradorIdempotency ok: 1 row after 2 saves, saldo=%s", matchingRows[0].Saldo())
 	})
 }
@@ -614,8 +635,8 @@ func TestCarteraRepo_SnapshotBatchIdempotency(t *testing.T) {
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		repo := analyticsfb.NewRepo(pool)
 
-		fechaCorte := time.Date(2026, 6, 3, 0, 0, 0, 0, time.UTC)
-		const zonaSnap3 = 9903
+		fechaCorte := time.Date(snapshotFechaCorteYear, 1, 3, 0, 0, 0, 0, time.UTC)
+		const zonaSnap3 = syntheticZonaSnapshot + 2
 		cob1 := 11
 		cob2 := 22
 
@@ -666,8 +687,8 @@ func TestCarteraRepo_ListRecentSnapshots_Limit(t *testing.T) {
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		repo := analyticsfb.NewRepo(pool)
 
-		fechaCorte := time.Date(2026, 6, 4, 0, 0, 0, 0, time.UTC)
-		const zonaSnap4 = 9904
+		fechaCorte := time.Date(snapshotFechaCorteYear, 1, 4, 0, 0, 0, 0, time.UTC)
+		const zonaSnap4 = syntheticZonaSnapshot + 3
 
 		batch := []domain.CarteraSnapshot{
 			makeSnapshot(t, fechaCorte, zonaSnap4, nil, domain.BucketAgingDias0_30, 1.00, 1),
