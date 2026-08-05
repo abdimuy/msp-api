@@ -11,6 +11,10 @@ La base de desarrollo pesa 3.9 GB y contiene datos reales de clientes. Ni una co
 ## Para usar la base (lo que hace un desarrollador)
 
 ```sh
+# 0. Levantar el servidor de Firebird (una sola vez por máquina)
+docker network create firebird_default
+docker compose --profile firebird up -d firebird
+
 # 1. Descomprimir
 gunzip msp-test-db.fbk.gz
 
@@ -25,6 +29,36 @@ docker exec -i mueblera-firebird /usr/local/firebird/bin/gbak -c \
 
 # 4. Verificar
 make test-firebird-all
+```
+
+> El paso 0 está detrás de un profile a propósito: `docker compose up` no lo arranca. Quien ya tenga un contenedor `mueblera-firebird` levantado a mano **no debe correrlo** — el servicio existe para que una máquina nueva reproduzca el mismo servidor sin adivinar la imagen ni la configuración.
+
+### No uses cualquier imagen de Firebird
+
+**Usa la del `compose.yml`: `jacobalberty/firebird:v4.0`.** No es un capricho de versión.
+
+Las imágenes de **Firebird 5 traen `WireCrypt = Required`**, y el driver `firebirdsql` v0.9.19 no negocia ese nivel. La conexión muere en el saludo inicial, antes de tocar la base. El síntoma es inconfundible:
+
+```
+fbtestutil: begin tx: Incompatible wire encryption levels requested on client and server
+fbtestutil: ping localhost: firebird: ping: Error op_response:<número>
+```
+
+Y engaña, porque **no falla un test: fallan cientos, todos a la vez**. Da la impresión de que la base llegó incompleta o que faltan tablas. No es eso: ningún test alcanzó a preguntarle nada a la base. La señal para distinguirlo es que **no aparece ni un solo `Table unknown`** en toda la salida. Si los errores son de `ping` o de `wire encryption`, el problema es el servidor, no los datos.
+
+Si por lo que sea hay que quedarse con otra imagen, dos salidas:
+
+- **Del lado del cliente:** `FB_WIRE_CRYPT=false` en el `.env`.
+- **Del lado del servidor:** dejar `WireCrypt = Enabled` y `AuthServer = Srp256, Srp` en el `firebird.conf`. Es el mismo arreglo que se aplicó en el servidor Windows cuando pasó a Firebird 5.
+
+> ⚠️ **La configuración se escribe una sola vez, en el primer arranque.** El entrypoint de la imagen genera `/firebird/etc/firebird.conf` únicamente cuando el volumen está vacío. Si quedó mal, **cambiar variables de entorno no la corrige**: hay que borrar el volumen (`docker volume rm msp-firebird-data`) y volver a restaurar, o editar el archivo a mano dentro del contenedor. Es la trampa que hace perder más tiempo aquí.
+
+### Meilisearch es aparte
+
+Los tests de `ventas/infra/ventsearch` necesitan Meilisearch corriendo y fallan con `dial tcp 127.0.0.1:7700: connect: connection refused` si no está. No tiene relación con Firebird:
+
+```sh
+docker compose up -d meilisearch
 ```
 
 > ⚠️ **`go test` a secas no ve `FB_DATABASE`.** El target del Makefile carga `.env` con `include`; una invocación manual de `go test` no. Sin esa variable los tests de integración **se saltan en silencio** y el paquete reporta `ok`. Es un falso verde que cuesta una tarde.

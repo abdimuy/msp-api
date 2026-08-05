@@ -66,6 +66,71 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  # Firebird de desarrollo (dev only). Producción corre Firebird nativo en
+  # Windows Server 2016 — este servicio no aplica ahí (CLAUDE.md regla 5).
+  #
+  # Está detrás de un profile a propósito: NO arranca con `docker compose up`.
+  # Quien ya tiene un contenedor `mueblera-firebird` levantado a mano (la
+  # máquina original de desarrollo) no debe tocarlo — este servicio existe
+  # para que una máquina nueva pueda reproducirlo sin adivinar.
+  #
+  # Máquina nueva, una sola vez:
+  #   docker network create firebird_default
+  #   docker compose --profile firebird up -d firebird
+  #   # …y restaurar el respaldo: ver docs/base-de-datos-de-pruebas.md
+  #
+  # La imagen está FIJADA a v4.0 por una razón concreta: las imágenes de
+  # Firebird 5 traen `WireCrypt = Required` y el driver firebirdsql v0.9.19
+  # no negocia ese nivel — falla con "Incompatible wire encryption levels
+  # requested on client and server" antes de abrir la conexión, y ni un solo
+  # test llega a tocar la base. No subir esta versión sin probar el driver.
+  #
+  # ⚠ El entrypoint escribe /firebird/etc/firebird.conf SOLO en el primer
+  # arranque, cuando el volumen está vacío. Si la configuración quedó mal,
+  # cambiar variables de entorno NO la corrige: hay que borrar el volumen
+  # (`docker volume rm msp-firebird-data`) o editar el archivo a mano.
+  firebird:
+    profiles: ["firebird"]
+    image: jacobalberty/firebird:v4.0
+    container_name: mueblera-firebird
+    restart: unless-stopped
+    environment:
+      # `masterkey` es la contraseña por defecto de Firebird y ya está en
+      # .env.example y en los comandos de restore de la documentación: no es
+      # un secreto, es un valor conocido de desarrollo. Precisamente por eso
+      # los puertos se publican solo en loopback (abajo). Este servicio no
+      # debe levantarse nunca en un host alcanzable desde la red.
+      ISC_PASSWORD: ${FB_PASSWORD:-masterkey}
+      FIREBIRD_USER: ${FB_USER:-SYSDBA}
+      DBPATH: /firebird/data
+    ports:
+      # Solo loopback, por la misma razón que el servicio ollama de más
+      # abajo: esto es SYSDBA con una contraseña que cualquiera adivina.
+      # Publicarlo en 0.0.0.0 lo dejaría accesible desde toda la red local
+      # —la del café, la de la oficina— con acceso total a los datos.
+      # El contenedor `api` NO pasa por estos puertos: alcanza a Firebird por
+      # nombre dentro de firebird_default, así que restringirlos no le afecta.
+      # 3050 = SQL. 3051 = puerto de eventos, lo necesita FbEventListener.
+      - "127.0.0.1:${FB_PORT:-3050}:3050"
+      - "127.0.0.1:3051:3051"
+    volumes:
+      # Un solo volumen para /firebird: adentro viven data/, etc/, system/
+      # y log/. Montar solo data/ haría que la base de seguridad (usuarios y
+      # contraseñas) se perdiera en cada recreación del contenedor.
+      - firebird-data:/firebird
+    networks:
+      - firebird_default
+    healthcheck:
+      # Solo comprueba que el puerto SQL acepte conexiones. A propósito no
+      # consulta una base: recién creado el volumen todavía no hay ninguna
+      # restaurada, y un healthcheck que exija la base dejaría el servicio
+      # en unhealthy para siempre hasta el restore.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/3050 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
   # Meilisearch (dev only). In production, run meilisearch.exe via nssm on
   # Windows Server 2016. Expose on the same network so the api container can
   # resolve it by service name.
@@ -121,6 +186,11 @@ services:
       - default
 
 volumes:
+  # Nombre distinto a propósito del volumen `firebird_firebird_data` que usa
+  # el contenedor levantado a mano en la máquina original: así el servicio de
+  # compose nunca escribe sobre esos datos por accidente.
+  firebird-data:
+    name: msp-firebird-data
   api-go-cache:
     name: msp-api-go-cache
   api-build-cache:
