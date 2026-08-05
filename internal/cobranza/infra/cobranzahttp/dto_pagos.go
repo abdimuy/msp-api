@@ -33,6 +33,10 @@ type PagoDTO struct {
 	CobradorID    *int   `json:"cobrador_id"     doc:"COBRADORES.COBRADOR_ID"`
 	NombreCliente string `json:"nombre_cliente"  doc:"CLIENTES.NOMBRE"`
 	FormaCobroID  *int   `json:"forma_cobro_id"  doc:"FORMAS_COBRO_DOCTOS.FORMA_COBRO_ID (efectivo/cheque/transferencia)"`
+
+	// PagoRecibidoID permite a la app móvil hacer match exacto entre un pago
+	// numérico sincronizado y su fila local por UUID.
+	PagoRecibidoID *string `json:"pago_recibido_id,omitempty" doc:"MSP_PAGOS_RECIBIDOS.ID — UUID original generado por la app móvil al capturar el pago; null si el pago no tiene fila vinculada (legacy)"`
 }
 
 // SyncSaldosBody envuelve un page de saldos para sync incremental.
@@ -135,6 +139,7 @@ func toPagoDTO(p domain.Pago) PagoDTO {
 		CobradorID:     p.CobradorID(),
 		NombreCliente:  p.NombreCliente(),
 		FormaCobroID:   p.FormaCobroID(),
+		PagoRecibidoID: p.PagoRecibidoID(),
 	}
 	if lat := p.Lat(); lat != nil {
 		s := lat.StringFixed(8)

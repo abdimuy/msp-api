@@ -416,6 +416,19 @@ func TestService_PagosEnRutaPorZona_ResolvesCutoff(t *testing.T) {
 	assert.Len(t, got, 1)
 }
 
+// TestService_PagosEnRutaPorZona_ParametrosExcluyentes covers the
+// resolveCutoff error branch: passing both desde and ventanaDias must fail
+// before ever reaching the repo.
+func TestService_PagosEnRutaPorZona_ParametrosExcluyentes(t *testing.T) {
+	t.Parallel()
+	svc, _, _ := newSvc(t)
+
+	desde := time.Now()
+	vd := 7
+	_, err := svc.PagosEnRutaPorZona(context.Background(), 3, &desde, &vd)
+	require.ErrorIs(t, err, domain.ErrParametrosExcluyentes)
+}
+
 func TestService_SyncPagosPorZona_DelegatesToRepo(t *testing.T) {
 	t.Parallel()
 	svc, _, pagos := newSvc(t)

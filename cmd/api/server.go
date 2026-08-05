@@ -53,6 +53,9 @@ import (
 
 	reactivacionapp "github.com/abdimuy/msp-api/internal/reactivacion/app"
 	reactivacionhttp "github.com/abdimuy/msp-api/internal/reactivacion/infra/reactivacionhttp"
+
+	visitasapp "github.com/abdimuy/msp-api/internal/visitas/app"
+	visitashttp "github.com/abdimuy/msp-api/internal/visitas/infra/visitashttp"
 )
 
 // RootHandler is the assembled chi router exposed as an fx-typed dependency.
@@ -160,6 +163,7 @@ func provideRootHandler(
 	rutasSvc *rutasapp.Service,
 	configSvc *configapp.Service,
 	reactivacionSvc *reactivacionapp.Service,
+	visitasSvc *visitasapp.Service,
 	logger *slog.Logger,
 ) RootHandler {
 	r := chi.NewRouter()
@@ -193,6 +197,33 @@ func provideRootHandler(
 		RequireKey: false,
 	})
 	capture := failedintent.CaptureMiddleware(fiCaptureCfg)
+
+	// cobranzaCapture is a second capture instance scoped to the cobranza pago
+	// WRITE path. Pagos are real money: a POST /v2/cobranza/pagos that the
+	// server rejects (422 pago_cargo_no_encontrado / pago_fecha_muy_antigua /
+	// importe_excede_saldo, etc.) must leave a durable audit row a human can
+	// inspect, correct via /replay-with-multipart, and re-dispatch — never a
+	// silently-lost payment. The default fiCaptureCfg is pinned to /v2/ventas,
+	// so cobranza needs its own path/method filter. Reuses the same Store, Blob
+	// and size cap; only POST is captured (GET reads and the streaming imagen
+	// downloads never match). Idempotency stays at the repo layer (body.id), so
+	// no idem middleware is added here.
+	cobranzaCapture := failedintent.CaptureMiddleware(failedintent.Config{
+		Store:             fiCaptureCfg.Store,
+		Blob:              fiCaptureCfg.Blob,
+		MaxMultipartBytes: fiCaptureCfg.MaxMultipartBytes,
+		PathPrefixes:      []string{"/v2/cobranza/pagos"},
+		Methods:           []string{http.MethodPost},
+	})
+
+	// visitasCapture is a third capture instance scoped to the visitas
+	// write path. JSON-only (no multipart, no Blob/MaxMultipartBytes) — a
+	// visita has no comprobante attachments, unlike a pago.
+	visitasCapture := failedintent.CaptureMiddleware(failedintent.Config{
+		Store:        fiCaptureCfg.Store,
+		PathPrefixes: []string{"/v2/visitas"},
+		Methods:      []string{http.MethodPost},
+	})
 
 	// API surface. Module routers mount under /v2.
 	r.Route("/v2", func(r chi.Router) {
@@ -288,13 +319,28 @@ func provideRootHandler(
 			reactivacionhttp.MountRouter(r, reactivacionSvc)
 		})
 
+		// Visitas endpoint — write-only (POST). Capture runs INSIDE authn so
+		// the captured intent carries the planted CurrentUser (needed for
+		// /replay-with and for the internal-replay Idempotency-Key bypass in
+		// the handler). MountRouter registers the operation at bare path
+		// "/visitas", so mount on a bare Group (like rutas/config) — NOT
+		// r.Route("/visitas"), which would double the prefix to
+		// /v2/visitas/visitas. Final path: POST /v2/visitas.
+		r.Group(func(r chi.Router) {
+			r.Use(authn.Handler, visitasCapture)
+			visitashttp.MountRouter(r, visitasSvc)
+		})
+
 		// Cobranza endpoints — authn only. Read (saldos, pagos, sync) plus
 		// pago write (CrearPago, imágenes) share one chi router + huma.API.
 		// Idempotency for POST /pagos is enforced end-to-end via body.id as
 		// the canonical key (the repo INSERT trips DUPLICATE_KEY on retry and
 		// the handler falls back to the idempotent fast-path).
 		r.Route("/cobranza", func(r chi.Router) {
-			r.Use(authn.Handler)
+			// cobranzaCapture runs INSIDE authn so the captured intent carries
+			// the planted CurrentUser (UsuarioID) — required for /me scoping and
+			// for /replay-with-multipart to rebuild the original requester.
+			r.Use(authn.Handler, cobranzaCapture)
 			cobranzahttp.MountReadRouter(r, cobranzaSvc, cobranzaBus, cfg.Cobranza, logger, cobranzaPagosRepo, cobranzaVentasRepo)
 		})
 

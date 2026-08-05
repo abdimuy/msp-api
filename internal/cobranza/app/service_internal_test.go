@@ -129,3 +129,32 @@ func TestResolveCutoff_BoundariesAndArithmetic(t *testing.T) {
 		})
 	}
 }
+
+// TestClampReconcileLimit exercises all branches of clampReconcileLimit: the
+// zero/negative guard (defaults), the upper clamp, and the in-range passthrough.
+func TestClampReconcileLimit(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		limit int
+		want  int
+	}{
+		{"zero_returns_default", 0, DefaultReconcileLimit},
+		{"negative_returns_default", -1, DefaultReconcileLimit},
+		{"very_negative_returns_default", -5000, DefaultReconcileLimit},
+		{"above_max_clamps_to_max", MaxReconcileLimit + 1, MaxReconcileLimit},
+		{"way_above_max_clamps_to_max", 999_999, MaxReconcileLimit},
+		{"in_range_returned_as_is", 250, 250},
+		{"exactly_max_returned_as_is", MaxReconcileLimit, MaxReconcileLimit},
+		{"exactly_one_returned_as_is", 1, 1},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := clampReconcileLimit(tc.limit)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}

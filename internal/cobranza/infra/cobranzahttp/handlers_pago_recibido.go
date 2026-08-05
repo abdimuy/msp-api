@@ -12,6 +12,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/auth"
 	cobranzaapp "github.com/abdimuy/msp-api/internal/cobranza/app"
 	"github.com/abdimuy/msp-api/internal/platform/apperror"
+	"github.com/abdimuy/msp-api/internal/platform/httpdispatch"
 )
 
 // CrearPago handles POST /cobranza/pagos.
@@ -55,7 +56,13 @@ func (h *Handlers) CrearPago(ctx context.Context, in *CrearPagoInput) (*CrearPag
 		)
 	}
 
-	if in.IdempotencyKey != "" && in.IdempotencyKey != body.ID {
+	// The Idempotency-Key header must match datos.id for real clients (the
+	// Android app sets both to the pago UUID). An internal replay — a desk
+	// operator re-applying a captured pago via /replay-with-multipart — mints
+	// a fresh transport key by design, so it legitimately diverges; skip the
+	// guard for those. body.id remains the canonical end-to-end idempotency
+	// key at the repo layer, so double-collection is still impossible.
+	if in.IdempotencyKey != "" && in.IdempotencyKey != body.ID && !httpdispatch.IsInternal(ctx) {
 		return nil, mapAppError(
 			apperror.NewValidation("idempotency_key_mismatch", "Idempotency-Key debe coincidir con datos.id"),
 		)

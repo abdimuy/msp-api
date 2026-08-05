@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -149,7 +150,10 @@ func TestE2E_CrearPagoConImagenes_FullCycle(t *testing.T) {
 		pagoID := uuid.New()
 		imgID1 := uuid.New()
 		imgID2 := uuid.New()
-		fechaRFC3339 := "2026-06-01T09:30:00Z"
+		// Fresh timestamp: this test runs under ProductionClock{}, so a stale
+		// literal would trip validateFechaHoraPago (maxAtrasoAceptable=30d) and
+		// 422 silently. Anchor 1h in the past — comfortably inside the window.
+		fechaRFC3339 := time.Now().UTC().Add(-1 * time.Hour).Format(time.RFC3339)
 		datos := `{"id":"` + pagoID.String() + `",` +
 			`"cargo_docto_cc_id":` + itoa(cargoID) + `,` +
 			`"cliente_id":` + itoa(clienteID) + `,` +
@@ -251,12 +255,14 @@ func TestE2E_CrearPagoConImagenes_IdempotentReplay(t *testing.T) {
 
 		pagoID := uuid.New()
 		imgID1 := uuid.New()
+		// Fresh timestamp (see FullCycle): ProductionClock{} rejects stale dates.
+		fechaRFC3339 := time.Now().UTC().Add(-1 * time.Hour).Format(time.RFC3339)
 		datos := `{"id":"` + pagoID.String() + `",` +
 			`"cargo_docto_cc_id":` + itoa(cargoID) + `,` +
 			`"cliente_id":` + itoa(clienteID) + `,` +
 			`"cobrador_id":42,"cobrador":"Ramírez García, Jorge",` +
 			`"importe":"` + importe.StringFixed(2) + `",` +
-			`"forma_cobro_id":87327,"fecha_hora_pago":"2026-06-01T09:30:00Z"}`
+			`"forma_cobro_id":87327,"fecha_hora_pago":"` + fechaRFC3339 + `"}`
 
 		// First POST.
 		body1, ct1 := buildCrearPagoMultipart(t, datos, []crearPagoImagen{
@@ -268,6 +274,9 @@ func TestE2E_CrearPagoConImagenes_IdempotentReplay(t *testing.T) {
 		router.ServeHTTP(rec1, req1)
 		require.Equal(t, http.StatusOK, rec1.Code, "first: %s", rec1.Body.String())
 
+		var dto1 cobranzahttp.PagoRecibidoDTO
+		require.NoError(t, json.Unmarshal(rec1.Body.Bytes(), &dto1))
+
 		// Second POST with same datos.id but a different imagenID.
 		imgID2 := uuid.New()
 		body2, ct2 := buildCrearPagoMultipart(t, datos, []crearPagoImagen{
@@ -278,6 +287,16 @@ func TestE2E_CrearPagoConImagenes_IdempotentReplay(t *testing.T) {
 		rec2 := httptest.NewRecorder()
 		router.ServeHTTP(rec2, req2)
 		require.Equal(t, http.StatusOK, rec2.Code, "second: %s", rec2.Body.String())
+
+		// The idempotent replay must return the WINNER's pago verbatim — not
+		// just "a pago with the same id". A field-by-field equality guards
+		// against a regression where the replay path echoes the incoming
+		// (losing) request's fields (importe, cobrador, fecha, forma_cobro…)
+		// instead of the persisted row — which would let a device silently
+		// mutate a committed pago by re-posting under the same UUID.
+		var dto2 cobranzahttp.PagoRecibidoDTO
+		require.NoError(t, json.Unmarshal(rec2.Body.Bytes(), &dto2))
+		assert.Equal(t, dto1, dto2, "idempotent replay must echo the winning pago field-by-field")
 
 		// One pago row, one imagen row.
 		var nPago, nImg int

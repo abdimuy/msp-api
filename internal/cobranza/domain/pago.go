@@ -38,6 +38,13 @@ type Pago struct {
 	cobradorID    *int
 	nombreCliente string
 	formaCobroID  *int
+
+	// pagoRecibidoID es el UUID original que la app móvil generó para este
+	// pago en MSP_PAGOS_RECIBIDOS.ID (ver AplicarPago). nil cuando el pago no
+	// tiene fila correspondiente en MSP_PAGOS_RECIBIDOS (pagos legacy
+	// capturados fuera de la app, o cargados desde queries simples que no
+	// hacen el JOIN). Solo SyncPorZona/ByIDs lo llenan.
+	pagoRecibidoID *string
 }
 
 // HydratePagoParams carries the persisted shape of a Pago for repository
@@ -65,6 +72,10 @@ type HydratePagoParams struct {
 	CobradorID    *int
 	NombreCliente string
 	FormaCobroID  *int
+
+	// PagoRecibidoID es el UUID de MSP_PAGOS_RECIBIDOS.ID cuando existe una
+	// fila vinculada (ver Pago.pagoRecibidoID).
+	PagoRecibidoID *string
 }
 
 // HydratePago reconstructs an existing Pago from persistent storage. It does
@@ -91,6 +102,7 @@ func HydratePago(p HydratePagoParams) Pago {
 		cobradorID:     p.CobradorID,
 		nombreCliente:  p.NombreCliente,
 		formaCobroID:   p.FormaCobroID,
+		pagoRecibidoID: p.PagoRecibidoID,
 	}
 }
 
@@ -108,6 +120,15 @@ func (p Pago) NombreCliente() string { return p.nombreCliente }
 // /sync/pagos. Distinct from ConceptoCCID; this maps to "efectivo / cheque /
 // transferencia / etc." in the mobile app.
 func (p Pago) FormaCobroID() *int { return p.formaCobroID }
+
+// PagoRecibidoID returns MSP_PAGOS_RECIBIDOS.ID — the client-generated UUID
+// the mobile app used when it originally captured this pago (see AplicarPago,
+// which persists IMPTE_DOCTO_CC_ID back onto that row once Microsip assigns
+// it). nil when the pago has no matching MSP_PAGOS_RECIBIDOS row (legacy
+// pagos captured outside the app) or was loaded via a query that doesn't
+// enrich this field. Lets the mobile app exact-match a numeric synced pago to
+// its local UUID row instead of relying on heuristics.
+func (p Pago) PagoRecibidoID() *string { return p.pagoRecibidoID }
 
 // ─── Getters ────────────────────────────────────────────────────────────────
 

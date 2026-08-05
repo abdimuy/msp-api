@@ -12,6 +12,16 @@
 //   - Cleanup order: FORMAS_COBRO_DOCTOS → IMPORTES_DOCTOS_CC → DOCTOS_CC
 //     (children before parent to respect FK constraints).
 //
+// POLLUTION RISK (accepted, bounded): unlike the rollback-only cobranzahttp
+// e2e tests (fbtestutil.WithTestTransaction), these tests COMMIT to the shared
+// Microsip DB and rely on t.Cleanup to delete afterward. If a test panics
+// between a successful INSERT and its t.Cleanup registration — or if cleanup
+// itself fails — real rows leak. For that reason this package is deliberately
+// EXCLUDED from `make test-firebird-all` and is run only on demand by a human
+// who can verify/repair the shared DB afterward. Do not add it to the
+// aggregate target. Prefer WithTestTransaction for any test that does not
+// specifically need a committed Microsip row.
+//
 //nolint:misspell // Microsip table/column identifiers are kept verbatim.
 package microsip_test
 
