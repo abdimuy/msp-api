@@ -140,6 +140,46 @@ func (h *Handlers) AsignarRolAUsuario(w http.ResponseWriter, r *http.Request) {
 	response.NoContent(w)
 }
 
+// ObtenerRolesDeUsuario handles GET /v2/usuarios/{id}/roles.
+func (h *Handlers) ObtenerRolesDeUsuario(w http.ResponseWriter, r *http.Request) {
+	id, err := parseUUIDParam(r, "id")
+	if err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	roles, err := h.svc.RolesDeUsuario(r.Context(), id)
+	if err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	items := make([]RolResponse, 0, len(roles))
+	for _, rol := range roles {
+		items = append(items, toRolResponse(rol))
+	}
+	response.JSON(w, r, http.StatusOK, ListResponse[RolResponse]{Items: items})
+}
+
+// ObtenerPermisosDeUsuario handles GET /v2/usuarios/{id}/permisos. It returns
+// the effective union of permisos granted to the usuario via every rol it
+// has assigned.
+func (h *Handlers) ObtenerPermisosDeUsuario(w http.ResponseWriter, r *http.Request) {
+	id, err := parseUUIDParam(r, "id")
+	if err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	permisos, err := h.svc.PermisosEfectivosDeUsuario(r.Context(), id)
+	if err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	items := make([]PermisoResponse, 0, len(permisos))
+	for _, p := range permisos {
+		items = append(items, toPermisoResponse(p))
+	}
+	response.JSON(w, r, http.StatusOK, ListResponse[PermisoResponse]{Items: items})
+}
+
 // RevocarRolDeUsuario handles DELETE /v2/usuarios/{id}/roles/{rol_id}.
 func (h *Handlers) RevocarRolDeUsuario(w http.ResponseWriter, r *http.Request) {
 	usuarioID, err := parseUUIDParam(r, "id")

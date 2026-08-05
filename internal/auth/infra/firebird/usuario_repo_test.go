@@ -174,6 +174,56 @@ func TestUsuarioRepo_PermisosFor_Deduplicates(t *testing.T) {
 	})
 }
 
+// TestReadPath_UsuarioRolPermiso_EndToEnd exercises the exact Go↔Firebird
+// read chain the 3 read-only HTTP endpoints (roles-of-user,
+// effective-permisos-of-user, permisos-of-role) wrap: a usuario with a rol
+// assigned, and that rol carrying a catalog permiso. RolesFor,
+// UsuarioRepo.PermisosFor (the effective union) and RolRepo.PermisosFor are
+// each covered individually elsewhere (TestUsuarioRepo_AsignarRolThenRevocar,
+// TestUsuarioRepo_PermisosFor_Deduplicates, TestRolRepo_AsignarYRevocarPermiso)
+// — this test asserts the single-rol/single-permiso happy path across all
+// three in one wired-up scenario, matching what the handlers actually see.
+func TestReadPath_UsuarioRolPermiso_EndToEnd(t *testing.T) {
+	t.Parallel()
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	usuarioRepo := authfb.NewUsuarioRepo(pool)
+	rolRepo := authfb.NewRolRepo(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		root := seedRootUsuario(ctx, t, pool)
+		codes := seedPermisoCatalog(ctx, t, pool)
+		require.NotEmpty(t, codes)
+
+		u := newUsuario(t, root, "readpath-"+uuid.NewString())
+		require.NoError(t, usuarioRepo.Save(ctx, u))
+
+		rol := newRol(t, root, "rp-"+uuid.NewString()[:8], false)
+		require.NoError(t, rolRepo.Save(ctx, rol))
+
+		require.NoError(t, rolRepo.AsignarPermiso(ctx, rol.ID(), codes[0], root, testNow()))
+		require.NoError(t, usuarioRepo.AsignarRol(ctx, u.ID(), rol.ID(), root, testNow()))
+
+		// GET /v2/usuarios/{id}/roles wraps UsuarioRepo.RolesFor.
+		roles, err := usuarioRepo.RolesFor(ctx, u.ID())
+		require.NoError(t, err)
+		require.Len(t, roles, 1)
+		assert.Equal(t, rol.ID(), roles[0].ID())
+
+		// GET /v2/usuarios/{id}/permisos wraps UsuarioRepo.PermisosFor
+		// (effective union of codes via every assigned rol).
+		usuarioPerms, err := usuarioRepo.PermisosFor(ctx, u.ID())
+		require.NoError(t, err)
+		require.Len(t, usuarioPerms, 1)
+		assert.Equal(t, codes[0], usuarioPerms[0])
+
+		// GET /v2/roles/{id}/permisos wraps RolRepo.PermisosFor.
+		rolPerms, err := rolRepo.PermisosFor(ctx, rol.ID())
+		require.NoError(t, err)
+		require.Len(t, rolPerms, 1)
+		assert.Equal(t, codes[0], rolPerms[0])
+	})
+}
+
 func TestUsuarioRepo_List_Pagination(t *testing.T) {
 	t.Parallel()
 	pool := fbtestutil.NewTestFirebirdPool(t)

@@ -38,6 +38,7 @@ func newTestRig(t *testing.T) *testRig {
 	t.Helper()
 	usuarios := newFakeUsuarioRepo()
 	roles := newFakeRolRepo()
+	usuarios.Roles = roles
 	permisos := newFakePermisoRepo()
 	fb := &fakeFirebase{}
 	clk := fixedClock{T: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)}

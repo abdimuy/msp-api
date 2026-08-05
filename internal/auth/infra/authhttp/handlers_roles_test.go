@@ -1,6 +1,7 @@
 package authhttp
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -131,6 +132,54 @@ func TestRevocarPermisoDeRol_Returns204(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+}
+
+// ─── ObtenerPermisosDeRol ───────────────────────────────────────────────────
+
+func TestObtenerPermisosDeRol_HappyPath(t *testing.T) {
+	t.Parallel()
+	rig := newTestRig(t)
+	caller := rig.seedUsuario(t, "fbuid-admin", "admin@example.com", "Admin")
+	rol := rig.seedRol(t, "vendedor")
+	rig.seedPermiso(t, domain.PermUsuariosListar)
+	rig.seedPermiso(t, domain.PermRolesListar)
+	require.NoError(t, rig.roles.AsignarPermiso(context.Background(), rol.ID(), domain.PermUsuariosListar, caller.ID(), rig.clockTime))
+
+	r := mountWithCurrentUser(rig, adminCurrentUser(caller))
+	req := httptest.NewRequest(http.MethodGet, "/roles/"+rol.ID().String()+"/permisos", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var resp ListResponse[PermisoResponse]
+	decodeBody(t, rec, &resp)
+	require.Len(t, resp.Items, 1)
+	assert.Equal(t, string(domain.PermUsuariosListar), resp.Items[0].Codigo)
+}
+
+func TestObtenerPermisosDeRol_NotFound_Returns404(t *testing.T) {
+	t.Parallel()
+	rig := newTestRig(t)
+	caller := rig.seedUsuario(t, "fbuid-admin", "admin@example.com", "Admin")
+
+	r := mountWithCurrentUser(rig, adminCurrentUser(caller))
+	req := httptest.NewRequest(http.MethodGet, "/roles/"+uuid.New().String()+"/permisos", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+}
+
+func TestObtenerPermisosDeRol_NoPermission_Returns403(t *testing.T) {
+	t.Parallel()
+	rig := newTestRig(t)
+	caller := rig.seedUsuario(t, "fbuid-no", "no@example.com", "No Perms")
+	rol := rig.seedRol(t, "vendedor")
+
+	r := mountWithCurrentUser(rig, auth.CurrentUser{ID: caller.ID()})
+	req := httptest.NewRequest(http.MethodGet, "/roles/"+rol.ID().String()+"/permisos", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 }
 
 func TestListarPermisos_HappyPath(t *testing.T) {

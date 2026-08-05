@@ -131,6 +131,30 @@ func (s *Service) Listar(ctx context.Context, p outbound.ListParams) (outbound.P
 	return s.usuarios.List(ctx, p)
 }
 
+// RolesDeUsuario returns every rol assigned to the usuario. The usuario is
+// verified to exist first so callers get a proper ErrUsuarioNotFound instead
+// of an empty list on a bad ID.
+func (s *Service) RolesDeUsuario(ctx context.Context, usuarioID uuid.UUID) ([]*domain.Rol, error) {
+	if _, err := s.usuarios.FindByID(ctx, usuarioID); err != nil {
+		return nil, err
+	}
+	return s.usuarios.RolesFor(ctx, usuarioID)
+}
+
+// PermisosEfectivosDeUsuario returns the effective union of permisos granted
+// to the usuario via every active rol it owns, enriched with catalog
+// metadata (description, categoria). The usuario is verified to exist first.
+func (s *Service) PermisosEfectivosDeUsuario(ctx context.Context, usuarioID uuid.UUID) ([]*domain.Permiso, error) {
+	if _, err := s.usuarios.FindByID(ctx, usuarioID); err != nil {
+		return nil, err
+	}
+	codes, err := s.usuarios.PermisosFor(ctx, usuarioID)
+	if err != nil {
+		return nil, err
+	}
+	return s.enrichPermisos(ctx, codes)
+}
+
 // AsignarRolAUsuario attaches a rol to a usuario. The usuario and rol are
 // both verified to exist first. Idempotent at the repository level. Emits a
 // "role.assigned" event on success.

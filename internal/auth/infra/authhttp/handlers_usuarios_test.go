@@ -34,8 +34,10 @@ func mountWithCurrentUser(rig *testRig, cu auth.CurrentUser) chi.Router {
 		r.With(RequirePermission(domain.PermUsuariosVer)).Get("/{id}", h.ObtenerUsuario)
 		r.With(RequirePermission(domain.PermUsuariosActualizar)).Patch("/{id}", h.ActualizarUsuario)
 		r.With(RequirePermission(domain.PermUsuariosDesactivar)).Delete("/{id}", h.DesactivarUsuario)
+		r.With(RequirePermission(domain.PermUsuariosVer)).Get("/{id}/roles", h.ObtenerRolesDeUsuario)
 		r.With(RequirePermission(domain.PermUsuariosAsignarRol)).Post("/{id}/roles", h.AsignarRolAUsuario)
 		r.With(RequirePermission(domain.PermUsuariosAsignarRol)).Delete("/{id}/roles/{rol_id}", h.RevocarRolDeUsuario)
+		r.With(RequirePermission(domain.PermUsuariosVer)).Get("/{id}/permisos", h.ObtenerPermisosDeUsuario)
 		r.Post("/ensure-vendedores-by-email", h.EnsureVendedoresByEmail)
 	})
 	r.Route("/roles", func(r chi.Router) {
@@ -45,6 +47,7 @@ func mountWithCurrentUser(rig *testRig, cu auth.CurrentUser) chi.Router {
 		r.With(RequirePermission(domain.PermRolesActualizar)).Patch("/{id}", h.ActualizarRol)
 		r.With(RequirePermission(domain.PermRolesActualizar)).Delete("/{id}", h.DesactivarRol)
 		r.With(RequirePermission(domain.PermRolesAsignarPermiso)).Post("/{id}/permisos", h.AsignarPermisoARol)
+		r.With(RequirePermission(domain.PermRolesListar)).Get("/{id}/permisos", h.ObtenerPermisosDeRol)
 		r.With(RequirePermission(domain.PermRolesAsignarPermiso)).Delete("/{id}/permisos/{codigo}", h.RevocarPermisoDeRol)
 	})
 	r.With(RequirePermission(domain.PermPermisosListar)).Get("/permisos", h.ListarPermisos)
@@ -222,6 +225,127 @@ func TestRevocarRol_Returns204(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+}
+
+// ─── ObtenerRolesDeUsuario ──────────────────────────────────────────────────
+
+func TestObtenerRolesDeUsuario_HappyPath(t *testing.T) {
+	t.Parallel()
+	rig := newTestRig(t)
+	caller := rig.seedUsuario(t, "fbuid-admin", "admin@example.com", "Admin")
+	target := rig.seedUsuario(t, "fbuid-t", "t@example.com", "Target")
+	rol := rig.seedRol(t, "vendedor")
+	require.NoError(t, rig.usuarios.AsignarRol(context.Background(), target.ID(), rol.ID(), caller.ID(), rig.clockTime))
+
+	r := mountWithCurrentUser(rig, adminCurrentUser(caller))
+	req := httptest.NewRequest(http.MethodGet, "/usuarios/"+target.ID().String()+"/roles", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var resp ListResponse[RolResponse]
+	decodeBody(t, rec, &resp)
+	require.Len(t, resp.Items, 1)
+	assert.Equal(t, rol.ID().String(), resp.Items[0].ID)
+	assert.Equal(t, "vendedor", resp.Items[0].Nombre)
+}
+
+func TestObtenerRolesDeUsuario_NotFound_Returns404(t *testing.T) {
+	t.Parallel()
+	rig := newTestRig(t)
+	caller := rig.seedUsuario(t, "fbuid-admin", "admin@example.com", "Admin")
+
+	r := mountWithCurrentUser(rig, adminCurrentUser(caller))
+	req := httptest.NewRequest(http.MethodGet, "/usuarios/"+uuid.New().String()+"/roles", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+}
+
+func TestObtenerRolesDeUsuario_NoPermission_Returns403(t *testing.T) {
+	t.Parallel()
+	rig := newTestRig(t)
+	caller := rig.seedUsuario(t, "fbuid-no", "no@example.com", "No Perms")
+	target := rig.seedUsuario(t, "fbuid-t", "t@example.com", "Target")
+
+	r := mountWithCurrentUser(rig, auth.CurrentUser{ID: caller.ID()})
+	req := httptest.NewRequest(http.MethodGet, "/usuarios/"+target.ID().String()+"/roles", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+}
+
+// ─── ObtenerPermisosDeUsuario ───────────────────────────────────────────────
+
+func TestObtenerPermisosDeUsuario_HappyPath_EffectiveUnion(t *testing.T) {
+	t.Parallel()
+	rig := newTestRig(t)
+	caller := rig.seedUsuario(t, "fbuid-admin", "admin@example.com", "Admin")
+	target := rig.seedUsuario(t, "fbuid-t", "t@example.com", "Target")
+	rig.seedPermiso(t, domain.PermUsuariosListar)
+	rig.seedPermiso(t, domain.PermRolesListar)
+	// Effective union: usuarios.PermisosFor returns bare codes regardless of
+	// how many roles contributed them — the fake models that directly.
+	rig.usuarios.Permisos[target.ID()] = []domain.Permission{domain.PermUsuariosListar, domain.PermRolesListar}
+
+	r := mountWithCurrentUser(rig, adminCurrentUser(caller))
+	req := httptest.NewRequest(http.MethodGet, "/usuarios/"+target.ID().String()+"/permisos", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var resp ListResponse[PermisoResponse]
+	decodeBody(t, rec, &resp)
+	require.Len(t, resp.Items, 2)
+	codes := []string{resp.Items[0].Codigo, resp.Items[1].Codigo}
+	assert.ElementsMatch(t, []string{string(domain.PermUsuariosListar), string(domain.PermRolesListar)}, codes)
+}
+
+func TestObtenerPermisosDeUsuario_OrphanCodeSkipped(t *testing.T) {
+	t.Parallel()
+	rig := newTestRig(t)
+	caller := rig.seedUsuario(t, "fbuid-admin", "admin@example.com", "Admin")
+	target := rig.seedUsuario(t, "fbuid-t", "t@example.com", "Target")
+	rig.seedPermiso(t, domain.PermUsuariosListar)
+	// PermRolesListar is granted but absent from the catalog: it must be
+	// silently skipped by the enrichment step.
+	rig.usuarios.Permisos[target.ID()] = []domain.Permission{domain.PermUsuariosListar, domain.PermRolesListar}
+
+	r := mountWithCurrentUser(rig, adminCurrentUser(caller))
+	req := httptest.NewRequest(http.MethodGet, "/usuarios/"+target.ID().String()+"/permisos", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var resp ListResponse[PermisoResponse]
+	decodeBody(t, rec, &resp)
+	require.Len(t, resp.Items, 1)
+	assert.Equal(t, string(domain.PermUsuariosListar), resp.Items[0].Codigo)
+}
+
+func TestObtenerPermisosDeUsuario_NotFound_Returns404(t *testing.T) {
+	t.Parallel()
+	rig := newTestRig(t)
+	caller := rig.seedUsuario(t, "fbuid-admin", "admin@example.com", "Admin")
+
+	r := mountWithCurrentUser(rig, adminCurrentUser(caller))
+	req := httptest.NewRequest(http.MethodGet, "/usuarios/"+uuid.New().String()+"/permisos", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+}
+
+func TestObtenerPermisosDeUsuario_NoPermission_Returns403(t *testing.T) {
+	t.Parallel()
+	rig := newTestRig(t)
+	caller := rig.seedUsuario(t, "fbuid-no", "no@example.com", "No Perms")
+	target := rig.seedUsuario(t, "fbuid-t", "t@example.com", "Target")
+
+	r := mountWithCurrentUser(rig, auth.CurrentUser{ID: caller.ID()})
+	req := httptest.NewRequest(http.MethodGet, "/usuarios/"+target.ID().String()+"/permisos", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 }
 
 // ─── EnsureVendedoresByEmail ────────────────────────────────────────────────
