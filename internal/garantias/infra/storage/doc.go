@@ -1,6 +1,6 @@
 // Package storage implements the [outbound.StorageProvider] port used by the
 // garantías module to persist binary blobs (evidencia fotográfica adjunta a
-// cada evento de garantía: recolección, diagnóstico, entrega).
+// cada evento: recolección, diagnóstico, entrega).
 //
 // The single implementation is [FilesystemProvider], which writes blobs
 // under a local directory with a sidecar `.meta` file holding content-type

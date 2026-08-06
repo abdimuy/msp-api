@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -96,6 +97,10 @@ func TestFilesystemProvider_Get_NotFound(t *testing.T) {
 
 	_, err = p.Get(context.Background(), "no/existe.jpg")
 	require.Error(t, err)
+	appErr, ok := apperror.As(err)
+	require.True(t, ok)
+	assert.Equal(t, "storage_object_not_found", appErr.Code)
+	assert.Equal(t, apperror.KindNotFound, appErr.Kind)
 }
 
 func TestFilesystemProvider_Delete_ExistingKey_RemovesBlobAndMeta(t *testing.T) {
@@ -145,6 +150,8 @@ func TestFilesystemProvider_Store_InvalidKeys_RejectedAndNoFilesCreated(t *testi
 		key  string
 	}{
 		{"path_traversal", "../escape.jpg"},
+		{"embedded_double_dot", "foo/../bar.jpg"},
+		{"whitespace_only", "   "},
 		{"null_byte", "evidencia/\x00nullbyte.jpg"},
 		{"absolute_path", "/etc/passwd"},
 		{"backslash", `evidencia\windows.jpg`},
@@ -162,7 +169,10 @@ func TestFilesystemProvider_Store_InvalidKeys_RejectedAndNoFilesCreated(t *testi
 			content := []byte("no debería escribirse")
 			err = p.Store(context.Background(), tc.key, "image/jpeg", int64(len(content)), bytes.NewReader(content))
 			require.Error(t, err)
-
+			appErr, ok := apperror.As(err)
+			require.True(t, ok)
+			assert.Equal(t, "storage_invalid_key", appErr.Code)
+			assert.Equal(t, apperror.KindValidation, appErr.Kind)
 			assert.Equal(t, 0, entryCount(t, dir), "no debería crearse ningún archivo en el directorio base")
 		})
 	}
@@ -175,6 +185,8 @@ func TestFilesystemProvider_Get_InvalidKeys_Rejected(t *testing.T) {
 		key  string
 	}{
 		{"path_traversal", "../escape.jpg"},
+		{"embedded_double_dot", "foo/../bar.jpg"},
+		{"whitespace_only", "   "},
 		{"null_byte", "evidencia/\x00nullbyte.jpg"},
 		{"absolute_path", "/etc/passwd"},
 		{"backslash", `evidencia\windows.jpg`},
@@ -191,7 +203,10 @@ func TestFilesystemProvider_Get_InvalidKeys_Rejected(t *testing.T) {
 
 			_, err = p.Get(context.Background(), tc.key)
 			require.Error(t, err)
-			assert.Equal(t, 0, entryCount(t, dir))
+			appErr, ok := apperror.As(err)
+			require.True(t, ok)
+			assert.Equal(t, "storage_invalid_key", appErr.Code)
+			assert.Equal(t, apperror.KindValidation, appErr.Kind)
 		})
 	}
 }
@@ -203,6 +218,8 @@ func TestFilesystemProvider_Delete_InvalidKeys_Rejected(t *testing.T) {
 		key  string
 	}{
 		{"path_traversal", "../escape.jpg"},
+		{"embedded_double_dot", "foo/../bar.jpg"},
+		{"whitespace_only", "   "},
 		{"null_byte", "evidencia/\x00nullbyte.jpg"},
 		{"absolute_path", "/etc/passwd"},
 		{"backslash", `evidencia\windows.jpg`},
@@ -219,7 +236,10 @@ func TestFilesystemProvider_Delete_InvalidKeys_Rejected(t *testing.T) {
 
 			err = p.Delete(context.Background(), tc.key)
 			require.Error(t, err)
-			assert.Equal(t, 0, entryCount(t, dir))
+			appErr, ok := apperror.As(err)
+			require.True(t, ok)
+			assert.Equal(t, "storage_invalid_key", appErr.Code)
+			assert.Equal(t, apperror.KindValidation, appErr.Kind)
 		})
 	}
 }
@@ -253,14 +273,16 @@ func TestNewFilesystemProvider_CreatesMissingDirectory(t *testing.T) {
 func TestNewFilesystemProvider_BaseDirIsAFile_ReturnsError(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	// baseDir pointing at an existing regular file: MkdirAll on an existing
-	// file path fails on most platforms because the path component already
-	// exists as a non-directory, exercising the "not a directory" guard.
 	filePath := filepath.Join(root, "soy-un-archivo")
 	require.NoError(t, os.WriteFile(filePath, []byte("contenido"), 0o600))
 
 	_, err := storage.NewFilesystemProvider(filePath)
 	require.Error(t, err)
+	appErr, ok := apperror.As(err)
+	require.True(t, ok)
+	assert.Equal(t, "storage_basedir_unwritable", appErr.Code)
+	// La rama '!info.IsDir()' es defensiva y no se alcanza en este caso porque
+	// MkdirAll falla antes; queda cubierta por la propia lógica de os.MkdirAll.
 }
 
 func TestFilesystemProvider_Store_CreatesNestedDirectories(t *testing.T) {
@@ -381,7 +403,6 @@ func TestFilesystemProvider_Store_RenameFailsWhenTargetIsDirectory(t *testing.T)
 	err := p.Store(ctx, key, "application/octet-stream",
 		int64(len(payload)), bytes.NewReader(payload))
 	require.Error(t, err)
-
 	appErr, ok := apperror.As(err)
 	require.True(t, ok)
 	assert.Equal(t, "storage_rename_failed", appErr.Code)
@@ -397,13 +418,16 @@ func TestFilesystemProvider_Store_RenameFailsWhenTargetIsDirectory(t *testing.T)
 
 func TestFilesystemProvider_Get_OpenFailsWithPermissionDenied(t *testing.T) {
 	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("permission-based open failure not portable to windows")
+	}
 	p, dir := newProvider(t)
 	ctx := context.Background()
 
 	key := "no-read/file.bin"
 	target := filepath.Join(dir, key)
 	require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o700))
-	require.NoError(t, os.WriteFile(target, []byte("data"), 0o000)) // sin permisos
+	require.NoError(t, os.WriteFile(target, []byte("data"), 0o000))
 
 	_, err := p.Get(ctx, key)
 	require.Error(t, err)
@@ -414,6 +438,9 @@ func TestFilesystemProvider_Get_OpenFailsWithPermissionDenied(t *testing.T) {
 
 func TestFilesystemProvider_Delete_RemoveFailsWhenParentReadOnly(t *testing.T) {
 	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("permission-based delete failure not portable to windows")
+	}
 	p, dir := newProvider(t)
 	ctx := context.Background()
 
@@ -424,14 +451,15 @@ func TestFilesystemProvider_Delete_RemoveFailsWhenParentReadOnly(t *testing.T) {
 
 	parent := filepath.Dir(target)
 	require.NoError(t, os.Chmod(parent, 0o555))
+	t.Cleanup(func() {
+		_ = os.Chmod(parent, 0o700) // restore para que TempDir pueda limpiar
+	})
 
 	err := p.Delete(ctx, key)
 	require.Error(t, err)
 	appErr, ok := apperror.As(err)
 	require.True(t, ok)
 	assert.Equal(t, "storage_delete_failed", appErr.Code)
-
-	_ = os.Chmod(parent, 0o700)
 }
 
 // TestFilesystemProvider_Get_MalformedSidecarLineTooLong cubre la rama
