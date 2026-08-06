@@ -82,17 +82,24 @@ Diferencia:
 
 ### De `internal/inventario/domain/tipo_movimiento.go`
 
-Copiado — el molde exacto:
-- Struct con un único campo privado `value string`.
-- Constantes exportadas, una por valor válido.
-- `New{Tipo}(s string) ({Tipo}, error)` que valida y devuelve el centinela si no matchea.
-- `Hydrate{Tipo}(s string) {Tipo}` sin validar, para reconstrucción desde persistencia.
-- `Value()`, `String()`, `Equals(other)`, `IsZero()`.
+Copiado — el molde correcto para enums es `internal/ventas/domain/tipo_venta.go` (y para estados, `estado_registro.go`):
+- `type {Tipo} string` con constantes tipadas, una por valor válido.
+- `Parse{Tipo}(s string) ({Tipo}, error)` que valida y devuelve el centinela si no matchea.
+- `IsValid()` para verificar pertenencia al conjunto.
+- `String()` para la representación como cadena.
+- Ayudantes `Es*` para cada valor (según la tabla del brief).
+- Para `EstadoFolio` (State VO): además se añadió el mapa `validEstadoFolioTransitions`, el método `CanTransitionTo(t EstadoFolio) bool` y `IsTerminal() bool`.
 
 Diferencia:
-- `TipoMovimiento` solo tiene dos valores y usa un `if` directo. `EstadoFolio` (6 valores), `Dictamen` (3) y `RolDecisor` (3) usan `switch` en vez de encadenar `if/||` para que quede legible.
-- Cada tipo añade sus propios ayudantes booleanos según la tabla del brief (`EsPiso`/`EsCliente`, `EsLiquidada`, `EsTerminal`/`EsCancelado`, `EsProveedor`/`EsTaller`, `EsAceptada`/`EsRechazada`/`EsSinFalla`, `EsOriginal`/`EsReemplazo`). `RolDecisor` es el único sin ayudantes propios — el brief lo marca explícitamente con "—" porque el rol es un dato registrado, no una condición que el dominio ramifique.
-- Los tests siguen la misma estructura (`HappyPath` con tabla de casos, `RejectsInvalid` con lista de strings inválidos, `EqualsAndIsZero`, `String`), pero se le agregó a cada `RejectsInvalid` la verificación `errors.Is(err, domain.ErrXInvalido)` contra el centinela específico — el test original de `tipo_movimiento_test.go` solo comprueba `err != nil` sin identificar cuál error. También se agregó un test `Hydrate{Tipo}_AcceptsGarbage` por cada tipo, que el brief pide de forma explícita y que `tipo_movimiento_test.go` no tiene.
+- Los enums simples (`OrigenFolio`, `EstadoCuenta`, `RutaReparacion`, `Dictamen`, `RolArticulo`, `RolDecisor`) usan constantes tipadas y los tres métodos básicos (`Parse`, `IsValid`, `String`), más sus ayudantes `Es*`.
+- `EstadoFolio` añade la máquina de estados con transiciones explícitas. Los valores son `string` y el zero value (`""`) no es válido; se valida siempre con `Parse`.
+- Los tests verifican:
+  - `TestX_WireValues`: fija cada literal para garantizar que las constantes no cambien accidentalmente.
+  - `TestParseX_HappyPath`: prueba cada valor válido con sus ayudantes.
+  - `TestParseX_RejectsInvalid`: lista de entradas inválidas y comprobación con `errors.Is` del centinela específico.
+  - `TestX_IsValid`: prueba directa del método.
+  - Para `EstadoFolio` además pruebas de `CanTransitionTo` e `IsTerminal`.
+- Se eliminaron completamente los viejos métodos `Hydrate`, `Value`, `Equals` e `IsZero` porque ya no son necesarios; la hidratación desde la base se hace con un simple `cast` a `Tipo` y la comparación es `==`.
 
 ---
 
