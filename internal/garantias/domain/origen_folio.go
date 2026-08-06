@@ -1,45 +1,38 @@
-//nolint:dupl // all value objects follow the same pattern; duplication is intentional and unavoidable.
 package domain
 
-// OrigenFolioPiso represents a warranty folio opened for a floor-stock item
-// (no associated cliente or venta).
-const OrigenFolioPiso = "piso"
+// OrigenFolio represents the origin of a warranty folio.
+type OrigenFolio string
 
-// OrigenFolioCliente represents a warranty folio opened against a client's
-// existing purchase.
-const OrigenFolioCliente = "cliente"
+// OrigenFolio values represent the origin of a warranty folio.
+const (
+	OrigenFolioPiso    OrigenFolio = "piso"
+	OrigenFolioCliente OrigenFolio = "cliente"
+)
 
-// OrigenFolio is a value object wrapping the origin of a warranty folio.
-// Only "piso" and "cliente" are valid.
-type OrigenFolio struct{ value string }
-
-// NewOrigenFolio validates and constructs an OrigenFolio. Accepts only
-// "piso" or "cliente"; rejects anything else with ErrOrigenFolioInvalido.
-func NewOrigenFolio(s string) (OrigenFolio, error) {
-	if s != OrigenFolioPiso && s != OrigenFolioCliente {
-		return OrigenFolio{}, ErrOrigenFolioInvalido
+// ParseOrigenFolio validates and returns an OrigenFolio.
+// Returns ErrOrigenFolioInvalido if s is not "piso" or "cliente".
+func ParseOrigenFolio(s string) (OrigenFolio, error) {
+	o := OrigenFolio(s)
+	if !o.IsValid() {
+		return "", ErrOrigenFolioInvalido
 	}
-	return OrigenFolio{value: s}, nil
+	return o, nil
 }
 
-// HydrateOrigenFolio rebuilds an OrigenFolio from persistence without
-// validation. Intended for repository use only.
-func HydrateOrigenFolio(s string) OrigenFolio { return OrigenFolio{value: s} }
+// IsValid reports whether o is a known OrigenFolio value.
+func (o OrigenFolio) IsValid() bool {
+	switch o {
+	case OrigenFolioPiso, OrigenFolioCliente:
+		return true
+	}
+	return false
+}
 
-// Value returns the raw origin string ("piso" or "cliente").
-func (o OrigenFolio) Value() string { return o.value }
+// String returns the string representation of o.
+func (o OrigenFolio) String() string { return string(o) }
 
-// String returns the origin string representation.
-func (o OrigenFolio) String() string { return o.value }
+// EsPiso reports whether the origin is floor stock.
+func (o OrigenFolio) EsPiso() bool { return o == OrigenFolioPiso }
 
-// Equals reports whether two OrigenFolio values are identical.
-func (o OrigenFolio) Equals(other OrigenFolio) bool { return o.value == other.value }
-
-// IsZero reports whether the OrigenFolio has its zero value (empty string).
-func (o OrigenFolio) IsZero() bool { return o.value == "" }
-
-// EsPiso reports whether this folio originates from floor stock.
-func (o OrigenFolio) EsPiso() bool { return o.value == OrigenFolioPiso }
-
-// EsCliente reports whether this folio originates from a client purchase.
-func (o OrigenFolio) EsCliente() bool { return o.value == OrigenFolioCliente }
+// EsCliente reports whether the origin is a client purchase.
+func (o OrigenFolio) EsCliente() bool { return o == OrigenFolioCliente }

@@ -7,43 +7,57 @@ import (
 	"github.com/abdimuy/msp-api/internal/garantias/domain"
 )
 
-func TestNewRolArticulo_HappyPath(t *testing.T) {
+func TestRolArticulo_WireValues(t *testing.T) {
+	t.Parallel()
+	if string(domain.RolArticuloOriginal) != "original" {
+		t.Errorf("RolArticuloOriginal = %q, want \"original\"", domain.RolArticuloOriginal)
+	}
+	if string(domain.RolArticuloReemplazo) != "reemplazo" {
+		t.Errorf("RolArticuloReemplazo = %q, want \"reemplazo\"", domain.RolArticuloReemplazo)
+	}
+}
+
+func TestParseRolArticulo_HappyPath(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		input       string
+		expected    domain.RolArticulo
 		esOriginal  bool
 		esReemplazo bool
 	}{
-		{domain.RolArticuloOriginal, true, false},
-		{domain.RolArticuloReemplazo, false, true},
+		{"original", domain.RolArticuloOriginal, true, false},
+		{"reemplazo", domain.RolArticuloReemplazo, false, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.input, func(t *testing.T) {
 			t.Parallel()
-			r, err := domain.NewRolArticulo(tc.input)
+			r, err := domain.ParseRolArticulo(tc.input)
 			if err != nil {
 				t.Fatalf("expected no error for %q, got %v", tc.input, err)
 			}
-			if r.Value() != tc.input {
-				t.Fatalf("value mismatch: want %q got %q", tc.input, r.Value())
+			if r != tc.expected {
+				t.Errorf("value mismatch: want %q, got %q", tc.expected, r)
 			}
 			if r.EsOriginal() != tc.esOriginal {
-				t.Fatalf("EsOriginal mismatch for %q", tc.input)
+				t.Errorf("EsOriginal mismatch for %q", tc.input)
 			}
 			if r.EsReemplazo() != tc.esReemplazo {
-				t.Fatalf("EsReemplazo mismatch for %q", tc.input)
+				t.Errorf("EsReemplazo mismatch for %q", tc.input)
+			}
+			if r.String() != tc.input {
+				t.Errorf("String() = %q, want %q", r.String(), tc.input)
 			}
 		})
 	}
 }
 
-func TestNewRolArticulo_RejectsInvalid(t *testing.T) {
+func TestParseRolArticulo_RejectsInvalid(t *testing.T) {
 	t.Parallel()
 	cases := []string{"", "Original", "REEMPLAZO", "original ", "x"}
 	for _, tc := range cases {
 		t.Run(tc+"_invalid", func(t *testing.T) {
 			t.Parallel()
-			_, err := domain.NewRolArticulo(tc)
+			_, err := domain.ParseRolArticulo(tc)
 			if err == nil {
 				t.Fatalf("expected error for %q, got nil", tc)
 			}
@@ -54,40 +68,15 @@ func TestNewRolArticulo_RejectsInvalid(t *testing.T) {
 	}
 }
 
-func TestRolArticulo_EqualsAndIsZero(t *testing.T) {
+func TestRolArticulo_IsValid(t *testing.T) {
 	t.Parallel()
-	o, _ := domain.NewRolArticulo(domain.RolArticuloOriginal)
-	o2, _ := domain.NewRolArticulo(domain.RolArticuloOriginal)
-	r, _ := domain.NewRolArticulo(domain.RolArticuloReemplazo)
-
-	if !o.Equals(o2) {
-		t.Fatal("expected o.Equals(o2) == true")
+	if !domain.RolArticuloOriginal.IsValid() {
+		t.Error("RolArticuloOriginal.IsValid() should be true")
 	}
-	if o.Equals(r) {
-		t.Fatal("expected o.Equals(r) == false")
+	if !domain.RolArticuloReemplazo.IsValid() {
+		t.Error("RolArticuloReemplazo.IsValid() should be true")
 	}
-
-	zero := domain.HydrateRolArticulo("")
-	if !zero.IsZero() {
-		t.Fatal("expected IsZero == true for empty rol_articulo")
-	}
-	if o.IsZero() {
-		t.Fatal("expected IsZero == false for valid rol_articulo")
-	}
-}
-
-func TestRolArticulo_String(t *testing.T) {
-	t.Parallel()
-	r, _ := domain.NewRolArticulo(domain.RolArticuloReemplazo)
-	if r.String() != domain.RolArticuloReemplazo {
-		t.Fatalf("expected %q, got %q", domain.RolArticuloReemplazo, r.String())
-	}
-}
-
-func TestHydrateRolArticulo_AcceptsGarbage(t *testing.T) {
-	t.Parallel()
-	r := domain.HydrateRolArticulo("cualquier-cosa")
-	if r.Value() != "cualquier-cosa" {
-		t.Fatalf("expected hydrate to accept garbage verbatim, got %q", r.Value())
+	if domain.RolArticulo("invalid").IsValid() {
+		t.Error("invalid RolArticulo should not be valid")
 	}
 }

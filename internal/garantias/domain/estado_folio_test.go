@@ -7,47 +7,68 @@ import (
 	"github.com/abdimuy/msp-api/internal/garantias/domain"
 )
 
-func TestNewEstadoFolio_HappyPath(t *testing.T) {
+func TestEstadoFolio_WireValues(t *testing.T) {
+	t.Parallel()
+	values := map[domain.EstadoFolio]string{
+		domain.EstadoFolioAbierto:      "abierto",
+		domain.EstadoFolioEnProceso:    "en_proceso",
+		domain.EstadoFolioListoEntrega: "listo_entrega",
+		domain.EstadoFolioEntregado:    "entregado",
+		domain.EstadoFolioCerrado:      "cerrado",
+		domain.EstadoFolioCancelado:    "cancelado",
+	}
+	for e, want := range values {
+		if string(e) != want {
+			t.Errorf("%s = %q, want %q", e, e, want)
+		}
+	}
+}
+
+func TestParseEstadoFolio_HappyPath(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		input       string
+		expected    domain.EstadoFolio
 		esTerminal  bool
 		esCancelado bool
 	}{
-		{domain.EstadoFolioAbierto, false, false},
-		{domain.EstadoFolioEnProceso, false, false},
-		{domain.EstadoFolioListoEntrega, false, false},
-		{domain.EstadoFolioEntregado, false, false},
-		{domain.EstadoFolioCerrado, true, false},
-		{domain.EstadoFolioCancelado, true, true},
+		{"abierto", domain.EstadoFolioAbierto, false, false},
+		{"en_proceso", domain.EstadoFolioEnProceso, false, false},
+		{"listo_entrega", domain.EstadoFolioListoEntrega, false, false},
+		{"entregado", domain.EstadoFolioEntregado, false, false},
+		{"cerrado", domain.EstadoFolioCerrado, true, false},
+		{"cancelado", domain.EstadoFolioCancelado, true, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.input, func(t *testing.T) {
 			t.Parallel()
-			e, err := domain.NewEstadoFolio(tc.input)
+			e, err := domain.ParseEstadoFolio(tc.input)
 			if err != nil {
 				t.Fatalf("expected no error for %q, got %v", tc.input, err)
 			}
-			if e.Value() != tc.input {
-				t.Fatalf("value mismatch: want %q got %q", tc.input, e.Value())
+			if e != tc.expected {
+				t.Errorf("value mismatch: want %q, got %q", tc.expected, e)
 			}
-			if e.EsTerminal() != tc.esTerminal {
-				t.Fatalf("EsTerminal mismatch for %q: want %v got %v", tc.input, tc.esTerminal, e.EsTerminal())
+			if e.IsTerminal() != tc.esTerminal {
+				t.Errorf("IsTerminal mismatch for %q: want %v, got %v", tc.input, tc.esTerminal, e.IsTerminal())
 			}
 			if e.EsCancelado() != tc.esCancelado {
-				t.Fatalf("EsCancelado mismatch for %q: want %v got %v", tc.input, tc.esCancelado, e.EsCancelado())
+				t.Errorf("EsCancelado mismatch for %q: want %v, got %v", tc.input, tc.esCancelado, e.EsCancelado())
+			}
+			if e.String() != tc.input {
+				t.Errorf("String() = %q, want %q", e.String(), tc.input)
 			}
 		})
 	}
 }
 
-func TestNewEstadoFolio_RejectsInvalid(t *testing.T) {
+func TestParseEstadoFolio_RejectsInvalid(t *testing.T) {
 	t.Parallel()
 	cases := []string{"", "Abierto", "EN_PROCESO", "abierto ", "x", "listo-entrega"}
 	for _, tc := range cases {
 		t.Run(tc+"_invalid", func(t *testing.T) {
 			t.Parallel()
-			_, err := domain.NewEstadoFolio(tc)
+			_, err := domain.ParseEstadoFolio(tc)
 			if err == nil {
 				t.Fatalf("expected error for %q, got nil", tc)
 			}
@@ -58,40 +79,58 @@ func TestNewEstadoFolio_RejectsInvalid(t *testing.T) {
 	}
 }
 
-func TestEstadoFolio_EqualsAndIsZero(t *testing.T) {
+func TestEstadoFolio_IsValid(t *testing.T) {
 	t.Parallel()
-	a, _ := domain.NewEstadoFolio(domain.EstadoFolioAbierto)
-	a2, _ := domain.NewEstadoFolio(domain.EstadoFolioAbierto)
-	c, _ := domain.NewEstadoFolio(domain.EstadoFolioCerrado)
-
-	if !a.Equals(a2) {
-		t.Fatal("expected a.Equals(a2) == true")
+	validStates := []domain.EstadoFolio{
+		domain.EstadoFolioAbierto,
+		domain.EstadoFolioEnProceso,
+		domain.EstadoFolioListoEntrega,
+		domain.EstadoFolioEntregado,
+		domain.EstadoFolioCerrado,
+		domain.EstadoFolioCancelado,
 	}
-	if a.Equals(c) {
-		t.Fatal("expected a.Equals(c) == false")
+	for _, s := range validStates {
+		if !s.IsValid() {
+			t.Errorf("%s.IsValid() should be true", s)
+		}
 	}
-
-	zero := domain.HydrateEstadoFolio("")
-	if !zero.IsZero() {
-		t.Fatal("expected IsZero == true for empty estado_folio")
-	}
-	if a.IsZero() {
-		t.Fatal("expected IsZero == false for valid estado_folio")
+	if domain.EstadoFolio("invalid").IsValid() {
+		t.Error("invalid EstadoFolio should not be valid")
 	}
 }
 
-func TestEstadoFolio_String(t *testing.T) {
+func TestEstadoFolio_CanTransitionTo(t *testing.T) {
 	t.Parallel()
-	e, _ := domain.NewEstadoFolio(domain.EstadoFolioListoEntrega)
-	if e.String() != domain.EstadoFolioListoEntrega {
-		t.Fatalf("expected %q, got %q", domain.EstadoFolioListoEntrega, e.String())
-	}
-}
+	tests := []struct {
+		from domain.EstadoFolio
+		to   domain.EstadoFolio
+		want bool
+	}{
+		{domain.EstadoFolioAbierto, domain.EstadoFolioEnProceso, true},
+		{domain.EstadoFolioAbierto, domain.EstadoFolioCancelado, true},
+		{domain.EstadoFolioAbierto, domain.EstadoFolioListoEntrega, false},
+		{domain.EstadoFolioAbierto, domain.EstadoFolioCerrado, false},
 
-func TestHydrateEstadoFolio_AcceptsGarbage(t *testing.T) {
-	t.Parallel()
-	e := domain.HydrateEstadoFolio("cualquier-cosa")
-	if e.Value() != "cualquier-cosa" {
-		t.Fatalf("expected hydrate to accept garbage verbatim, got %q", e.Value())
+		{domain.EstadoFolioEnProceso, domain.EstadoFolioListoEntrega, true},
+		{domain.EstadoFolioEnProceso, domain.EstadoFolioCancelado, true},
+		{domain.EstadoFolioEnProceso, domain.EstadoFolioEntregado, false},
+
+		{domain.EstadoFolioListoEntrega, domain.EstadoFolioEntregado, true},
+		{domain.EstadoFolioListoEntrega, domain.EstadoFolioCancelado, false},
+
+		{domain.EstadoFolioEntregado, domain.EstadoFolioCerrado, true},
+		{domain.EstadoFolioEntregado, domain.EstadoFolioCancelado, false},
+
+		{domain.EstadoFolioCerrado, domain.EstadoFolioAbierto, false},
+		{domain.EstadoFolioCancelado, domain.EstadoFolioAbierto, false},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.from)+"_to_"+string(tt.to), func(t *testing.T) {
+			t.Parallel()
+			got := tt.from.CanTransitionTo(tt.to)
+			if got != tt.want {
+				t.Errorf("CanTransitionTo(%q, %q) = %v, want %v", tt.from, tt.to, got, tt.want)
+			}
+		})
 	}
 }

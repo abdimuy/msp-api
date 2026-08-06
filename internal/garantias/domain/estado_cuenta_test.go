@@ -7,39 +7,53 @@ import (
 	"github.com/abdimuy/msp-api/internal/garantias/domain"
 )
 
-func TestNewEstadoCuenta_HappyPath(t *testing.T) {
+func TestEstadoCuenta_WireValues(t *testing.T) {
+	t.Parallel()
+	if string(domain.EstadoCuentaLiquidada) != "liquidada" {
+		t.Errorf("EstadoCuentaLiquidada = %q, want \"liquidada\"", domain.EstadoCuentaLiquidada)
+	}
+	if string(domain.EstadoCuentaSaldoPendiente) != "saldo_pendiente" {
+		t.Errorf("EstadoCuentaSaldoPendiente = %q, want \"saldo_pendiente\"", domain.EstadoCuentaSaldoPendiente)
+	}
+}
+
+func TestParseEstadoCuenta_HappyPath(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		input       string
+		expected    domain.EstadoCuenta
 		esLiquidada bool
 	}{
-		{domain.EstadoCuentaLiquidada, true},
-		{domain.EstadoCuentaSaldoPendiente, false},
+		{"liquidada", domain.EstadoCuentaLiquidada, true},
+		{"saldo_pendiente", domain.EstadoCuentaSaldoPendiente, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.input, func(t *testing.T) {
 			t.Parallel()
-			e, err := domain.NewEstadoCuenta(tc.input)
+			e, err := domain.ParseEstadoCuenta(tc.input)
 			if err != nil {
 				t.Fatalf("expected no error for %q, got %v", tc.input, err)
 			}
-			if e.Value() != tc.input {
-				t.Fatalf("value mismatch: want %q got %q", tc.input, e.Value())
+			if e != tc.expected {
+				t.Errorf("value mismatch: want %q, got %q", tc.expected, e)
 			}
 			if e.EsLiquidada() != tc.esLiquidada {
-				t.Fatalf("EsLiquidada mismatch for %q", tc.input)
+				t.Errorf("EsLiquidada mismatch for %q", tc.input)
+			}
+			if e.String() != tc.input {
+				t.Errorf("String() = %q, want %q", e.String(), tc.input)
 			}
 		})
 	}
 }
 
-func TestNewEstadoCuenta_RejectsInvalid(t *testing.T) {
+func TestParseEstadoCuenta_RejectsInvalid(t *testing.T) {
 	t.Parallel()
 	cases := []string{"", "Liquidada", "SALDO_PENDIENTE", "liquidada ", "x"}
 	for _, tc := range cases {
 		t.Run(tc+"_invalid", func(t *testing.T) {
 			t.Parallel()
-			_, err := domain.NewEstadoCuenta(tc)
+			_, err := domain.ParseEstadoCuenta(tc)
 			if err == nil {
 				t.Fatalf("expected error for %q, got nil", tc)
 			}
@@ -50,40 +64,15 @@ func TestNewEstadoCuenta_RejectsInvalid(t *testing.T) {
 	}
 }
 
-func TestEstadoCuenta_EqualsAndIsZero(t *testing.T) {
+func TestEstadoCuenta_IsValid(t *testing.T) {
 	t.Parallel()
-	l, _ := domain.NewEstadoCuenta(domain.EstadoCuentaLiquidada)
-	l2, _ := domain.NewEstadoCuenta(domain.EstadoCuentaLiquidada)
-	s, _ := domain.NewEstadoCuenta(domain.EstadoCuentaSaldoPendiente)
-
-	if !l.Equals(l2) {
-		t.Fatal("expected l.Equals(l2) == true")
+	if !domain.EstadoCuentaLiquidada.IsValid() {
+		t.Error("EstadoCuentaLiquidada.IsValid() should be true")
 	}
-	if l.Equals(s) {
-		t.Fatal("expected l.Equals(s) == false")
+	if !domain.EstadoCuentaSaldoPendiente.IsValid() {
+		t.Error("EstadoCuentaSaldoPendiente.IsValid() should be true")
 	}
-
-	zero := domain.HydrateEstadoCuenta("")
-	if !zero.IsZero() {
-		t.Fatal("expected IsZero == true for empty estado_cuenta")
-	}
-	if l.IsZero() {
-		t.Fatal("expected IsZero == false for valid estado_cuenta")
-	}
-}
-
-func TestEstadoCuenta_String(t *testing.T) {
-	t.Parallel()
-	e, _ := domain.NewEstadoCuenta(domain.EstadoCuentaSaldoPendiente)
-	if e.String() != domain.EstadoCuentaSaldoPendiente {
-		t.Fatalf("expected %q, got %q", domain.EstadoCuentaSaldoPendiente, e.String())
-	}
-}
-
-func TestHydrateEstadoCuenta_AcceptsGarbage(t *testing.T) {
-	t.Parallel()
-	e := domain.HydrateEstadoCuenta("cualquier-cosa")
-	if e.Value() != "cualquier-cosa" {
-		t.Fatalf("expected hydrate to accept garbage verbatim, got %q", e.Value())
+	if domain.EstadoCuenta("invalid").IsValid() {
+		t.Error("invalid EstadoCuenta should not be valid")
 	}
 }

@@ -7,43 +7,57 @@ import (
 	"github.com/abdimuy/msp-api/internal/garantias/domain"
 )
 
-func TestNewOrigenFolio_HappyPath(t *testing.T) {
+func TestOrigenFolio_WireValues(t *testing.T) {
+	t.Parallel()
+	if string(domain.OrigenFolioPiso) != "piso" {
+		t.Errorf("OrigenFolioPiso = %q, want \"piso\"", domain.OrigenFolioPiso)
+	}
+	if string(domain.OrigenFolioCliente) != "cliente" {
+		t.Errorf("OrigenFolioCliente = %q, want \"cliente\"", domain.OrigenFolioCliente)
+	}
+}
+
+func TestParseOrigenFolio_HappyPath(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		input     string
+		expected  domain.OrigenFolio
 		esPiso    bool
 		esCliente bool
 	}{
-		{domain.OrigenFolioPiso, true, false},
-		{domain.OrigenFolioCliente, false, true},
+		{"piso", domain.OrigenFolioPiso, true, false},
+		{"cliente", domain.OrigenFolioCliente, false, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.input, func(t *testing.T) {
 			t.Parallel()
-			o, err := domain.NewOrigenFolio(tc.input)
+			o, err := domain.ParseOrigenFolio(tc.input)
 			if err != nil {
 				t.Fatalf("expected no error for %q, got %v", tc.input, err)
 			}
-			if o.Value() != tc.input {
-				t.Fatalf("value mismatch: want %q got %q", tc.input, o.Value())
+			if o != tc.expected {
+				t.Errorf("value mismatch: want %q, got %q", tc.expected, o)
 			}
 			if o.EsPiso() != tc.esPiso {
-				t.Fatalf("EsPiso mismatch for %q", tc.input)
+				t.Errorf("EsPiso mismatch for %q", tc.input)
 			}
 			if o.EsCliente() != tc.esCliente {
-				t.Fatalf("EsCliente mismatch for %q", tc.input)
+				t.Errorf("EsCliente mismatch for %q", tc.input)
+			}
+			if o.String() != tc.input {
+				t.Errorf("String() = %q, want %q", o.String(), tc.input)
 			}
 		})
 	}
 }
 
-func TestNewOrigenFolio_RejectsInvalid(t *testing.T) {
+func TestParseOrigenFolio_RejectsInvalid(t *testing.T) {
 	t.Parallel()
 	cases := []string{"", "Piso", "CLIENTE", "piso ", " cliente", "x"}
 	for _, tc := range cases {
 		t.Run(tc+"_invalid", func(t *testing.T) {
 			t.Parallel()
-			_, err := domain.NewOrigenFolio(tc)
+			_, err := domain.ParseOrigenFolio(tc)
 			if err == nil {
 				t.Fatalf("expected error for %q, got nil", tc)
 			}
@@ -54,40 +68,15 @@ func TestNewOrigenFolio_RejectsInvalid(t *testing.T) {
 	}
 }
 
-func TestOrigenFolio_EqualsAndIsZero(t *testing.T) {
+func TestOrigenFolio_IsValid(t *testing.T) {
 	t.Parallel()
-	p, _ := domain.NewOrigenFolio(domain.OrigenFolioPiso)
-	p2, _ := domain.NewOrigenFolio(domain.OrigenFolioPiso)
-	c, _ := domain.NewOrigenFolio(domain.OrigenFolioCliente)
-
-	if !p.Equals(p2) {
-		t.Fatal("expected p.Equals(p2) == true")
+	if !domain.OrigenFolioPiso.IsValid() {
+		t.Error("OrigenFolioPiso.IsValid() should be true")
 	}
-	if p.Equals(c) {
-		t.Fatal("expected p.Equals(c) == false")
+	if !domain.OrigenFolioCliente.IsValid() {
+		t.Error("OrigenFolioCliente.IsValid() should be true")
 	}
-
-	zero := domain.HydrateOrigenFolio("")
-	if !zero.IsZero() {
-		t.Fatal("expected IsZero == true for empty origen_folio")
-	}
-	if p.IsZero() {
-		t.Fatal("expected IsZero == false for valid origen_folio")
-	}
-}
-
-func TestOrigenFolio_String(t *testing.T) {
-	t.Parallel()
-	o, _ := domain.NewOrigenFolio(domain.OrigenFolioCliente)
-	if o.String() != domain.OrigenFolioCliente {
-		t.Fatalf("expected %q, got %q", domain.OrigenFolioCliente, o.String())
-	}
-}
-
-func TestHydrateOrigenFolio_AcceptsGarbage(t *testing.T) {
-	t.Parallel()
-	o := domain.HydrateOrigenFolio("cualquier-cosa")
-	if o.Value() != "cualquier-cosa" {
-		t.Fatalf("expected hydrate to accept garbage verbatim, got %q", o.Value())
+	if domain.OrigenFolio("invalid").IsValid() {
+		t.Error("invalid OrigenFolio should not be valid")
 	}
 }
