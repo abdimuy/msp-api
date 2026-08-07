@@ -33,7 +33,7 @@ Las tres tablas de §5 del spec: `MSP_CM_ENVIO`, `MSP_CM_CURSOR`, `MSP_CM_CONFIG
 
 **0.2 — Value objects**
 `domain/tipo_comprobante.go` · `domain/estado_envio.go` · `domain/canal.go` · `domain/errors.go` · `domain/doc.go` + pruebas.
-Molde a copiar: `internal/inventario/domain/tipo_movimiento.go`.
+Molde a copiar: `internal/ventas/domain/tipo_venta.go` (enums) y `internal/ventas/domain/estado_registro.go` (estado). Ver `docs/module-standards/02-value-objects-errors.md`.
 
 **0.3 — Entidad `Envio`**
 `domain/envio.go` + pruebas.
