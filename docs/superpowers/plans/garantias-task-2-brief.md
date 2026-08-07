@@ -16,7 +16,7 @@ Dos entregables independientes; se pueden hacer en cualquier orden.
 1. `CLAUDE.md` — reglas duras. En especial la **#1 (nada de lógica en la base)** y la **#3 (código en inglés, mensajes de usuario en español)**.
 2. `migrations-firebird/000046_create_msp_rx_conversacion.up.sql` y su `.down.sql` — el modelo de encabezado, formato y cierre. Fíjate en lo corto que es el `down`.
 3. `migrations-firebird/000028_create_gen_mst_folio.up.sql` — cómo se declara un generador de folio en este proyecto.
-4. Para los enums: `internal/ventas/domain/tipo_venta.go` y su `_test.go`; para el State VO: `internal/ventas/domain/estado_registro.go`. Esos son los moldes correctos para esta tarea.
+4. Para los enums: `internal/ventas/domain/tipo_venta.go` y su `_test.go`. Para el State VO: la plantilla del estándar `02-value-objects-errors.md` y el ejemplo real `internal/garantias/domain/estado_folio.go`. **No** `internal/ventas/domain/estado_registro.go`: es un Enum VO de categoría 1 y no tiene mapa de transiciones — la cita estaba mal en el estándar y se corrigió el 2026-08-07.
 5. `docs/superpowers/specs/2026-07-27-garantias-design.md` §3 y §4 — de dónde salen las tablas y qué significa cada estado.
 
 ---
@@ -171,7 +171,7 @@ internal/garantias/domain/rol_decisor.go
 + un _test.go por cada uno
 ```
 
-Mismo patrón que `internal/ventas/domain/tipo_venta.go` (para enums) y `internal/ventas/domain/estado_registro.go` (para el State VO): `type {Tipo} string` con constantes tipadas, `Parse{Tipo}` que valida y devuelve centinela, `IsValid`, `String`, y los ayudantes `Es*` para cada valor. Para `EstadoFolio` se añade además el mapa de transiciones, `CanTransitionTo` e `IsTerminal`. No se usan `Hydrate`, `Value`, `Equals` ni `IsZero` — la hidratación desde la base se hace con un cast directo y la comparación es `==`.
+Mismo patrón que `internal/ventas/domain/tipo_venta.go` (para enums) y `internal/garantias/domain/estado_folio.go` (para el State VO): `type {Tipo} string` con constantes tipadas, `Parse{Tipo}` que valida y devuelve centinela, `IsValid`, `String`, y los ayudantes `Es*` para cada valor. Para `EstadoFolio` se añade además el mapa de transiciones, `CanTransitionTo` e `IsTerminal`. No se usan `Hydrate`, `Value`, `Equals` ni `IsZero` — la hidratación desde la base se hace con un cast directo y la comparación es `==`.
 
 Comentarios de doc **en inglés**. Mensajes de error **en español**.
 
@@ -252,7 +252,7 @@ Más de **dos horas** trabado en una sola cosa: avisa. No sigas.
 
 ## Reporte
 
-`docs/superpowers/plans/garantias-task-2-report.md`, con: archivos creados, salida literal de los siete comandos, qué copiaste de `000046` y de los moldes correctos (`tipo_venta.go` y `estado_registro.go`) y en qué se diferencia lo tuyo, y confirmación de que ningún archivo importa otro módulo.
+`docs/superpowers/plans/garantias-task-2-report.md`, con: archivos creados, salida literal de los siete comandos, qué copiaste de `000046` y de los moldes correctos (`tipo_venta.go` y `estado_folio.go`) y en qué se diferencia lo tuyo, y confirmación de que ningún archivo importa otro módulo.
 
 ## Rama y commit
 

@@ -16,7 +16,7 @@ No hay base de datos, no hay HTTP. Es Go puro con la biblioteca estándar.
 1. `CLAUDE.md` — reglas duras, en especial la **#3: código en inglés, mensajes al usuario en español**.
 2. `docs/module-standards/02-value-objects-errors.md` — las tres categorías de VO y sus checklists.
 3. `internal/ventas/domain/tipo_venta.go` — **el molde de los enums** (categoría 1). Cópialo.
-4. `internal/ventas/domain/estado_registro.go` — **el molde del estado** (categoría 2). Cópialo.
+4. Para el State VO (categoría 2), el molde es la plantilla del propio `02-value-objects-errors.md` y el ejemplo real `internal/garantias/domain/estado_folio.go`. **No** `internal/ventas/domain/estado_registro.go`: ese archivo es un Enum VO de categoría 1 y no tiene mapa de transiciones — la cita estaba mal en el estándar y se corrigió el 2026-08-07.
 5. `docs/superpowers/specs/2026-07-29-comprobantes-whatsapp-design.md` §4.3 y §5.1 — qué significa cada valor.
 
 ## El patrón, una vez
@@ -204,7 +204,7 @@ Más de **dos horas** trabado en una sola cosa: avisa. No sigas. Llegar al 99% s
 
 ## Reporte
 
-`docs/superpowers/plans/comprobantes-task-2-report.md`, con: archivos creados, salida literal de los seis comandos, qué tomaste de `internal/ventas/domain/tipo_venta.go` y `estado_registro.go` (y el estándar `02-value-objects-errors.md`) y en qué se diferencia cada tipo tuyo, y confirmación de que `domain` no importa nada fuera de la biblioteca estándar y `apperror`.
+`docs/superpowers/plans/comprobantes-task-2-report.md`, con: archivos creados, salida literal de los seis comandos, qué tomaste de `internal/ventas/domain/tipo_venta.go` y de `internal/garantias/domain/estado_folio.go` (y el estándar `02-value-objects-errors.md`) y en qué se diferencia cada tipo tuyo, y confirmación de que `domain` no importa nada fuera de la biblioteca estándar y `apperror`.
 
 ## Rama y commit
 
