@@ -67,9 +67,9 @@ func FuzzNewFolio(f *testing.F) {
 	})
 }
 
-// FuzzNewTipoMovimiento exercises NewTipoMovimiento with arbitrary string
+// FuzzParseTipoMovimiento exercises ParseTipoMovimiento with arbitrary string
 // inputs. The contract is: never panic, and only "S" and "E" are accepted.
-func FuzzNewTipoMovimiento(f *testing.F) {
+func FuzzParseTipoMovimiento(f *testing.F) {
 	seeds := []string{
 		"S", "E", "", "s", "e", "X", "SE", "ES", " S", "S ",
 		"salida", "entrada", "SALIDA", "ENTRADA",
@@ -78,14 +78,13 @@ func FuzzNewTipoMovimiento(f *testing.F) {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, s string) {
-		tm, err := domain.NewTipoMovimiento(s)
+		tm, err := domain.ParseTipoMovimiento(s)
 		if err != nil {
 			return
 		}
 		// Invariant: only "S" or "E" may be accepted.
-		v := tm.Value()
-		if v != domain.TipoMovimientoSalida && v != domain.TipoMovimientoEntrada {
-			t.Fatalf("accepted invalid tipo_movimiento: %q", v)
+		if tm != domain.TipoMovimientoSalida && tm != domain.TipoMovimientoEntrada {
+			t.Fatalf("accepted invalid tipo_movimiento: %q", tm)
 		}
 	})
 }

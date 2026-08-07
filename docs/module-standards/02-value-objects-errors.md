@@ -134,7 +134,12 @@ func (v {VO}) IsTerminal() bool {
 | IsTerminal | `(v {VO}) IsTerminal() bool` |
 | Mapa | `var valid{VO}Transitions map[{VO}][]{VO}` |
 
-Referencia real: `internal/ventas/domain/estado_registro.go`, `situacion.go`.
+Referencia real: `internal/garantias/domain/estado_folio.go` — mapa, `CanTransitionTo` e `IsTerminal`.
+
+> **Corregido 2026-08-07.** Este apartado citaba `internal/ventas/domain/estado_registro.go` y
+> `situacion.go` como referencia real, pero **ninguno de los dos tiene mapa de transiciones**: son
+> Enum VO de Categoría 1. La cita mandó a buscar un ejemplo que no existía. Hasta `estado_folio.go`
+> no había en el repositorio ningún State VO construido.
 
 ---
 
