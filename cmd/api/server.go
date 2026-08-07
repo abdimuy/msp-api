@@ -53,6 +53,9 @@ import (
 
 	reactivacionapp "github.com/abdimuy/msp-api/internal/reactivacion/app"
 	reactivacionhttp "github.com/abdimuy/msp-api/internal/reactivacion/infra/reactivacionhttp"
+
+	visitasapp "github.com/abdimuy/msp-api/internal/visitas/app"
+	visitashttp "github.com/abdimuy/msp-api/internal/visitas/infra/visitashttp"
 )
 
 // RootHandler is the assembled chi router exposed as an fx-typed dependency.
@@ -160,6 +163,7 @@ func provideRootHandler(
 	rutasSvc *rutasapp.Service,
 	configSvc *configapp.Service,
 	reactivacionSvc *reactivacionapp.Service,
+	visitasSvc *visitasapp.Service,
 	logger *slog.Logger,
 ) RootHandler {
 	r := chi.NewRouter()
@@ -210,6 +214,15 @@ func provideRootHandler(
 		MaxMultipartBytes: fiCaptureCfg.MaxMultipartBytes,
 		PathPrefixes:      []string{"/v2/cobranza/pagos"},
 		Methods:           []string{http.MethodPost},
+	})
+
+	// visitasCapture is a third capture instance scoped to the visitas
+	// write path. JSON-only (no multipart, no Blob/MaxMultipartBytes) — a
+	// visita has no comprobante attachments, unlike a pago.
+	visitasCapture := failedintent.CaptureMiddleware(failedintent.Config{
+		Store:        fiCaptureCfg.Store,
+		PathPrefixes: []string{"/v2/visitas"},
+		Methods:      []string{http.MethodPost},
 	})
 
 	// API surface. Module routers mount under /v2.
@@ -304,6 +317,18 @@ func provideRootHandler(
 		r.Group(func(r chi.Router) {
 			r.Use(skipAuthForPublicDocs(authn.Handler))
 			reactivacionhttp.MountRouter(r, reactivacionSvc)
+		})
+
+		// Visitas endpoint — write-only (POST). Capture runs INSIDE authn so
+		// the captured intent carries the planted CurrentUser (needed for
+		// /replay-with and for the internal-replay Idempotency-Key bypass in
+		// the handler). MountRouter registers the operation at bare path
+		// "/visitas", so mount on a bare Group (like rutas/config) — NOT
+		// r.Route("/visitas"), which would double the prefix to
+		// /v2/visitas/visitas. Final path: POST /v2/visitas.
+		r.Group(func(r chi.Router) {
+			r.Use(authn.Handler, visitasCapture)
+			visitashttp.MountRouter(r, visitasSvc)
 		})
 
 		// Cobranza endpoints — authn only. Read (saldos, pagos, sync) plus

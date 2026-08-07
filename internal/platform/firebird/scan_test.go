@@ -174,9 +174,15 @@ func TestScanUTCTime_FromString_NoZone(t *testing.T) {
 	got, err := firebird.ScanUTCTime("2026-03-15 10:30:00")
 	require.NoError(t, err)
 	assert.Equal(t, time.UTC, got.Location())
-	// String without zone is interpreted as time.Local and converted to UTC.
-	want := time.Date(2026, 3, 15, 10, 30, 0, 0, time.Local).UTC()
-	assert.True(t, want.Equal(got))
+	// A string with no zone is wall-clock in BusinessTZ, not in time.Local:
+	// that is the contract scanTimestampString implements. Anchoring the
+	// expectation to time.Local only agrees by accident on a machine whose
+	// local zone happens to be CDMX, and fails anywhere else (a CI runner
+	// runs in UTC). Assert against the business zone the code actually uses.
+	want := time.Date(2026, 3, 15, 10, 30, 0, 0, firebird.BusinessTZ()).UTC()
+	assert.True(t, want.Equal(got),
+		"naked timestamp must be read as wall-clock in %s: want %s got %s",
+		firebird.BusinessTZ(), want, got)
 }
 
 func TestScanUTCTime_FromString_RFC3339(t *testing.T) {

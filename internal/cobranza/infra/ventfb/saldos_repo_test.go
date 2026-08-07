@@ -663,6 +663,92 @@ func TestE2E_Saldos_DeleteCargo_GeneraTombstone(t *testing.T) {
 	})
 }
 
+// TestE2E_Saldos_DeletePago_SaldoVuelveASubir verifies that physically
+// deleting a single IMPORTES_DOCTOS_CC pago row (TIPO_IMPTE='R') — without
+// touching the parent cargo — causes the trigger MSP_SALDOS_IMPORTES_CC_AIUD
+// (migration 000010) to re-run MSP_RECOMPUTE_SALDO_VENTA, which fully
+// re-derives SALDO = PRECIO_TOTAL - TOTAL_IMPORTE - IMPTE_REST from the
+// importe rows that still exist. With the pago gone, the cached SALDO must
+// go back up by exactly the deleted pago amount, and the cargo itself must
+// remain live (not tombstoned) — contrast with
+// TestE2E_Saldos_DeleteCargo_GeneraTombstone, which deletes the whole cargo.
+//
+//nolint:paralleltest // serial: shares rollback-only tx.
+func TestE2E_Saldos_DeletePago_SaldoVuelveASubir(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		q := firebird.GetQuerier(ctx, pool.DB)
+		requireMigration000010(t, q)
+
+		clienteID, _ := seedClienteID(t, q)
+
+		cargoImporte := decimal.RequireFromString("4500.00")
+		pagoImporte := decimal.RequireFromString("800.00")
+
+		// The native Microsip trigger chain (AFECTA_SALDOS_CC) decrements
+		// SALDOS_CC.CREDITOS_CXC when a pago importe is physically deleted;
+		// pre-seed so the >= 0 CHECK constraint on SALDOS_CC does not fail
+		// (same reason preseedSaldosCC is used before deletes in
+		// pagos_repo_tombstone_test.go).
+		buffer := decimal.RequireFromString("5000.00")
+		preseedSaldosCC(t, q, clienteID, buffer)
+
+		cargoID := insertCargoDoctosCC(t, q, clienteID, "SDL-PAG1", cargoImporte)
+
+		repo := cobranzaventfb.NewSaldosRepo(pool)
+
+		// 1. Baseline: no pagos yet, saldo must equal the full precio total.
+		saldoBase, err := repo.PorCargo(ctx, cargoID)
+		if err != nil {
+			t.Skipf("trigger did not create cache row for cargo %d — verify migration 000010", cargoID)
+		}
+		require.NotNil(t, saldoBase)
+		assert.True(t, cargoImporte.Equal(saldoBase.Saldo()),
+			"baseline saldo must equal precio total: want=%s got=%s",
+			cargoImporte.StringFixed(2), saldoBase.Saldo().StringFixed(2))
+
+		// 2. Insert a pago — saldo must decrease by exactly the pago amount.
+		// This is the setup step, mirroring
+		// TestE2E_Cobranza_AbonoExterno_UpdatesSaldo — the assertion that
+		// matters is step 3 below.
+		impteID := insertPagoImporte(t, q, cargoID, pagoImporte)
+
+		saldoConPago, err := repo.PorCargo(ctx, cargoID)
+		require.NoError(t, err)
+		expectedConPago := saldoBase.Saldo().Sub(pagoImporte)
+		assert.True(t, expectedConPago.Equal(saldoConPago.Saldo()),
+			"saldo after pago mismatch: want=%s got=%s",
+			expectedConPago.StringFixed(2), saldoConPago.Saldo().StringFixed(2))
+
+		// 3. DELETE just the pago's IMPORTES_DOCTOS_CC row (NOT the cargo) —
+		// the trigger must re-derive SALDO from the importe rows that remain,
+		// raising it back up by exactly the deleted pago amount.
+		_, err = q.ExecContext(context.Background(),
+			`DELETE FROM IMPORTES_DOCTOS_CC WHERE IMPTE_DOCTO_CC_ID = ?`,
+			impteID)
+		require.NoError(t, err, "DELETE pago IMPORTES_DOCTOS_CC row")
+
+		saldoTrasBorrar, err := repo.PorCargo(ctx, cargoID)
+		require.NoError(t, err)
+		assert.True(t, saldoBase.Saldo().Equal(saldoTrasBorrar.Saldo()),
+			"saldo must return to baseline after deleting the pago: want=%s got=%s",
+			saldoBase.Saldo().StringFixed(2), saldoTrasBorrar.Saldo().StringFixed(2))
+
+		// 4. The cargo itself must remain live — deleting one pago must not
+		// tombstone the cargo (contrast with
+		// TestE2E_Saldos_DeleteCargo_GeneraTombstone, which deletes the cargo).
+		assert.False(t, saldoTrasBorrar.CargoCancelado(),
+			"cargo must remain live (not tombstoned) after deleting only its pago")
+		assert.Equal(t, 0, saldoTrasBorrar.NumPagos(),
+			"NumPagos must return to zero after deleting the only pago")
+
+		t.Logf("cargo %d: SaldoBase=%s SaldoConPago=%s SaldoTrasBorrarPago=%s",
+			cargoID, saldoBase.Saldo(), saldoConPago.Saldo(), saldoTrasBorrar.Saldo())
+	})
+}
+
 // TestE2E_Saldos_SyncPorZona_SameMillisecond_NoSkip verifies that SyncPorZona
 // does NOT silently skip rows when two rows share the exact same UPDATED_AT
 // millisecond value. The production code already implements the tie-break via

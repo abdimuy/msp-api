@@ -1,7 +1,7 @@
 package eventbus_test
 
 import (
-	"sort"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -241,11 +241,32 @@ func TestBus_UnsubscribeDuringPublish_NoDeadlock(t *testing.T) {
 
 // ── Concurrency stress test ───────────────────────────────────────────────────
 
-// TestBus_ConcurrencyStress verifies that concurrent subscribers and publishers
-// do not race and that Publish stays fast.
+// TestBus_ConcurrencyStress drives 200 subscribers × 2000 publishes (400 000
+// delivery ops) so the race detector and goleak get a wide surface to work on.
+// Its value is catching data races and goroutine leaks under load — both
+// correctness bugs.
 //
-// Scale: 200 subscribers × 2000 publishes (400 000 total ops). Full 1000×10 000
-// would be 10 M ops and takes >30 s under -race; this scale completes in <5 s.
+// It deliberately does NOT assert on elapsed time. It used to require a p99
+// under 2 ms; that assertion was removed on purpose:
+//
+//   - A wall-clock threshold measures the machine, not the code. The same
+//     commit passed on an M2 laptop and failed at 19.5 ms on a developer's
+//     WSL box. Nothing had changed but the hardware.
+//   - Under -race (how this suite always runs) the number is dominated by the
+//     race detector's 5–10× overhead, so it says nothing about the latency
+//     production actually sees.
+//   - p99 is the noisiest statistic available: it is exactly where GC pauses
+//     and OS scheduling land. Any background process moves it.
+//
+// A flaky blocking test is worse than no test — it teaches people to push with
+// --no-verify, which disables the entire gate.
+//
+// What guards the contract instead, deterministically:
+//   - TestBus_SlowSubscriber_PublishNeverBlocks — the real invariant
+//     ("Publish never blocks"), asserted as liveness rather than speed.
+//   - TestBus_PublishDoesNotAllocate — catches a per-subscriber allocation
+//     regression with a machine-independent count.
+//   - BenchmarkBus_Publish — the actual numbers, on demand, gating nobody.
 func TestBus_ConcurrencyStress(t *testing.T) {
 	t.Parallel()
 	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
@@ -253,9 +274,6 @@ func TestBus_ConcurrencyStress(t *testing.T) {
 	const (
 		numSubs    = 200
 		numPublish = 2000
-		// Under -race the Go race detector adds ~5–10× overhead.
-		// Use a generous threshold so the assertion holds in both modes.
-		p99Threshold = 2 * time.Millisecond
 	)
 
 	b := eventbus.New()
@@ -267,12 +285,8 @@ func TestBus_ConcurrencyStress(t *testing.T) {
 		unsubs[i] = unsub
 	}
 
-	// Publish and collect per-call latencies.
-	durations := make([]time.Duration, numPublish)
 	for i := range numPublish {
-		start := time.Now()
 		b.Publish("pagos_changed", []int{i})
-		durations[i] = time.Since(start)
 	}
 
 	// Unsubscribe all.
@@ -281,14 +295,84 @@ func TestBus_ConcurrencyStress(t *testing.T) {
 	}
 	b.Close()
 
-	// Compute p99.
-	sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
-	p99 := durations[int(float64(len(durations))*0.99)]
+	// Getting here without a race report, a deadlock or a leaked goroutine is
+	// most of the assertion; this pins the bookkeeping too.
+	assert.Equal(t, 0, b.SubscriberCount("pagos_changed"),
+		"every subscriber must be gone after unsubscribing")
+}
 
-	assert.Less(t, p99, p99Threshold,
-		"Publish p99 latency %v exceeds threshold %v (scale: %d subs × %d publishes)",
-		p99, p99Threshold, numSubs, numPublish,
-	)
+// ── Allocation guard ──────────────────────────────────────────────────────────
+
+// TestBus_PublishDoesNotAllocate pins the allocation cost of Publish.
+//
+// This is the machine-independent half of what the old p99 assertion was
+// reaching for. Publish walks its subscribers doing channel sends; it must not
+// allocate per subscriber. If someone introduces a copy inside that loop — the
+// classic way a fan-out turns quadratic — the count goes from constant to
+// one-per-subscriber, and this fails identically on every machine because it
+// counts allocations instead of measuring time.
+//
+// No t.Parallel(): testing.AllocsPerRun pins GOMAXPROCS while it runs.
+//
+//nolint:paralleltest // serial: testing.AllocsPerRun manipulates GOMAXPROCS.
+func TestBus_PublishDoesNotAllocate(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	const numSubs = 100
+
+	b := eventbus.New()
+	defer b.Close()
+
+	for range numSubs {
+		_, unsub := b.Subscribe("pagos_changed")
+		defer unsub()
+	}
+
+	// Allocated once, outside the measured function: what is under test is
+	// what Publish allocates, not the caller's payload.
+	ids := []int{1, 2, 3}
+
+	avg := testing.AllocsPerRun(100, func() {
+		b.Publish("pagos_changed", ids)
+	})
+
+	assert.Zero(t, avg,
+		"Publish must not allocate: got %v allocs/op with %d subscribers "+
+			"(anything above zero means the fan-out loop started copying)",
+		avg, numSubs)
+}
+
+// ── Benchmarks ────────────────────────────────────────────────────────────────
+
+// BenchmarkBus_Publish reports the real cost of Publish as the subscriber count
+// grows. This is where performance questions belong: run it on purpose with
+//
+//	go test -bench=. -run=^$ ./internal/cobranza/app/eventbus/
+//
+// and compare runs with benchstat to catch regressions with statistical
+// confidence — something a single p99 sample inside a unit test never could.
+//
+// Run it WITHOUT -race: the race detector's overhead swamps the measurement.
+func BenchmarkBus_Publish(b *testing.B) {
+	for _, numSubs := range []int{1, 10, 100, 1000} {
+		b.Run(fmt.Sprintf("subs=%d", numSubs), func(b *testing.B) {
+			bus := eventbus.New()
+			defer bus.Close()
+
+			for range numSubs {
+				_, unsub := bus.Subscribe("pagos_changed")
+				defer unsub()
+			}
+
+			ids := []int{1, 2, 3}
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				bus.Publish("pagos_changed", ids)
+			}
+		})
+	}
 }
 
 // ── Rapid property tests ──────────────────────────────────────────────────────

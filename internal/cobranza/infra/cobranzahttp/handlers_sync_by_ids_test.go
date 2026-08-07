@@ -211,6 +211,62 @@ func TestByIDs_Pagos_HappyPath(t *testing.T) {
 	assert.Equal(t, 103, dtos[2].ImpteDoctoCCID)
 }
 
+// TestByIDs_Pagos_PagoRecibidoID_RoundTrips verifies that Pago.PagoRecibidoID
+// round-trips through the DTO as JSON field "pago_recibido_id": present with
+// the UUID string when set, and omitted entirely (omitempty on *string) when
+// nil — the legacy-pago case (no matching MSP_PAGOS_RECIBIDOS row).
+func TestByIDs_Pagos_PagoRecibidoID_RoundTrips(t *testing.T) {
+	t.Parallel()
+
+	recibidoID := "b7e6c9d0-1234-4abc-9def-0123456789ab"
+	now := time.Date(2026, 5, 15, 10, 0, 0, 0, time.UTC)
+	zonaID := 21552
+
+	withRecibido := domain.HydratePago(domain.HydratePagoParams{
+		ImpteDoctoCCID: 201,
+		DoctoCCID:      1201,
+		DoctoCCAcrID:   2201,
+		ClienteID:      11486,
+		ZonaClienteID:  &zonaID,
+		Folio:          "CV-2026-002",
+		ConceptoCCID:   87327,
+		Fecha:          now,
+		Importe:        decimal.NewFromInt(500),
+		Impuesto:       decimal.NewFromInt(0),
+		Cancelado:      false,
+		Aplicado:       true,
+		UpdatedAt:      now,
+		PagoRecibidoID: &recibidoID,
+	})
+	legacy := makePago(202, zonaID) // PagoRecibidoID left nil
+
+	pagosRepo := &fakePagosByIDsRepo{rows: []domain.Pago{withRecibido, legacy}}
+	handler := mountByIDsRouter(byIDsUser(), pagosRepo, &fakeVentasByIDsRepo{})
+
+	req := httptest.NewRequest(http.MethodGet, "/sync/pagos/by-ids?zona_id=21552&ids=201,202", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	// Assert against the raw JSON (not just the typed DTO) so omitempty
+	// behavior — the key being absent, not merely null — is actually verified.
+	var raw []map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &raw))
+	require.Len(t, raw, 2)
+
+	assert.Equal(t, recibidoID, raw[0]["pago_recibido_id"], "pago_recibido_id must round-trip verbatim when set")
+	_, present := raw[1]["pago_recibido_id"]
+	assert.False(t, present, "pago_recibido_id must be omitted entirely for a legacy pago (nil, omitempty)")
+
+	var dtos []cobranzahttp.PagoDTO
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dtos))
+	require.Len(t, dtos, 2)
+	require.NotNil(t, dtos[0].PagoRecibidoID)
+	assert.Equal(t, recibidoID, *dtos[0].PagoRecibidoID)
+	assert.Nil(t, dtos[1].PagoRecibidoID)
+}
+
 func TestByIDs_Pagos_EmptyIDs(t *testing.T) {
 	t.Parallel()
 
