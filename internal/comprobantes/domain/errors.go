@@ -27,9 +27,4 @@ var (
 		"receipt_channel_invalid",
 		"canal de envío inválido",
 	)
-	// ErrMotivoSupresionInvalido is returned for any value other than "rebote".
-	ErrMotivoSupresionInvalido = apperror.NewValidation(
-		"receipt_suppression_reason_invalid",
-		"motivo de supresión inválido",
-	)
 )

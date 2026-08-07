@@ -2,29 +2,30 @@ package domain_test
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/abdimuy/msp-api/internal/comprobantes/domain"
 )
 
-func TestNewCanal_HappyPath(t *testing.T) {
+func TestParseCanal_HappyPath(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		input  string
+		input  domain.Canal
 		esReal bool
 	}{
 		{domain.CanalLocal, false},
 		{domain.CanalWhatsappBusiness, true},
 	}
 	for _, tc := range cases {
-		t.Run(tc.input, func(t *testing.T) {
+		t.Run(string(tc.input), func(t *testing.T) {
 			t.Parallel()
-			got, err := domain.NewCanal(tc.input)
+			got, err := domain.ParseCanal(string(tc.input))
 			if err != nil {
 				t.Fatalf("expected no error for %q, got %v", tc.input, err)
 			}
-			if got.Value() != tc.input {
-				t.Fatalf("value mismatch: want %q got %q", tc.input, got.Value())
+			if got != tc.input {
+				t.Fatalf("value mismatch: want %q got %q", tc.input, got)
 			}
 			if got.EsReal() != tc.esReal {
 				t.Fatalf("EsReal mismatch for %q", tc.input)
@@ -33,13 +34,13 @@ func TestNewCanal_HappyPath(t *testing.T) {
 	}
 }
 
-func TestNewCanal_RejectsInvalid(t *testing.T) {
+func TestParseCanal_RejectsInvalid(t *testing.T) {
 	t.Parallel()
 	cases := []string{"", "Local", "WHATSAPP_BUSINESS", "X", "local ", " whatsapp_business", "telegram", "sms"}
 	for _, tc := range cases {
-		t.Run(tc+"_invalid", func(t *testing.T) {
+		t.Run(fmt.Sprintf("%q_invalid", tc), func(t *testing.T) {
 			t.Parallel()
-			_, err := domain.NewCanal(tc)
+			_, err := domain.ParseCanal(tc)
 			if err == nil {
 				t.Fatalf("expected error for %q, got nil", tc)
 			}
@@ -50,33 +51,26 @@ func TestNewCanal_RejectsInvalid(t *testing.T) {
 	}
 }
 
-func TestCanal_EqualsAndIsZero(t *testing.T) {
+func TestCanal_IsValid(t *testing.T) {
 	t.Parallel()
-	l, _ := domain.NewCanal(domain.CanalLocal)
-	l2, _ := domain.NewCanal(domain.CanalLocal)
-	w, _ := domain.NewCanal(domain.CanalWhatsappBusiness)
-
-	if !l.Equals(l2) {
-		t.Fatal("expected l.Equals(l2) == true")
+	if !domain.CanalLocal.IsValid() {
+		t.Fatal("expected CanalLocal to be valid")
 	}
-	if l.Equals(w) {
-		t.Fatal("expected l.Equals(w) == false")
+	if !domain.CanalWhatsappBusiness.IsValid() {
+		t.Fatal("expected CanalWhatsappBusiness to be valid")
 	}
-
-	zero := domain.HydrateCanal("")
-	if !zero.IsZero() {
-		t.Fatal("expected IsZero == true for empty canal")
-	}
-	if l.IsZero() {
-		t.Fatal("expected IsZero == false for valid canal")
+	for _, invalid := range []domain.Canal{"", "local ", "LOCAL", "telegram", "whatsapp"} {
+		if invalid.IsValid() {
+			t.Fatalf("expected %q to be invalid", invalid)
+		}
 	}
 }
 
 func TestCanal_String(t *testing.T) {
 	t.Parallel()
-	c, _ := domain.NewCanal(domain.CanalLocal)
-	if c.String() != domain.CanalLocal {
-		t.Fatalf("expected %q, got %q", domain.CanalLocal, c.String())
+	c, _ := domain.ParseCanal(string(domain.CanalLocal))
+	if c.String() != string(domain.CanalLocal) {
+		t.Fatalf("expected %q, got %q", string(domain.CanalLocal), c.String())
 	}
 }
 
@@ -87,21 +81,5 @@ func TestCanalConstants(t *testing.T) {
 	}
 	if domain.CanalWhatsappBusiness != "whatsapp_business" {
 		t.Fatalf("expected CanalWhatsappBusiness='whatsapp_business', got %q", domain.CanalWhatsappBusiness)
-	}
-}
-
-func TestHydrateCanal_AcceptsGarbage(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []string{"", "garbage", "LOCAL", "123"} {
-		t.Run(tc+"_hydrate", func(t *testing.T) {
-			t.Parallel()
-			hydrated := domain.HydrateCanal(tc)
-			if hydrated.Value() != tc {
-				t.Fatalf("expected value %q, got %q", tc, hydrated.Value())
-			}
-			if !hydrated.Equals(domain.HydrateCanal(tc)) {
-				t.Fatal("expected hydrated values to be equal")
-			}
-		})
 	}
 }

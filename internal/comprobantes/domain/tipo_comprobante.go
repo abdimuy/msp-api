@@ -1,42 +1,41 @@
 package domain
 
-// TipoVenta identifies a receipt for a sale registered in Microsip.
-const TipoVenta = "venta"
+// TipoComprobante enumerates which event produced the receipt.
+type TipoComprobante string
 
-// TipoPago identifies a receipt for a payment applied in Microsip.
-const TipoPago = "pago"
+// TipoComprobante enum values. The string forms match the persisted column
+// values in MSP_CM_ENVIO.TIPO.
+const (
+	// TipoVenta identifies a receipt for a sale registered in Microsip.
+	TipoVenta TipoComprobante = "venta"
+	// TipoPago identifies a receipt for a payment applied in Microsip.
+	TipoPago TipoComprobante = "pago"
+)
 
-// TipoComprobante is a value object wrapping which event produced the
-// receipt. Only "venta" and "pago" are valid.
-type TipoComprobante struct{ value string }
-
-// NewTipoComprobante validates and constructs a TipoComprobante. Rejects
-// anything else with ErrTipoComprobanteInvalido.
-func NewTipoComprobante(s string) (TipoComprobante, error) {
-	if s != TipoVenta && s != TipoPago {
-		return TipoComprobante{}, ErrTipoComprobanteInvalido
+// ParseTipoComprobante parses a string into a TipoComprobante or returns
+// ErrTipoComprobanteInvalido.
+func ParseTipoComprobante(s string) (TipoComprobante, error) {
+	t := TipoComprobante(s)
+	if !t.IsValid() {
+		return "", ErrTipoComprobanteInvalido
 	}
-	return TipoComprobante{value: s}, nil
+	return t, nil
 }
 
-// HydrateTipoComprobante rebuilds one from persistence without validation.
-// Intended for repository use only.
-func HydrateTipoComprobante(s string) TipoComprobante { return TipoComprobante{value: s} }
+// IsValid reports whether t is a recognized TipoComprobante.
+func (t TipoComprobante) IsValid() bool {
+	switch t {
+	case TipoVenta, TipoPago:
+		return true
+	}
+	return false
+}
 
-// Value returns the raw receipt type string ("venta" or "pago").
-func (t TipoComprobante) Value() string { return t.value }
-
-// String returns the receipt type string representation.
-func (t TipoComprobante) String() string { return t.value }
-
-// Equals reports whether two TipoComprobante values are identical.
-func (t TipoComprobante) Equals(other TipoComprobante) bool { return t.value == other.value }
-
-// IsZero reports whether the TipoComprobante has its zero value (empty string).
-func (t TipoComprobante) IsZero() bool { return t.value == "" }
+// String returns the canonical string representation.
+func (t TipoComprobante) String() string { return string(t) }
 
 // EsVenta reports whether this is a receipt for a sale.
-func (t TipoComprobante) EsVenta() bool { return t.value == TipoVenta }
+func (t TipoComprobante) EsVenta() bool { return t == TipoVenta }
 
 // EsPago reports whether this is a receipt for a payment.
-func (t TipoComprobante) EsPago() bool { return t.value == TipoPago }
+func (t TipoComprobante) EsPago() bool { return t == TipoPago }

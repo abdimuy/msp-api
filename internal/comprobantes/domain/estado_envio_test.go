@@ -2,44 +2,43 @@ package domain_test
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/abdimuy/msp-api/internal/comprobantes/domain"
 )
 
-func TestNewEstadoEnvio_HappyPath(t *testing.T) {
+func TestParseEstadoEnvio_HappyPath(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		input string
-	}{
-		{domain.EstadoEnvioEnEspera},
-		{domain.EstadoEnvioEnviando},
-		{domain.EstadoEnvioEnviado},
-		{domain.EstadoEnvioDetenido},
-		{domain.EstadoEnvioFallido},
-		{domain.EstadoEnvioSinTelefono},
+	cases := []domain.EstadoEnvio{
+		domain.EstadoEnvioEnEspera,
+		domain.EstadoEnvioEnviando,
+		domain.EstadoEnvioEnviado,
+		domain.EstadoEnvioDetenido,
+		domain.EstadoEnvioFallido,
+		domain.EstadoEnvioSinTelefono,
 	}
-	for _, tc := range cases {
-		t.Run(tc.input, func(t *testing.T) {
+	for _, input := range cases {
+		t.Run(string(input), func(t *testing.T) {
 			t.Parallel()
-			got, err := domain.NewEstadoEnvio(tc.input)
+			got, err := domain.ParseEstadoEnvio(string(input))
 			if err != nil {
-				t.Fatalf("expected no error for %q, got %v", tc.input, err)
+				t.Fatalf("expected no error for %q, got %v", input, err)
 			}
-			if got.Value() != tc.input {
-				t.Fatalf("value mismatch: want %q got %q", tc.input, got.Value())
+			if got != input {
+				t.Fatalf("value mismatch: want %q got %q", input, got)
 			}
 		})
 	}
 }
 
-func TestNewEstadoEnvio_RejectsInvalid(t *testing.T) {
+func TestParseEstadoEnvio_RejectsInvalid(t *testing.T) {
 	t.Parallel()
 	cases := []string{"", "EnEspera", "ENVIADO", "X", "en_espera ", " enviando", "cancelado", "pendiente"}
 	for _, tc := range cases {
-		t.Run(tc+"_invalid", func(t *testing.T) {
+		t.Run(fmt.Sprintf("%q_invalid", tc), func(t *testing.T) {
 			t.Parallel()
-			_, err := domain.NewEstadoEnvio(tc)
+			_, err := domain.ParseEstadoEnvio(tc)
 			if err == nil {
 				t.Fatalf("expected error for %q, got nil", tc)
 			}
@@ -53,30 +52,30 @@ func TestNewEstadoEnvio_RejectsInvalid(t *testing.T) {
 func TestEstadoEnvio_ExhaustiveHelpers(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		input       string
+		input       domain.EstadoEnvio
 		esDetenible bool
-		esTerminal  bool
+		isTerminal  bool
 		esFalla     bool
 	}{
 		{domain.EstadoEnvioEnEspera, true, false, false},
 		{domain.EstadoEnvioEnviando, false, false, false},
 		{domain.EstadoEnvioEnviado, false, true, false},
 		{domain.EstadoEnvioDetenido, false, true, false},
-		{domain.EstadoEnvioFallido, false, true, true},
+		{domain.EstadoEnvioFallido, false, false, true},
 		{domain.EstadoEnvioSinTelefono, false, true, false},
 	}
 	for _, tc := range cases {
-		t.Run(tc.input, func(t *testing.T) {
+		t.Run(string(tc.input), func(t *testing.T) {
 			t.Parallel()
-			got, err := domain.NewEstadoEnvio(tc.input)
+			got, err := domain.ParseEstadoEnvio(string(tc.input))
 			if err != nil {
 				t.Fatalf("expected no error for %q, got %v", tc.input, err)
 			}
 			if got.EsDetenible() != tc.esDetenible {
 				t.Fatalf("EsDetenible mismatch for %q: want %v got %v", tc.input, tc.esDetenible, got.EsDetenible())
 			}
-			if got.EsTerminal() != tc.esTerminal {
-				t.Fatalf("EsTerminal mismatch for %q: want %v got %v", tc.input, tc.esTerminal, got.EsTerminal())
+			if got.IsTerminal() != tc.isTerminal {
+				t.Fatalf("IsTerminal mismatch for %q: want %v got %v", tc.input, tc.isTerminal, got.IsTerminal())
 			}
 			if got.EsFalla() != tc.esFalla {
 				t.Fatalf("EsFalla mismatch for %q: want %v got %v", tc.input, tc.esFalla, got.EsFalla())
@@ -85,33 +84,41 @@ func TestEstadoEnvio_ExhaustiveHelpers(t *testing.T) {
 	}
 }
 
-func TestEstadoEnvio_EqualsAndIsZero(t *testing.T) {
+func TestEstadoEnvio_CanTransitionTo(t *testing.T) {
 	t.Parallel()
-	ee, _ := domain.NewEstadoEnvio(domain.EstadoEnvioEnEspera)
-	ee2, _ := domain.NewEstadoEnvio(domain.EstadoEnvioEnEspera)
-	f, _ := domain.NewEstadoEnvio(domain.EstadoEnvioFallido)
-
-	if !ee.Equals(ee2) {
-		t.Fatal("expected ee.Equals(ee2) == true")
+	cases := []struct {
+		from   domain.EstadoEnvio
+		to     domain.EstadoEnvio
+		expect bool
+	}{
+		{domain.EstadoEnvioEnEspera, domain.EstadoEnvioEnviando, true},
+		{domain.EstadoEnvioEnEspera, domain.EstadoEnvioDetenido, true},
+		{domain.EstadoEnvioEnviando, domain.EstadoEnvioEnviado, true},
+		{domain.EstadoEnvioEnviando, domain.EstadoEnvioFallido, true},
+		{domain.EstadoEnvioFallido, domain.EstadoEnvioEnEspera, true},
+		{domain.EstadoEnvioEnEspera, domain.EstadoEnvioEnviado, false},
+		{domain.EstadoEnvioEnviando, domain.EstadoEnvioEnEspera, false},
+		{domain.EstadoEnvioEnviado, domain.EstadoEnvioFallido, false},
+		{domain.EstadoEnvioDetenido, domain.EstadoEnvioEnEspera, false},
+		{domain.EstadoEnvioFallido, domain.EstadoEnvioEnviado, false},
+		{domain.EstadoEnvioSinTelefono, domain.EstadoEnvioEnEspera, false},
 	}
-	if ee.Equals(f) {
-		t.Fatal("expected ee.Equals(f) == false")
-	}
-
-	zero := domain.HydrateEstadoEnvio("")
-	if !zero.IsZero() {
-		t.Fatal("expected IsZero == true for empty estado_envio")
-	}
-	if ee.IsZero() {
-		t.Fatal("expected IsZero == false for valid estado_envio")
+	for _, tc := range cases {
+		name := fmt.Sprintf("%s_to_%s", tc.from, tc.to)
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.from.CanTransitionTo(tc.to); got != tc.expect {
+				t.Fatalf("CanTransitionTo(%s -> %s) = %v, want %v", tc.from, tc.to, got, tc.expect)
+			}
+		})
 	}
 }
 
 func TestEstadoEnvio_String(t *testing.T) {
 	t.Parallel()
-	ee, _ := domain.NewEstadoEnvio(domain.EstadoEnvioEnviado)
-	if ee.String() != domain.EstadoEnvioEnviado {
-		t.Fatalf("expected %q, got %q", domain.EstadoEnvioEnviado, ee.String())
+	ee, _ := domain.ParseEstadoEnvio(string(domain.EstadoEnvioEnviado))
+	if ee.String() != string(domain.EstadoEnvioEnviado) {
+		t.Fatalf("expected %q, got %q", string(domain.EstadoEnvioEnviado), ee.String())
 	}
 }
 
@@ -119,7 +126,7 @@ func TestEstadoEnvioConstants(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
-		got  string
+		got  domain.EstadoEnvio
 		want string
 	}{
 		{"EnEspera", domain.EstadoEnvioEnEspera, "en_espera"},
@@ -132,24 +139,8 @@ func TestEstadoEnvioConstants(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if tc.got != tc.want {
-				t.Fatalf("expected constant value %q, got %q", tc.want, tc.got)
-			}
-		})
-	}
-}
-
-func TestHydrateEstadoEnvio_AcceptsGarbage(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []string{"", "garbage", "ENVIADO", "123"} {
-		t.Run(tc+"_hydrate", func(t *testing.T) {
-			t.Parallel()
-			hydrated := domain.HydrateEstadoEnvio(tc)
-			if hydrated.Value() != tc {
-				t.Fatalf("expected value %q, got %q", tc, hydrated.Value())
-			}
-			if !hydrated.Equals(domain.HydrateEstadoEnvio(tc)) {
-				t.Fatal("expected hydrated values to be equal")
+			if string(tc.got) != tc.want {
+				t.Fatalf("expected constant value %q, got %q", tc.want, string(tc.got))
 			}
 		})
 	}

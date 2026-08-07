@@ -12,11 +12,9 @@ internal/comprobantes/domain/errors.go
 internal/comprobantes/domain/tipo_comprobante.go
 internal/comprobantes/domain/estado_envio.go
 internal/comprobantes/domain/canal.go
-internal/comprobantes/domain/motivo_supresion.go
 internal/comprobantes/domain/tipo_comprobante_test.go
 internal/comprobantes/domain/estado_envio_test.go
 internal/comprobantes/domain/canal_test.go
-internal/comprobantes/domain/motivo_supresion_test.go
 ```
 
 **Archivo adicional fuera de la lista del brief (aprobado por el responsable):**
@@ -62,10 +60,12 @@ ok  	github.com/abdimuy/msp-api/internal/comprobantes/domain	2.943s	coverage: 10
 PASS
 ```
 
-Todos los tests pasan con el detector de carreras activo: 28 funciones de test,
-incluyendo la tabla exhaustiva de `EstadoEnvio` (6 valores ×
-`EsDetenible`/`EsTerminal`/`EsFalla`) y la comprobación explícita de que
-`sin_telefono` **no** es falla.
+Todos los tests pasan con el detector de carreras activo: 16 funciones de test
+(6 en `estado_envio_test.go`, 5 en `canal_test.go` y 5 en
+`tipo_comprobante_test.go`), incluyendo la tabla exhaustiva de `EstadoEnvio`
+(6 valores × `EsDetenible`/`IsTerminal`/`EsFalla`), la cobertura de
+`CanTransitionTo` sobre todas las aristas del mapa (incluida `fallido →
+en_espera`) y la comprobación explícita de que `sin_telefono` **no** es falla.
 
 ### 6. `go tool cover -func=coverage-comprobantes-domain.out | tail -1`
 
@@ -75,19 +75,27 @@ total:										(statements)		100.0%
 
 Cobertura de `domain`: **100.0%** (piso del gate: 99.0%).
 
-## Qué se tomó de `tipo_movimiento.go` y diferencias por tipo
+## Qué se tomó de `ventas` y diferencias por tipo
 
-Molde estructural copiado de `internal/inventario/domain/tipo_movimiento.go`:
-dos constantes públicas por valor, struct privado `{ value string }`,
-constructor validador `New*`, `Hydrate*` sin validación, y los métodos
-`Value()`, `String()`, `Equals()`, `IsZero()` con la misma semántica.
+Molde tomado de `docs/module-standards/02-value-objects-errors.md` (categoría 1
+enum y categoría 2 state), con las referencias reales
+`internal/ventas/domain/tipo_venta.go` y `estado_registro.go`: tipo
+`string`-backed, constantes tipadas por valor, y para los enums
+exactamente `Parse`/`IsValid`/`String`; para el estado, además
+`CanTransitionTo`, `IsTerminal` y el mapa de transiciones. Se eliminaron los
+métodos `New*`/`Hydrate*`/`Value()`/`Equals()`/`IsZero()` del molde original
+del brief (`tipo_movimiento.go`): hidratar es un cast (`Canal(row.Canal)`),
+comparar es `==`, y el valor cero es `== ""`.
 
-| Tipo | Constantes | Ayudantes | Diferencias frente al molde |
+| Tipo | Constantes | Métodos | Diferencias frente al molde |
 |---|---|---|---|
-| `TipoComprobante` | `TipoVenta`, `TipoPago` | `EsVenta()`, `EsPago()` | Idéntico al molde; dos valores (`venta`/`pago`) en vez de `S`/`E`. |
-| `EstadoEnvio` | 6 constantes `EstadoEnvio*` | `EsDetenible()`, `EsTerminal()`, `EsFalla()` | Tres ayudantes en vez de dos; `EsTerminal()` usa un `switch` explícito sobre los 4 estados finales para que quede documentado en código cuáles son. `EsFalla()` es `== fallido` a propósito (ver abajo). |
-| `Canal` | `CanalLocal`, `CanalWhatsappBusiness` | `EsReal()` | Un ayudante. `EsReal()` solo es true para `whatsapp_business` para que un envío de prueba nunca cuente como entregado. |
-| `MotivoSupresion` | `MotivoSupresionRebote` | `EsRebote()` | Un solo valor válido por ahora; el constructor rechaza todo lo que no sea `rebote`. Se modela como VO (y no constante suelta) porque aparecerán más motivos. |
+| `TipoComprobante` | `TipoVenta`, `TipoPago` | `Parse`, `IsValid`, `String`, `EsVenta()`, `EsPago()` | Enum VO; dos valores (`venta`/`pago`). |
+| `EstadoEnvio` | 6 constantes `EstadoEnvio*` | `Parse`, `IsValid`, `String`, `CanTransitionTo`, `IsTerminal`, `EsDetenible()`, `EsFalla()` | State VO con `validEstadoEnvioTransitions` (spec §4.3 + `fallido → en_espera` por `/reenviar`). `EsFalla()` es `== fallido` a propósito (ver abajo). |
+| `Canal` | `CanalLocal`, `CanalWhatsappBusiness` | `Parse`, `IsValid`, `String`, `EsReal()` | Enum VO. `EsReal()` solo es true para `whatsapp_business` para que un envío de prueba nunca cuente como entregado. |
+
+`MotivoSupresion` **no está**: no aparece en el spec (solo en el brief), y la
+única fuente de rebotes son los webhooks de Meta, fuera de v1 (§12). Se eliminó
+junto con su sentinela `ErrMotivoSupresionInvalido` en la corrección post-revisión.
 
 **Nota de diseño de `EstadoEnvio`:** `EsFalla()` devuelve true **solo** para
 `fallido`. `sin_telefono` es terminal pero no falla: con ~68.8% de cobertura de
@@ -95,6 +103,11 @@ teléfono, un tercio de los envíos cae en `sin_telefono`, y contarlo como falla
 llenaría la bitácora de ruido y dispararía reintentos a clientes sin teléfono.
 La prueba `TestEstadoEnvio_ExhaustiveHelpers` verifica explícitamente que
 `sin_telefono` → `EsFalla() == false`.
+
+`fallido` **no** es terminal: el `UNIQUE (TIPO, REFERENCIA)` de `MSP_CM_ENVIO`
+(§5.1) obliga a que `POST /{id}/reenviar` reúse la fila y vuelva a `en_espera`
+incrementando `INTENTOS`, así que `fallido → en_espera` es una transición válida
+del mapa y `IsTerminal()` solo cubre `enviado`, `detenido` y `sin_telefono`.
 
 ## Confirmación de imports
 
@@ -119,9 +132,14 @@ La prueba `TestEstadoEnvio_ExhaustiveHelpers` verifica explícitamente que
 
 ## Rama y commit
 
-Commit único en `feat/comprobantes-domain`, sin push (no hay acceso de escritura
-al remoto):
+La rama `feat/comprobantes-domain` se subió al remoto y es el PR #7. El commit
+de esta tarea es:
 
 ```
-feat(comprobantes): value objects y errores del dominio
+feat(comprobantes): add domain value objects and sentinel errors
 ```
+
+Este reporte se corrigió tras la revisión del PR #7 (CHANGES_REQUESTED):
+los VOs se convirtieron a las categorías 1 y 2 del estándar
+(`docs/module-standards/02-value-objects-errors.md`), se eliminó
+`MotivoSupresion` y su sentinela, y este documento refleja el estado final.
