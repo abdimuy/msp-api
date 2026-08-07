@@ -3,7 +3,8 @@
 - **Fecha:** 2026-07-27
 - **Estado:** aprobado, listo para plan de implementación
 - **Módulo:** `internal/garantias`
-- **Migración:** `000047_create_msp_ga_garantias`
+- **Migración:** `000050_create_msp_ga_garantias`
+- **Nota:** la `000047` se reasignó a `MSP_VISITAS` (rama `feat/visitas`), que ya tiene código escrito. La `000048` la reserva asistencia y la `000049` comprobantes. **Antes de escribir la migración, correr `ls migrations-firebird/` y confirmar que la 50 sigue libre** — con varios módulos en vuelo el número es donde chocan.
 - **Prefijo de tablas:** `MSP_GA_*`
 
 ## 1. Objetivo
@@ -37,7 +38,9 @@ Garantías se construye como **vertical slice sellado**, siguiendo [ADR-0009](..
 - El módulo posee su cableado: `internal/garantias/module.go` expone un `fx.Option` que el composition root incluye en una línea.
 - Firebird queda detrás de los repositorios. `firebird.ToWallClock` y `firebird.ScanUTCTime` no aparecen en `domain` ni en `app`.
 
-**Garantías es el primer módulo sellado que existe.** ADR-0009 está escrito pero `internal/asistencia` no se ha construido, y el target `make check-sealed` está codificado contra ese nombre. Parte del trabajo es generalizarlo para que reciba el módulo como parámetro, y añadir la regla `garantias-sealed` en `.golangci.yml`.
+**Garantías es el primer módulo sellado que se construye.** ADR-0009 está escrito pero `internal/asistencia` no existe todavía.
+
+El andamiaje ya está puesto (commit `f6c53ab` en `main`): `make check-sealed` recorre los módulos de `SEALED_MODULES` y omite los que aún no existen, y `.golangci.yml` tiene la regla `garantias-sealed` que prohíbe estáticamente importar cualquier `internal/` que no sea el propio módulo o `platform`. Ambos verificados contra una fuga real antes de commitear. `make check-sealed` corre en `pre-push`.
 
 ### 2.2 La costura con auth
 
@@ -334,7 +337,7 @@ Adicionalmente, específico de este módulo:
 
 **Barrido de seguridad** table-driven sobre las catorce rutas, verificando el permiso exigido en cada una.
 
-**`make check-sealed garantias`** corre en cada entrega, no al final. Es lo que impide que el módulo se cablee a `clientes` o a `ventas` y que se descubra semanas después.
+**`make check-sealed`** corre en cada entrega vía `pre-push`, no al final. Es lo que impide que el módulo se cablee a `clientes` o a `ventas` y que se descubra semanas después.
 
 Los tests de integración se envuelven en `fbtestutil.WithTestTransaction` para que las escrituras se reviertan y la base compartida de desarrollo no acumule estado.
 
@@ -359,8 +362,8 @@ Ninguno bloquea la construcción: el primero se resuelve editando `transiciones.
 Dos reglas gobiernan el corte: los contratos se fijan antes que nada, y **dos tareas nunca escriben el mismo archivo**.
 
 **Tanda 0 — el molde (secuencial, bloquea todo)**
-1. Generalizar `make check-sealed` a un módulo parametrizable + regla `garantias-sealed` en `.golangci.yml`.
-2. Migración `000047` — las cuatro tablas y el generador de folio.
+1. ~~Generalizar `make check-sealed` + regla `garantias-sealed`~~ — **hecho** en `main` (`f6c53ab`). Basta con sacar la rama de `main` al día.
+2. Migración `000050` — las cuatro tablas y el generador de folio. Confirmar antes que el número siga libre.
 3. `domain/` — value objects, catálogos, entidades, `transiciones.go`, errores centinela.
 4. `ports/outbound/` + `garantias_contracts.go`.
 
