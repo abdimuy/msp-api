@@ -134,6 +134,34 @@ func TestRevocarPermisoDeRol_Returns204(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
 }
 
+// TestRevocarPermisoDeRol_EncodedCodigo_Revoca reproduce el bug: el FE manda el
+// ':' del código percent-encoded (encodeURIComponent → %3A). chi enruta sobre
+// el path escapado, así que sin decodificar el handler revocaba un código
+// distinto ("usuarios%3Alistar") y el permiso real quedaba intacto pese al 204.
+func TestRevocarPermisoDeRol_EncodedCodigo_Revoca(t *testing.T) {
+	t.Parallel()
+	rig := newTestRig(t)
+	caller := rig.seedUsuario(t, "fbuid-admin", "admin@example.com", "Admin")
+	rol := rig.seedRol(t, "vendedor")
+	require.NoError(t, rig.roles.AsignarPermiso(
+		context.Background(), rol.ID(), domain.PermUsuariosListar, caller.ID(), rig.clockTime,
+	))
+
+	r := mountWithCurrentUser(rig, adminCurrentUser(caller))
+	req := httptest.NewRequest(
+		http.MethodDelete,
+		"/roles/"+rol.ID().String()+"/permisos/usuarios%3Alistar",
+		nil,
+	)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+
+	perms, err := rig.roles.PermisosFor(context.Background(), rol.ID())
+	require.NoError(t, err)
+	assert.NotContains(t, perms, domain.PermUsuariosListar)
+}
+
 // ─── ObtenerPermisosDeRol ───────────────────────────────────────────────────
 
 func TestObtenerPermisosDeRol_HappyPath(t *testing.T) {

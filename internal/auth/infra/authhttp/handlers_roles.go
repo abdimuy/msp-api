@@ -2,6 +2,7 @@ package authhttp
 
 import (
 	"net/http"
+	"net/url"
 
 	"github.com/go-chi/chi/v5"
 
@@ -181,7 +182,14 @@ func (h *Handlers) RevocarPermisoDeRol(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
+	// Permission codes are "categoria:accion" — the ':' arrives percent-encoded
+	// (%3A) from encodeURIComponent. chi routes on the escaped path, so
+	// URLParam returns the still-encoded segment; decode it or the DELETE would
+	// silently match nothing (RevocarPermiso is idempotent → false 204).
 	codigo := chi.URLParam(r, "codigo")
+	if decoded, derr := url.PathUnescape(codigo); derr == nil {
+		codigo = decoded
+	}
 	if codigo == "" {
 		response.Error(w, r, apperror.NewValidation("invalid_codigo", "el código del permiso es obligatorio"))
 		return
