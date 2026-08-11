@@ -110,7 +110,20 @@ func (h *byIDsHandlers) getSaldosByIDs(w http.ResponseWriter, r *http.Request) {
 		writeAppErrorCobranza(w, err)
 		return
 	}
-	writeByIDsJSON(w, marshalVentaDTOs(ventasToDTOs(ventas)))
+	pvIDs := make([]int, 0, len(ventas))
+	for _, v := range ventas {
+		if pv := v.DoctoPVID(); pv != nil {
+			pvIDs = append(pvIDs, *pv)
+		}
+	}
+	productos, err := h.ventasRepo.ProductosByPVIDs(ctx, pvIDs)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "cobranza.by_ids_saldos_productos_failed",
+			slog.Int("zona_id", zonaID), slog.Int("ids_count", len(ids)), slog.Any("error", err))
+		writeAppErrorCobranza(w, err)
+		return
+	}
+	writeByIDsJSON(w, marshalVentaDTOs(ventasToDTOs(ventas, productos)))
 }
 
 // ─── Shared parse logic ────────────────────────────────────────────────────────
@@ -192,10 +205,14 @@ func pagosToDTOs(pagos []domain.Pago) []PagoDTO {
 	return dtos
 }
 
-func ventasToDTOs(ventas []domain.Venta) []VentaDTO {
+func ventasToDTOs(ventas []domain.Venta, productos map[int][]domain.ProductoVenta) []VentaDTO {
 	dtos := make([]VentaDTO, len(ventas))
 	for i, v := range ventas {
-		dtos[i] = toVentaDTO(v)
+		var ps []domain.ProductoVenta
+		if pv := v.DoctoPVID(); pv != nil {
+			ps = productos[*pv]
+		}
+		dtos[i] = toVentaDTO(v, ps)
 	}
 	return dtos
 }
