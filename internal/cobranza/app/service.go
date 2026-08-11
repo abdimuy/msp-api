@@ -247,6 +247,12 @@ func (s *Service) SyncVentasPorZona(
 	return s.ventas.SyncPorZona(ctx, zonaID, cursor, afterID, limit, optionalDesdeOrZero(desde))
 }
 
+// ProductosPorPVIDs returns the sale line items for the given DOCTOS_PV IDs,
+// keyed by DOCTO_PV_ID. Used by the ventas sync handlers to embed productos.
+func (s *Service) ProductosPorPVIDs(ctx context.Context, pvIDs []int) (map[int][]domain.ProductoVenta, error) {
+	return s.ventas.ProductosByPVIDs(ctx, pvIDs)
+}
+
 // optionalDesdeOrZero unwraps a nullable desde for the sync repos, which take
 // time.Time{} as the "no cutoff" sentinel. Sync no honra `ventana_dias` (la
 // app móvil pasa siempre la fecha absoluta de FECHA_CARGA_INICIAL), por eso

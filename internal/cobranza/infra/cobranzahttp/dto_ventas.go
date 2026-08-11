@@ -56,6 +56,28 @@ type VentaDTO struct {
 	Vendedor2             string  `json:"vendedor_2"                doc:"Nombre del vendedor 2"`
 	Vendedor3             string  `json:"vendedor_3"                doc:"Nombre del vendedor 3"`
 	FrecPago              string  `json:"frec_pago"                 doc:"Frecuencia de pago (SEMANAL/QUINCENAL/MENSUAL), resuelta desde LIBRES_CARGOS_CC.FORMA_DE_PAGO"`
+
+	// Productos are the sale line items (empty slice, never null).
+	Productos []ProductoDTO `json:"productos" doc:"Líneas de la venta (artículos)"`
+}
+
+// ProductoDTO is the JSON projection of a domain.ProductoVenta. Keys are
+// UPPER_SNAKE to map 1:1 with the Android app's Product/ProductEntity (Gson
+// matches by exact field name). Prices are emitted as JSON numbers (float64),
+// NOT decimal strings — a deliberate deviation from the module's
+// decimal-as-string convention to match the app's Double fields.
+//
+//nolint:tagliatelle // UPPER_SNAKE keys are required to match the Android app's Gson field names exactly.
+type ProductoDTO struct {
+	DoctoPVDetID        int     `json:"DOCTO_PV_DET_ID"`
+	DoctoPVID           int     `json:"DOCTO_PV_ID"`
+	Folio               string  `json:"FOLIO"`
+	ArticuloID          int     `json:"ARTICULO_ID"`
+	Articulo            string  `json:"ARTICULO"`
+	Cantidad            int     `json:"CANTIDAD"`
+	PrecioUnitarioImpto float64 `json:"PRECIO_UNITARIO_IMPTO"`
+	PrecioTotalNeto     float64 `json:"PRECIO_TOTAL_NETO"`
+	Posicion            int     `json:"POSICION"`
 }
 
 // SyncVentasBody envuelve un page de ventas enriquecidas para sync incremental.
@@ -82,10 +104,26 @@ type SyncVentasOutput struct {
 
 // ─── Mapping helpers ──────────────────────────────────────────────────────────
 
+// toProductoDTO projects a domain.ProductoVenta into a ProductoDTO.
+func toProductoDTO(p domain.ProductoVenta) ProductoDTO {
+	return ProductoDTO{
+		DoctoPVDetID:        p.DoctoPVDetID(),
+		DoctoPVID:           p.DoctoPVID(),
+		Folio:               p.Folio(),
+		ArticuloID:          p.ArticuloID(),
+		Articulo:            p.Articulo(),
+		Cantidad:            p.Cantidad(),
+		PrecioUnitarioImpto: p.PrecioUnitario().InexactFloat64(),
+		PrecioTotalNeto:     p.PrecioTotalNeto().InexactFloat64(),
+		Posicion:            p.Posicion(),
+	}
+}
+
 // toVentaDTO projects a domain.Venta into a VentaDTO. Decimal pointers are
 // rendered with 2 decimal places when non-nil; nil columns surface as JSON
-// null.
-func toVentaDTO(v domain.Venta) VentaDTO {
+// null. productos are the line items for this venta (nil-safe; always
+// rendered as a non-nil, possibly empty, slice).
+func toVentaDTO(v domain.Venta, productos []domain.ProductoVenta) VentaDTO {
 	dto := VentaDTO{
 		DoctoCCID:             v.DoctoCCID(),
 		DoctoPVID:             v.DoctoPVID(),
@@ -141,14 +179,26 @@ func toVentaDTO(v domain.Venta) VentaDTO {
 		s := p.StringFixed(2)
 		dto.PrecioDeContado = &s
 	}
+	prods := make([]ProductoDTO, 0, len(productos))
+	for _, p := range productos {
+		prods = append(prods, toProductoDTO(p))
+	}
+	dto.Productos = prods
 	return dto
 }
 
 // toSyncVentasBody projects an outbound.SyncPage[domain.Venta] into the DTO.
-func toSyncVentasBody(page outbound.SyncPage[domain.Venta]) SyncVentasBody {
+// productos maps DOCTO_PV_ID to its line items; each venta's productos are
+// looked up by v.DoctoPVID() (nil-safe — a nil DoctoPVID or missing map entry
+// yields an empty slice).
+func toSyncVentasBody(page outbound.SyncPage[domain.Venta], productos map[int][]domain.ProductoVenta) SyncVentasBody {
 	items := make([]VentaDTO, 0, len(page.Items))
 	for _, v := range page.Items {
-		items = append(items, toVentaDTO(v))
+		var ps []domain.ProductoVenta
+		if pv := v.DoctoPVID(); pv != nil {
+			ps = productos[*pv]
+		}
+		items = append(items, toVentaDTO(v, ps))
 	}
 	return SyncVentasBody{
 		Items:        items,

@@ -41,4 +41,9 @@ type VentasRepo interface {
 	//
 	// ids may contain duplicates; the result deduplicates by PK.
 	ByIDs(ctx context.Context, zonaID int, ids []int) ([]domain.Venta, error)
+
+	// ProductosByPVIDs returns the DOCTOS_PV_DET line items for every DOCTOS_PV
+	// document in pvIDs, keyed by DOCTO_PV_ID. Batch query (anti N+1). Documents
+	// with no lines are absent from the map. ids may contain duplicates.
+	ProductosByPVIDs(ctx context.Context, pvIDs []int) (map[int][]domain.ProductoVenta, error)
 }

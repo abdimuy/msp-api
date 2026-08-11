@@ -88,6 +88,10 @@ func (f *fakeVentasByIDsRepo) ByIDs(_ context.Context, zonaID int, ids []int) ([
 	return f.rows, f.err
 }
 
+func (f *fakeVentasByIDsRepo) ProductosByPVIDs(_ context.Context, _ []int) (map[int][]domain.ProductoVenta, error) {
+	return map[int][]domain.ProductoVenta{}, nil
+}
+
 // ─── Test helpers ─────────────────────────────────────────────────────────────
 
 // byIDsUser builds a CurrentUser with both pagos and saldos permissions.

@@ -112,6 +112,10 @@ func (f *fakeVentasRepo) ByIDs(_ context.Context, _ int, _ []int) ([]domain.Vent
 	return nil, nil
 }
 
+func (f *fakeVentasRepo) ProductosByPVIDs(_ context.Context, _ []int) (map[int][]domain.ProductoVenta, error) {
+	return map[int][]domain.ProductoVenta{}, nil
+}
+
 // makeVenta builds a minimal domain.Venta for test use.
 func makeVenta(doctoCCID, clienteID int) domain.Venta {
 	return domain.HydrateVenta(domain.HydrateVentaParams{

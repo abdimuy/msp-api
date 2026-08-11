@@ -29,7 +29,17 @@ func (h *Handlers) SyncVentasPorZona(ctx context.Context, in *SyncVentasInput) (
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	return &SyncVentasOutput{Body: toSyncVentasBody(page)}, nil
+	pvIDs := make([]int, 0, len(page.Items))
+	for _, v := range page.Items {
+		if pv := v.DoctoPVID(); pv != nil {
+			pvIDs = append(pvIDs, *pv)
+		}
+	}
+	productos, err := h.svc.ProductosPorPVIDs(ctx, pvIDs)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+	return &SyncVentasOutput{Body: toSyncVentasBody(page, productos)}, nil
 }
 
 // ─── Compile-time handler signature check ────────────────────────────────────
