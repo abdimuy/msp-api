@@ -475,7 +475,9 @@ func (s *ventaRowScan) scanContrato() (ventaContractAmounts, error) {
 	if err != nil {
 		return ventaContractAmounts{}, err
 	}
-	monto, err := scanNullDecimal2Ptr(s.montoCortoPlazoRaw)
+	// MONTO_A_CORTO_PLAZO is a scale-0 INTEGER in Microsip (the value already
+	// IS the peso amount); scale 2 would divide it by 100 — see scanNullDecimal0Ptr.
+	monto, err := scanNullDecimal0Ptr(s.montoCortoPlazoRaw)
 	if err != nil {
 		return ventaContractAmounts{}, err
 	}
@@ -493,6 +495,26 @@ func scanNullDecimal2Ptr(src any) (*decimal.Decimal, error) {
 		return nil, nil //nolint:nilnil // nil = column was SQL NULL.
 	}
 	d, err := firebird.ScanDecimal(src, 2)
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// scanNullDecimal0Ptr maps a possibly-nil scale-0 (INTEGER) driver value to
+// *decimal.Decimal. Returns nil when src is nil.
+//
+// Unlike the other LIBRES_CARGOS_CC contract amounts (ENGANCHE,
+// PRECIO_DE_CONTADO are NUMERIC scale 2), Microsip declares
+// LIBRES_CARGOS_CC.MONTO_A_CORTO_PLAZO as a plain INTEGER (scale 0): the
+// stored value IS the peso amount (e.g. 3200 = $3,200). Reading it with
+// scale 2 would divide by 100 ($3,200 → $32), which is the "monto raro"
+// bug this fixes.
+func scanNullDecimal0Ptr(src any) (*decimal.Decimal, error) {
+	if src == nil {
+		return nil, nil //nolint:nilnil // nil = column was SQL NULL.
+	}
+	d, err := firebird.ScanDecimal(src, 0)
 	if err != nil {
 		return nil, err
 	}
