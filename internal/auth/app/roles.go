@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
 
@@ -17,23 +18,65 @@ type CrearRolParams struct {
 
 // CrearRol creates a non-inmutable rol. The domain constructor validates the
 // name and description; on success a "role.created" event is enqueued.
+//
+// Because "delete" is a soft-deactivation and MSP_ROLES.NOMBRE is UNIQUE, a
+// name freed by a soft-deleted rol would otherwise collide on re-creation.
+// To keep the intuitive "delete then create the same name again" flow working,
+// re-creating a name held only by a soft-deleted rol REACTIVATES that rol
+// cleanly: it is re-activated, its description reset to the new value, and its
+// previous permisos dropped — so it behaves like a brand-new rol. A name held
+// by an ACTIVO or inmutable rol is still a genuine conflict (ErrRolYaExiste).
 func (s *Service) CrearRol(ctx context.Context, p CrearRolParams, by uuid.UUID) (*domain.Rol, error) {
-	id := uuid.New()
 	now := s.clock.Now()
-	rol, err := domain.NewRol(id, p.Nombre, p.Description, false, by, now)
+	// Build+validate first so we work with the normalized (trimmed) name.
+	nuevo, err := domain.NewRol(uuid.New(), p.Nombre, p.Description, false, by, now)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.roles.Save(ctx, rol); err != nil {
+
+	var result *domain.Rol
+	err = s.runInTx(ctx, func(ctx context.Context) error {
+		existing, ferr := s.roles.FindByNombre(ctx, nuevo.Nombre())
+		switch {
+		case ferr == nil:
+			// A rol with this name already exists.
+			if existing.Activo() || existing.Inmutable() {
+				return domain.ErrRolYaExiste
+			}
+			// Soft-deleted rol: reactivate it as if freshly created.
+			if aerr := existing.Reactivar(by, now); aerr != nil {
+				return aerr
+			}
+			if uerr := existing.Update(nuevo.Nombre(), p.Description, by, now); uerr != nil {
+				return uerr
+			}
+			if uerr := s.roles.Update(ctx, existing); uerr != nil {
+				return uerr
+			}
+			if serr := s.roles.SyncPermisos(ctx, existing.ID(), nil, by, now); serr != nil {
+				return serr
+			}
+			result = existing
+		case errors.Is(ferr, domain.ErrRolNotFound):
+			if serr := s.roles.Save(ctx, nuevo); serr != nil {
+				return serr
+			}
+			result = nuevo
+		default:
+			return ferr
+		}
+
+		s.enqueueEvent(ctx, outboxAggregateRol, result.ID(), eventRoleCreated, map[string]any{
+			"rol_id":     result.ID(),
+			"nombre":     result.Nombre(),
+			"created_by": by,
+		})
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
-
-	s.enqueueEvent(ctx, outboxAggregateRol, rol.ID(), eventRoleCreated, map[string]any{
-		"rol_id":     rol.ID(),
-		"nombre":     rol.Nombre(),
-		"created_by": by,
-	})
-	return rol, nil
+	return result, nil
 }
 
 // ActualizarRolParams carries the input for editing an existing rol.
