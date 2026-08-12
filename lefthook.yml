@@ -113,15 +113,34 @@ pre-commit:
         fi
 
 # ── Pre-push: full gate (parallel) ──────────────────────────────────
+#
+# Every command below is glob-gated, which means a push whose files match
+# nothing runs NOTHING. That is fine for a README, and was a hole for the
+# files that DEFINE the gate: a commit touching only .golangci.yml sailed
+# through pre-commit and pre-push without a single check — the file that
+# governs the linter was the one file nobody linted.
+#
+# So each glob also lists the non-Go files whose change can alter that
+# command's outcome:
+#   .golangci.yml           → lint-full (rules) + check-sealed (depguard)
+#   Makefile                → the two commands that shell out to make
+#   migrations-firebird/*   → the Firebird suite runs against that schema
+#   lefthook.yml            → editing the gate still pays the fast gate
 pre-push:
   parallel: true
   commands:
     lint-full:
-      glob: "*.go"
+      glob:
+        - "*.go"
+        - ".golangci.yml"
+        - "lefthook.yml"
       run: golangci-lint run ./...
 
     check-sealed:
-      glob: "*.go"
+      glob:
+        - "*.go"
+        - ".golangci.yml"
+        - "Makefile"
       # ADR 0009: sealed modules must not depend on any other module.
       # depguard catches the import statically; this catches it through the
       # transitive dependency graph, which is where a leak actually shows up.
@@ -129,7 +148,9 @@ pre-push:
       run: make check-sealed
 
     test-unit:
-      glob: "*.go"
+      glob:
+        - "*.go"
+        - "lefthook.yml"
       # What actually skips the integration tests here is the ABSENCE of
       # FB_DATABASE, not -short: nothing in this repo calls testing.Short().
       # This command runs go test directly (not through make), so .env is never
@@ -141,7 +162,10 @@ pre-push:
       run: go test ./... -race -count=1 -short -timeout 180s
 
     test-firebird-all:
-      glob: "*.go"
+      glob:
+        - "*.go"
+        - "migrations-firebird/*.sql"
+        - "Makefile"
       # Full Firebird integration suite — covers platform/firebird,
       # platform/fbtestutil, auth/infra/firebird, ventas/infra/ventfb and
       # ventas/infra/venthttp. Make loads .env automatically, so
