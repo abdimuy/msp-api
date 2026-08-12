@@ -15,6 +15,7 @@ func TestEtapa_CanTransitionTo_ValidTransitions(t *testing.T) {
 	}{
 		// Tronco común
 		{domain.EtapaRegistrado, domain.EtapaPendienteRecoleccion},
+		{domain.EtapaRegistrado, domain.EtapaEnRevision},
 		{domain.EtapaPendienteRecoleccion, domain.EtapaRecolectado},
 		{domain.EtapaRecolectado, domain.EtapaEnRevision},
 
@@ -42,7 +43,6 @@ func TestEtapa_CanTransitionTo_ValidTransitions(t *testing.T) {
 		{domain.EtapaReparadoTaller, domain.EtapaListoEntrega},
 
 		// Cambio físico
-		{domain.EtapaCambioAutorizado, domain.EtapaListoEntrega},
 		{domain.EtapaCambioAutorizado, domain.EtapaStandby},
 
 		// Convergencia
@@ -113,6 +113,9 @@ func TestEtapa_CanTransitionTo_RejectsInvalid(t *testing.T) {
 
 		// Sin retrocesos desde cambio_autorizado
 		{domain.EtapaCambioAutorizado, domain.EtapaDictamenRecibido},
+
+		// cambio_autorizado ya no permite listo_entrega (el original no se entrega)
+		{domain.EtapaCambioAutorizado, domain.EtapaListoEntrega},
 	}
 
 	for _, tt := range tests {
@@ -138,28 +141,7 @@ func TestEtapa_CanTransitionTo_UnknownStageReturnsFalse(t *testing.T) {
 
 func TestEtapa_EsTerminal_Consistency(t *testing.T) {
 	t.Parallel()
-	// Verifica que las etapas terminales también tengan lista vacía en el mapa
-	terminales := []domain.Etapa{
-		domain.EtapaEntregado,
-		domain.EtapaReingresadoInventario,
-		domain.EtapaSegundaMano,
-		domain.EtapaDesarmado,
-		domain.EtapaMerma,
-	}
-
-	for _, e := range terminales {
-		t.Run(e.String(), func(t *testing.T) {
-			t.Parallel()
-			if !e.EsTerminal() {
-				t.Errorf("%s: EsTerminal() = false, want true", e)
-			}
-			if e.CanTransitionTo(e) {
-				t.Errorf("%s: CanTransitionTo(self) should be false for terminal stages", e)
-			}
-		})
-	}
-
-	// Verifica que las no-terminales no estén vacías
+	// Verifica que las no-terminales no estén marcadas como terminales.
 	noTerminales := []domain.Etapa{
 		domain.EtapaRegistrado,
 		domain.EtapaPendienteRecoleccion,
@@ -184,5 +166,91 @@ func TestEtapa_EsTerminal_Consistency(t *testing.T) {
 				t.Errorf("%s: EsTerminal() = true, want false", e)
 			}
 		})
+	}
+}
+
+func TestEtapa_CanTransitionTo_ExhaustiveInvalid(t *testing.T) {
+	t.Parallel()
+
+	// Lista completa de transiciones válidas (25 en total)
+	validCases := []struct{ from, to domain.Etapa }{
+		// Tronco común
+		{domain.EtapaRegistrado, domain.EtapaPendienteRecoleccion},
+		{domain.EtapaRegistrado, domain.EtapaEnRevision}, // origen piso
+		{domain.EtapaPendienteRecoleccion, domain.EtapaRecolectado},
+		{domain.EtapaRecolectado, domain.EtapaEnRevision},
+
+		// Desde en_revision
+		{domain.EtapaEnRevision, domain.EtapaOrdenGenerada},
+		{domain.EtapaEnRevision, domain.EtapaEnTaller},
+		{domain.EtapaEnRevision, domain.EtapaReingresadoInventario},
+
+		// Ruta proveedor
+		{domain.EtapaOrdenGenerada, domain.EtapaEnviadoProveedor},
+		{domain.EtapaEnviadoProveedor, domain.EtapaDictamenRecibido},
+		{domain.EtapaDictamenRecibido, domain.EtapaReparadoProveedor},
+		{domain.EtapaDictamenRecibido, domain.EtapaListoEntrega},
+		{domain.EtapaDictamenRecibido, domain.EtapaEsperaRespuestaCliente},
+		{domain.EtapaReparadoProveedor, domain.EtapaListoEntrega},
+
+		// espera_respuesta_cliente → exactamente 3 salidas
+		{domain.EtapaEsperaRespuestaCliente, domain.EtapaListoEntrega},
+		{domain.EtapaEsperaRespuestaCliente, domain.EtapaCambioAutorizado},
+		{domain.EtapaEsperaRespuestaCliente, domain.EtapaStandby},
+
+		// Ruta taller
+		{domain.EtapaEnTaller, domain.EtapaReparadoTaller},
+		{domain.EtapaEnTaller, domain.EtapaCambioAutorizado},
+		{domain.EtapaReparadoTaller, domain.EtapaListoEntrega},
+
+		// Cambio físico – el original solo va a standby (ya no a listo_entrega)
+		{domain.EtapaCambioAutorizado, domain.EtapaStandby},
+
+		// Convergencia
+		{domain.EtapaListoEntrega, domain.EtapaEntregado},
+
+		// Standby → terminales
+		{domain.EtapaStandby, domain.EtapaSegundaMano},
+		{domain.EtapaStandby, domain.EtapaDesarmado},
+		{domain.EtapaStandby, domain.EtapaMerma},
+	}
+
+	validSet := make(map[[2]domain.Etapa]bool)
+	for _, c := range validCases {
+		validSet[[2]domain.Etapa{c.from, c.to}] = true
+	}
+
+	todas := []domain.Etapa{
+		domain.EtapaRegistrado,
+		domain.EtapaPendienteRecoleccion,
+		domain.EtapaRecolectado,
+		domain.EtapaEnRevision,
+		domain.EtapaOrdenGenerada,
+		domain.EtapaEnviadoProveedor,
+		domain.EtapaDictamenRecibido,
+		domain.EtapaReparadoProveedor,
+		domain.EtapaEsperaRespuestaCliente,
+		domain.EtapaEnTaller,
+		domain.EtapaReparadoTaller,
+		domain.EtapaCambioAutorizado,
+		domain.EtapaListoEntrega,
+		domain.EtapaStandby,
+		domain.EtapaEntregado,
+		domain.EtapaReingresadoInventario,
+		domain.EtapaSegundaMano,
+		domain.EtapaDesarmado,
+		domain.EtapaMerma,
+	}
+
+	for _, from := range todas {
+		for _, to := range todas {
+			key := [2]domain.Etapa{from, to}
+			if validSet[key] {
+				continue
+			}
+			if from.CanTransitionTo(to) {
+				t.Errorf("CanTransitionTo(%q, %q) = true, want false (not in valid set)", from, to)
+			}
+		}
 	}
 }

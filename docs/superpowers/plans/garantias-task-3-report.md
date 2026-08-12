@@ -30,6 +30,7 @@ internal/garantias/domain/
 ### 2. Salida literal de los comandos de verificación
 
 ```bash
+ricar77@DESKTOP-ELR74FG:~/msp-api$ gofumpt -w internal/garantias/domain/
 ricar77@DESKTOP-ELR74FG:~/msp-api$ gofmt -l internal/garantias
 go vet ./internal/garantias/...
 go build ./...
@@ -38,12 +39,12 @@ go clean -testcache && go test -race -count=1 -coverprofile=cov.out ./internal/g
 go tool cover -func=cov.out | tail -1        # ≥ 99.0%
 make check-sealed MODULE=garantias
 0 issues.
-ok      github.com/abdimuy/msp-api/internal/garantias/domain    1.082s  coverage: 99.1% of statements
-total:                                                                          (statements)            99.1%
+ok      github.com/abdimuy/msp-api/internal/garantias/domain    1.092s  coverage: 100.0% of statements
+total:                                                                          (statements)            100.0%
 ✔ garantias is sealed
 ```
 
-**Cobertura final: 99.1 %**
+**Cobertura final: 100 %**
 
 ---
 
@@ -65,12 +66,14 @@ total:                                                                          
     1. `espera_respuesta_cliente` → solo `listo_entrega`, `cambio_autorizado`, `standby`.
     2. `standby` solo alcanzable desde `espera_respuesta_cliente` y `cambio_autorizado`.
     3. Terminales (`entregado`, `reingresado_inventario`, `segunda_mano`, `desarmado`, `merma`) → lista vacía.
+  - Adicionalmente, tras la revisión se añadió la arista `registrado → en_revision` para cubrir el origen `piso`, y se eliminó `cambio_autorizado → listo_entrega` (el artículo original no se entrega). El test se complementó con un barrido exhaustivo de los 19×19 pares.
+
 
 **Pruebas**
 
 - Cada VO tiene `TestX_WireValues`, `TestParseX_HappyPath`, `TestParseX_RejectsInvalid`.
-- `Etapa` además tiene `TestEtapa_EsTerminal` (tabla con los 19 valores).
-- `transiciones_test.go` cubre todas las transiciones válidas (una por una) y un conjunto representativo de inválidas, incluyendo los tres puntos aclarados.
+- `Etapa` además tiene `TestEtapa_EsTerminal` (tabla con los 19 valores + caso de etapa desconocida para cubrir el 100 %).
+- `transiciones_test.go` cubre todas las transiciones válidas (una por una) y un conjunto representativo de inválidas, además del barrido exhaustivo que verifica que ningún par fuera de la tabla sea aceptado.
 
 ---
 
@@ -86,7 +89,5 @@ La Tarea 3 está completa:
 
 - Los tres catálogos (`Etapa`, `Ubicacion`, `Desenlace`) están definidos como Enum VO, con sus pruebas y centinelas.
 - El mapa de transiciones de etapa (`validEtapaTransitions`) está implementado y probado exhaustivamente.
-- La cobertura del paquete `domain` es del 99.0 %, los linters y el build pasan sin errores.
+- La cobertura del paquete `domain` es del 100 %, los linters y el build pasan sin errores.
 - El módulo permanece sellado.
-
-**Siguiente paso:** avanzar con la Tanda 1 (comandos y repositorios).

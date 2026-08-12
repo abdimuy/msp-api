@@ -112,6 +112,7 @@ func TestEtapa_EsTerminal(t *testing.T) {
 		{domain.EtapaSegundaMano, true},
 		{domain.EtapaDesarmado, true},
 		{domain.EtapaMerma, true},
+		{domain.Etapa("etapa_que_no_existe"), false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.stage.String(), func(t *testing.T) {
