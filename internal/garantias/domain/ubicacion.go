@@ -6,7 +6,7 @@ type Ubicacion string
 // All 8 locations from the design.
 const (
 	UbicacionDomicilioCliente   Ubicacion = "domicilio_cliente"
-	UbicacionEnTransito         Ubicacion = "en_transito" //nolint:misspell // "en_transito" es la forma correcta en español, no error ortográfico
+	UbicacionEnTransito         Ubicacion = "en_transito"
 	UbicacionAlmacenRevision    Ubicacion = "almacen_revision"
 	UbicacionTaller             Ubicacion = "taller"
 	UbicacionProveedor          Ubicacion = "proveedor"
