@@ -127,6 +127,8 @@ linters:
         - inventario
         - clientes
         - Clientes
+        - transito
+        - Transito
 
     # ── revive ───────────────────────────────────────────────────────
     revive:
