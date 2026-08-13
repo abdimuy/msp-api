@@ -58,8 +58,10 @@ func MountRouter(
 			r.With(RequirePermission(domain.PermUsuariosVer)).Get("/{id}", h.ObtenerUsuario)
 			r.With(idem, RequirePermission(domain.PermUsuariosActualizar)).Patch("/{id}", h.ActualizarUsuario)
 			r.With(RequirePermission(domain.PermUsuariosDesactivar)).Delete("/{id}", h.DesactivarUsuario)
+			r.With(RequirePermission(domain.PermUsuariosVer)).Get("/{id}/roles", h.ObtenerRolesDeUsuario)
 			r.With(idem, RequirePermission(domain.PermUsuariosAsignarRol)).Post("/{id}/roles", h.AsignarRolAUsuario)
 			r.With(RequirePermission(domain.PermUsuariosAsignarRol)).Delete("/{id}/roles/{rol_id}", h.RevocarRolDeUsuario)
+			r.With(RequirePermission(domain.PermUsuariosVer)).Get("/{id}/permisos", h.ObtenerPermisosDeUsuario)
 			// No RequirePermission: cobrador calls this on every venta to resolve
 			// vendedor emails; any authenticated user may call it. No idem: the
 			// service is idempotent by construction — same list, same result.
@@ -73,6 +75,7 @@ func MountRouter(
 			r.With(idem, RequirePermission(domain.PermRolesActualizar)).Patch("/{id}", h.ActualizarRol)
 			r.With(RequirePermission(domain.PermRolesActualizar)).Delete("/{id}", h.DesactivarRol)
 			r.With(idem, RequirePermission(domain.PermRolesAsignarPermiso)).Post("/{id}/permisos", h.AsignarPermisoARol)
+			r.With(RequirePermission(domain.PermRolesListar)).Get("/{id}/permisos", h.ObtenerPermisosDeRol)
 			r.With(RequirePermission(domain.PermRolesAsignarPermiso)).Delete("/{id}/permisos/{codigo}", h.RevocarPermisoDeRol)
 		})
 

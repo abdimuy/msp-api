@@ -2,6 +2,7 @@ package authhttp
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -78,6 +79,11 @@ type fakeUsuarioRepo struct {
 	ByEmail   map[string]*domain.Usuario
 	RoleLinks map[uuid.UUID]map[uuid.UUID]struct{}
 	Permisos  map[uuid.UUID][]domain.Permission
+	// Roles resolves rol IDs (as tracked in RoleLinks) into full *domain.Rol
+	// values for RolesFor. Wired by newTestRig after both fakes exist —
+	// fakeUsuarioRepo cannot own the canonical Rol objects itself since
+	// fakeRolRepo is a sibling fake, not a dependency.
+	Roles *fakeRolRepo
 }
 
 func newFakeUsuarioRepo() *fakeUsuarioRepo {
@@ -198,8 +204,25 @@ func (f *fakeUsuarioRepo) PermisosFor(_ context.Context, usuarioID uuid.UUID) ([
 	return f.Permisos[usuarioID], nil
 }
 
-func (f *fakeUsuarioRepo) RolesFor(_ context.Context, _ uuid.UUID) ([]*domain.Rol, error) {
-	return nil, nil
+func (f *fakeUsuarioRepo) RolesFor(_ context.Context, usuarioID uuid.UUID) ([]*domain.Rol, error) {
+	f.mu.Lock()
+	rolIDs := make([]uuid.UUID, 0, len(f.RoleLinks[usuarioID]))
+	for rolID := range f.RoleLinks[usuarioID] {
+		rolIDs = append(rolIDs, rolID)
+	}
+	roles := f.Roles
+	f.mu.Unlock()
+
+	if roles == nil {
+		return nil, nil
+	}
+	out := make([]*domain.Rol, 0, len(rolIDs))
+	for _, rolID := range rolIDs {
+		if r, err := roles.FindByID(context.Background(), rolID); err == nil {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 
 // ─── fakeRolRepo ────────────────────────────────────────────────────────────
@@ -369,6 +392,10 @@ func (f *fakePermisoRepo) FindAll(_ context.Context) ([]*domain.Permiso, error) 
 		p := domain.HydratePermiso(m.Code, m.Description, m.Categoria)
 		out = append(out, &p)
 	}
+	// Mirror the production repo's ORDER BY CODIGO so callers (e.g.
+	// Service.enrichPermisos) see the same deterministic ordering in tests
+	// as in Firebird.
+	sort.Slice(out, func(i, j int) bool { return out[i].Codigo() < out[j].Codigo() })
 	return out, nil
 }
 

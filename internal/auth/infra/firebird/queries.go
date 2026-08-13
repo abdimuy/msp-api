@@ -114,15 +114,19 @@ const selectRolByNombre = `
 SELECT ` + rolColumns + `
 FROM MSP_ROLES WHERE NOMBRE = ?`
 
+// Only ACTIVO roles are listed: a "deleted" rol is soft-deactivated
+// (ACTIVO = FALSE) to preserve audit and existing assignments, and must not
+// surface in the management list.
 const selectRolesFirstPage = `
 SELECT FIRST ? ` + rolColumns + `
 FROM MSP_ROLES
+WHERE ACTIVO = TRUE
 ORDER BY CREATED_AT, ID`
 
 const selectRolesAfterCursor = `
 SELECT FIRST ? ` + rolColumns + `
 FROM MSP_ROLES
-WHERE (CREATED_AT > ?) OR (CREATED_AT = ? AND ID > ?)
+WHERE ACTIVO = TRUE AND ((CREATED_AT > ?) OR (CREATED_AT = ? AND ID > ?))
 ORDER BY CREATED_AT, ID`
 
 // ─── Rol ↔ Permiso ─────────────────────────────────────────────────────────

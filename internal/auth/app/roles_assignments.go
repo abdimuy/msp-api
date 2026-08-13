@@ -57,3 +57,18 @@ func (s *Service) RevocarPermisoDeRol(ctx context.Context, rolID uuid.UUID, codi
 	})
 	return nil
 }
+
+// PermisosDeRol returns every permission code attached to the rol, enriched
+// with catalog metadata (description, categoria). The rol is verified to
+// exist first so callers get a proper ErrRolNotFound instead of an empty
+// list on a bad ID.
+func (s *Service) PermisosDeRol(ctx context.Context, rolID uuid.UUID) ([]*domain.Permiso, error) {
+	if _, err := s.roles.FindByID(ctx, rolID); err != nil {
+		return nil, err
+	}
+	codes, err := s.roles.PermisosFor(ctx, rolID)
+	if err != nil {
+		return nil, err
+	}
+	return s.enrichPermisos(ctx, codes)
+}

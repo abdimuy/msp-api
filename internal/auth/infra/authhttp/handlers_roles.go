@@ -2,6 +2,7 @@ package authhttp
 
 import (
 	"net/http"
+	"net/url"
 
 	"github.com/go-chi/chi/v5"
 
@@ -155,6 +156,25 @@ func (h *Handlers) AsignarPermisoARol(w http.ResponseWriter, r *http.Request) {
 	response.NoContent(w)
 }
 
+// ObtenerPermisosDeRol handles GET /v2/roles/{id}/permisos.
+func (h *Handlers) ObtenerPermisosDeRol(w http.ResponseWriter, r *http.Request) {
+	id, err := parseUUIDParam(r, "id")
+	if err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	permisos, err := h.svc.PermisosDeRol(r.Context(), id)
+	if err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	items := make([]PermisoResponse, 0, len(permisos))
+	for _, p := range permisos {
+		items = append(items, toPermisoResponse(p))
+	}
+	response.JSON(w, r, http.StatusOK, ListResponse[PermisoResponse]{Items: items})
+}
+
 // RevocarPermisoDeRol handles DELETE /v2/roles/{id}/permisos/{codigo}.
 func (h *Handlers) RevocarPermisoDeRol(w http.ResponseWriter, r *http.Request) {
 	rolID, err := parseUUIDParam(r, "id")
@@ -162,7 +182,14 @@ func (h *Handlers) RevocarPermisoDeRol(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, r, err)
 		return
 	}
+	// Permission codes are "categoria:accion" — the ':' arrives percent-encoded
+	// (%3A) from encodeURIComponent. chi routes on the escaped path, so
+	// URLParam returns the still-encoded segment; decode it or the DELETE would
+	// silently match nothing (RevocarPermiso is idempotent → false 204).
 	codigo := chi.URLParam(r, "codigo")
+	if decoded, derr := url.PathUnescape(codigo); derr == nil {
+		codigo = decoded
+	}
 	if codigo == "" {
 		response.Error(w, r, apperror.NewValidation("invalid_codigo", "el código del permiso es obligatorio"))
 		return

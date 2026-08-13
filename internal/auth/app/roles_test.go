@@ -39,12 +39,39 @@ func TestCrearRol(t *testing.T) {
 		assert.Empty(t, h.outbox.Calls)
 	})
 
-	t.Run("nombre_collision_returns_yaexiste", func(t *testing.T) {
+	t.Run("nombre_collision_con_rol_activo_returns_yaexiste", func(t *testing.T) {
 		t.Parallel()
 		h := newHarness(t, false)
 		h.seedRol(t, "vendedor")
 		_, err := h.svc.CrearRol(t.Context(), CrearRolParams{Nombre: "vendedor"}, uuid.New())
 		require.ErrorIs(t, err, domain.ErrRolYaExiste)
+	})
+
+	t.Run("recrear_nombre_de_rol_soft_deleted_lo_reactiva_limpio", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t, false)
+		by := uuid.New()
+
+		// Crear el rol, darle un permiso y luego "borrarlo" (soft-delete).
+		created, err := h.svc.CrearRol(t.Context(), CrearRolParams{Nombre: "vendedor"}, by)
+		require.NoError(t, err)
+		require.NoError(t, h.roles.SyncPermisos(
+			t.Context(), created.ID(), []domain.Permission{domain.PermUsuariosListar}, by, h.clock.T,
+		))
+		require.NoError(t, h.svc.DesactivarRol(t.Context(), created.ID(), by))
+
+		// Recrear el mismo nombre reactiva LA MISMA fila, activa y sin permisos.
+		desc := "nueva descripcion"
+		again, err := h.svc.CrearRol(t.Context(), CrearRolParams{Nombre: "vendedor", Description: &desc}, by)
+		require.NoError(t, err)
+		assert.Equal(t, created.ID(), again.ID())
+		assert.True(t, again.Activo())
+		require.NotNil(t, again.Description())
+		assert.Equal(t, "nueva descripcion", *again.Description())
+
+		perms, err := h.roles.PermisosFor(t.Context(), again.ID())
+		require.NoError(t, err)
+		assert.Empty(t, perms)
 	})
 }
 
