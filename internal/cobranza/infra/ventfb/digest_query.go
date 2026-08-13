@@ -139,6 +139,7 @@ SELECT DOCTO_CC_ID, UPDATED_AT
 FROM MSP_SALDOS_VENTAS
 WHERE ZONA_CLIENTE_ID = ?
   AND CARGO_CANCELADO = 'N'
+  AND ` + ventaClienteFilterFor("MSP_SALDOS_VENTAS") + `
   AND ` + saldoFilter
 
 		rows, qerr := q.QueryContext(ctx, query, args...)
@@ -175,6 +176,7 @@ FROM MSP_SALDOS_VENTAS
 WHERE ZONA_CLIENTE_ID = ?
   AND CARGO_CANCELADO = 'N'
   AND DOCTO_CC_ID > ?
+  AND ` + ventaClienteFilterFor("MSP_SALDOS_VENTAS") + `
   AND ` + saldoFilter + `
 ORDER BY DOCTO_CC_ID ASC`
 
@@ -202,11 +204,19 @@ ORDER BY DOCTO_CC_ID ASC`
 // args for the saldos digest/ids queries. When desde is zero it mirrors the
 // legacy sync filter (SALDO > 0 only). When desde is set it also includes
 // recently-paid saldos (SALDO <= 0 AND FECHA_ULT_PAGO >= desde).
-func saldoDigestSaldoFilter(desde time.Time) (string, []any) {
-	if desde.IsZero() {
-		return `SALDO > 0`, nil
-	}
-	return `(SALDO > 0 OR (SALDO <= 0 AND FECHA_ULT_PAGO >= ?))`, []any{firebird.ToWallClock(desde)}
+// saldoDigestSaldoFilter: SALDO > 0 estricto, igual que la API legacy.
+//
+// Antes tenia una segunda rama que conservaba las saldadas con FECHA_ULT_PAGO
+// dentro de la ventana del cobrador. Se quito por decision de negocio: la
+// legacy nunca las mostro (`... - M.TOTAL_IMPORTE - M.IMPTE_REST > 0`) y los
+// cobradores las leian como clientes de mas en su ruta. En la zona 34 eran 13
+// de 317.
+//
+// `desde` se conserva en la firma porque el llamador lo tiene y porque la
+// simetria con el sync importa: los dos filtros TIENEN que decir lo mismo o el
+// reconciler ve extras/phantoms donde no los hay.
+func saldoDigestSaldoFilter(_ time.Time) (string, []any) {
+	return `SALDO > 0`, nil
 }
 
 // ─── computation helpers ──────────────────────────────────────────────────────

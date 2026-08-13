@@ -27,10 +27,17 @@ func findVenta(items []domain.Venta, doctoCCID int) *domain.Venta {
 	return nil
 }
 
-// seedZonedCliente returns a CLIENTE_ID + ZONA_CLIENTE_ID where the cliente
-// has a non-null zona, suitable for sync-by-zona tests. Skips the test when
-// no such cliente exists. Prefers the well-known test cliente 11486 when it
-// happens to be zoned; otherwise picks the first zoned cliente by PK.
+// seedZonedCliente returns a CLIENTE_ID + ZONA_CLIENTE_ID usable by the
+// sync-by-zona tests. Skips the test when no such cliente exists.
+//
+// El cliente tiene que cumplir las MISMAS condiciones que el sync exige para
+// mostrarlo en la ruta (ver ventaClienteFilter): zona no nula, ESTATUS 'A' y
+// domicilio principal. Si no, la prueba se monta sobre un cliente que el
+// backend filtra a proposito y todo falla por el fixture, no por el codigo.
+//
+// Paso justo eso: el helper tomaba `FIRST 1 ... ORDER BY CLIENTE_ID`, que en
+// la base de desarrollo devuelve al cliente 11511 — ESTATUS 'B', o sea uno
+// que oficina dio de baja. Los tres tests de tombstone rompieron por eso.
 func seedZonedCliente(t *testing.T, q firebird.Querier) (int, int) {
 	t.Helper()
 	const preferredID = 11486
@@ -40,13 +47,22 @@ func seedZonedCliente(t *testing.T, q firebird.Querier) (int, int) {
 		zonaID        int
 	)
 	err := q.QueryRowContext(context.Background(),
-		`SELECT ZONA_CLIENTE_ID FROM CLIENTES WHERE CLIENTE_ID = ?`, preferredID).Scan(&preferredZona)
+		`SELECT ZONA_CLIENTE_ID FROM CLIENTES c
+		 WHERE c.CLIENTE_ID = ?
+		   AND c.ESTATUS = 'A'
+		   AND EXISTS (SELECT 1 FROM DIRS_CLIENTES d
+		               WHERE d.CLIENTE_ID = c.CLIENTE_ID AND d.ES_DIR_PPAL = 'S')`,
+		preferredID).Scan(&preferredZona)
 	if err == nil && preferredZona != nil {
 		return preferredID, *preferredZona
 	}
 	err = q.QueryRowContext(context.Background(),
-		`SELECT FIRST 1 CLIENTE_ID, ZONA_CLIENTE_ID FROM CLIENTES
-		 WHERE ZONA_CLIENTE_ID IS NOT NULL ORDER BY CLIENTE_ID`).Scan(&clienteID, &zonaID)
+		`SELECT FIRST 1 c.CLIENTE_ID, c.ZONA_CLIENTE_ID FROM CLIENTES c
+		 WHERE c.ZONA_CLIENTE_ID IS NOT NULL
+		   AND c.ESTATUS = 'A'
+		   AND EXISTS (SELECT 1 FROM DIRS_CLIENTES d
+		               WHERE d.CLIENTE_ID = c.CLIENTE_ID AND d.ES_DIR_PPAL = 'S')
+		 ORDER BY c.CLIENTE_ID`).Scan(&clienteID, &zonaID)
 	if err != nil {
 		t.Skipf("no zoned cliente available: %v", err)
 	}
@@ -109,11 +125,15 @@ func TestE2E_VentasRepo_SyncPorZona_ReturnsEnrichedRow(t *testing.T) {
 // TestE2E_VentasRepo_SyncPorZona_SaldadaConDesde verifica el contrato del
 // parámetro `desde` (filtro depende SOLO de desde, no del cursor):
 //
-//  1. cursor=zero, desde=zero  → venta saldada NO viaja (legacy admin).
-//  2. cursor=zero, desde<FUP   → venta saldada SÍ viaja (sync inicial).
-//  3. cursor!=zero, desde<FUP  → venta saldada SÍ viaja (paginación/incremental).
-//  4. cursor!=zero, desde=zero → venta saldada NO viaja (paginación legacy:
-//     evita que saldadas históricas se cuelen en páginas 2+).
+// Contrato vigente desde 2026-08-13: SALDO > 0 ESTRICTO, igual que la API
+// legacy. Una venta saldada NO viaja, con `desde` o sin él. La regla que las
+// conservaba si tenían pago en la ventana del cobrador se retiró por decisión
+// de negocio — los cobradores las leían como clientes de más en su ruta.
+//
+//  1. cursor=zero, desde=zero  → saldada NO viaja.
+//  2. cursor=zero, desde<FUP   → saldada NO viaja (antes SÍ).
+//  3. cursor!=zero, desde<FUP  → saldada NO viaja (antes SÍ).
+//  4. cursor!=zero, desde=zero → saldada NO viaja.
 //  5. cursor=zero, desde<FUP, pero la venta se saldó con una
 //     condonación (CONCEPTO_CC_ID=155). La condonación SÍ actualiza
 //     FECHA_ULT_PAGO (filtro 87327, 155 en MSP_RECOMPUTE_SALDO_VENTA)
@@ -158,19 +178,21 @@ func TestE2E_VentasRepo_SyncPorZona_SaldadaConDesde(t *testing.T) {
 		assert.Nil(t, findVenta(pageLegacy.Items, cargoID),
 			"sin desde, la venta saldada no debería aparecer en sync inicial")
 
-		// Caso 2: sync inicial con desde anterior al pago — saldada SÍ viaja.
+		// Caso 2: NI CON `desde` viaja una saldada. El contrato cambio por
+		// decision de negocio (2026-08-13): SALDO > 0 estricto, igual que la
+		// API legacy, que nunca las mostro. Antes se conservaban las saldadas
+		// con pago en la ventana del cobrador y este mismo test exigia lo
+		// contrario — en la zona 34 eran 13 clientes de mas en la ruta.
 		pageConDesde, err := repo.SyncPorZona(ctx, zonaID, time.Time{}, 0, 5000, desde)
 		require.NoError(t, err)
-		v := findVenta(pageConDesde.Items, cargoID)
-		require.NotNil(t, v, "con desde<fechaUltPago, la venta saldada debe aparecer")
-		assert.True(t, v.Saldo().IsZero(), "venta debe traer saldo=0")
+		assert.Nil(t, findVenta(pageConDesde.Items, cargoID),
+			"con desde, la saldada TAMPOCO debe viajar: SALDO > 0 estricto")
 
-		// Caso 3: paginación/incremental CON desde — saldada SÍ viaja
-		// (el cliente debe mandar desde en TODAS las páginas).
+		// Caso 3: lo mismo al paginar con cursor.
 		pageIncrConDesde, err := repo.SyncPorZona(ctx, zonaID, cursor, 0, 5000, desde)
 		require.NoError(t, err)
-		assert.NotNil(t, findVenta(pageIncrConDesde.Items, cargoID),
-			"con desde, la venta saldada debe seguir viajando al paginar")
+		assert.Nil(t, findVenta(pageIncrConDesde.Items, cargoID),
+			"con desde, la saldada tampoco debe colarse al paginar")
 
 		// Caso 4: paginación legacy sin desde — saldada NO viaja
 		// (protege que las saldadas históricas no se cuelen en páginas 2+).

@@ -4,6 +4,7 @@ package ventfb
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"time"
 
@@ -58,6 +59,48 @@ const selectVentaCols = `
 	UPPER(lv2.VALOR_DESPLEGADO),
 	UPPER(lv3.VALOR_DESPLEGADO),
 	UPPER(lfp.VALOR_DESPLEGADO)`
+
+// ventaClienteFilter replica el control que oficina ejerce desde Microsip y
+// que la API legacy respetaba al pie de la letra:
+//
+//	WHERE CLIENTES.ESTATUS = 'A' ... AND DIRS_CLIENTES.ES_DIR_PPAL = 'S'
+//
+// ESTATUS deja de ser 'A' es la palanca con la que oficina SACA a un cliente
+// de la ruta, aunque tenga saldo. No es un accidente ni un filtro de higiene:
+// es intencional, y el Go lo estaba ignorando — por eso los cobradores veian
+// clientes que oficina ya habia dado de baja. Medido en produccion: 30 ventas
+// ($191,165) de clientes 'B', 'V' y 'C', quince de ellas en MAYOREO.
+//
+// El domicilio principal hoy no descarta ninguna (los 11,185 clientes 'A' lo
+// tienen), pero va por paridad con la legacy: sin el, un cliente sin direccion
+// aparecia en la ruta sin domicilio al que ir.
+//
+// Va por EXISTS y no por JOIN a proposito: las cinco consultas que deben
+// compartirlo (sync x2, by-ids, digest, ids) no tienen las mismas tablas
+// unidas, y un EXISTS no puede multiplicar filas.
+//
+// IMPORTANTE: las cinco tienen que aplicarlo o el reconciler pelea consigo
+// mismo. Cuando un cliente sale de 'A' sus ventas dejan de viajar por /sync,
+// y el telefono solo se entera de borrarlas porque /ids tampoco las lista y
+// el barrido de phantoms las evicta. Si /ids lo omitiera, el cobrador se
+// quedaria con esas ventas para siempre.
+const ventaClienteFilter = `EXISTS (
+		SELECT 1 FROM CLIENTES cf
+		WHERE cf.CLIENTE_ID = %[1]s.CLIENTE_ID
+		  AND cf.ESTATUS = 'A'
+	)
+	AND EXISTS (
+		SELECT 1 FROM DIRS_CLIENTES df
+		WHERE df.CLIENTE_ID = %[1]s.CLIENTE_ID
+		  AND df.ES_DIR_PPAL = 'S'
+	)`
+
+// ventaClienteFilterFor devuelve [ventaClienteFilter] ligado al alias con el
+// que la consulta llama a MSP_SALDOS_VENTAS ("s", o el nombre completo en las
+// del digest, que no usan alias).
+func ventaClienteFilterFor(alias string) string {
+	return fmt.Sprintf(ventaClienteFilter, alias)
+}
 
 const ventaFromClause = `
 FROM MSP_SALDOS_VENTAS s
@@ -136,7 +179,8 @@ func (r *VentasRepo) ByIDs(ctx context.Context, zonaID int, ids []int) ([]domain
 	query := `
 SELECT ` + selectVentaCols + ventaFromClause + `
 WHERE s.ZONA_CLIENTE_ID = ?
-  AND s.DOCTO_CC_ID IN (` + strings.Join(placeholders, ",") + `)`
+  AND s.DOCTO_CC_ID IN (` + strings.Join(placeholders, ",") + `)
+  AND ` + ventaClienteFilterFor("s")
 
 	var result []domain.Venta
 	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
@@ -213,20 +257,22 @@ func queryVentaSyncPage(ctx context.Context, q firebird.Querier, spec ventaSyncS
 	var statusArgs []any
 	if !spec.desde.IsZero() {
 		desde := firebird.ToWallClock(spec.desde)
+		// SALDO > 0 estricto, igual que la legacy. La rama que conservaba
+		// las saldadas con pago en la ventana se retiro por decision de
+		// negocio: la legacy nunca las mostro y los cobradores las leian
+		// como clientes de mas (13 de 317 en la zona 34).
+		//
+		// La rama de cancelados SE QUEDA y no es un filtro de saldo: es la
+		// senal con la que el telefono BORRA un cargo que Microsip cancelo.
+		// Sin ella el cobrador arrastraria ventas fantasma para siempre.
 		statusFilter = `(s.SALDO > 0
 		OR (s.CARGO_CANCELADO = 'S' AND EXISTS (
 			SELECT 1 FROM DOCTOS_CC dc
 			WHERE dc.DOCTO_CC_ID = s.DOCTO_CC_ID
 			  AND (dc.FECHA_HORA_CANCELACION IS NULL
 			       OR dc.FECHA_HORA_CANCELACION >= ?)
-		))
-		OR EXISTS (
-			SELECT 1 FROM MSP_PAGOS_VENTAS p
-			WHERE p.DOCTO_CC_ACR_ID = s.DOCTO_CC_ID
-			  AND p.FECHA          >= ?
-			  AND p.CONCEPTO_CC_ID IN (87327, 27969)
-		))`
-		statusArgs = []any{desde, desde}
+		)))`
+		statusArgs = []any{desde}
 	}
 	if spec.cursor.IsZero() {
 		args := append([]any{spec.limit, spec.zonaID, upper, spec.afterID}, statusArgs...)
@@ -236,6 +282,7 @@ WHERE s.ZONA_CLIENTE_ID = ?
   AND s.UPDATED_AT <= ?
   AND s.DOCTO_CC_ID > ?
   AND ` + statusFilter + `
+  AND ` + ventaClienteFilterFor("s") + `
 ORDER BY s.UPDATED_AT, s.DOCTO_CC_ID`
 		rows, err := q.QueryContext(ctx, query, args...)
 		if err != nil {
@@ -255,6 +302,7 @@ WHERE s.ZONA_CLIENTE_ID = ?
   AND s.UPDATED_AT <= ?
   AND (s.UPDATED_AT > ? OR (s.UPDATED_AT = ? AND s.DOCTO_CC_ID > ?))
   AND ` + statusFilter + `
+  AND ` + ventaClienteFilterFor("s") + `
 ORDER BY s.UPDATED_AT, s.DOCTO_CC_ID`
 	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {

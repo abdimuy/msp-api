@@ -128,15 +128,28 @@ func seedZonedClienteFromPool(t *testing.T, pool *firebird.Pool) (int, int) {
 	t.Helper()
 	const preferredID = 11486
 	var preferredZona *int
+	// Mismas condiciones que exige el sync para mostrar la venta en la ruta
+	// (ver ventaClienteFilter): ESTATUS 'A' y domicilio principal. Sin esto el
+	// helper devuelve al cliente 11511 — ESTATUS 'B' — y las pruebas fallan
+	// por el fixture, no por el codigo.
 	err := pool.QueryRowContext(context.Background(),
-		`SELECT ZONA_CLIENTE_ID FROM CLIENTES WHERE CLIENTE_ID = ?`, preferredID).Scan(&preferredZona)
+		`SELECT ZONA_CLIENTE_ID FROM CLIENTES c
+		 WHERE c.CLIENTE_ID = ?
+		   AND c.ESTATUS = 'A'
+		   AND EXISTS (SELECT 1 FROM DIRS_CLIENTES d
+		               WHERE d.CLIENTE_ID = c.CLIENTE_ID AND d.ES_DIR_PPAL = 'S')`,
+		preferredID).Scan(&preferredZona)
 	if err == nil && preferredZona != nil {
 		return preferredID, *preferredZona
 	}
 	var clienteID, zonaID int
 	err = pool.QueryRowContext(context.Background(),
-		`SELECT FIRST 1 CLIENTE_ID, ZONA_CLIENTE_ID FROM CLIENTES
-		 WHERE ZONA_CLIENTE_ID IS NOT NULL ORDER BY CLIENTE_ID`).Scan(&clienteID, &zonaID)
+		`SELECT FIRST 1 c.CLIENTE_ID, c.ZONA_CLIENTE_ID FROM CLIENTES c
+		 WHERE c.ZONA_CLIENTE_ID IS NOT NULL
+		   AND c.ESTATUS = 'A'
+		   AND EXISTS (SELECT 1 FROM DIRS_CLIENTES d
+		               WHERE d.CLIENTE_ID = c.CLIENTE_ID AND d.ES_DIR_PPAL = 'S')
+		 ORDER BY c.CLIENTE_ID`).Scan(&clienteID, &zonaID)
 	if err != nil {
 		t.Skipf("no zoned cliente available: %v", err)
 	}
@@ -640,11 +653,20 @@ func TestE2E_SaldosDigest_SaldoFilterMatchesSync(t *testing.T) {
 		cargoA, idSet[cargoA], cargoB, idSet[cargoB])
 }
 
-// TestE2E_SaldosDigest_DesdeIncludesRecentSaldadas verifies that setting desde
-// causes recently-paid saldos to appear in the digest.
+// TestE2E_SaldosDigest_DesdeExcluyeSaldadas: una venta saldada NO aparece en
+// el digest, ni con `desde` ni sin el. Contrato vigente desde 2026-08-13:
+// SALDO > 0 estricto, igual que la API legacy.
+//
+// El test se llamaba DesdeIncludesRecentSaldadas y exigia lo contrario. La
+// regla se retiro por decision de negocio — los cobradores leian esas ventas
+// como clientes de mas en su ruta (13 de 317 en la zona 34).
+//
+// Lo que este test protege ahora es la SIMETRIA: el digest tiene que decir
+// exactamente lo mismo que /sync. Si divergieran, el reconciler del telefono
+// veria extras o phantoms donde no los hay y borraria ventas buenas.
 //
 //nolint:paralleltest
-func TestE2E_SaldosDigest_DesdeIncludesRecentSaldadas(t *testing.T) {
+func TestE2E_SaldosDigest_DesdeExcluyeSaldadas(t *testing.T) {
 	requireFBEnv(t)
 	pool := fbtestutil.NewTestFirebirdPool(t)
 
@@ -688,7 +710,8 @@ func TestE2E_SaldosDigest_DesdeIncludesRecentSaldadas(t *testing.T) {
 	for _, id := range idsWithDesde {
 		withDesdeSet[id] = true
 	}
-	assert.True(t, withDesdeSet[cargo], "recently-paid cargo must appear when desde <= FECHA_ULT_PAGO")
+	assert.False(t, withDesdeSet[cargo],
+		"saldada NO debe aparecer ni con desde: SALDO > 0 estricto, como la legacy")
 
 	t.Logf("SaldosDigest desde: cargo=%d noDesde=%v withDesde=%v ultPago=%s desde=%s",
 		cargo, noDesdeSet[cargo], withDesdeSet[cargo],

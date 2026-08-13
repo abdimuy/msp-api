@@ -8,6 +8,7 @@ package ventfb
 import (
 	"context"
 	"database/sql"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -196,21 +197,79 @@ func (r *PagosRepo) SyncPorZona(
 // haciendo el fan-out estructuralmente imposible en vez de simplemente
 // improbable. El índice IDX_MSP_PAGOS_RECIB_IMPTE (migración 000054) vuelve
 // esta subquery un lookup indexado por fila, no un scan.
+//
+// REGLA: el valor SIEMPRE sale de Microsip (DOCTOS_CC / IMPORTES_DOCTOS_CC).
+// De MSP_PAGOS_VENTAS solo se toma lo que en Microsip no existe:
+//
+//	UPDATED_AT  el cursor incremental — Microsip no tiene marca de cambio
+//	TX_ID       el watermark (ADR-0007)
+//	la EXISTENCIA de la fila cuando Microsip ya la borró (tombstone)
+//
+// Ese ultimo caso es lo que sostiene cada COALESCE: `i` y `dc` entran por
+// LEFT JOIN a proposito, para que un pago borrado fisicamente en Microsip
+// siga viajando por el sync y el telefono lo elimine en vez de quedarse con
+// un pago fantasma (migraciones 000019/000020). Son 144 filas hoy. Cuando
+// Microsip tiene la fila, manda Microsip; cuando ya no la tiene, la cache es
+// lo unico que queda.
+//
+// Por que la regla: la cache SE DESFASA al editar el encabezado. Medido sobre
+// los 1,931,042 pagos de produccion: 43 folios y 41 fechas divergentes, y —el
+// caso extremo— LAT/LON en NULL en el 100% de las filas mientras DOCTOS_CC
+// tiene 965,930 pagos con coordenada. Ese hueco es el que hacia que el cliente
+// pintara su centinela de "sin ubicacion" (Long.MAX_VALUE) como si fuera una
+// distancia en metros.
+//
+// FECHA y LAT/LON salen de DOCTOS_CC, no de la caché. Regla: los datos que
+// viajan al teléfono son los de Microsip; MSP_PAGOS_VENTAS existe para
+// DETECTAR cambios (su UPDATED_AT es el cursor incremental), no para ser la
+// verdad. Sus columnas son copias y una copia puede quedar sin poblar sin que
+// nadie se entere — que es exactamente lo que pasó: LAT/LON se crearon en la
+// migración 000013 como placeholder ("hoy no hay fuente") y quedaron NULL en
+// el 100% de las filas, mientras DOCTOS_CC tenía 805,378 pagos con coordenada.
+// El cliente terminó pintando su centinela de "sin ubicación" (Long.MAX_VALUE)
+// como si fuera una distancia en metros.
+//
+// El COALESCE contra p.* es por los tombstones: dc entra por LEFT JOIN
+// precisamente para que las filas cuyo DOCTO_CC padre fue borrado en Microsip
+// sigan viajando por el sync (ver pagoFromClause). Sin él, esas filas
+// llegarían con FECHA NULL y reventarían el scan.
+//
+// FECHA es la EXCEPCION a la regla, y va al reves que las demas: la cache
+// primero, Microsip de respaldo. No es descuido — es que la HORA del cobro no
+// existe en Microsip. DOCTOS_CC.FECHA es un DATE (solo dia); el instante real
+// en que el cobrador capturo el pago vive en MSP_PAGOS_RECIBIDOS y de ahi lo
+// hereda MSP_PAGOS_VENTAS.FECHA. Por la regla misma —de la cache solo lo que
+// Microsip no tiene— la hora le toca a la cache.
+//
+// La legacy hacia exactamente esto:
+//
+//	COALESCE(MSP_PAGOS_RECIBIDOS.FECHA, DOCTOS_CC.FECHA + DOCTOS_CC.HORA)
+//
+// Medido en produccion: de los pagos de una semana en la zona 34, 165 traen
+// hora real y 7 vienen a medianoche (capturas de oficina, que solo tienen
+// fecha). Tomar dc.FECHA para todos aplanaria esos 165 a las 00:00 y moveria
+// el borde de la ventana del cobrador: un pago cobrado despues de la hora en
+// que abre su semana se le saldria del corte. Por eso NO se toca.
+//
+// El CAST del respaldo no es cosmetico: DOCTOS_CC.FECHA es DATE y la de la
+// cache es TIMESTAMP; Firebird rechaza el COALESCE entre ambos con "Datatypes
+// are not comparable" (SQLSTATE HY004). Es un error que solo aparece contra
+// Firebird real — compila y los tests unitarios pasan igual.
 const selectPagoColsP = `
 	p.IMPTE_DOCTO_CC_ID,
-	p.DOCTO_CC_ID,
-	p.DOCTO_CC_ACR_ID,
-	p.CLIENTE_ID,
+	COALESCE(dc.DOCTO_CC_ID, p.DOCTO_CC_ID),
+	COALESCE(i.DOCTO_CC_ACR_ID, p.DOCTO_CC_ACR_ID),
+	COALESCE(dc.CLIENTE_ID, p.CLIENTE_ID),
 	p.ZONA_CLIENTE_ID,
-	p.FOLIO,
-	p.CONCEPTO_CC_ID,
-	p.FECHA,
-	(p.IMPORTE + p.IMPUESTO),
-	p.IMPUESTO,
-	p.LAT,
-	p.LON,
-	p.CANCELADO,
-	p.APLICADO,
+	COALESCE(dc.FOLIO, p.FOLIO),
+	COALESCE(dc.CONCEPTO_CC_ID, p.CONCEPTO_CC_ID),
+	COALESCE(p.FECHA, CAST(dc.FECHA AS TIMESTAMP)),
+	COALESCE(i.IMPORTE + i.IMPUESTO, p.IMPORTE + p.IMPUESTO),
+	COALESCE(i.IMPUESTO, p.IMPUESTO),
+	dc.LAT,
+	dc.LON,
+	COALESCE(i.CANCELADO, p.CANCELADO),
+	COALESCE(i.APLICADO, p.APLICADO),
 	p.UPDATED_AT,
 	COALESCE(CAST(dc.DESCRIPCION AS VARCHAR(200) CHARACTER SET WIN1252), ''),
 	COALESCE(c.NOMBRE, ''),
@@ -259,6 +318,7 @@ const selectPagoColsP = `
 const pagoFromClause = `
 FROM MSP_PAGOS_VENTAS p
 JOIN MSP_SALDOS_VENTAS s        ON s.DOCTO_CC_ID = p.DOCTO_CC_ACR_ID
+LEFT JOIN IMPORTES_DOCTOS_CC i  ON i.IMPTE_DOCTO_CC_ID = p.IMPTE_DOCTO_CC_ID
 LEFT JOIN DOCTOS_CC dc          ON dc.DOCTO_CC_ID = p.DOCTO_CC_ID
 LEFT JOIN CLIENTES c            ON c.CLIENTE_ID = p.CLIENTE_ID
 LEFT JOIN FORMAS_COBRO_DOCTOS fcd
@@ -474,14 +534,8 @@ func (p *pagoRowScan) hydrate() (domain.Pago, error) {
 	if err != nil {
 		return domain.Pago{}, err
 	}
-	lat, err := scanNullableDecimal(p.latRaw, 8)
-	if err != nil {
-		return domain.Pago{}, err
-	}
-	lon, err := scanNullableDecimal(p.lonRaw, 8)
-	if err != nil {
-		return domain.Pago{}, err
-	}
+	lat := scanCoordinate(p.latRaw)
+	lon := scanCoordinate(p.lonRaw)
 
 	return domain.HydratePago(domain.HydratePagoParams{
 		ImpteDoctoCCID: p.impteID,
@@ -594,20 +648,38 @@ func scanEnrichedPagoRows(rows *sql.Rows) ([]domain.Pago, error) {
 	return result, nil
 }
 
-// scanNullableDecimal returns nil when raw is the SQL NULL marker; otherwise
-// it delegates to firebird.ScanDecimal. A nil *decimal.Decimal IS the value
-// here — it encodes "this column was NULL" — so returning (nil, nil) is the
-// correct signature, but err113's nilnil rule disagrees. Wrap the contract in
-// a helper named for what it does so the call sites read plainly.
-func scanNullableDecimal(raw any, scale int) (*decimal.Decimal, error) {
+// scanCoordinate decodifica DOCTOS_CC.LAT / .LON, que NO son numéricos: son
+// VARCHAR(100) con el valor en texto ("18.2708885", "-97.1446266"). Por eso el
+// sistema Node traía un conversor de buffer para estas dos columnas.
+//
+// Devuelve nil —"sin ubicación"— en tres casos:
+//
+//   - SQL NULL: el pago no trae coordenada.
+//   - Valor cero: `0` y `0.0` son el centinela de "sin señal GPS" que graba la
+//     app al capturar sin fix. Son 68,526 pagos. Dejarlos pasar como 0.0 es
+//     peor que descartarlos: el cliente los toma por una ubicación real y
+//     calcula el centroide de la venta contra el punto (0,0), en el Golfo de
+//     Guinea, así que la distancia sale igual de absurda pero sin el número
+//     gigante que delata el problema.
+//   - Texto no parseable: se descarta la coordenada en vez de reventar. Es un
+//     campo de presentación (ordenar por cercanía); un valor sucio no puede
+//     costarle al cobrador la página entera del sync — y con ella su cobranza.
+//     Hoy las 805,378 filas están limpias, pero quien escribe esa columna es
+//     Microsip y el legacy, no nosotros.
+func scanCoordinate(raw any) *decimal.Decimal {
 	if raw == nil {
-		return nil, nil //nolint:nilnil // nil = SQL NULL; see helper doc.
+		return nil
 	}
-	d, err := firebird.ScanDecimal(raw, scale)
+	d, err := firebird.ScanDecimal(raw, 8)
 	if err != nil {
-		return nil, err
+		slog.Warn("cobranza: coordenada ilegible en DOCTOS_CC; se omite",
+			"error", err)
+		return nil
 	}
-	return &d, nil
+	if d.IsZero() {
+		return nil
+	}
+	return &d
 }
 
 func nullableInt(v sql.NullInt64) *int {
