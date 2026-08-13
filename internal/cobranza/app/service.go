@@ -8,6 +8,7 @@ package app
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/abdimuy/msp-api/internal/cobranza/domain"
@@ -73,6 +74,15 @@ type Service struct {
 	// Reconcile ports for the digest/ids endpoints.
 	pagosReconcile  outbound.PagosReconcileRepo
 	saldosReconcile outbound.SaldosReconcileRepo
+
+	// syncEpoch reads the resync-forcing generation counters. Optional: when
+	// nil, SyncEpoch reports 0 and the sync behaves exactly as before the
+	// epoch mechanism existed.
+	syncEpoch outbound.SyncEpochRepo
+	// epochLogger records epoch read failures. Never nil after
+	// WithSyncEpochRepo; nil-checked at use so a Service built by NewService
+	// alone stays usable.
+	epochLogger *slog.Logger
 }
 
 // NewService builds a Service wired against the given ports. ventas may be
@@ -121,6 +131,54 @@ func NewService(
 func (s *Service) WithReconcilePorts(pagosR outbound.PagosReconcileRepo, saldosR outbound.SaldosReconcileRepo) {
 	s.pagosReconcile = pagosR
 	s.saldosReconcile = saldosR
+}
+
+// WithSyncEpochRepo attaches the port that reads MSP_CFG_SYNC_EPOCH. Called
+// at wiring time after NewService, same rationale as WithReconcilePorts.
+// A nil logger falls back to slog.Default().
+func (s *Service) WithSyncEpochRepo(repo outbound.SyncEpochRepo, logger *slog.Logger) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	s.syncEpoch = repo
+	s.epochLogger = logger
+}
+
+// SyncEpoch returns the effective sync generation for (recurso, zonaID),
+// which the sync endpoints echo back as `sync_epoch`. A client that sees a
+// value higher than the one it stored wipes its cursor and resynchronizes
+// from scratch — the server-side replacement for hardcoded migration markers
+// shipped in an APK.
+//
+// It deliberately returns no error. The epoch is metadata bolted onto a sync
+// page: a missing port (module wired without it), a missing table (migration
+// 000055 not applied) or a transient Firebird failure must all degrade to 0
+// and let the page through, never fail the request. Failures are logged so
+// the degradation is visible instead of silent.
+func (s *Service) SyncEpoch(ctx context.Context, recurso domain.RecursoSync, zonaID int) int {
+	if s.syncEpoch == nil {
+		return 0
+	}
+	epoch, err := s.syncEpoch.Efectivo(ctx, recurso, zonaID)
+	if err != nil {
+		s.logEpochFailure(ctx, recurso, zonaID, err)
+		return 0
+	}
+	return epoch
+}
+
+// logEpochFailure reports a degraded epoch read without letting a nil logger
+// panic the sync path.
+func (s *Service) logEpochFailure(ctx context.Context, recurso domain.RecursoSync, zonaID int, err error) {
+	logger := s.epochLogger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger.WarnContext(ctx, "cobranza.sync_epoch.read_failed",
+		slog.String("recurso", recurso.String()),
+		slog.Int("zona_cliente_id", zonaID),
+		slog.String("error", err.Error()),
+	)
 }
 
 // runInTx executes fn inside a Firebird transaction. Composes with existing

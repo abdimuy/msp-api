@@ -134,6 +134,7 @@ func appOptions() []fx.Option {
 			provideCobranzaPagosReconcileRepo,
 			provideCobranzaSaldosReconcileRepo,
 			provideCobranzaErrorsRepo,
+			provideCobranzaSyncEpochRepo,
 			provideCobranzaClock,
 			provideCobranzaReconcilerConfig,
 			provideCobranzaPagosRecibidosRepo,

@@ -63,6 +63,14 @@ func provideCobranzaErrorsRepo(p *firebird.Pool) cobranzaoutbound.ErrorsRepo {
 	return cobranzaventfb.NewErrorsRepo(p)
 }
 
+// provideCobranzaSyncEpochRepo builds the Firebird-backed SyncEpochRepo
+// (MSP_CFG_SYNC_EPOCH), the lever that forces mobile clients to resynchronize
+// without shipping a new APK. TTL-cached — see ventfb.DefaultSyncEpochTTL for
+// why the sync path must not acquire a pool connection per page.
+func provideCobranzaSyncEpochRepo(p *firebird.Pool) cobranzaoutbound.SyncEpochRepo {
+	return cobranzaventfb.NewSyncEpochRepo(p)
+}
+
 // provideCobranzaClock returns the production UTC clock for the cobranza module.
 func provideCobranzaClock() cobranzaoutbound.Clock {
 	return cobranzaoutbound.ProductionClock{}
@@ -120,9 +128,12 @@ func provideCobranzaService(
 	txMgr *firebird.TxManager,
 	pagosReconcile cobranzaoutbound.PagosReconcileRepo,
 	saldosReconcile cobranzaoutbound.SaldosReconcileRepo,
+	syncEpoch cobranzaoutbound.SyncEpochRepo,
+	logger *slog.Logger,
 ) *cobranzaapp.Service {
 	svc := cobranzaapp.NewService(saldos, pagos, ventas, clock, pagosRecibidos, pagosImagenes, microsipPago, storage, imageProc, txMgr)
 	svc.WithReconcilePorts(pagosReconcile, saldosReconcile)
+	svc.WithSyncEpochRepo(syncEpoch, logger)
 	return svc
 }
 

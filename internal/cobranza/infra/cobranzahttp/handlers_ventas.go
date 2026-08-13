@@ -5,6 +5,7 @@ import (
 	"context"
 
 	"github.com/abdimuy/msp-api/internal/auth"
+	"github.com/abdimuy/msp-api/internal/cobranza/domain"
 )
 
 // SyncVentasPorZona handles GET /cobranza/sync/ventas/zona/{zona_id}.
@@ -39,7 +40,8 @@ func (h *Handlers) SyncVentasPorZona(ctx context.Context, in *SyncVentasInput) (
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	return &SyncVentasOutput{Body: toSyncVentasBody(page, productos)}, nil
+	epoch := h.svc.SyncEpoch(ctx, domain.RecursoSyncVentas, in.ZonaID)
+	return &SyncVentasOutput{Body: toSyncVentasBody(page, productos, epoch)}, nil
 }
 
 // ─── Compile-time handler signature check ────────────────────────────────────

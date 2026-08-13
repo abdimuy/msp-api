@@ -86,6 +86,7 @@ type SyncVentasBody struct {
 	MaxUpdatedAt string     `json:"max_updated_at" doc:"Cursor para la próxima llamada (RFC3339 UTC)"`
 	ServerNow    string     `json:"server_now"     doc:"Reloj del servidor al momento de la consulta (RFC3339 UTC)"`
 	HasMore      bool       `json:"has_more"       doc:"true si quedan más items para el mismo cursor (paginar con after_id)"`
+	SyncEpoch    int        `json:"sync_epoch"     doc:"Generación de sincronización de esta zona. Si es mayor al valor guardado, el cliente debe descartar su cursor y resincronizar desde cero. 0 = nunca se ha forzado nada"`
 }
 
 // SyncVentasInput contains the parameters for GET /cobranza/sync/ventas/zona/{zona_id}.
@@ -190,8 +191,9 @@ func toVentaDTO(v domain.Venta, productos []domain.ProductoVenta) VentaDTO {
 // toSyncVentasBody projects an outbound.SyncPage[domain.Venta] into the DTO.
 // productos maps DOCTO_PV_ID to its line items; each venta's productos are
 // looked up by v.DoctoPVID() (nil-safe — a nil DoctoPVID or missing map entry
-// yields an empty slice).
-func toSyncVentasBody(page outbound.SyncPage[domain.Venta], productos map[int][]domain.ProductoVenta) SyncVentasBody {
+// yields an empty slice). syncEpoch is the zone's effective sync generation
+// (0 when nothing has ever been forced).
+func toSyncVentasBody(page outbound.SyncPage[domain.Venta], productos map[int][]domain.ProductoVenta, syncEpoch int) SyncVentasBody {
 	items := make([]VentaDTO, 0, len(page.Items))
 	for _, v := range page.Items {
 		var ps []domain.ProductoVenta
@@ -205,5 +207,6 @@ func toSyncVentasBody(page outbound.SyncPage[domain.Venta], productos map[int][]
 		MaxUpdatedAt: page.MaxUpdatedAt.UTC().Format(time.RFC3339Nano),
 		ServerNow:    page.ServerNow.UTC().Format(time.RFC3339Nano),
 		HasMore:      page.HasMore,
+		SyncEpoch:    syncEpoch,
 	}
 }

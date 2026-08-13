@@ -82,7 +82,8 @@ func (h *Handlers) SyncPagosPorZona(ctx context.Context, in *SyncPagosInput) (*S
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	return &SyncPagosOutput{Body: toSyncPagosBody(page)}, nil
+	epoch := h.svc.SyncEpoch(ctx, domain.RecursoSyncPagos, in.ZonaID)
+	return &SyncPagosOutput{Body: toSyncPagosBody(page, epoch)}, nil
 }
 
 // parseCursor parses the sync cursor — RFC3339 timestamp. Empty input returns

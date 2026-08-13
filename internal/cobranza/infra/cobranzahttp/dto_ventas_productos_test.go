@@ -134,7 +134,7 @@ func TestToSyncVentasBody_MapsProductosByDoctoPVID(t *testing.T) {
 		// 7777 intentionally absent from the map — must map to empty.
 	}
 
-	body := toSyncVentasBody(page, productos)
+	body := toSyncVentasBody(page, productos, 0)
 	require.Len(t, body.Items, 3)
 
 	byDoctoCC := make(map[int]VentaDTO, len(body.Items))

@@ -53,6 +53,7 @@ type SyncPagosBody struct {
 	MaxUpdatedAt string    `json:"max_updated_at" doc:"Cursor para la próxima llamada (RFC3339 UTC)"`
 	ServerNow    string    `json:"server_now"     doc:"Reloj del servidor al momento de la consulta (RFC3339 UTC)"`
 	HasMore      bool      `json:"has_more"       doc:"true si quedan más items para el mismo cursor (paginar con after_id)"`
+	SyncEpoch    int       `json:"sync_epoch"     doc:"Generación de sincronización de esta zona. Si es mayor al valor guardado, el cliente debe descartar su cursor y resincronizar desde cero. 0 = nunca se ha forzado nada"`
 }
 
 // ─── Input DTOs ───────────────────────────────────────────────────────────────
@@ -167,7 +168,9 @@ func toSyncSaldosBody(page outbound.SyncPage[domain.Saldo]) SyncSaldosBody {
 }
 
 // toSyncPagosBody projects an outbound.SyncPage[domain.Pago] into the DTO.
-func toSyncPagosBody(page outbound.SyncPage[domain.Pago]) SyncPagosBody {
+// syncEpoch is the zone's effective sync generation (0 when nothing has ever
+// been forced).
+func toSyncPagosBody(page outbound.SyncPage[domain.Pago], syncEpoch int) SyncPagosBody {
 	items := make([]PagoDTO, 0, len(page.Items))
 	for _, p := range page.Items {
 		items = append(items, toPagoDTO(p))
@@ -177,5 +180,6 @@ func toSyncPagosBody(page outbound.SyncPage[domain.Pago]) SyncPagosBody {
 		MaxUpdatedAt: page.MaxUpdatedAt.UTC().Format(time.RFC3339Nano),
 		ServerNow:    page.ServerNow.UTC().Format(time.RFC3339Nano),
 		HasMore:      page.HasMore,
+		SyncEpoch:    syncEpoch,
 	}
 }
