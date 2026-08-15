@@ -13,10 +13,19 @@ banderas; la configuración y el catálogo cambian poco, los conteos sí.
 | 71190 | MEDIO MAYOREO | 14 | **9** |
 | 2990694 | R/SUP RICARDO MORALES | 0 | 0 |
 
-**Bloqueante para encender `VENTAS_ZONA_OBLIGATORIA`.** `MEDIO MAYOREO` tiene 9
-clientes activos; con la bandera encendida sus ventas fallarían con
-`ErrZonaSinCaja`. Hay que sembrar su fila antes. `R/SUP RICARDO MORALES` está
-vacía y es inerte.
+**No bloquea.** Ninguna de las dos vende desde la app:
+
+- `MEDIO MAYOREO` (71190) es mayoreo, y el mayoreo **no se captura desde la
+  app** (confirmado por el negocio el 2026-08-15). Sus 9 clientes activos se
+  atienden por otra vía, así que la falta de caja nunca se ejercita. **No hay
+  que sembrar su fila.**
+- `R/SUP RICARDO MORALES` (2990694) está vacía y es inerte.
+
+Por lo tanto `VENTAS_ZONA_OBLIGATORIA` sólo espera a que la adopción de la app
+que exige zona sea ~total. La cobertura del catálogo ya no es una precondición.
+
+Si algún día el mayoreo llegara a capturarse desde la app, hay que sembrar su
+fila **antes** o sus ventas fallarán con `ErrZonaSinCaja`.
 
 ## D0 — MSP_CFG_APLICAR
 
