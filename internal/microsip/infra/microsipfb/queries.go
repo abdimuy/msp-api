@@ -86,6 +86,18 @@ SELECT ZONA_CLIENTE_ID, NOMBRE AS ZONA_CLIENTE
 FROM ZONAS_CLIENTES
 ORDER BY NOMBRE`
 
+// selectCiudades reads the CIUDADES catalog with its ESTADOS join.
+//
+// The estado travels with the ciudad row: the catalog spans several states,
+// so resolving them independently mismatches them. The LEFT JOIN keeps
+// ciudades whose ESTADO_ID has no matching row rather than dropping them
+// from the picker.
+const selectCiudades = `
+SELECT C.CIUDAD_ID, C.NOMBRE, C.ESTADO_ID, E.NOMBRE AS ESTADO
+FROM CIUDADES C
+LEFT JOIN ESTADOS E ON E.ESTADO_ID = C.ESTADO_ID
+ORDER BY C.NOMBRE`
+
 // selectCobradoresPorZona mirrors sys_msp_backend GET_COBRADORES_POR_ZONA.
 // Returns the top cobrador (by client count) for each zona.
 const selectCobradoresPorZona = `

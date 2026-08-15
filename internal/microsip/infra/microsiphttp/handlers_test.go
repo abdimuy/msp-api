@@ -54,12 +54,28 @@ func (f *fakeZonaRepo) Listar(_ context.Context) ([]domain.ZonaCliente, error) {
 	return f.zonas, f.err
 }
 
+type fakeCiudadRepo struct {
+	ciudades []domain.Ciudad
+	err      error
+}
+
+func (f *fakeCiudadRepo) Listar(_ context.Context) ([]domain.Ciudad, error) {
+	return f.ciudades, f.err
+}
+
 // ─── Harness ─────────────────────────────────────────────────────────────
 
 func newServer(t *testing.T, almRepo *fakeAlmacenRepo, zRepo *fakeZonaRepo) http.Handler {
 	t.Helper()
+	return newServerFull(t, almRepo, zRepo, &fakeCiudadRepo{})
+}
+
+func newServerFull(
+	t *testing.T, almRepo *fakeAlmacenRepo, zRepo *fakeZonaRepo, cRepo *fakeCiudadRepo,
+) http.Handler {
+	t.Helper()
 	r := chi.NewRouter()
-	svc := microsipapp.NewService(almRepo, zRepo)
+	svc := microsipapp.NewService(almRepo, zRepo, cRepo)
 	microsiphttp.MountRouter(r, svc)
 	return r
 }
@@ -192,4 +208,56 @@ func TestListarZonasCliente_OK(t *testing.T) {
 	require.Len(t, body.Items, 2)
 	assert.Equal(t, "TEHUACAN - JUAN PEREZ", body.Items[0].ZonaCliente)
 	assert.Equal(t, "PUEBLA", body.Items[1].ZonaCliente)
+}
+
+func TestListarCiudades_OK(t *testing.T) {
+	t.Parallel()
+	srv := newServerFull(t, &fakeAlmacenRepo{}, &fakeZonaRepo{}, &fakeCiudadRepo{
+		ciudades: []domain.Ciudad{
+			{ID: 338, Nombre: "TEHUACAN", EstadoID: 337, Estado: "PUEBLA"},
+			{ID: 48662, Nombre: "OAXACA", EstadoID: 11523, Estado: "OAXACA"},
+		},
+	})
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ciudades", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body struct {
+		Items []struct {
+			CiudadID int    `json:"ciudad_id"`
+			Ciudad   string `json:"ciudad"`
+			EstadoID int    `json:"estado_id"`
+			Estado   string `json:"estado"`
+		} `json:"items"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&body))
+	require.Len(t, body.Items, 2)
+
+	// Each ciudad ships its own estado: the catalog spans several, so a fixed
+	// estado would mismatch them.
+	assert.Equal(t, "TEHUACAN", body.Items[0].Ciudad)
+	assert.Equal(t, 337, body.Items[0].EstadoID)
+	assert.Equal(t, "PUEBLA", body.Items[0].Estado)
+	assert.Equal(t, "OAXACA", body.Items[1].Ciudad)
+	assert.Equal(t, 11523, body.Items[1].EstadoID, "OAXACA must not inherit Puebla's estado")
+}
+
+func TestListarCiudades_EmptyIsArrayNotNull(t *testing.T) {
+	t.Parallel()
+	srv := newServerFull(t, &fakeAlmacenRepo{}, &fakeZonaRepo{}, &fakeCiudadRepo{})
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ciudades", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	// Gson turns a null into a null field and the app NPEs on it.
+	assert.Contains(t, rec.Body.String(), `"items":[]`)
+}
+
+func TestListarCiudades_RepoErrorIs500(t *testing.T) {
+	t.Parallel()
+	srv := newServerFull(t, &fakeAlmacenRepo{}, &fakeZonaRepo{}, &fakeCiudadRepo{
+		err: errors.New("firebird down"),
+	})
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ciudades", nil))
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }

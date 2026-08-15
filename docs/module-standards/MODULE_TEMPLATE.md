@@ -60,6 +60,8 @@ The `internal/{module}` root package is the **only** import-allowed surface for 
 
 11. **Dates and times**: read `DATETIME_HANDLING.md` before writing any code that touches `time.Time`. The three non-negotiable rules: (a) domain/app always operate in UTC; (b) `firebird.ToWallClock` wraps every write; (c) `firebird.ScanUTCTime` decodes every read. The frontend contract (RFC3339 with explicit TZ, response always UTC `Z`) is documented in the same file.
 
+12. **Field captures (writes from the phone)**: if the module receives writes from the mobile app, read `ENTREGA_GARANTIZADA.md` **before** designing the endpoint. The three non-negotiable requirements: (a) idempotency by the body's `id`, with no expiry, returning the existing row; (b) a `GET /{id}` reachable by the role that captures, with clean 200/404; (c) coverage by `failedintent.CaptureMiddleware`, which confirms custody with `X-Intent-Captured`. Do not invent a per-module retry policy — the decision table lives once, in the app's `:core:upload`.
+
 ## File-suffix convention
 
 Module HTTP/firebird package names use the `{module}` prefix + `{layer}` suffix (e.g. `authhttp`, `authfb`, `venthttp`, `ventfb`). This avoids collisions with stdlib (`http`), platform packages (`firebird`), and other modules.

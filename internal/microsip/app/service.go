@@ -18,12 +18,17 @@ import (
 type Service struct {
 	almacenes outbound.AlmacenRepo
 	zonas     outbound.ZonaClienteRepo
+	ciudades  outbound.CiudadRepo
 }
 
-// NewService wires a Service against its repos. Both ports are required —
+// NewService wires a Service against its repos. Every port is required —
 // the surface is small enough that a partial wiring is never useful.
-func NewService(almacenes outbound.AlmacenRepo, zonas outbound.ZonaClienteRepo) *Service {
-	return &Service{almacenes: almacenes, zonas: zonas}
+func NewService(
+	almacenes outbound.AlmacenRepo,
+	zonas outbound.ZonaClienteRepo,
+	ciudades outbound.CiudadRepo,
+) *Service {
+	return &Service{almacenes: almacenes, zonas: zonas, ciudades: ciudades}
 }
 
 // ListarAlmacenes returns the full visible-almacen list (cf. AlmacenRepo.Listar).
@@ -46,4 +51,10 @@ func (s *Service) ListarArticulosDelAlmacen(ctx context.Context, almacenID int, 
 // the top cobrador (legacy contract).
 func (s *Service) ListarZonasCliente(ctx context.Context) ([]domain.ZonaCliente, error) {
 	return s.zonas.Listar(ctx)
+}
+
+// ListarCiudades returns the ciudades catalog, each row carrying its own
+// estado (cf. domain.Ciudad).
+func (s *Service) ListarCiudades(ctx context.Context) ([]domain.Ciudad, error) {
+	return s.ciudades.Listar(ctx)
 }

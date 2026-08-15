@@ -161,6 +161,26 @@ type MicrosipVenta struct {
 	// transaction. Default false. CONTADO ventas never trigger this
 	// regardless of the flag.
 	ReactivarClienteEnabled bool `env:"MICROSIP_REACTIVAR_CLIENTE_ENABLED" envDefault:"false"`
+	// ZonaObligatoria requires every venta to carry a zona, and resolves
+	// caja/cajero from MSP_CFG_ZONA_CAJA for ALL venta types — CONTADO
+	// included, which today falls back to the fixed mostrador caja from
+	// MSP_CFG_APLICAR.
+	//
+	// Default false: the backlog of ventas already captured without a zona
+	// still has to drain through the defaults path. Turn it on only when
+	// adoption of the app version that requires a zona is ~total AND every
+	// active zona has a row in MSP_CFG_ZONA_CAJA — a zona without a row makes
+	// its ventas fail with zona_sin_caja.
+	ZonaObligatoria bool `env:"VENTAS_ZONA_OBLIGATORIA" envDefault:"false"`
+	// CiudadCatalogo resolves the captured ciudad against Microsip's CIUDADES
+	// catalog when auto-creating a cliente, instead of always writing the
+	// fixed Tehuacán/Puebla defaults. A ciudad with no match blocks the apply.
+	//
+	// Default false. Turn it on only AFTER the catalog is deduplicated: it
+	// carries near-duplicates ("TLACHICHUCA" / "TLACHICHUCA, PUE") and rows
+	// whose ESTADO_ID contradicts the name (QUERETARO, TECAMAC and
+	// TECAMACHALCO are all filed under CIUDAD DE MEXICO).
+	CiudadCatalogo bool `env:"VENTAS_CIUDAD_CATALOGO" envDefault:"false"`
 }
 
 // validate enforces that the MicrosipVenta configuration is internally
@@ -281,6 +301,16 @@ type App struct {
 	Env       Environment `env:"APP_ENV" envDefault:"development"`
 	LogLevel  string      `env:"APP_LOG_LEVEL" envDefault:"info"`
 	LogFormat string      `env:"APP_LOG_FORMAT" envDefault:"text"`
+	// MinAppVersion is the minimum mobile app version NAME ("2.17.0") the API
+	// accepts. Empty disables the gate. It is a version name, not a
+	// versionCode, because that is what X-App-Version carries — and the gate
+	// exists to stop OLD builds, which only ever send the name.
+	//
+	// This is the backstop for the in-app gate: a phone that never reads the
+	// Firestore config still reaches the API. Turn it on only AFTER the new
+	// app is published; a wrong value locks out the fleet, and clearing it
+	// reverts just as fast. See docs/module-standards/ENTREGA_GARANTIZADA.md.
+	MinAppVersion string `env:"MIN_APP_VERSION" envDefault:""`
 }
 
 // HTTP holds HTTP server settings.

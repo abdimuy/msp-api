@@ -180,6 +180,12 @@ func provideRootHandler(
 		middleware.CORS(cfg.HTTP.CORSOrigins),
 		middleware.BodyLimit(int64(cfg.HTTP.MaxBodySizeMB)*1024*1024),
 		middleware.Timeout(cfg.HTTP.WriteTimeout),
+		// Version gate sits in the ROOT chain, which puts it ahead of every
+		// per-module failed-intent capture — otherwise a fleet of outdated
+		// phones writes one MSP_FAILED_INTENTS row per attempt. Disabled
+		// while cfg.App.MinAppVersion is empty, and fails open for clients
+		// that do not send X-App-Version (desktop, web, v1).
+		middleware.MinAppVersion(cfg.App.MinAppVersion),
 	)
 
 	// Platform endpoints — kept off the /v2 prefix so they don't trigger

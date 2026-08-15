@@ -79,12 +79,17 @@ func buildAplicarContadoSinZona(t *testing.T, userID uuid.UUID) *domain.Venta {
 	return v
 }
 
-// TestE2E_AplicarVenta_Contado_SinZona_AplicaEnMicrosip is the end-to-end proof
-// of the contado fix: a CONTADO venta WITHOUT a zona is applied through the full
-// Service.AplicarVenta path against the real Microsip DB. Before the fix this
-// failed with ErrVentaSinZona (the apply flow required a zona to resolve the
-// caja). After the fix it must apply against the fixed mostrador caja
-// (MSP_CFG_APLICAR.CAJA_CONTADO_ID), producing a real applied DOCTOS_PV.
+// TestE2E_AplicarVenta_Contado_SinZona_AplicaEnMicrosip covers the BACKLOG
+// path, with VENTAS_ZONA_OBLIGATORIA off (the harness default).
+//
+// A CONTADO venta WITHOUT a zona is applied through the full
+// Service.AplicarVenta path against the real Microsip DB, landing on the fixed
+// mostrador caja (MSP_CFG_APLICAR.CAJA_CONTADO_ID) and producing a real applied
+// DOCTOS_PV.
+//
+// This test EXPIRES. It exists only while ventas captured without a zona are
+// still draining; once that backlog is zero, both this test and
+// contadoCajaCajeroFromDefaults go away. Its twin below is the target state.
 //
 //nolint:paralleltest // serial: shares rollback-only tx.
 func TestE2E_AplicarVenta_Contado_SinZona_AplicaEnMicrosip(t *testing.T) {
@@ -131,5 +136,43 @@ func TestE2E_AplicarVenta_Contado_SinZona_AplicaEnMicrosip(t *testing.T) {
 		}
 		t.Logf("contado sin zona aplicado: DoctoPVID=%d Folio=%s CajaID=%d",
 			doctoPVID, folio, cajaID)
+	})
+}
+
+// TestE2E_AplicarVenta_Contado_SinZona_RechazadaConZonaObligatoria is the twin
+// of the test above and the TARGET state: with VENTAS_ZONA_OBLIGATORIA on, the
+// very same venta is rejected before anything reaches Microsip.
+//
+// Together the two pin both sides of the flag against the real database: the
+// backlog keeps draining while it is off, and nothing without a zona gets
+// through once it is on.
+//
+//nolint:paralleltest // serial: shares rollback-only tx.
+func TestE2E_AplicarVenta_Contado_SinZona_RechazadaConZonaObligatoria(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		userID := seedUsuarioRow(ctx, t, pool)
+		h := newAplicarE2EHarness(ctx, t, pool)
+		h.svc.WithZonaObligatoria(true)
+
+		q := firebird.GetQuerier(ctx, pool.DB)
+		requireCatalog(t, q)
+
+		v := buildAplicarContadoSinZona(t, userID)
+		ventaID := h.persistAprobada(ctx, t, v)
+
+		_, err := h.svc.AplicarVenta(ctx, ventaID, userID)
+
+		require.ErrorIs(t, err, domain.ErrVentaSinZona,
+			"con la bandera encendida, una venta sin zona no puede aplicarse")
+
+		// Nothing may have been written: the venta stays unapplied.
+		var doctoPVID *int
+		require.NoError(t, q.QueryRowContext(ctx,
+			`SELECT MICROSIP_DOCTO_PV_ID FROM MSP_VENTAS WHERE ID = ?`, ventaID.String(),
+		).Scan(&doctoPVID), "must read the venta header back")
+		assert.Nil(t, doctoPVID, "no debe haberse materializado ningún DOCTOS_PV")
 	})
 }

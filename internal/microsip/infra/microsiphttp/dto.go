@@ -35,6 +35,15 @@ type ZonaClienteDTO struct {
 	ZonaCliente   string `json:"zona_cliente"`
 }
 
+// CiudadDTO is the public shape of a ciudad. estado_id/estado travel with
+// the ciudad and are never selected independently — see domain.Ciudad.
+type CiudadDTO struct {
+	CiudadID int    `json:"ciudad_id"`
+	Ciudad   string `json:"ciudad"`
+	EstadoID int    `json:"estado_id"`
+	Estado   string `json:"estado"`
+}
+
 // listResponse[T] is the envelope every list endpoint returns. Keeping the
 // items under "items" matches the convention used by every other v2
 // list endpoint (ventas, cobranza, etc.).
@@ -82,6 +91,14 @@ type ListarZonasClienteOutput struct {
 	Body listResponse[ZonaClienteDTO]
 }
 
+// ListarCiudadesInput is empty — the endpoint takes no parameters.
+type ListarCiudadesInput struct{}
+
+// ListarCiudadesOutput is the ciudades envelope.
+type ListarCiudadesOutput struct {
+	Body listResponse[CiudadDTO]
+}
+
 // ─── Mappers ─────────────────────────────────────────────────────────────
 
 func toAlmacenDTO(a domain.Almacen) AlmacenDTO {
@@ -107,5 +124,15 @@ func toZonaClienteDTO(z domain.ZonaCliente) ZonaClienteDTO {
 	return ZonaClienteDTO{
 		ZonaClienteID: z.ID,
 		ZonaCliente:   z.Nombre,
+	}
+}
+
+// toCiudadDTO projects a domain.Ciudad into its public shape.
+func toCiudadDTO(c domain.Ciudad) CiudadDTO {
+	return CiudadDTO{
+		CiudadID: c.ID,
+		Ciudad:   c.Nombre,
+		EstadoID: c.EstadoID,
+		Estado:   c.Estado,
 	}
 }

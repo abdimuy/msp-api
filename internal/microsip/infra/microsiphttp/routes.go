@@ -57,7 +57,7 @@ func MountRouter(r chi.Router, svc *microsipapp.Service) huma.API {
 }
 
 // registerOperations declares every Huma operation the microsip module
-// exposes. All four are GET-only reads, secured by bearer token.
+// exposes. All are GET-only reads, secured by bearer token.
 func registerOperations(api huma.API, h *Handlers) {
 	security := []map[string][]string{{securitySchemeName: {}}}
 	tags := []string{"microsip"}
@@ -105,4 +105,15 @@ func registerOperations(api huma.API, h *Handlers) {
 		Security:      security,
 		DefaultStatus: http.StatusOK,
 	}, h.ListarZonasCliente)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "listar-ciudades",
+		Method:        http.MethodGet,
+		Path:          "/ciudades",
+		Summary:       "Listar ciudades",
+		Description:   "Devuelve el catálogo de ciudades de Microsip. Cada ciudad trae su estado (estado_id + estado): el catálogo abarca varios estados, así que elegirlos por separado produce clientes con ciudad de un estado y estado de otro.",
+		Tags:          tags,
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+	}, h.ListarCiudades)
 }

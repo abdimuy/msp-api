@@ -72,6 +72,19 @@ func (h *Handlers) ListarZonasCliente(ctx context.Context, _ *ListarZonasCliente
 	return &ListarZonasClienteOutput{Body: listResponse[ZonaClienteDTO]{Items: items}}, nil
 }
 
+// ListarCiudades returns the ciudades catalog with each estado joined in.
+func (h *Handlers) ListarCiudades(ctx context.Context, _ *ListarCiudadesInput) (*ListarCiudadesOutput, error) {
+	ciudades, err := h.svc.ListarCiudades(ctx)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	items := make([]CiudadDTO, 0, len(ciudades))
+	for _, c := range ciudades {
+		items = append(items, toCiudadDTO(c))
+	}
+	return &ListarCiudadesOutput{Body: listResponse[CiudadDTO]{Items: items}}, nil
+}
+
 // mapError surfaces repo errors as a generic 500 — the catalog endpoints
 // have no expected domain errors, so anything reaching this point is
 // unexpected (Firebird unreachable, schema drift, etc.).

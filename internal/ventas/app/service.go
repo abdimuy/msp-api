@@ -63,6 +63,18 @@ type Service struct {
 	juegoResolver         outbound.MicrosipJuegoResolver
 	juegosEnabled         bool
 	juegosLineaArticuloID int
+	// ciudadCatalogo resolves the captured ciudad against Microsip's CIUDADES
+	// catalog. Optional: when nil or ciudadCatalogoEnabled is false, the
+	// cliente auto-create keeps writing the fixed Tehuacán/Puebla defaults.
+	// Set via WithCiudadCatalogo.
+	ciudadCatalogo        outbound.CiudadCatalogo
+	ciudadCatalogoEnabled bool
+	// zonaObligatoria requires a zona on every venta and resolves caja/cajero
+	// from MSP_CFG_ZONA_CAJA for all venta types. When false (the default),
+	// CONTADO ventas fall back to the fixed mostrador caja so the backlog of
+	// ventas captured without a zona can still drain. Set via
+	// WithZonaObligatoria.
+	zonaObligatoria bool
 	// zonaReader is optional. Tests omit it; production wires it via
 	// WithZonaReader. When nil, the zona mismatch check is skipped — used for
 	// tests that do not exercise the pre-existing cliente branch.
@@ -147,6 +159,23 @@ func (s *Service) WithJuegos(r outbound.MicrosipJuegoResolver, enabled bool, lin
 	s.juegoResolver = r
 	s.juegosEnabled = enabled
 	s.juegosLineaArticuloID = lineaArticuloID
+	return s
+}
+
+// WithZonaObligatoria toggles the zona requirement inside AplicarVenta (see
+// zonaObligatoria). Returns s for fluent wiring at the composition root.
+func (s *Service) WithZonaObligatoria(enabled bool) *Service {
+	s.zonaObligatoria = enabled
+	return s
+}
+
+// WithCiudadCatalogo attaches the CIUDADES resolver and enables resolving the
+// captured ciudad instead of writing the fixed defaults. When c is nil the
+// feature is off regardless of enabled. Returns s for fluent wiring at the
+// composition root.
+func (s *Service) WithCiudadCatalogo(c outbound.CiudadCatalogo, enabled bool) *Service {
+	s.ciudadCatalogo = c
+	s.ciudadCatalogoEnabled = enabled && c != nil
 	return s
 }
 

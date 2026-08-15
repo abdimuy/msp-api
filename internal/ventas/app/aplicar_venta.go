@@ -37,7 +37,7 @@ func (s *Service) AplicarVenta(ctx context.Context, ventaID, by uuid.UUID) (*dom
 		if err != nil {
 			return err
 		}
-		if err := checkPreconditions(v); err != nil {
+		if err := checkPreconditions(v, s.zonaObligatoria); err != nil {
 			return err
 		}
 		// Idempotency: already aplicada → return as-is without re-materializing.
@@ -92,7 +92,7 @@ func (s *Service) AplicarVenta(ctx context.Context, ventaID, by uuid.UUID) (*dom
 
 // checkPreconditions validates the state machine invariants before attempting
 // materialization.
-func checkPreconditions(v *domain.Venta) error {
+func checkPreconditions(v *domain.Venta, zonaObligatoria bool) error {
 	if v.Estado() != domain.EstadoActive {
 		return domain.ErrVentaNoActiva
 	}
@@ -102,10 +102,13 @@ func checkPreconditions(v *domain.Venta) error {
 	if v.Situacion() != domain.SituacionAprobada {
 		return domain.ErrVentaNoAplicable
 	}
-	// Zona is required only for credito ventas (to resolve the zona caja).
-	// Contado ventas use the fixed mostrador caja regardless of zona.
-	if v.TipoVenta() == domain.TipoVentaCredito && v.Direccion().ZonaClienteID() == nil {
-		return domain.ErrVentaSinZona
+	// Zona resolves the caja. With zonaObligatoria on it is required for every
+	// venta type; with it off, only CREDITO needs it — CONTADO falls back to
+	// the fixed mostrador caja so already-captured ventas can still drain.
+	if zonaObligatoria || v.TipoVenta() == domain.TipoVentaCredito {
+		if v.Direccion().ZonaClienteID() == nil {
+			return domain.ErrVentaSinZona
+		}
 	}
 	// ClienteID is nil only when the auto-create branch will run inside the
 	// tx. If the venta lacks enough snapshot data to auto-create, reject now
@@ -147,15 +150,7 @@ func (s *Service) buildWriterInput(ctx context.Context, v *domain.Venta) (outbou
 		return outbound.MicrosipVentaInput{}, err
 	}
 
-	// Resolve caja for the venta type. Contado uses the fixed mostrador caja
-	// (from MSP_CFG_APLICAR); credito uses the zona mapping. The error check
-	// is shared outside the if/else to keep nesting flat.
-	var cc outbound.CajaCajero
-	if v.TipoVenta() == domain.TipoVentaContado {
-		cc, err = contadoCajaCajeroFromDefaults(defs)
-	} else {
-		cc, err = s.aplicarCfg.CajaCajero(ctx, *v.Direccion().ZonaClienteID())
-	}
+	cc, err := s.resolveCajaCajero(ctx, v)
 	if err != nil {
 		return outbound.MicrosipVentaInput{}, err
 	}
@@ -251,12 +246,17 @@ func (s *Service) autoCrearClienteSiNecesario(ctx context.Context, v *domain.Ven
 		return domain.ErrVentaSinClienteMicrosip
 	}
 
-	cc, err := s.resolveAutoCreateCajaCajero(ctx, v)
+	cc, err := s.resolveCajaCajero(ctx, v)
 	if err != nil {
 		return err
 	}
 
-	in := buildAutoCreateClienteInput(v, cc)
+	ciudad, err := s.resolveCiudad(ctx, v)
+	if err != nil {
+		return err
+	}
+
+	in := buildAutoCreateClienteInput(v, cc, ciudad)
 	res, err := s.microsipCliente.Crear(ctx, in)
 	if err != nil {
 		return err
@@ -267,13 +267,27 @@ func (s *Service) autoCrearClienteSiNecesario(ctx context.Context, v *domain.Ven
 	return s.ventas.UpdateCliente(ctx, v)
 }
 
-// resolveAutoCreateCajaCajero returns the CajaCajero to use when auto-creating
-// a new Microsip cliente during AplicarVenta. CONTADO ventas use the fixed
-// mostrador caja loaded from MSP_CFG_APLICAR; CREDITO ventas use the zona
-// mapping. Extracted to keep autoCrearClienteSiNecesario flat.
-func (s *Service) resolveAutoCreateCajaCajero(ctx context.Context, v *domain.Venta) (outbound.CajaCajero, error) {
-	if v.TipoVenta() != domain.TipoVentaContado {
-		return s.aplicarCfg.CajaCajero(ctx, *v.Direccion().ZonaClienteID())
+// resolveCajaCajero is the SINGLE place that decides which caja/cajero a venta
+// posts to. Both call sites — the writer input and the cliente auto-create
+// branch — go through it; they used to carry separate copies of the rule that
+// could drift apart.
+//
+// With zonaObligatoria on, the zona mapping (MSP_CFG_ZONA_CAJA) is the only
+// source for every venta type. With it off, CONTADO still falls back to the
+// fixed mostrador caja from MSP_CFG_APLICAR so the backlog of ventas captured
+// without a zona can drain.
+//
+// The nil-zona check is not redundant with checkPreconditions: both previous
+// copies dereferenced ZonaClienteID() unguarded, so any future caller reaching
+// here without a zona got a nil-pointer panic instead of an error.
+func (s *Service) resolveCajaCajero(ctx context.Context, v *domain.Venta) (outbound.CajaCajero, error) {
+	porZona := s.zonaObligatoria || v.TipoVenta() != domain.TipoVentaContado
+	if porZona {
+		zona := v.Direccion().ZonaClienteID()
+		if zona == nil {
+			return outbound.CajaCajero{}, domain.ErrVentaSinZona
+		}
+		return s.aplicarCfg.CajaCajero(ctx, *zona)
 	}
 	defs, err := s.aplicarCfg.Defaults(ctx)
 	if err != nil {
@@ -325,7 +339,47 @@ func (s *Service) validarZonaClienteMicrosipPreExistente(ctx context.Context, v 
 // snapshot + the zona's caja config + the hardcoded catálogo defaults from
 // the outbound package. This is only called inside AplicarVenta's auto-create
 // branch (when v.ClienteID() is nil).
-func buildAutoCreateClienteInput(v *domain.Venta, cc outbound.CajaCajero) outbound.MicrosipClienteInput {
+// resolveCiudad turns the captured ciudad text into catalog IDs.
+//
+// With the flag off it returns the fixed Tehuacán/Puebla defaults — the
+// pre-existing behavior, which discards whatever the vendor captured.
+//
+// With the flag on the captured text must match a CIUDADES row; a miss blocks
+// the apply with ErrCiudadNoEnCatalogo instead of quietly filing the cliente
+// under Tehuacán. The venta stays capturable and the office resolves it.
+//
+// The estado always comes from the SAME row as the ciudad.
+func (s *Service) resolveCiudad(ctx context.Context, v *domain.Venta) (outbound.CiudadResuelta, error) {
+	defaults := outbound.CiudadResuelta{
+		CiudadID: outbound.DefaultCiudadID,
+		EstadoID: outbound.DefaultEstadoID,
+	}
+	if !s.ciudadCatalogoEnabled {
+		return defaults, nil
+	}
+
+	capturada := v.Direccion().Ciudad()
+	if domain.NormalizeCiudad(capturada) == "" {
+		return outbound.CiudadResuelta{}, domain.ErrCiudadNoEnCatalogo
+	}
+
+	match, err := s.ciudadCatalogo.Resolver(ctx, capturada)
+	if err != nil {
+		return outbound.CiudadResuelta{}, err
+	}
+	if match == nil {
+		slog.WarnContext(ctx, "venta.ciudad_no_en_catalogo",
+			slog.String("venta_id", v.ID().String()),
+			slog.String("ciudad_capturada", capturada),
+		)
+		return outbound.CiudadResuelta{}, domain.ErrCiudadNoEnCatalogo
+	}
+	return *match, nil
+}
+
+func buildAutoCreateClienteInput(
+	v *domain.Venta, cc outbound.CajaCajero, ciudad outbound.CiudadResuelta,
+) outbound.MicrosipClienteInput {
 	dir := v.Direccion()
 	gps := v.GPS()
 
@@ -344,8 +398,8 @@ func buildAutoCreateClienteInput(v *domain.Venta, cc outbound.CajaCajero) outbou
 		ZonaClienteID:           zonaID,
 		CobradorID:              cc.CobradorID,
 		VendedorID:              cc.VendedorID,
-		CiudadID:                outbound.DefaultCiudadID,
-		EstadoID:                outbound.DefaultEstadoID,
+		CiudadID:                ciudad.CiudadID,
+		EstadoID:                ciudad.EstadoID,
 		PaisID:                  outbound.DefaultPaisID,
 		CondPagoID:              outbound.DefaultCondPagoID,
 		TipoClienteID:           outbound.DefaultTipoClienteID,

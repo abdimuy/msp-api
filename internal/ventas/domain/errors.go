@@ -125,6 +125,13 @@ var (
 		"zona_sin_caja",
 		"la zona del cliente no tiene caja configurada",
 	)
+	// ErrCiudadNoEnCatalogo is returned when the captured ciudad has no match
+	// in Microsip's CIUDADES catalog. Blocks the apply rather than silently
+	// writing the Tehuacán/Puebla default over whatever the vendor captured.
+	ErrCiudadNoEnCatalogo = apperror.NewValidation(
+		"ciudad_no_en_catalogo",
+		"la ciudad capturada no existe en el catálogo, corrígela desde la oficina",
+	)
 	// ErrVentaSinZona is returned when applying a venta whose dirección has no
 	// zona_cliente_id (required to resolve the caja).
 	ErrVentaSinZona = apperror.NewValidation(

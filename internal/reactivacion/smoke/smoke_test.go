@@ -95,6 +95,7 @@ func TestSmokeCopilotoEndToEnd(t *testing.T) {
 			microsipapp.NewService(
 				microsipfb.NewAlmacenRepo(pool, []int{42, 8437, 6925}),
 				microsipfb.NewZonaRepo(pool),
+				microsipfb.NewCiudadRepo(pool),
 			),
 		)
 		nbp := reactivacionmicrosip.NewNBPReader(catalogo, repo, reactivacionmicrosip.NBPConfig{

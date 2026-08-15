@@ -34,3 +34,12 @@ type ZonaClienteRepo interface {
 	// cobrador (by client count). Zonas with no cobrador keep the raw name.
 	Listar(ctx context.Context) ([]domain.ZonaCliente, error)
 }
+
+// CiudadRepo exposes read access to Microsip's CIUDADES catalog. Read-only:
+// CIUDADES is shared with the office and nothing in this API writes to it.
+type CiudadRepo interface {
+	// Listar returns every ciudad with its estado joined in, ordered by
+	// name. Each row carries its own EstadoID — the estado is never chosen
+	// independently of the ciudad.
+	Listar(ctx context.Context) ([]domain.Ciudad, error)
+}

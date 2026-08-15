@@ -60,6 +60,14 @@ func (f *fakeAplicarConfig) CajaCajero(_ context.Context, _ int) (outbound.CajaC
 	return f.cc, f.ccErr
 }
 
+// setCajaCajeroErr makes the zona → caja lookup fail, modelling a zona with no
+// row in MSP_CFG_ZONA_CAJA.
+func (f *fakeAplicarConfig) setCajaCajeroErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ccErr = err
+}
+
 func (f *fakeAplicarConfig) FormaDePagoID(_ context.Context, frecuencia string) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

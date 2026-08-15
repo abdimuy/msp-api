@@ -3,6 +3,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -122,6 +123,15 @@ type CrearVentaInput struct {
 // behavior.
 func (s *Service) CrearVenta(ctx context.Context, in CrearVentaInput, by uuid.UUID) (*domain.Venta, error) {
 	now := s.clock.Now()
+	// Idempotency by the body's id, with no expiry. The phone retries a
+	// capture indefinitely until the server confirms custody, so a replay can
+	// arrive long after the idempotency cache (24 h, 2xx only) has forgotten
+	// it. Without this guard the retry trips the primary key and surfaces as
+	// an unclassified 500, which the decision table retries forever.
+	// Mirrors crear_pago. See docs/module-standards/ENTREGA_GARANTIZADA.md.
+	if existing, err := s.ventaExistente(ctx, in.ID); err != nil || existing != nil {
+		return existing, err
+	}
 	if err := s.validateClienteID(ctx, in.ClienteID); err != nil {
 		return nil, err
 	}
@@ -151,6 +161,24 @@ func (s *Service) CrearVenta(ctx context.Context, in CrearVentaInput, by uuid.UU
 	}
 	s.drainEvents(ctx, venta)
 	return venta, nil
+}
+
+// ventaExistente resolves the idempotent replay case: it returns the already
+// stored venta for id, or (nil, nil) when there is none.
+//
+// A lookup error other than "not found" is propagated rather than read as a
+// miss: proceeding to insert on an indeterminate answer is exactly how a
+// wedged pool turns a replay into a primary-key violation.
+func (s *Service) ventaExistente(ctx context.Context, id uuid.UUID) (*domain.Venta, error) {
+	existing, err := s.ventas.FindByID(ctx, id)
+	switch {
+	case err == nil:
+		return existing, nil
+	case errors.Is(err, domain.ErrVentaNotFound):
+		return nil, nil //nolint:nilnil // (nil, nil) is the documented "no venta, no error" case
+	default:
+		return nil, err
+	}
 }
 
 // validateStockFromVenta derives the traspaso detalles from the fully built

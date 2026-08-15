@@ -120,6 +120,7 @@ func appOptions() []fx.Option {
 			provideVentasService,
 			provideMicrosipAlmacenRepo,
 			provideMicrosipZonaRepo,
+			provideMicrosipCiudadRepo,
 			provideMicrosipService,
 			provideMicrosipCatalogo,
 			provideCobranzaSaldosRepo,

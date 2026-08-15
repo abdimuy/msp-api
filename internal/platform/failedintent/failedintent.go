@@ -54,6 +54,22 @@ const HeaderInternalReplay = "X-Internal-Replay"
 // 4xx/5xx call and saving again would duplicate the audit row.
 const HeaderIdempotentReplay = "Idempotent-Replay"
 
+// HeaderIntentCaptured is the response header that confirms custody: the
+// server could not apply the capture, but it is stored and the office can
+// correct it. Its value is the Intent UUID.
+//
+// It is emitted ONLY when Store.Save returned nil. The field device reads it as
+// the stop condition for retrying — without it, a 4xx/5xx is retried forever —
+// so emitting it on a failed save would silently drop the capture. See
+// docs/module-standards/ENTREGA_GARANTIZADA.md.
+const HeaderIntentCaptured = "X-Intent-Captured"
+
+// deferredBodyCapBytes caps how much of an error response the middleware holds
+// in memory while it decides whether to confirm custody. Problem+JSON bodies
+// are a few hundred bytes; anything past this cap gives up the confirmation
+// rather than risk the response.
+const deferredBodyCapBytes = 1 << 20 // 1 MiB
+
 // DefaultBodyCapBytes is the maximum request-body bytes captured per intent.
 // Anything past this point is discarded and Intent.BodyTruncated is set.
 const DefaultBodyCapBytes int64 = 256 * 1024
@@ -356,16 +372,27 @@ func handleJSON(cfg Config, next http.Handler, w http.ResponseWriter, r *http.Re
 	next.ServeHTTP(cw, r)
 
 	if cw.status < http.StatusBadRequest {
+		cw.flushDeferred("")
 		return
 	}
 	if isIdempotentReplay(cw) {
 		// Cached response from idempotency — the underlying intent was
 		// already captured on the original call. Skipping avoids duplicate
-		// rows on every retry.
+		// rows on every retry. No Save ran now, so no custody is claimed now.
+		cw.flushDeferred("")
 		return
 	}
 	intent := buildIntent(cfg, r, body, truncated, cw)
-	saveIntent(r.Context(), cfg, intent)
+	cw.flushDeferred(confirmationFor(r.Context(), cfg, intent))
+}
+
+// confirmationFor persists the intent and returns the value for
+// HeaderIntentCaptured — the Intent UUID when it is in custody, "" otherwise.
+func confirmationFor(ctx context.Context, cfg Config, intent Intent) string {
+	if !saveIntent(ctx, cfg, intent) {
+		return ""
+	}
+	return intent.ID.String()
 }
 
 // handleMultipart tees the request body to BlobStorage while the downstream
@@ -419,11 +446,12 @@ func handleMultipart(cfg Config, next http.Handler, w http.ResponseWriter, r *ht
 			//nolint:contextcheck // detached so a client disconnect does not abort cleanup.
 			_ = cfg.Blob.Delete(saveCtx, saveResult.path)
 		}
+		cw.flushDeferred("")
 		return
 	}
 
 	intent := buildMultipartIntent(cfg, r, intentID, contentType, saveResult, cw)
-	saveIntent(r.Context(), cfg, intent)
+	cw.flushDeferred(confirmationFor(r.Context(), cfg, intent))
 }
 
 // isIdempotentReplay reports whether the captured response was emitted by
@@ -525,7 +553,12 @@ func buildMultipartIntent(
 // Store.Save failure is logged but never propagated — failing the request
 // because the capture pipeline broke would be worse than losing one piece of
 // evidence.
-func saveIntent(parentCtx context.Context, cfg Config, intent Intent) {
+//
+// It reports whether the intent is now in custody. Only a true return may be
+// confirmed to the client with HeaderIntentCaptured: the phone releases a
+// capture on that promise, so claiming custody we do not have is precisely the
+// failure that loses payments.
+func saveIntent(parentCtx context.Context, cfg Config, intent Intent) bool {
 	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(parentCtx), 5*time.Second)
 	defer cancel()
 	if saveErr := cfg.Store.Save(saveCtx, intent); saveErr != nil {
@@ -537,9 +570,10 @@ func saveIntent(parentCtx context.Context, cfg Config, intent Intent) {
 			"path", intent.Path,
 			"http_status", intent.HTTPStatus,
 		)
-		return
+		return false
 	}
 	emitCapturedLog(parentCtx, intent)
+	return true
 }
 
 // isMultipart reports whether the request's Content-Type is multipart/form-data.
@@ -605,29 +639,87 @@ func readCappedBody(r *http.Request, capBytes int64) ([]byte, bool, error) {
 
 // captureWriter is a ResponseWriter that records status code + a bounded body
 // snippet so we can derive the error code/message.
+//
+// On a 4xx/5xx it also WITHHOLDS the response: status and body are buffered
+// instead of forwarded, because HeaderIntentCaptured can only be added while
+// the header block is still open, and whether to add it is not known until
+// Store.Save has run — which happens after the handler returns. flushDeferred
+// releases the withheld response. 2xx/3xx are forwarded as they are written,
+// so the happy path keeps streaming and buffers nothing.
 type captureWriter struct {
 	http.ResponseWriter
 	status   int
 	body     bytes.Buffer
 	bodyCap  int
 	bodyFull bool
+
+	// headerSeen records that the handler called WriteHeader, so a second
+	// call is ignored the way net/http ignores a superfluous one.
+	headerSeen bool
+	// deferring reports that status+pending are being withheld.
+	deferring bool
+	// pending holds the withheld response body verbatim (unlike body, which
+	// is a bounded snippet used only for diagnostics).
+	pending bytes.Buffer
 }
 
 func newCaptureWriter(w http.ResponseWriter) *captureWriter {
 	return &captureWriter{ResponseWriter: w, status: http.StatusOK, bodyCap: DefaultResponseBodyCapBytes}
 }
 
-// WriteHeader records the status code and forwards it.
+// WriteHeader records the status code. A 4xx/5xx is withheld until
+// flushDeferred; anything else is forwarded immediately.
 func (c *captureWriter) WriteHeader(code int) {
+	if c.headerSeen {
+		return
+	}
+	c.headerSeen = true
 	c.status = code
+	if code >= http.StatusBadRequest {
+		c.deferring = true
+		return
+	}
 	c.ResponseWriter.WriteHeader(code)
 }
 
-// Write buffers up to bodyCap bytes for later inspection then forwards to the
-// underlying writer.
+// Write buffers up to bodyCap bytes for later inspection, then either withholds
+// the bytes (deferring) or forwards them.
 func (c *captureWriter) Write(b []byte) (int, error) {
+	if !c.headerSeen {
+		// Implicit 200 the way net/http does it — never a deferred status.
+		c.WriteHeader(http.StatusOK)
+	}
 	c.bufferForCapture(b)
-	return c.ResponseWriter.Write(b)
+
+	if !c.deferring {
+		return c.ResponseWriter.Write(b)
+	}
+	if c.pending.Len()+len(b) > deferredBodyCapBytes {
+		// Too large to hold: release what we have without a confirmation
+		// rather than buffer an unbounded response.
+		c.flushDeferred("")
+		return c.ResponseWriter.Write(b)
+	}
+	return c.pending.Write(b)
+}
+
+// flushDeferred releases a withheld response, optionally stamping it with the
+// custody confirmation. intentID is the saved Intent's UUID, or "" when nothing
+// is in custody. Calling it when nothing is withheld is a no-op, so both the
+// JSON and multipart paths can call it unconditionally.
+func (c *captureWriter) flushDeferred(intentID string) {
+	if !c.deferring {
+		return
+	}
+	c.deferring = false
+	if intentID != "" {
+		c.Header().Set(HeaderIntentCaptured, intentID)
+	}
+	c.ResponseWriter.WriteHeader(c.status)
+	if c.pending.Len() > 0 {
+		_, _ = c.ResponseWriter.Write(c.pending.Bytes())
+		c.pending.Reset()
+	}
 }
 
 // bufferForCapture stores as much of b as fits in the remaining capacity.

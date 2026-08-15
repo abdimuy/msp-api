@@ -20,12 +20,18 @@ func provideMicrosipZonaRepo(p *firebird.Pool) microsipoutbound.ZonaClienteRepo 
 	return microsipfb.NewZonaRepo(p)
 }
 
+// provideMicrosipCiudadRepo builds the Firebird-backed CiudadRepo.
+func provideMicrosipCiudadRepo(p *firebird.Pool) microsipoutbound.CiudadRepo {
+	return microsipfb.NewCiudadRepo(p)
+}
+
 // provideMicrosipService assembles the microsip application service.
 func provideMicrosipService(
 	almacenes microsipoutbound.AlmacenRepo,
 	zonas microsipoutbound.ZonaClienteRepo,
+	ciudades microsipoutbound.CiudadRepo,
 ) *microsipapp.Service {
-	return microsipapp.NewService(almacenes, zonas)
+	return microsipapp.NewService(almacenes, zonas, ciudades)
 }
 
 // provideMicrosipCatalogo exposes the microsip service as the cross-module
