@@ -297,7 +297,38 @@ Se descartan explícitamente para que no se cuelen a media implementación:
 
 ---
 
-## 7. Riesgos
+## 7. Orden de despliegue
+
+**Servidor primero, app después. No salen juntos.**
+
+El cambio del servidor (1a y 1b) es **puramente aditivo**: registra una ruta
+nueva y agrega una cabecera. Ninguna versión de app existente se ve afectada —
+la 2.12.1 no llama ese GET y descarta cabeceras desconocidas. Se puede
+desplegar en cualquier momento, de forma independiente, y verificar en
+producción antes de tocar la app.
+
+**Desplegar la app primero sería el error.** Buscaría `X-Intent-Captured` en un
+servidor que no la emite; como la tabla manda reintentar cuando falta, todo
+rechazo legítimo entraría en reintento indefinido y saturaría
+`MSP_FAILED_INTENTS`.
+
+**La convivencia de versiones no es opcional.** El 2026-08-14 había cuatro
+versiones simultáneas en campo (2.12.1, 2.14.0, 2.15.2, 2.16.0). El servidor
+nuevo convivirá con apps viejas durante días, así que la compatibilidad hacia
+atrás es un requisito, no una cortesía.
+
+**Modo de falla del orden equivocado:** ruido, no pérdida. Si la app nueva
+corre contra un servidor sin la cabecera —despliegue invertido o reversión—
+reintenta de más y ensucia la tabla de fallidos, pero **ningún pago se pierde**.
+Es la dirección correcta en la que fallar, y es deliberada.
+
+**Verificación entre pasos:** antes de publicar la app, comprobar en producción
+que `GET /v2/cobranza/pagos/{id}` responde 200/404 con token de cobrador y que
+un 422 provocado devuelve `X-Intent-Captured`.
+
+---
+
+## 8. Riesgos
 
 **Ventas funciona hoy y la etapa 2 le cambia el comportamiento.** Es el riesgo
 principal. Mitigación: la etapa 1 no la toca, y la etapa 2 no se empieza hasta
@@ -311,6 +342,6 @@ la etapa 1, y su prueba fuerza el fallo del store para comprobar que se omite.
 **El GET añade una petición por error.** Sólo ocurre en el camino de error, no
 en el feliz. Ventas ya lo hace y no ha sido problema.
 
-**Orden obligatorio.** 1b (cabecera) antes que 1d (decisión), porque la tabla
+**Orden obligatorio dentro de la etapa 1.** 1b (cabecera) antes que 1d (decisión), porque la tabla
 depende de ella. Si se implementa 1d primero, todo 4xx/5xx reintentaría sin
 condición de paro.
