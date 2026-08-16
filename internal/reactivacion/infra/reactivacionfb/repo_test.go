@@ -23,6 +23,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/abdimuy/msp-api/internal/platform/fbtestutil"
+	"github.com/abdimuy/msp-api/internal/platform/firebird"
+	"github.com/abdimuy/msp-api/internal/platform/microsipseed"
 	"github.com/abdimuy/msp-api/internal/reactivacion/domain"
 	"github.com/abdimuy/msp-api/internal/reactivacion/infra/reactivacionfb"
 	"github.com/abdimuy/msp-api/internal/reactivacion/ports/outbound"
@@ -220,36 +222,106 @@ func TestRepo_ListarCohorte_Filters(t *testing.T) {
 	})
 }
 
-// TestRepo_LeerUniversoTehuacan is read-only against the live dev Microsip DB.
-// It asserts the query returns tratable Tehuacán clientes with both segmentos and
-// valid invariants (phone present, segmento canonical, saldo >= 0).
+// tehuacanCiudadID duplica a propósito la constante privada de queries.go: es el
+// CIUDAD_ID de Tehuacán en el catálogo CIUDADES, que `gbak -skip_data` conserva.
+// La prueba verifica que siga existiendo antes de sembrar contra él.
+const tehuacanCiudadID = 338
+
+// TestRepo_LeerUniversoTehuacan verifica que la consulta del universo tratable
+// devuelva a los clientes de Tehuacán con teléfono y su segmento correcto.
+//
+// ANTES corría contra los movimientos reales del clon de desarrollo y exigía
+// `NotEmpty`, con el mensaje "the Tehuacán tratable universe must not be empty
+// in the dev clone". Contra la base reducida el universo sale vacío y la prueba
+// falla — y contra la base completa dependía de que existieran clientes reales
+// de Tehuacán CON TELÉFONO, es decir, de datos personales.
+//
+// AHORA siembra dos clientes de Tehuacán con domicilio y teléfono sintéticos:
+// uno con la venta saldada (recien_liquidado) y otro con un hueco pequeño
+// (por_liquidar_hueco). Eso permite exigir los DOS segmentos por construcción,
+// que es lo que la consulta clasifica.
 //
 //nolint:paralleltest // serial: shares the test pool.
 func TestRepo_LeerUniversoTehuacan(t *testing.T) {
 	requireFBEnv(t)
 	pool := fbtestutil.NewTestFirebirdPool(t)
-
 	repo := reactivacionfb.NewRepo(pool)
-	universo, err := repo.LeerUniversoTehuacan(context.Background())
-	require.NoError(t, err)
-	require.NotEmpty(t, universo, "the Tehuacán tratable universe must not be empty in the dev clone")
 
-	segCounts := map[domain.Segmento]int{}
-	for _, u := range universo {
-		assert.Positive(t, u.ClienteID)
-		assert.True(t, u.Segmento.Valido(), "segmento must be canonical: %q", u.Segmento)
-		assert.NotEmpty(t, u.Telefono, "universe rows must carry a phone")
-		assert.False(t, u.Saldo.IsNegative(), "saldo must be >= 0")
-		if u.Segmento == domain.SegmentoRecienLiquidado {
-			assert.True(t, u.Saldo.IsZero(), "recien_liquidado implies saldo 0")
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		q := firebird.GetQuerier(ctx, pool.DB)
+		microsipseed.RequiereCiudad(t, q, tehuacanCiudadID)
+		microsipseed.RequiereConceptos(t, q, conceptoCobranzaRuta)
+
+		liquidado, huecoID := sembrarUniversoTehuacan(t, q)
+
+		// LeerUniversoTehuacan es re-entrante: firebird.RunInReadTx reutiliza la
+		// transacción que ya trae el contexto, así que ve lo recién sembrado y
+		// todo se revierte al final.
+		universo, err := repo.LeerUniversoTehuacan(ctx)
+		require.NoError(t, err)
+		require.NotEmpty(t, universo, "los clientes sembrados deben estar en el universo")
+
+		porCliente := map[int]outbound.ClienteUniverso{}
+		segCounts := map[domain.Segmento]int{}
+		for _, u := range universo {
+			assert.Positive(t, u.ClienteID)
+			assert.True(t, u.Segmento.Valido(), "el segmento debe ser canónico: %q", u.Segmento)
+			assert.NotEmpty(t, u.Telefono, "toda fila del universo debe traer teléfono")
+			assert.False(t, u.Saldo.IsNegative(), "el saldo debe ser >= 0")
+			if u.Segmento == domain.SegmentoRecienLiquidado {
+				assert.True(t, u.Saldo.IsZero(), "recien_liquidado implica saldo 0")
+			}
+			porCliente[u.ClienteID] = u
+			segCounts[u.Segmento]++
 		}
-		segCounts[u.Segmento]++
-	}
-	t.Logf("universo tehuacán: total=%d recien_liquidado=%d por_liquidar_hueco=%d",
-		len(universo), segCounts[domain.SegmentoRecienLiquidado], segCounts[domain.SegmentoPorLiquidarHueco])
-	assert.Positive(t, segCounts[domain.SegmentoRecienLiquidado], "recien_liquidado segment expected in dev")
-	assert.Positive(t, segCounts[domain.SegmentoPorLiquidarHueco], "por_liquidar_hueco segment expected in dev")
-	// Live-verified: 6,721 clientes with phone (6,270 recien + 451 hueco after tiebreak).
-	// Assert a plausible floor so a semantic regression (e.g. a per-SUM revert) trips.
-	assert.Greater(t, len(universo), 5000, "tratable universe with phone should be in the thousands")
+
+		// Los DOS segmentos, por construcción y no por lo que hubiera en la base.
+		liq, ok := porCliente[liquidado]
+		require.Truef(t, ok, "el cliente %d con la venta saldada debe aparecer", liquidado)
+		assert.Equal(t, domain.SegmentoRecienLiquidado, liq.Segmento)
+		assert.True(t, liq.Saldo.IsZero(), "saldo del liquidado debe ser 0, fue %s", liq.Saldo)
+
+		hueco, ok := porCliente[huecoID]
+		require.Truef(t, ok, "el cliente %d con hueco pequeño debe aparecer", huecoID)
+		assert.Equal(t, domain.SegmentoPorLiquidarHueco, hueco.Segmento)
+		assert.True(t, hueco.Saldo.IsPositive(), "saldo del hueco debe ser > 0, fue %s", hueco.Saldo)
+
+		t.Logf("universo tehuacán: total=%d recien_liquidado=%d por_liquidar_hueco=%d",
+			len(universo), segCounts[domain.SegmentoRecienLiquidado], segCounts[domain.SegmentoPorLiquidarHueco])
+	})
+}
+
+// conceptoCobranzaRuta es "Cobranza en ruta" en el catálogo CONCEPTOS_CC. Se usa
+// para saldar la venta del cliente que debe caer en recien_liquidado.
+const conceptoCobranzaRuta = 87327
+
+// sembrarUniversoTehuacan crea los dos clientes que la consulta debe clasificar
+// en cada segmento, y devuelve sus identificadores.
+//
+//   - liquidado: una venta abonada por completo → SALDO = 0 → recien_liquidado.
+//   - hueco:     una venta abonada al 90% → SALDO < 20% del total → por_liquidar_hueco.
+//
+// El 20% es el umbral `porLiquidarUmbral` de queries.go. Se deja un 10% para
+// caer holgadamente dentro y que la prueba no dependa del redondeo.
+func sembrarUniversoTehuacan(t *testing.T, q firebird.Querier) (int, int) {
+	t.Helper()
+	total := decimal.NewFromInt(10000)
+	dir := microsipseed.OpcionesDireccion{CiudadID: tehuacanCiudadID, Telefono: "2381234567"}
+
+	liquidado := microsipseed.Cliente(t, q, "JOSEFINA ARELLANO MOTA")
+	microsipseed.DireccionPrincipal(t, q, liquidado, dir)
+	ventaLiq := microsipseed.VentaCredito(t, q, liquidado, microsipseed.OpcionesVenta{Total: total})
+	microsipseed.AbonoAplicado(t, q, ventaLiq, microsipseed.OpcionesAbono{
+		ConceptoCCID: conceptoCobranzaRuta,
+		Importe:      total, // salda por completo
+	})
+
+	hueco := microsipseed.Cliente(t, q, "RAFAEL ESPINOZA TREJO")
+	microsipseed.DireccionPrincipal(t, q, hueco, dir)
+	ventaHueco := microsipseed.VentaCredito(t, q, hueco, microsipseed.OpcionesVenta{Total: total})
+	microsipseed.AbonoAplicado(t, q, ventaHueco, microsipseed.OpcionesAbono{
+		ConceptoCCID: conceptoCobranzaRuta,
+		Importe:      total.Mul(decimal.NewFromFloat(0.90)), // deja 10% de hueco
+	})
+	return liquidado, hueco
 }

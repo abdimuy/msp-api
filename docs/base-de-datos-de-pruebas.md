@@ -186,9 +186,11 @@ Cuesta 8 MB. Se queda.
 
 La base conserva `CLIENTES` (43,834 filas) y `DIRS_CLIENTES` con **nombres, domicilios y teléfonos reales**. Las fotografías sí se omiten.
 
-Pesan poco —2,728 y 1,384 páginas— así que quitarlos no es cuestión de tamaño sino de no repartir datos personales entre máquinas de desarrollo. Los tests crean sus propios clientes con identificadores sintéticos (`900000001`, `777001`), aunque al menos uno busca un cliente existente.
+Pesan poco —2,728 y 1,384 páginas— así que quitarlos no es cuestión de tamaño sino de no repartir datos personales entre máquinas de desarrollo.
 
-**Decisión pendiente.** Si se omiten, hay que calcular su cierre transitivo —es amplio— y sembrar unos clientes sintéticos para el test que los necesita.
+**Esto es también lo que impide publicar el artefacto.** El repositorio es público; subir el `.fbk.gz` a un release, a un artefacto de Actions o al propio repositorio sería divulgar nombres, domicilios y teléfonos de 43,834 personas. Mientras `CLIENTES` siga dentro, el artefacto sólo puede viajar por canales privados.
+
+**Ya no queda ningún test que dependa de un cliente real** (2026-08-16): los que buscaban a `12387` o `12440` ahora siembran el suyo con `microsipseed.Cliente`. Lo que falta para omitir `CLIENTES` y `DIRS_CLIENTES` es calcular su cierre transitivo de llaves foráneas —es amplio— y volver a correr la suite.
 
 ---
 
@@ -254,21 +256,39 @@ La base conserva los catálogos y **omite los movimientos**. Conteos reales del 
 
 Dos cosas quedan sin resolver a propósito. Están documentadas aquí para que quien las encuentre sepa que ya se conocían y no crea que las rompió.
 
-### Diez tests leen filas de producción por identificador fijo
+### ~~Diez tests leen filas de producción por identificador fijo~~ — RESUELTO (2026-08-16)
 
-En `internal/clientes` e `internal/cobranza` hay tests que traen filas reales por identificadores escritos a mano —`clienteID = 24037`, `doctoPVID = 4070523`— y verifican cantidades exactas. Contra la base reducida fallan los diez, porque esas filas viven en los movimientos que `-skip_data` omite.
+> Se conserva el enunciado porque explica de dónde viene el paquete `microsipseed`.
 
-**La base reducida los expuso; no los causó.** Son frágiles desde que se escribieron: dependen de que la base compartida conserve una fila concreta. Ya hay un comentario en el código dejando constancia de que un fixture se rompió antes al resembrar la base.
+Había tests que traían filas reales por identificadores escritos a mano —`clienteID = 24037`, `doctoPVID = 4070523`, `pago 4070588`— y verificaban cantidades exactas. Contra la base reducida fallaban, porque esas filas viven en los movimientos que `-skip_data` omite.
 
-No bloquean a nadie: el paso `test-unit` del `pre-push` corre `go test` directo, sin `make`, así que no carga `.env` y estos paquetes se saltan solos. Solo aparecen si alguien exporta `FB_DATABASE` a mano.
+**El conteo que decía este documento estaba mal por partida doble.** Corriendo la suite COMPLETA (`go test ./...`, no los nueve paquetes del target) contra la base reducida salieron **trece**, repartidos en **cuatro** módulos — no diez en dos:
 
-Arreglarlos de verdad significa sembrar datos sintéticos y reescribir todos los identificadores. Es un trabajo propio, no un parche.
+| Paquete | Tests | Qué leían de producción |
+|---|---|---|
+| `clientes/infra/clientesfb` | 8 | clientes 24037/12387/12440/202468, venta 4070523, pagos 4070588 y 4172481, zona 21566 |
+| `clientes/infra/clienteshttp` | 1 | el reporte de la clienta 24037 (4 ventas, 3 liquidadas) |
+| `analytics/infra/analyticsfb` | 2 | clientes 3074781 y 114397 con sus fechas de pago; "algún cliente que pagó en ene–feb 2026" |
+| `rutas/infra/rutasfb` | 1 | la zona 12271 con ventas en los últimos 30 días |
+| `reactivacion/infra/reactivacionfb` | 1 | el universo de Tehuacán: clientes reales CON TELÉFONO |
+
+`internal/cobranza`, que este documento señalaba, **pasa completo**: sus pruebas ya sembraban sus propios documentos (`insertCargoDoctosCC` y compañía). Los dos de `analytics`, el de `rutas` y el de `reactivacion` sólo aparecen si se corre `./...`; el target de nueve paquetes ni los toca.
+
+Ahora siembran lo que verifican, vía [`internal/platform/microsipseed`](../internal/platform/microsipseed/seed.go). El sembrador no inserta el cargo de cuentas por cobrar a mano: inserta el documento de punto de venta y voltea `APLICADO` de `'N'` a `'S'`, dejando que la cascada de Microsip genere el cargo, el puente `DOCTOS_ENTRE_SIS`, los importes y las cachés `MSP_SALDOS_VENTAS` / `MSP_PAGOS_VENTAS` — el mismo camino que el writer de producción.
+
+De paso quedaron reforzadas: antes afirmaban `TotalComprado > 0` porque nadie sabía cuánto debía dar; ahora afirman la igualdad exacta, y `ConSaldo`, que contra la base reducida recorría una lista vacía y pasaba **sin verificar nada**, ahora siembra un cliente con saldo y otro sin él.
+
+También se quitó la dependencia de `CLIENTES` reales (`12387`, `12440`, zona `21566`), que no fallaba pero era la misma fragilidad. Eso desbloquea lo de la sección siguiente.
 
 ### El target de integración cubre 9 de 25 paquetes
 
 `make test-firebird-all` corre nueve paquetes. Veinticinco dependen de `FB_DATABASE`.
 
-Ampliarlo parece lo correcto y hoy **rompería el push de los tres desarrolladores**, porque arrastraría los tests de arriba, que necesitan datos reales que la base de 15 MB no trae. El orden es: primero quitarles la dependencia de filas de producción, después ampliar el target.
+El bloqueo que impedía ampliarlo —los tests atados a filas de producción— ya no existe.
+
+Queda una advertencia, con la evidencia que hay y no más: al correr `clientes` y `cobranza` juntos, **`TestSync_GoldenSnapshot` falló una vez**. No se reprodujo en 3 corridas paralelas más, 2 con `-p 1`, 2 del paquete solo y 1 del test aislado — todas en verde. La salida de la falla se perdió (el filtro de la corrida sólo conservó el nombre), así que **la causa no está probada**.
+
+Lo que sí es un hecho es la condición de fondo: `go test ./...` corre los paquetes en PARALELO y esta suite comparte una sola base Firebird; el propio comentario de ese test dice que su marca de agua sale del `MinActiveTransactionID` vivo, que es estado global del servidor. Por eso el job de CI usa `-p 1`: cuesta tiempo de reloj y compra determinismo, que es lo único que hace útil una señal remota. Si alguien amplía `make test-firebird-all`, conviene que haga lo mismo.
 
 ### Cómo no volver a plantar una bomba de tiempo
 

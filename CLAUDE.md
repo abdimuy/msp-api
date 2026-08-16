@@ -89,7 +89,11 @@ The quality gate runs in two places, and they cover different failure modes.
 
 CI deliberately runs **without** `FB_DATABASE`, so the ~25 packages that need a real Firebird DB skip themselves. Integration coverage stays on the developer's machine via `make test-firebird-all`, against the local `mueblera-firebird` container. Each test is wrapped in `fbtestutil.WithTestTransaction` so writes roll back and the shared dev DB never accumulates state.
 
-Running the integration suite in CI is not off the table, but it is blocked on two things first: stripping the personal data from the test DB (the repo is public — see `docs/base-de-datos-de-pruebas.md`), and fixing the tests that read production rows by hardcoded ID.
+Running the integration suite in CI is not off the table. The job is already written (`integracion-firebird` in `ci.yml`) but is **switched off** behind the repo variable `INTEGRACION_FIREBIRD_LISTA`. Status of the blockers, as of 2026-08-16:
+
+- ~~Fixing the tests that read production rows by hardcoded ID~~ — **done.** They seed what they verify via `internal/platform/microsipseed`. Measured over the full `go test ./...`, there were **thirteen across four modules** (clientes 9, analytics 2, rutas 1, reactivacion 1) — not the ten in clientes+cobranza the docs claimed. `internal/cobranza` already seeded its own and passed untouched.
+- Stripping the personal data from the test DB — **still open, and it is the one that matters.** Beware the trap: the 15 MB artifact existing is *not* the same as it being clean. It still carries `CLIENTES` (43,834 rows) and `DIRS_CLIENTES` with real names, addresses and phone numbers. The repo is public, so that artifact cannot be published anywhere — release asset, Actions artifact, or commit. No test depends on a real client any more, so omitting those tables is now unblocked; what remains is computing their FK transitive closure.
+- Watch out, found while measuring: `TestSync_GoldenSnapshot` failed once in a combined parallel run and never reproduced (8 further runs green), so the cause is **unproven**. The standing condition is real though — `go test ./...` runs packages in parallel against one shared Firebird, and that test reads the live `MinActiveTransactionID`. The CI job runs `-p 1` to buy determinism.
 
 Coverage gates, mutation testing and benchmarks stay in Make targets and lefthook — CI runs the fast, non-negotiable checks, not everything.
 

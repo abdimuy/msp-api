@@ -4,11 +4,13 @@
 # a local `git push --no-verify` bypasses the hooks entirely, and with several
 # people pushing that is the one real hole. This workflow is the backstop.
 #
-# What this does NOT cover: the ~25 packages that need a real Firebird DB.
-# FB_DATABASE is deliberately absent here, so those tests skip themselves —
-# exactly as they do in the `test-unit` pre-push step. Integration coverage
-# still runs on a developer machine via `make test-firebird-all`.
-# See docs/base-de-datos-de-pruebas.md.
+# El job `quality` corre SIN FB_DATABASE, así que los ~25 paquetes que
+# necesitan Firebird se saltan solos — igual que en el paso `test-unit` del
+# pre-push. Esa cobertura la aporta el job `integracion-firebird` de abajo, que
+# está DESACTIVADO hasta que alguien resuelva de dónde saca la base (ver el
+# comentario largo en ese job). Mientras tanto sigue viviendo en la máquina de
+# un desarrollador vía `make test-firebird-all`.
+# Ver docs/base-de-datos-de-pruebas.md.
 
 name: CI
 
@@ -97,3 +99,183 @@ jobs:
       # Sin FB_DATABASE: los tests de integración se saltan solos.
       - name: Tests unitarios
         run: go test ./... -race -count=1 -short -timeout 300s
+
+  # ───────────────────────────────────────────────────────────────────────
+  # Suite de integración contra Firebird.
+  #
+  # POR QUÉ ES UN JOB APARTE
+  # ========================
+  # Una falla de infraestructura de la base (imagen que no levanta, restore que
+  # truena, artefacto ausente) NO debe tapar la señal de `quality`. Separados,
+  # un desarrollador ve de inmediato si lo que se rompió fue su código o el
+  # andamio de la base.
+  #
+  # ⚠️ ESTE JOB ESTÁ APAGADO A PROPÓSITO ⚠️
+  # ========================================
+  # Corre sólo cuando la variable de repositorio INTEGRACION_FIREBIRD_LISTA vale
+  # 'true'. Falta UNA decisión que este archivo no puede tomar: de dónde saca CI
+  # la base de datos. Ver "CÓMO OBTENER LA BASE" abajo. Encenderlo antes de
+  # resolverlo deja todos los PR en rojo.
+  #
+  # CÓMO OBTENER LA BASE — tres caminos, ninguno gratis
+  # ===================================================
+  # El repositorio es PÚBLICO. El artefacto `msp-test-db.fbk.gz` NO puede
+  # publicarse en ningún lugar público: aunque `-skip_data` omite los
+  # movimientos, la base reducida CONSERVA `CLIENTES` (43,834 filas) y
+  # `DIRS_CLIENTES` con nombres, domicilios y teléfonos REALES. Está escrito en
+  # docs/base-de-datos-de-pruebas.md §"Sobre los datos de clientes" y sigue sin
+  # auditarse.
+  #
+  #   (A) Construirla en el propio job, sin artefacto binario.
+  #       Es la mejor opción y HOY NO ES POSIBLE: el esquema de Microsip
+  #       (CLIENTES, ARTICULOS, DOCTOS_PV y sus disparadores) no está versionado
+  #       en este repositorio — `migrations-firebird/` sólo trae nuestras tablas
+  #       MSP_*. Sin esos disparadores no hay cascada que genere el cargo de
+  #       cuentas por cobrar, que es de lo que dependen los sembradores.
+  #       Para habilitarla haría falta versionar un extracto de METADATOS
+  #       (`gbak -b -m`, o `isql -x`): texto SQL, cero filas, auditable en
+  #       revisión. Los catálogos que las pruebas de contrato necesitan
+  #       (CONCEPTOS_CC, FORMAS_COBRO_CC, ALMACENES…) se versionarían como
+  #       INSERTs, previa revisión de que no traen datos personales.
+  #       CLIENTES ya no haría falta: las pruebas siembran los suyos
+  #       (internal/platform/microsipseed).
+  #
+  #   (B) Un secreto del repositorio con el artefacto (o una URL firmada a un
+  #       bucket privado), descargado aquí. Es lo más rápido de montar. Riesgo:
+  #       el artefacto con datos personales pasa por el runner y queda expuesto
+  #       a cualquier workflow que se ejecute con esos secretos; en un
+  #       repositorio público hay que asegurarse de que el job NO corra sobre
+  #       `pull_request` de forks (los secretos no se exponen ahí, así que el
+  #       job simplemente se saltaría).
+  #
+  #   (C) Un runner autohospedado en la máquina que ya tiene la base. Cero
+  #       movimiento de datos personales. Riesgo: un runner autohospedado en un
+  #       repositorio PÚBLICO ejecuta código de cualquier PR sobre una máquina
+  #       con acceso a la base de desarrollo. GitHub lo desaconseja
+  #       explícitamente. Sólo viable con aprobación manual por PR.
+  #
+  # RECOMENDACIÓN: (A) como destino, (C) con aprobación manual como puente si
+  # se necesita la señal ya. (B) sólo después de auditar y purgar los datos
+  # personales del artefacto — que es un trabajo que vale la pena por sí solo,
+  # porque también lo vuelve repartible entre desarrolladores.
+  integracion-firebird:
+    name: Suite de integración (Firebird)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: vars.INTEGRACION_FIREBIRD_LISTA == 'true'
+
+    env:
+      # Ruta DENTRO del contenedor de Firebird. El driver la manda tal cual.
+      FB_DATABASE: /firebird/data/MSPTEST.FDB
+      FB_HOST: localhost
+      FB_PORT: "3050"
+      FB_USER: SYSDBA
+      FB_PASSWORD: masterkey
+      FB_CHARSET: UTF8
+      FB_POOL_SIZE: "10"
+      # config.Load() exige estas tres. Modo dev: sin Firebase real.
+      APP_ENV: development
+      FIREBASE_DEV_MODE: "true"
+      FIREBASE_ALLOW_UNCONFIGURED: "true"
+      STORAGE_DIR: /tmp/msp-storage
+      MEILISEARCH_URL: http://localhost:7700
+      MEILISEARCH_INDEX_NAME: clientes
+      MEILISEARCH_VENTAS_INDEX_NAME: ventas
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # jacobalberty/firebird:v4.0 y NO Firebird 5. Las imágenes de Firebird 5
+      # traen `WireCrypt = Required` y el driver firebirdsql v0.9.19 no negocia
+      # ese nivel: la conexión muere en el saludo, antes de tocar la base, y
+      # fallan CIENTOS de tests a la vez sin un solo "Table unknown".
+      # Documentado en docs/base-de-datos-de-pruebas.md.
+      - name: Levantar Firebird 4.0
+        run: |
+          docker run -d --name mueblera-firebird \
+            -e ISC_PASSWORD=masterkey \
+            -e FIREBIRD_USER=SYSDBA \
+            -e DBPATH=/firebird/data \
+            -p 3050:3050 -p 3051:3051 \
+            jacobalberty/firebird:v4.0
+          for _ in $(seq 1 30); do
+            if docker exec mueblera-firebird bash -c 'exec 3<>/dev/tcp/127.0.0.1/3050' 2>/dev/null; then
+              echo "Firebird acepta conexiones"; exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Firebird no aceptó conexiones en 60s"; exit 1
+
+      - name: Levantar Meilisearch
+        run: |
+          docker run -d --name msp-meilisearch \
+            -e MEILI_ENV=development \
+            -e MEILI_MASTER_KEY= \
+            -p 7700:7700 \
+            getmeili/meilisearch:v1.13
+          for _ in $(seq 1 30); do
+            if curl -sf http://localhost:7700/health >/dev/null; then
+              echo "Meilisearch listo"; exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Meilisearch no respondió en 60s"; exit 1
+
+      # ╔══════════════════════════════════════════════════════════════════╗
+      # ║  HUECO A LLENAR — de aquí sale la base de datos.                 ║
+      # ║                                                                  ║
+      # ║  Este paso debe dejar un respaldo en el contenedor y restaurarlo ║
+      # ║  en $FB_DATABASE. Elegir uno de los caminos (A)/(B)/(C) del      ║
+      # ║  comentario de cabecera de este job y reemplazar el `exit 1`.    ║
+      # ║                                                                  ║
+      # ║  NO subir el .fbk.gz a este repositorio, ni publicarlo como      ║
+      # ║  release asset ni como artefacto de Actions: es público y la     ║
+      # ║  base reducida trae datos personales de clientes reales.         ║
+      # ║                                                                  ║
+      # ║  Forma del paso una vez resuelto (ejemplo con el camino B):      ║
+      # ║                                                                  ║
+      # ║    curl -sSL "$DB_URL" -o msp-test-db.fbk.gz                     ║
+      # ║    gunzip msp-test-db.fbk.gz                                     ║
+      # ║    docker cp msp-test-db.fbk mueblera-firebird:/tmp/             ║
+      # ║    docker exec mueblera-firebird \                               ║
+      # ║      /usr/local/firebird/bin/gbak -c \                           ║
+      # ║      -user sysdba -password masterkey \                          ║
+      # ║      /tmp/msp-test-db.fbk "$FB_DATABASE"                         ║
+      # ╚══════════════════════════════════════════════════════════════════╝
+      - name: Obtener y restaurar la base de pruebas
+        run: |
+          echo "::error::Falta definir de dónde obtiene CI la base de pruebas."
+          echo "Ver el comentario de cabecera del job integracion-firebird en"
+          echo ".github/workflows/ci.yml — opciones (A), (B) y (C)."
+          exit 1
+
+      - name: Verificar que la base trae los catálogos
+        run: |
+          docker exec mueblera-firebird /usr/local/firebird/bin/isql \
+            -user sysdba -password masterkey "$FB_DATABASE" -q <<'SQL'
+          SELECT 'ARTICULOS='   || COUNT(*) FROM ARTICULOS;
+          SELECT 'CONCEPTOS_CC='|| COUNT(*) FROM CONCEPTOS_CC;
+          SELECT 'ZONAS='       || COUNT(*) FROM ZONAS_CLIENTES;
+          SQL
+
+      # -p 1 NO es cosmético. Toda la suite comparte UNA base Firebird, y hay
+      # pruebas que dependen del estado GLOBAL del servidor: la de cobranza
+      # TestSync_GoldenSnapshot deriva su marca de agua de
+      # MinActiveTransactionID, así que una transacción abierta en otro paquete
+      # que corra en paralelo la invalida y la prueba falla de forma
+      # intermitente. Serializar los paquetes vuelve la suite determinista, que
+      # es lo que hace útil una señal en CI.
+      #
+      # -timeout 1800s: el default de Go son 10 minutos y la suite los rebasa
+      # (sólo cobranza/infra/ventfb son ~2 minutos).
+      - name: Suite de integración
+        run: go test ./... -race -p 1 -count=1 -timeout 1800s
+
+      - name: Diagnóstico de Firebird si algo falló
+        if: failure()
+        run: docker logs mueblera-firebird --tail 100

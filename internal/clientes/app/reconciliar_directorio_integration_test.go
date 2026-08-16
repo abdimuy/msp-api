@@ -45,6 +45,36 @@ func requireMeiliAndFBEnv(t *testing.T) {
 	}
 }
 
+// Presupuesto de tiempo de la reconciliación completa.
+//
+// POR QUÉ ES PROPORCIONAL Y NO UN NÚMERO FIJO
+// ===========================================
+// Este aserto era `elapsed < 120s`. Un presupuesto absoluto sobre un trabajo que
+// crece con el padrón es una bomba de tiempo: el 2026-08 la reconciliación de
+// 43,726 documentos tardaba 2m26s en frío contra los 2m del límite, y nadie
+// había tocado el código — sólo habían entrado clientes nuevos. Es la misma
+// trampa que ya se documentó en docs/base-de-datos-de-pruebas.md ("un test
+// afirma sobre el código, no sobre el estado de la base compartida").
+//
+// El presupuesto proporcional separa las dos causas de que esto tarde más:
+// crecer el padrón (legítimo, no debe fallar) y encarecer el documento
+// (regresión, debe fallar). Sólo la segunda mueve el ms/documento.
+//
+// Los valores son generosos a propósito: esto es un guardián contra
+// regresiones de orden de magnitud, no un banco de pruebas. Medido en una Mac
+// M2: ~3.3 ms/documento en frío, ~0.6 ms/documento en caliente. El corredor de
+// CI es más lento, así que el piso se fija en 10 ms/documento.
+const (
+	arranqueReconcile     = 60 * time.Second      // costo fijo: pool, EnsureIndex, primera consulta
+	porDocumentoReconcile = 10 * time.Millisecond // piso de rendimiento por documento
+)
+
+// presupuestoReconcile devuelve el tiempo máximo aceptable para reconciliar n
+// documentos.
+func presupuestoReconcile(n int) time.Duration {
+	return arranqueReconcile + time.Duration(n)*porDocumentoReconcile
+}
+
 // TestReconciliarDirectorio_LiveIntegration exercises the full pipeline:
 // Firebird → app service → Meilisearch. It populates the real index and
 // asserts doc count and document shape.
@@ -92,9 +122,16 @@ func TestReconciliarDirectorio_LiveIntegration(t *testing.T) {
 	elapsed := time.Since(start)
 	require.NoError(t, err, "ReconciliarDirectorio must succeed against live DB")
 
-	t.Logf("ReconciliarDirectorio: docs=%d elapsed=%s", n, elapsed)
+	t.Logf("ReconciliarDirectorio: docs=%d elapsed=%s (presupuesto %s)",
+		n, elapsed, presupuestoReconcile(n))
 	assert.Positive(t, n, "should index at least one document")
-	assert.Less(t, elapsed, 120*time.Second, "full reconcile should complete within 2 minutes")
+	assert.Lessf(t, elapsed, presupuestoReconcile(n),
+		"la reconciliación tardó %s para %d documentos (%.1f ms/doc). El presupuesto es "+
+			"proporcional al trabajo: %s de arranque + %s por documento. Rebasarlo significa que el "+
+			"COSTO POR DOCUMENTO empeoró —una consulta N+1, un lote más chico, un índice perdido—, "+
+			"no que el padrón creció.",
+		elapsed, n, float64(elapsed.Milliseconds())/float64(max(n, 1)),
+		arranqueReconcile, porDocumentoReconcile)
 
 	// Poll until Meilisearch has processed all documents (or 30s timeout).
 	indexName := cfg.Meilisearch.IndexName
