@@ -653,20 +653,18 @@ func TestE2E_SaldosDigest_SaldoFilterMatchesSync(t *testing.T) {
 		cargoA, idSet[cargoA], cargoB, idSet[cargoB])
 }
 
-// TestE2E_SaldosDigest_DesdeExcluyeSaldadas: una venta saldada NO aparece en
-// el digest, ni con `desde` ni sin el. Contrato vigente desde 2026-08-13:
-// SALDO > 0 estricto, igual que la API legacy.
+// TestE2E_SaldosDigest_VentanaIncluyeSaldadasRecientes: una venta saldada
+// aparece en el inventario si —y solo si— su FECHA_ULT_PAGO cae dentro de la
+// ventana. Es el mismo predicado que aplica /sync/ventas.
 //
-// El test se llamaba DesdeIncludesRecentSaldadas y exigia lo contrario. La
-// regla se retiro por decision de negocio — los cobradores leian esas ventas
-// como clientes de mas en su ruta (13 de 317 en la zona 34).
-//
-// Lo que este test protege ahora es la SIMETRIA: el digest tiene que decir
-// exactamente lo mismo que /sync. Si divergieran, el reconciler del telefono
-// veria extras o phantoms donde no los hay y borraria ventas buenas.
+// Lo que este test protege es la SIMETRIA: el inventario tiene que decir
+// exactamente lo mismo que el sync. Cuando divergen, el reconciliador del
+// teléfono ve fantasmas donde no los hay y borra ventas buenas — justo las
+// que se saldaron esta semana, que son las que el cobrador necesita para
+// comprobar que su cobro quedó registrado.
 //
 //nolint:paralleltest
-func TestE2E_SaldosDigest_DesdeExcluyeSaldadas(t *testing.T) {
+func TestE2E_SaldosDigest_VentanaIncluyeSaldadasRecientes(t *testing.T) {
 	requireFBEnv(t)
 	pool := fbtestutil.NewTestFirebirdPool(t)
 
@@ -710,8 +708,19 @@ func TestE2E_SaldosDigest_DesdeExcluyeSaldadas(t *testing.T) {
 	for _, id := range idsWithDesde {
 		withDesdeSet[id] = true
 	}
-	assert.False(t, withDesdeSet[cargo],
-		"saldada NO debe aparecer ni con desde: SALDO > 0 estricto, como la legacy")
+	assert.True(t, withDesdeSet[cargo],
+		"la saldada con FECHA_ULT_PAGO dentro de la ventana SÍ debe aparecer: "+
+			"es lo que entrega /sync/ventas y el inventario no puede contradecirlo")
+
+	// Ventana que empieza después del último pago: la saldada queda fuera.
+	desdeFuturo := ultPago.Add(24 * time.Hour)
+	idsFuera, _, err := repo.ListIDs(ctx, zonaID, 0, 100000, desdeFuturo)
+	require.NoError(t, err)
+	fueraSet := make(map[int]bool, len(idsFuera))
+	for _, id := range idsFuera {
+		fueraSet[id] = true
+	}
+	assert.False(t, fueraSet[cargo], "fuera de la ventana la saldada no debe aparecer")
 
 	t.Logf("SaldosDigest desde: cargo=%d noDesde=%v withDesde=%v ultPago=%s desde=%s",
 		cargo, noDesdeSet[cargo], withDesdeSet[cargo],

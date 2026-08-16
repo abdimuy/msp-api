@@ -60,6 +60,9 @@ func newHumaConfig(title string) huma.Config {
 // causing Android NPEs when Gson left non-null String fields as null.
 //
 // Returns the constructed huma.API for testing / introspection.
+// clock resuelve la ventana por defecto de los endpoints by-ids, que no pasan
+// por *Service (leen los repos directo por latencia) y por eso necesitan su
+// propia referencia al mismo reloj.
 func MountReadRouter(
 	r chi.Router,
 	svc *cobranzaapp.Service,
@@ -68,6 +71,7 @@ func MountReadRouter(
 	logger *slog.Logger,
 	pagosRepo outbound.PagosRepo,
 	ventasRepo outbound.VentasRepo,
+	clock outbound.Clock,
 ) huma.API {
 	cfg := newHumaConfig("MSP API · Cobranza")
 	api := humachi.New(r, cfg)
@@ -84,7 +88,7 @@ func MountReadRouter(
 	sse := newSSEHandler(bus, sseCfg, logger)
 	mountCobranzaSSE(r, sse)
 	// by-ids endpoints — raw chi, flat JSON array, no Huma envelope.
-	byIDs := newByIDsHandlers(pagosRepo, ventasRepo, logger)
+	byIDs := newByIDsHandlers(pagosRepo, ventasRepo, clock, logger)
 	mountByIDs(r, byIDs)
 	return api
 }

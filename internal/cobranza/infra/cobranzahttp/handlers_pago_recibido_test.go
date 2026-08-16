@@ -301,7 +301,7 @@ func (f *fakeSaldosRepoHTTP) SyncPorZona(_ context.Context, _ int, _ time.Time, 
 	return outbound.SyncPage[domain.Saldo]{}, nil
 }
 
-func (f *fakeSaldosRepoHTTP) ByIDs(_ context.Context, _ int, _ []int) ([]domain.Saldo, error) {
+func (f *fakeSaldosRepoHTTP) ByIDs(_ context.Context, _ int, _ []int, _ time.Time) ([]domain.Saldo, error) {
 	return nil, nil
 }
 
@@ -322,7 +322,7 @@ func (fakePagosRepoHTTP) SyncPorZona(_ context.Context, _ int, _ time.Time, _, _
 	return outbound.SyncPage[domain.Pago]{}, nil
 }
 
-func (fakePagosRepoHTTP) ByIDs(_ context.Context, _ int, _ []int) ([]domain.Pago, error) {
+func (fakePagosRepoHTTP) ByIDs(_ context.Context, _ int, _ []int, _ time.Time) ([]domain.Pago, error) {
 	return nil, nil
 }
 
@@ -400,7 +400,7 @@ func buildTestService(
 func mountReadWithUser(cu auth.CurrentUser, svc *cobranzaapp.Service) http.Handler {
 	r := chi.NewRouter()
 	r.Use(planter(cu))
-	cobranzahttp.MountReadRouter(r, svc, eventbus.New(), config.Cobranza{}, slog.Default(), nil, nil)
+	cobranzahttp.MountReadRouter(r, svc, eventbus.New(), config.Cobranza{}, slog.Default(), nil, nil, outbound.ProductionClock{})
 	return r
 }
 

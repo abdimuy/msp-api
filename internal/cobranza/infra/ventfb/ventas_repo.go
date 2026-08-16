@@ -102,6 +102,22 @@ func ventaClienteFilterFor(alias string) string {
 	return fmt.Sprintf(ventaClienteFilter, alias)
 }
 
+// ventaStatusFilterConVentana es EL predicado de ventana que comparten los
+// tres canales del recurso ventas/saldos: el sync (queryVentaSyncPage), el
+// inventario (SaldosRepo.Digest / ListIDs, que lo aplica sin alias y sin la
+// rama de cancelados porque ya filtra CARGO_CANCELADO = 'N') y ByIDs.
+//
+// Toma DOS binds, ambos el mismo `desde`, en este orden: FECHA_ULT_PAGO,
+// FECHA_HORA_CANCELACION. Ver queryVentaSyncPage para el porqué de cada rama.
+const ventaStatusFilterConVentana = `(s.SALDO > 0
+		OR s.FECHA_ULT_PAGO >= ?
+		OR (s.CARGO_CANCELADO = 'S' AND EXISTS (
+			SELECT 1 FROM DOCTOS_CC dcan
+			WHERE dcan.DOCTO_CC_ID = s.DOCTO_CC_ID
+			  AND (dcan.FECHA_HORA_CANCELACION IS NULL
+			       OR dcan.FECHA_HORA_CANCELACION >= ?)
+		)))`
+
 const ventaFromClause = `
 FROM MSP_SALDOS_VENTAS s
 JOIN CLIENTES c                ON c.CLIENTE_ID       = s.CLIENTE_ID
@@ -143,16 +159,23 @@ func (r *VentasRepo) SyncPorZona(
 }
 
 // ByIDs returns the enriched Venta rows for the given primary keys, constrained
-// to ZONA_CLIENTE_ID = zonaID. Uses selectVentaCols + ventaFromClause for
-// shape parity with SyncPorZona. No watermark filtering — the caller (by-ids
-// HTTP endpoint) obtained these PKs from the SSE listener which only publishes
-// committed rows.
+// to ZONA_CLIENTE_ID = zonaID y a la MISMA ventana que SyncPorZona. Uses
+// selectVentaCols + ventaFromClause for shape parity with SyncPorZona. No
+// watermark filtering — the caller (by-ids HTTP endpoint) obtained these PKs
+// from the SSE listener which only publishes committed rows.
+//
+// El filtro de ventana (ventaStatusFilterConVentana) no es defensa en
+// profundidad: sin él este era el canal permisivo. El SSE anuncia un
+// DOCTO_CC_ID, el teléfono lo pide aquí y se lleva una fila que ni el sync ni
+// el inventario reconocen; el reconciliador la ve como fantasma y la borra, y
+// el ciclo se repite. Los tres canales tienen que responder lo mismo para la
+// misma zona y el mismo `desde`.
 //
 // Duplicate IDs in the input are deduplicated before querying. Rows whose
 // PK is in ids but whose zona does not match are silently excluded.
 //
 //nolint:dupl // structurally mirrors PagosRepo.ByIDs; differs in column list + scanner + return type — abstraction not worth it
-func (r *VentasRepo) ByIDs(ctx context.Context, zonaID int, ids []int) ([]domain.Venta, error) {
+func (r *VentasRepo) ByIDs(ctx context.Context, zonaID int, ids []int, desde time.Time) ([]domain.Venta, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -176,10 +199,18 @@ func (r *VentasRepo) ByIDs(ctx context.Context, zonaID int, ids []int) ([]domain
 		args = append(args, id)
 	}
 
+	statusFilter := `(s.SALDO > 0 OR s.CARGO_CANCELADO = 'S')`
+	if !desde.IsZero() {
+		statusFilter = ventaStatusFilterConVentana
+		wall := firebird.ToWallClock(desde)
+		args = append(args, wall, wall)
+	}
+
 	query := `
 SELECT ` + selectVentaCols + ventaFromClause + `
 WHERE s.ZONA_CLIENTE_ID = ?
   AND s.DOCTO_CC_ID IN (` + strings.Join(placeholders, ",") + `)
+  AND ` + statusFilter + `
   AND ` + ventaClienteFilterFor("s")
 
 	var result []domain.Venta
@@ -220,59 +251,64 @@ type ventaSyncSpec struct {
 // primera, para que la paginación no se cuele saldados que no caben en la
 // ventana del cobrador):
 //
-//   - desde zero (legacy admin/full sync sin ventana): solo activos
-//     (SALDO > 0) + tombstones (CARGO_CANCELADO = 'S'). Saldados
-//     silenciosos no se mandan.
+//   - desde zero (solo llamadas internas/tests: el HTTP siempre resuelve un
+//     default de servidor, ver app.ResolveSyncDesde): activos (SALDO > 0) y
+//     tombstones (CARGO_CANCELADO = 'S').
 //
-//   - desde set (sync del cobrador con FECHA_CARGA_INICIAL): tres ramas
-//     deben cumplirse, cada una alineada con la semántica del cliente:
+//   - desde set (el caso normal): tres ramas, cada una alineada con la
+//     semántica del cliente:
 //
 //     1. Activos (SALDO > 0): siempre viajan — el cobrador los necesita
 //     para cobrar.
 //
-//     2. Tombstones (CARGO_CANCELADO='S') cuya cancelación real en
-//     Microsip cae dentro de la ventana (FECHA_HORA_CANCELACION >=
-//     desde). Sin este sub-filtro, cualquier backfill del cache que
-//     toque UPDATED_AT (típico en migraciones que llaman
-//     MSP_RECOMPUTE_SALDO_VENTA en bucle) "resucita" tombstones de
-//     cancelaciones de 2018-2025 que ya nadie tiene en local. El
-//     cliente las recibiría solo para borrarlas en no-op silencioso
-//     — bandwidth desperdiciado más ruido en logs de sync. NULL en
-//     FECHA_HORA_CANCELACION se trata como "fecha desconocida" y se
-//     propaga (defensivo: mejor mandar un delete de más que perder
-//     una cancelación legítima).
+//     2. Saldadas dentro de la ventana (FECHA_ULT_PAGO >= desde). Es la
+//     venta la que decide qué pagos existen, no cada pago por su
+//     cuenta: el pago que SALDA una venta la deja en SALDO = 0 y sin
+//     esta rama la venta —y con ella su pago— desaparece del sync el
+//     mismo día en que se cobró. El cobrador no ve el abono, cree que
+//     no se registró y vuelve a cobrar. La legacy derivaba igual
+//     (filtraba las ventas y sacaba los pagos de ellas con
+//     `IMPORTES_DOCTOS_CC.DOCTO_CC_ACR_ID IN (ventasIds)`).
 //
-//     3. Saldadas con pago de cobranza activa (CONCEPTO_CC_ID IN 87327
-//     cobranza en ruta, 27969 abono mostrador) en ventana. NO basta
-//     FECHA_ULT_PAGO porque esa columna avanza con pagos
-//     administrativos (anticipos, condonaciones, ajustes) que
-//     /sync/pagos ya filtra fuera — incluirlas aquí desperdiciaba
-//     bandwidth porque el cliente terminaba borrándolas en
-//     mergeVentas. El filtro replica exacto el de /sync/pagos
-//     (pagos_repo.pagoConceptoFilter) vía EXISTS sobre
-//     MSP_PAGOS_VENTAS (índice IDX_MSP_PAGOS_CARGO).
+//     FECHA_ULT_PAGO es confiable para esto: la migración 000011 —y
+//     la 000023, que es la versión vigente del recompute— la calculan
+//     como MAX(COALESCE(MSP_PAGOS_RECIBIDOS.FECHA, DOCTOS_CC.FECHA))
+//     restringido a CONCEPTO_CC_ID IN (87327, 155), o sea cobranza en
+//     ruta y su contraparte interna. No avanza con condonaciones ni
+//     ajustes.
+//
+//     El predicado es además el barato: se apoya en el índice
+//     IDX_MSP_SALDOS_ZONA_FUP (ZONA_CLIENTE_ID, FECHA_ULT_PAGO) que
+//     la migración 000012 dejó cubriendo esta columna. Medido en el
+//     clon de producción sobre la zona 21563: 0.285 s / 18,163
+//     lecturas, contra 7.5 s / 1,324,166 de la variante con EXISTS
+//     correlacionado sobre MSP_PAGOS_VENTAS. No requiere migración.
+//
+//     3. Tombstones (CARGO_CANCELADO='S') cuya cancelación real en
+//     Microsip cae dentro de la ventana (FECHA_HORA_CANCELACION >=
+//     desde). Esta rama NO es un filtro de saldo: es la señal con la
+//     que el teléfono BORRA un cargo que Microsip canceló. Sin ella el
+//     cobrador arrastraría ventas fantasma para siempre. El
+//     sub-filtro por fecha evita que cualquier backfill del cache que
+//     toque UPDATED_AT (típico en migraciones que llaman
+//     MSP_RECOMPUTE_SALDO_VENTA en bucle) "resucite" tombstones de
+//     2018-2025 que ya nadie tiene en local. NULL en
+//     FECHA_HORA_CANCELACION se trata como "fecha desconocida" y se
+//     propaga (defensivo: mejor mandar un delete de más que perder una
+//     cancelación legítima).
+//
+// Los tres canales del mismo recurso —este sync, el inventario
+// (SaldosRepo.Digest/ListIDs) y ByIDs— comparten este predicado. Si divergen,
+// el reconciliador borra como fantasmas justo lo que el sync acaba de
+// entregar; TestParidadCanales_Ventas lo fija.
 func queryVentaSyncPage(ctx context.Context, q firebird.Querier, spec ventaSyncSpec) (*sql.Rows, error) {
 	upper := firebird.ToWallClock(spec.upperBound)
 	statusFilter := `(s.SALDO > 0 OR s.CARGO_CANCELADO = 'S')`
 	var statusArgs []any
 	if !spec.desde.IsZero() {
 		desde := firebird.ToWallClock(spec.desde)
-		// SALDO > 0 estricto, igual que la legacy. La rama que conservaba
-		// las saldadas con pago en la ventana se retiro por decision de
-		// negocio: la legacy nunca las mostro y los cobradores las leian
-		// como clientes de mas (13 de 317 en la zona 34).
-		//
-		// La rama de cancelados SE QUEDA y no es un filtro de saldo: es la
-		// senal con la que el telefono BORRA un cargo que Microsip cancelo.
-		// Sin ella el cobrador arrastraria ventas fantasma para siempre.
-		statusFilter = `(s.SALDO > 0
-		OR (s.CARGO_CANCELADO = 'S' AND EXISTS (
-			SELECT 1 FROM DOCTOS_CC dc
-			WHERE dc.DOCTO_CC_ID = s.DOCTO_CC_ID
-			  AND (dc.FECHA_HORA_CANCELACION IS NULL
-			       OR dc.FECHA_HORA_CANCELACION >= ?)
-		)))`
-		statusArgs = []any{desde}
+		statusFilter = ventaStatusFilterConVentana
+		statusArgs = []any{desde, desde}
 	}
 	if spec.cursor.IsZero() {
 		args := append([]any{spec.limit, spec.zonaID, upper, spec.afterID}, statusArgs...)

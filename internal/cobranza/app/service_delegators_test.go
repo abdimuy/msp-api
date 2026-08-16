@@ -39,7 +39,8 @@ type fakePagosReconcileRepo struct {
 	lastDesde  time.Time
 }
 
-func (f *fakePagosReconcileRepo) Digest(_ context.Context, _ int, _ time.Time) (outbound.DigestResult, error) {
+func (f *fakePagosReconcileRepo) Digest(_ context.Context, _ int, desde time.Time) (outbound.DigestResult, error) {
+	f.lastDesde = desde
 	if f.err != nil {
 		return outbound.DigestResult{}, f.err
 	}
@@ -73,7 +74,8 @@ type fakeSaldosReconcileRepo struct {
 	lastDesde  time.Time
 }
 
-func (f *fakeSaldosReconcileRepo) Digest(_ context.Context, _ int, _ time.Time) (outbound.DigestResult, error) {
+func (f *fakeSaldosReconcileRepo) Digest(_ context.Context, _ int, desde time.Time) (outbound.DigestResult, error) {
+	f.lastDesde = desde
 	if f.err != nil {
 		return outbound.DigestResult{}, f.err
 	}
@@ -97,18 +99,21 @@ func (f *fakeSaldosReconcileRepo) ListIDs(_ context.Context, zonaID, after, limi
 type fakeVentasRepo struct {
 	syncPage outbound.SyncPage[domain.Venta]
 	err      error
+
+	lastDesde time.Time
 }
 
 func (f *fakeVentasRepo) SyncPorZona(
-	_ context.Context, _ int, _ time.Time, _, _ int, _ time.Time,
+	_ context.Context, _ int, _ time.Time, _, _ int, desde time.Time,
 ) (outbound.SyncPage[domain.Venta], error) {
+	f.lastDesde = desde
 	if f.err != nil {
 		return outbound.SyncPage[domain.Venta]{}, f.err
 	}
 	return f.syncPage, nil
 }
 
-func (f *fakeVentasRepo) ByIDs(_ context.Context, _ int, _ []int) ([]domain.Venta, error) {
+func (f *fakeVentasRepo) ByIDs(_ context.Context, _ int, _ []int, _ time.Time) ([]domain.Venta, error) {
 	return nil, nil
 }
 

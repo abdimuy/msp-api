@@ -123,24 +123,27 @@ func TestE2E_VentasRepo_SyncPorZona_ReturnsEnrichedRow(t *testing.T) {
 }
 
 // TestE2E_VentasRepo_SyncPorZona_SaldadaConDesde verifica el contrato del
-// parámetro `desde` (filtro depende SOLO de desde, no del cursor):
+// parámetro `desde` (el filtro depende SOLO de desde, no del cursor):
 //
-// Contrato vigente desde 2026-08-13: SALDO > 0 ESTRICTO, igual que la API
-// legacy. Una venta saldada NO viaja, con `desde` o sin él. La regla que las
-// conservaba si tenían pago en la ventana del cobrador se retiró por decisión
-// de negocio — los cobradores las leían como clientes de más en su ruta.
+// Contrato vigente: la venta que se saldó DENTRO de la ventana sigue
+// viajando. Es el pago que la saldó el que la deja en SALDO = 0, y si la
+// venta desaparece ese mismo día el cobrador no ve el abono, cree que no se
+// registró y vuelve a cobrar. Sin `desde` el filtro es SALDO > 0 estricto,
+// pero por HTTP `desde` nunca falta: app.ResolveSyncDesde le pone el default
+// de servidor.
 //
-//  1. cursor=zero, desde=zero  → saldada NO viaja.
-//  2. cursor=zero, desde<FUP   → saldada NO viaja (antes SÍ).
-//  3. cursor!=zero, desde<FUP  → saldada NO viaja (antes SÍ).
+//  1. cursor=zero, desde=zero  → saldada NO viaja (sin ventana).
+//  2. cursor=zero, desde<FUP   → saldada SÍ viaja.
+//  3. cursor!=zero, desde<FUP  → saldada SÍ viaja al paginar.
 //  4. cursor!=zero, desde=zero → saldada NO viaja.
-//  5. cursor=zero, desde<FUP, pero la venta se saldó con una
-//     condonación (CONCEPTO_CC_ID=155). La condonación SÍ actualiza
-//     FECHA_ULT_PAGO (filtro 87327, 155 en MSP_RECOMPUTE_SALDO_VENTA)
-//     pero NO aparece en /sync/pagos (filtro 87327, 27969). El filtro
-//     viejo (`FECHA_ULT_PAGO >= ?`) la dejaba colarse; el nuevo
-//     (EXISTS sobre MSP_PAGOS_VENTAS con el mismo concepto que pagos)
-//     debe rechazarla.
+//  5. cursor=zero, desde>FUP   → saldada FUERA de la ventana NO viaja.
+//  6. cursor=zero, desde<FUP, venta saldada con CONCEPTO_CC_ID=155:
+//     viaja igual. FECHA_ULT_PAGO cuenta 87327 y 155 (000011/000023),
+//     así que una venta saldada solo por ese concepto entra por la
+//     ventana aunque su abono no aparezca en /sync/pagos, que filtra
+//     (87327, 27969). Es una asimetría conocida de los catálogos, no
+//     del predicado: preferimos que el cobrador vea la venta saldada
+//     sin uno de sus abonos a que la venta desaparezca de su ruta.
 //
 //nolint:paralleltest // serial: shares rollback-only tx.
 func TestE2E_VentasRepo_SyncPorZona_SaldadaConDesde(t *testing.T) {
@@ -178,21 +181,28 @@ func TestE2E_VentasRepo_SyncPorZona_SaldadaConDesde(t *testing.T) {
 		assert.Nil(t, findVenta(pageLegacy.Items, cargoID),
 			"sin desde, la venta saldada no debería aparecer en sync inicial")
 
-		// Caso 2: NI CON `desde` viaja una saldada. El contrato cambio por
-		// decision de negocio (2026-08-13): SALDO > 0 estricto, igual que la
-		// API legacy, que nunca las mostro. Antes se conservaban las saldadas
-		// con pago en la ventana del cobrador y este mismo test exigia lo
-		// contrario — en la zona 34 eran 13 clientes de mas en la ruta.
+		// Caso 2: con `desde`, la saldada dentro de la ventana SÍ viaja.
+		// Es la rama que el defecto D2 había retirado: sin ella el pago que
+		// salda la venta se borra a sí mismo del sync el día que se cobra.
 		pageConDesde, err := repo.SyncPorZona(ctx, zonaID, time.Time{}, 0, 5000, desde)
 		require.NoError(t, err)
-		assert.Nil(t, findVenta(pageConDesde.Items, cargoID),
-			"con desde, la saldada TAMPOCO debe viajar: SALDO > 0 estricto")
+		assert.NotNil(t, findVenta(pageConDesde.Items, cargoID),
+			"con desde, la venta saldada dentro de la ventana debe viajar")
 
 		// Caso 3: lo mismo al paginar con cursor.
 		pageIncrConDesde, err := repo.SyncPorZona(ctx, zonaID, cursor, 0, 5000, desde)
 		require.NoError(t, err)
-		assert.Nil(t, findVenta(pageIncrConDesde.Items, cargoID),
-			"con desde, la saldada tampoco debe colarse al paginar")
+		assert.NotNil(t, findVenta(pageIncrConDesde.Items, cargoID),
+			"con desde, la saldada debe seguir viajando al paginar")
+
+		// Caso 5: ventana que empieza DESPUÉS del último pago — la saldada
+		// queda fuera y no viaja. Sin esta mitad, un `OR TRUE` accidental
+		// pasaría el caso 2 sin que nadie se entere.
+		desdeFuturo := time.Now().Add(24 * time.Hour)
+		pageFuera, err := repo.SyncPorZona(ctx, zonaID, time.Time{}, 0, 5000, desdeFuturo)
+		require.NoError(t, err)
+		assert.Nil(t, findVenta(pageFuera.Items, cargoID),
+			"con la ventana empezando mañana, la saldada de hoy no debe viajar")
 
 		// Caso 4: paginación legacy sin desde — saldada NO viaja
 		// (protege que las saldadas históricas no se cuelen en páginas 2+).
@@ -201,12 +211,12 @@ func TestE2E_VentasRepo_SyncPorZona_SaldadaConDesde(t *testing.T) {
 		assert.Nil(t, findVenta(pageIncrLegacy.Items, cargoID),
 			"sin desde, las saldadas no deben colarse en paginación")
 
-		// Caso 5: venta saldada por una condonación (CONCEPTO_CC_ID=155).
-		// Concepto que SÍ actualiza FECHA_ULT_PAGO (filtro 87327, 155 en
-		// MSP_RECOMPUTE_SALDO_VENTA) pero que NO aparece en /sync/pagos
-		// (filtro 87327, 27969). El filtro viejo `FECHA_ULT_PAGO >= ?`
-		// la dejaba colarse y la app la borraba en mergeVentas — el
-		// EXISTS contra MSP_PAGOS_VENTAS debe rechazarla en el backend.
+		// Caso 6: venta saldada por un abono de CONCEPTO_CC_ID=155.
+		// FECHA_ULT_PAGO cuenta 87327 y 155, así que entra por la ventana
+		// aunque su abono no salga en /sync/pagos (filtro 87327, 27969).
+		// Asimetría conocida entre los dos catálogos de conceptos; se deja
+		// documentada aquí en vez de resolverla con un EXISTS carísimo
+		// (7.5 s / 1.3M lecturas medidos contra 0.285 s del predicado).
 		importeAdm := decimal.RequireFromString("750.00")
 		cargoAdm := insertCargoDoctosCC(t, q, clienteID, "VENT-ADM", importeAdm)
 		insertPagoNoEnRutaImporte(t, q, clienteID, cargoAdm, importeAdm)
@@ -214,16 +224,23 @@ func TestE2E_VentasRepo_SyncPorZona_SaldadaConDesde(t *testing.T) {
 		saldoAdm, err := saldoRepo.PorCargo(ctx, cargoAdm)
 		require.NoError(t, err)
 		require.True(t, saldoAdm.Saldo().IsZero(),
-			"prerequisito caso 5: saldo debe ser 0 tras la condonación; got=%s", saldoAdm.Saldo())
+			"prerequisito caso 6: saldo debe ser 0 tras el abono 155; got=%s", saldoAdm.Saldo())
 		require.NotNil(t, saldoAdm.FechaUltPago(),
-			"prerequisito caso 5: FECHA_ULT_PAGO debe quedar set (la condonación cuenta para FUP)")
+			"prerequisito caso 6: FECHA_ULT_PAGO debe quedar set (el concepto 155 cuenta para FUP)")
 		require.True(t, saldoAdm.FechaUltPago().After(desde),
-			"prerequisito caso 5: FECHA_ULT_PAGO debe caer dentro de la ventana `desde`")
+			"prerequisito caso 6: FECHA_ULT_PAGO debe caer dentro de la ventana `desde`")
+
+		// Esperar de nuevo el margen de clock-skew: cargoAdm se acaba de
+		// escribir y su UPDATED_AT quedaría por encima de la cota superior
+		// (server_now - 1 s). Sin esta espera el caso pasaría por el motivo
+		// equivocado — la fila queda fuera de la página por tiempo, no por el
+		// predicado.
+		time.Sleep(2 * time.Second)
 
 		pageAdm, err := repo.SyncPorZona(ctx, zonaID, time.Time{}, 0, 5000, desde)
 		require.NoError(t, err)
-		assert.Nil(t, findVenta(pageAdm.Items, cargoAdm),
-			"venta saldada por condonación NO debe viajar — el filtro EXISTS exige pago de cobranza activa")
+		assert.NotNil(t, findVenta(pageAdm.Items, cargoAdm),
+			"la saldada por concepto 155 viaja: FECHA_ULT_PAGO la cuenta y la ventana manda")
 	})
 }
 

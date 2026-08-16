@@ -23,12 +23,13 @@ type VentasRepo interface {
 	// for sub-cursor pagination when has_more=true. Pass cursor=time.Time{}
 	// for a full initial sync.
 	//
-	// desde controla el filtro de saldo en el sync inicial (cursor zero):
-	//   - desde zero:   solo cargos activos + tombstones (legacy).
-	//   - desde set:    activos + tombstones + saldados con FECHA_ULT_PAGO >= desde.
-	// En sync incremental (cursor set) el filtro de saldo se quita: cualquier
-	// row con UPDATED_AT > cursor entra, incluyendo ventas que acaban de
-	// saldarse y tombstones — el cliente decide qué hacer con cada caso.
+	// desde acota la ventana en TODAS las páginas (no solo la primera):
+	//   - desde zero:   solo cargos activos + tombstones.
+	//   - desde set:    activos + saldados con FECHA_ULT_PAGO >= desde +
+	//                   tombstones cancelados dentro de la ventana.
+	//
+	// El HTTP nunca pasa zero: app.ResolveSyncDesde le da un default de
+	// servidor. Zero queda para llamadas internas y tests.
 	SyncPorZona(ctx context.Context, zonaID int, cursor time.Time, afterID, limit int, desde time.Time) (SyncPage[domain.Venta], error)
 
 	// ByIDs returns the enriched Venta rows for the given primary keys
@@ -39,8 +40,11 @@ type VentasRepo interface {
 	// filter, not 404). No watermark filtering — callers obtain these PKs
 	// from the SSE listener which only publishes committed rows.
 	//
+	// desde aplica el MISMO filtro de ventana que SyncPorZona y que
+	// SaldosReconcileRepo.ListIDs — ver la nota equivalente en PagosRepo.ByIDs.
+	//
 	// ids may contain duplicates; the result deduplicates by PK.
-	ByIDs(ctx context.Context, zonaID int, ids []int) ([]domain.Venta, error)
+	ByIDs(ctx context.Context, zonaID int, ids []int, desde time.Time) ([]domain.Venta, error)
 
 	// ProductosByPVIDs returns the DOCTOS_PV_DET line items for every DOCTOS_PV
 	// document in pvIDs, keyed by DOCTO_PV_ID. Batch query (anti N+1). Documents

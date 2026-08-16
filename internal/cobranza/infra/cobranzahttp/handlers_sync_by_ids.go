@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/abdimuy/msp-api/internal/auth"
+	cobranzaapp "github.com/abdimuy/msp-api/internal/cobranza/app"
 	"github.com/abdimuy/msp-api/internal/cobranza/domain"
 	"github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/apperror"
@@ -27,12 +29,27 @@ const maxByIDsLimit = 500
 type byIDsHandlers struct {
 	pagosRepo  outbound.PagosRepo
 	ventasRepo outbound.VentasRepo
+	clock      outbound.Clock
 	logger     *slog.Logger
 }
 
 // newByIDsHandlers constructs a byIDsHandlers.
-func newByIDsHandlers(pagos outbound.PagosRepo, ventas outbound.VentasRepo, logger *slog.Logger) *byIDsHandlers {
-	return &byIDsHandlers{pagosRepo: pagos, ventasRepo: ventas, logger: logger}
+func newByIDsHandlers(
+	pagos outbound.PagosRepo, ventas outbound.VentasRepo, clock outbound.Clock, logger *slog.Logger,
+) *byIDsHandlers {
+	return &byIDsHandlers{pagosRepo: pagos, ventasRepo: ventas, clock: clock, logger: logger}
+}
+
+// desdeDeLaRequest resuelve la ventana de estos endpoints. Acepta el mismo
+// ?desde= que el sync (RFC3339 o YYYY-MM-DD) y, cuando falta, cae en el
+// default de servidor — el MISMO que resuelven el sync y el inventario, para
+// que los tres canales respondan lo mismo aunque el cliente no mande nada.
+func (h *byIDsHandlers) desdeDeLaRequest(r *http.Request) (time.Time, error) {
+	parsed, err := parseDesde(r.URL.Query().Get("desde"))
+	if err != nil {
+		return time.Time{}, err
+	}
+	return cobranzaapp.ResolveSyncDesde(parsed, h.clock), nil
 }
 
 // getPagosByIDs handles GET /v2/cobranza/sync/pagos/by-ids.
@@ -40,6 +57,8 @@ func newByIDsHandlers(pagos outbound.PagosRepo, ventas outbound.VentasRepo, logg
 // Query params:
 //   - zona_id (int, required) — must match the user's zona access scope.
 //   - ids     (string, required) — comma-separated integer list.
+//   - desde   (string, optional) — misma ventana que /sync (RFC3339 o
+//     YYYY-MM-DD). Omitirlo aplica el default de servidor, no "sin ventana".
 //
 // Returns 200 with []PagoDTO, or an apperror-shaped JSON error on failure.
 // No watermark filtering is applied — the caller obtained these PKs from the
@@ -65,7 +84,12 @@ func (h *byIDsHandlers) getPagosByIDs(w http.ResponseWriter, r *http.Request) {
 		writeByIDsJSON(w, marshalPagoDTOs(nil))
 		return
 	}
-	pagos, err := h.pagosRepo.ByIDs(ctx, zonaID, ids)
+	desde, err := h.desdeDeLaRequest(r)
+	if err != nil {
+		writeAppErrorCobranza(w, err)
+		return
+	}
+	pagos, err := h.pagosRepo.ByIDs(ctx, zonaID, ids, desde)
 	if err != nil {
 		h.logger.ErrorContext(ctx, "cobranza.by_ids_pagos_failed",
 			slog.Int("zona_id", zonaID), slog.Int("ids_count", len(ids)), slog.Any("error", err))
@@ -103,7 +127,12 @@ func (h *byIDsHandlers) getSaldosByIDs(w http.ResponseWriter, r *http.Request) {
 		writeByIDsJSON(w, marshalVentaDTOs(nil))
 		return
 	}
-	ventas, err := h.ventasRepo.ByIDs(ctx, zonaID, ids)
+	desde, err := h.desdeDeLaRequest(r)
+	if err != nil {
+		writeAppErrorCobranza(w, err)
+		return
+	}
+	ventas, err := h.ventasRepo.ByIDs(ctx, zonaID, ids, desde)
 	if err != nil {
 		h.logger.ErrorContext(ctx, "cobranza.by_ids_saldos_failed",
 			slog.Int("zona_id", zonaID), slog.Int("ids_count", len(ids)), slog.Any("error", err))

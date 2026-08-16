@@ -177,14 +177,17 @@ func insertPagoImporte(
 }
 
 // insertPagoNoEnRutaImporte inserts a pago crediting cargoID whose header
-// carries CONCEPTO_CC_ID=155 (condonación). Concepto crítico para reproducir
-// la asimetría que motiva el fix: MSP_RECOMPUTE_SALDO_VENTA (migración
-// 000015) cuenta este concepto dentro de FECHA_ULT_PAGO — por lo que el
-// filtro viejo `s.FECHA_ULT_PAGO >= ?` lo dejaba colarse — pero /sync/pagos
-// lo excluye (filtro (87327, 27969)), de modo que la venta saldada por
-// condonación viajaba sin pago asociado y la app la borraba en
-// mergeVentas. El filtro nuevo basado en EXISTS sobre MSP_PAGOS_VENTAS
-// (mismo concepto que /sync/pagos) debe rechazarla.
+// carries CONCEPTO_CC_ID=155 (abono interno). Sirve para fijar la asimetría
+// conocida entre los dos catálogos de conceptos: MSP_RECOMPUTE_SALDO_VENTA
+// cuenta 87327 y 155 para FECHA_ULT_PAGO, mientras /sync/pagos entrega
+// 87327 y 27969. Una venta saldada solo por un abono 155 entra por la
+// ventana (FECHA_ULT_PAGO) aunque su abono no salga en /sync/pagos.
+//
+// Se acepta a propósito: la alternativa —exigir un pago visible vía EXISTS
+// sobre MSP_PAGOS_VENTAS— cuesta 7.5 s y 1.3M lecturas por zona contra los
+// 0.285 s del predicado por índice, y su beneficio es ahorrar bandwidth en
+// un puñado de filas. Perder la venta de la ruta es peor que mostrarla sin
+// uno de sus abonos.
 func insertPagoNoEnRutaImporte(
 	t *testing.T,
 	q firebird.Querier,

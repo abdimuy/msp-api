@@ -118,7 +118,10 @@ func saldosOnlyUser() auth.CurrentUser {
 
 // buildReconcileSvc constructs a Service with the given fake reconcile repos attached.
 func buildReconcileSvc(pagosR outbound.PagosReconcileRepo, saldosR outbound.SaldosReconcileRepo) *cobranzaapp.Service {
-	svc := cobranzaapp.NewService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	// El reloj ya no es opcional para estos endpoints: resuelven la ventana
+	// por defecto con app.ResolveSyncDesde. Un Service sin reloj es un bug de
+	// cableado, no un caso soportado.
+	svc := cobranzaapp.NewService(nil, nil, nil, outbound.ProductionClock{}, nil, nil, nil, nil, nil, nil)
 	svc.WithReconcilePorts(pagosR, saldosR)
 	return svc
 }
@@ -127,7 +130,7 @@ func buildReconcileSvc(pagosR outbound.PagosReconcileRepo, saldosR outbound.Sald
 func mountReconcileRouter(cu auth.CurrentUser, svc *cobranzaapp.Service) http.Handler {
 	r := chi.NewRouter()
 	r.Use(planter(cu))
-	cobranzahttp.MountReadRouter(r, svc, eventbus.New(), config.Cobranza{}, slog.Default(), nil, nil)
+	cobranzahttp.MountReadRouter(r, svc, eventbus.New(), config.Cobranza{}, slog.Default(), nil, nil, outbound.ProductionClock{})
 	return r
 }
 
@@ -330,7 +333,7 @@ func TestHandler_SyncPagosDigest_Unauthorized(t *testing.T) {
 	svc := buildReconcileSvc(&fakePagosReconcileRepo{}, &fakeSaldosReconcileRepo{})
 	r := chi.NewRouter()
 	// No planter — context has no CurrentUser.
-	cobranzahttp.MountReadRouter(r, svc, eventbus.New(), config.Cobranza{}, slog.Default(), nil, nil)
+	cobranzahttp.MountReadRouter(r, svc, eventbus.New(), config.Cobranza{}, slog.Default(), nil, nil, outbound.ProductionClock{})
 
 	req := httptest.NewRequest(http.MethodGet, "/sync/pagos/zona/1/digest", nil)
 	rec := httptest.NewRecorder()
@@ -522,20 +525,29 @@ func TestHandler_SyncPagosIDs_DesdePassedThrough(t *testing.T) {
 		"handler must pass the parsed desde to the repo")
 }
 
-func TestHandler_SyncPagosDigest_NoDesde_ZeroTime(t *testing.T) {
+func TestHandler_SyncPagosDigest_SinDesde_UsaElDefaultDeServidor(t *testing.T) {
 	t.Parallel()
-	// When ?desde= is absent the handler must pass time.Time{} (zero) to the repo.
+	// Un ?desde= ausente ya NO significa "sin ventana": el servicio resuelve
+	// el default de servidor, el mismo que resuelve el sync. Si el inventario
+	// mirara una ventana distinta a la del sync, el reconciliador borraría del
+	// teléfono justo lo que el sync acaba de entregar.
 	pagosRepo := &fakePagosReconcileRepo{digest: outbound.DigestResult{}}
 	svc := buildReconcileSvc(pagosRepo, &fakeSaldosReconcileRepo{})
 	handler := mountReconcileRouter(reconcileUser(), svc)
 
+	antes := time.Now()
 	req := httptest.NewRequest(http.MethodGet, "/sync/pagos/zona/1/digest", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
+	despues := time.Now()
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.True(t, pagosRepo.lastDesde.IsZero(),
-		"absent ?desde= must forward time.Time{} (zero) to keep legacy saldo>0 filter")
+	assert.False(t, pagosRepo.lastDesde.IsZero(),
+		"sin ?desde= el inventario debe recibir la ventana por defecto, no zero")
+	assert.WithinRange(t, pagosRepo.lastDesde,
+		antes.AddDate(0, 0, -cobranzaapp.DefaultVentanaDias).Add(-time.Second),
+		despues.AddDate(0, 0, -cobranzaapp.DefaultVentanaDias).Add(time.Second),
+		"la ventana por defecto es now - %d días", cobranzaapp.DefaultVentanaDias)
 }
 
 // ─── Property test: digest changes when IDs change ────────────────────────────

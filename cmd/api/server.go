@@ -156,6 +156,7 @@ func provideRootHandler(
 	cobranzaBus *eventbus.Bus,
 	cobranzaPagosRepo cobranzaoutbound.PagosRepo,
 	cobranzaVentasRepo cobranzaoutbound.VentasRepo,
+	cobranzaClock cobranzaoutbound.Clock,
 	microsipSvc *microsipapp.Service,
 	inventarioSvc *inventarioapp.Service,
 	analyticsSvc *analyticsapp.Service,
@@ -347,7 +348,10 @@ func provideRootHandler(
 			// the planted CurrentUser (UsuarioID) — required for /me scoping and
 			// for /replay-with-multipart to rebuild the original requester.
 			r.Use(authn.Handler, cobranzaCapture)
-			cobranzahttp.MountReadRouter(r, cobranzaSvc, cobranzaBus, cfg.Cobranza, logger, cobranzaPagosRepo, cobranzaVentasRepo)
+			cobranzahttp.MountReadRouter(
+				r, cobranzaSvc, cobranzaBus, cfg.Cobranza, logger,
+				cobranzaPagosRepo, cobranzaVentasRepo, cobranzaClock,
+			)
 		})
 
 		// Cobranza admin endpoints — authn only; no failed-intent capture.

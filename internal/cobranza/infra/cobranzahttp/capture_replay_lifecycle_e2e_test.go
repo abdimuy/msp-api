@@ -168,7 +168,7 @@ func a2AssembleRouter(ctx context.Context, t *testing.T, pool *firebird.Pool, cu
 			// intent carries UsuarioID; txInjector splices the test tx.
 			r.Use(txInjector(ctx), planter(cu), capture)
 			cobranzahttp.MountReadRouter(
-				r, svc, eventbus.New(), config.Cobranza{}, slog.Default(), nil, nil,
+				r, svc, eventbus.New(), config.Cobranza{}, slog.Default(), nil, nil, cobranzaoutbound.ProductionClock{},
 			)
 		})
 		r.Route("/_admin/failed-intents", func(r chi.Router) {

@@ -273,10 +273,10 @@ func (s *Service) PagosEnRutaPorZona(
 
 // SyncPagosPorZona returns a page of pagos for incremental sync.
 //
-// desde acota la ventana de saldados en el sync inicial (cursor zero): nil
-// devuelve solo pagos de cargos con saldo activo (legacy), set incluye
-// además pagos con FECHA >= desde aunque la venta ya esté saldada. Ignorado
-// cuando cursor != zero. Mismo contrato wire que /cobranza/pagos/zona.
+// desde acota la ventana en todas las páginas: entran los pagos de cargos con
+// saldo activo más los de ventas cuyo FECHA_ULT_PAGO cae en la ventana. Un
+// desde nil NO desactiva la ventana — ResolveSyncDesde le pone el default de
+// servidor.
 func (s *Service) SyncPagosPorZona(
 	ctx context.Context, zonaID int, cursor time.Time, afterID, limit int, desde *time.Time,
 ) (outbound.SyncPage[domain.Pago], error) {
@@ -284,17 +284,18 @@ func (s *Service) SyncPagosPorZona(
 	if err != nil {
 		return outbound.SyncPage[domain.Pago]{}, err
 	}
-	return s.pagos.SyncPorZona(ctx, zonaID, cursor, afterID, limit, optionalDesdeOrZero(desde))
+	ventana := ResolveSyncDesde(optionalDesdeOrZero(desde), s.clock)
+	return s.pagos.SyncPorZona(ctx, zonaID, cursor, afterID, limit, ventana)
 }
 
 // SyncVentasPorZona returns a page of enriched ventas for incremental sync.
 // Each item carries the saldo row plus the static cliente/direccion/contrato
 // fields needed to render the mobile cobranza UI without a follow-up call.
 //
-// desde acota la ventana de saldadas en el sync inicial (cursor zero): nil
-// devuelve solo activas + tombstones (legacy), set incluye además ventas
-// saldadas con FECHA_ULT_PAGO >= desde para que la app del cobrador las
-// conserve dentro de su ventana visible. Ignorado cuando cursor != zero.
+// desde acota la ventana en todas las páginas: activas + saldadas con
+// FECHA_ULT_PAGO >= desde + tombstones cancelados dentro de la ventana. Un
+// desde nil NO desactiva la ventana — ResolveSyncDesde le pone el default de
+// servidor.
 func (s *Service) SyncVentasPorZona(
 	ctx context.Context, zonaID int, cursor time.Time, afterID, limit int, desde *time.Time,
 ) (outbound.SyncPage[domain.Venta], error) {
@@ -302,7 +303,8 @@ func (s *Service) SyncVentasPorZona(
 	if err != nil {
 		return outbound.SyncPage[domain.Venta]{}, err
 	}
-	return s.ventas.SyncPorZona(ctx, zonaID, cursor, afterID, limit, optionalDesdeOrZero(desde))
+	ventana := ResolveSyncDesde(optionalDesdeOrZero(desde), s.clock)
+	return s.ventas.SyncPorZona(ctx, zonaID, cursor, afterID, limit, ventana)
 }
 
 // ProductosPorPVIDs returns the sale line items for the given DOCTOS_PV IDs,
@@ -311,15 +313,41 @@ func (s *Service) ProductosPorPVIDs(ctx context.Context, pvIDs []int) (map[int][
 	return s.ventas.ProductosByPVIDs(ctx, pvIDs)
 }
 
-// optionalDesdeOrZero unwraps a nullable desde for the sync repos, which take
-// time.Time{} as the "no cutoff" sentinel. Sync no honra `ventana_dias` (la
-// app móvil pasa siempre la fecha absoluta de FECHA_CARGA_INICIAL), por eso
-// no reutilizamos resolveCutoff aquí — su default de 7 días no aplica.
+// optionalDesdeOrZero unwraps a nullable desde into the time.Time{} sentinel
+// the sync repos use for "sin ventana".
 func optionalDesdeOrZero(desde *time.Time) time.Time {
 	if desde == nil {
 		return time.Time{}
 	}
 	return *desde
+}
+
+// ResolveSyncDesde devuelve la ventana que TODOS los canales de cobranza
+// comparten: el sync (/sync/ventas, /sync/pagos), el inventario
+// (/digest, /ids) y by-ids. Un `desde` ausente ya no significa "sin ventana":
+// resuelve a now - DefaultVentanaDias.
+//
+// Por qué deja de ser opcional: el filtro de ventana es lo único que mantiene
+// visible la venta que se acaba de saldar —y el pago que la saldó—. Con
+// `desde` vacío el predicado colapsaba a SALDO > 0 estricto y ese pago
+// desaparecía el mismo día en que se cobró; el cobrador, al no verlo, vuelve
+// a cobrar. Un default de servidor quita esa decisión del cliente: da igual
+// si una versión vieja de la app omite el parámetro.
+//
+// Por qué 7 días: es DefaultVentanaDias, el mismo default que ya aplican
+// PagosEnRutaPorZona y EnRutaPorZona vía resolveCutoff, así que la ventana
+// que ve el cobrador en /pagos/zona y la que le entrega el sync coinciden en
+// vez de ser dos números distintos. Cubre además la ventana del Node legacy
+// (`moment().day(-3)`, que según el día de la semana cae entre 3 y 10 días
+// atrás) sin quedarse corto en lunes.
+//
+// El reloj entra por el puerto Clock para que los tests fijen la ventana sin
+// tocar el reloj de la máquina.
+func ResolveSyncDesde(desde time.Time, clock outbound.Clock) time.Time {
+	if !desde.IsZero() {
+		return desde
+	}
+	return clock.Now().AddDate(0, 0, -DefaultVentanaDias)
 }
 
 // resolveCutoff applies the desde / ventanaDias contract used by saldos and
@@ -379,44 +407,42 @@ func clampReconcileLimit(limit int) int {
 }
 
 // DigestPagosPorZona returns the point-in-time digest for pagos in zonaID,
-// computed under a single snapshot transaction. Pass desde zero for the legacy
-// "saldo > 0 only" filter; set it to extend the set with pagos whose FECHA >=
-// desde (matching the /sync window). Backwards-compatible: old clients that
-// do not send ?desde= get the same filter as before.
+// computed under a single snapshot transaction. desde zero resuelve al default
+// de servidor (ResolveSyncDesde) — el inventario tiene que mirar exactamente
+// la misma ventana que el sync o el reconciliador declara fantasmas.
 func (s *Service) DigestPagosPorZona(ctx context.Context, zonaID int, desde time.Time) (outbound.DigestResult, error) {
 	if s.pagosReconcile == nil {
 		return outbound.DigestResult{}, errWriteDepsMissing("pagos_reconcile")
 	}
-	return s.pagosReconcile.Digest(ctx, zonaID, desde)
+	return s.pagosReconcile.Digest(ctx, zonaID, ResolveSyncDesde(desde, s.clock))
 }
 
 // ListIDsPagosPorZona returns pago IDs for zonaID, paginated by after.
-// limit is clamped to [1, MaxReconcileLimit]. desde mirrors the /sync window
-// parameter — pass zero for the legacy filter.
+// limit is clamped to [1, MaxReconcileLimit]. desde zero resuelve al default
+// de servidor, igual que DigestPagosPorZona.
 func (s *Service) ListIDsPagosPorZona(ctx context.Context, zonaID, after, limit int, desde time.Time) ([]int, bool, error) {
 	if s.pagosReconcile == nil {
 		return nil, false, errWriteDepsMissing("pagos_reconcile")
 	}
-	return s.pagosReconcile.ListIDs(ctx, zonaID, after, clampReconcileLimit(limit), desde)
+	return s.pagosReconcile.ListIDs(ctx, zonaID, after, clampReconcileLimit(limit), ResolveSyncDesde(desde, s.clock))
 }
 
 // DigestSaldosPorZona returns the point-in-time digest for saldos in zonaID,
-// computed under a single snapshot transaction. Pass desde zero for the legacy
-// "saldo > 0 only" filter; set it to extend the set with recently-paid saldos
-// (SALDO <= 0 AND FECHA_ULT_PAGO >= desde).
+// computed under a single snapshot transaction. desde zero resuelve al default
+// de servidor (ResolveSyncDesde).
 func (s *Service) DigestSaldosPorZona(ctx context.Context, zonaID int, desde time.Time) (outbound.DigestResult, error) {
 	if s.saldosReconcile == nil {
 		return outbound.DigestResult{}, errWriteDepsMissing("saldos_reconcile")
 	}
-	return s.saldosReconcile.Digest(ctx, zonaID, desde)
+	return s.saldosReconcile.Digest(ctx, zonaID, ResolveSyncDesde(desde, s.clock))
 }
 
 // ListIDsSaldosPorZona returns active saldo IDs for zonaID, paginated by after.
-// limit is clamped to [1, MaxReconcileLimit]. desde mirrors the /sync window
-// parameter — pass zero for the legacy filter.
+// limit is clamped to [1, MaxReconcileLimit]. desde zero resuelve al default
+// de servidor, igual que DigestSaldosPorZona.
 func (s *Service) ListIDsSaldosPorZona(ctx context.Context, zonaID, after, limit int, desde time.Time) ([]int, bool, error) {
 	if s.saldosReconcile == nil {
 		return nil, false, errWriteDepsMissing("saldos_reconcile")
 	}
-	return s.saldosReconcile.ListIDs(ctx, zonaID, after, clampReconcileLimit(limit), desde)
+	return s.saldosReconcile.ListIDs(ctx, zonaID, after, clampReconcileLimit(limit), ResolveSyncDesde(desde, s.clock))
 }
