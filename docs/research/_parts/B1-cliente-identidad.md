@@ -471,7 +471,7 @@ Cualquier consulta de cobertura debe filtrar por `CLIENTE_ID` o usar un índice.
 
 ```sql
 -- Cobertura estimada (NO ejecutar como full scan):
-SELECT FIRST 1 CLAVE_CLIENTE FROM CLAVES_CLIENTES WHERE CLIENTE_ID = 3083038 ORDER BY CLAVE_CLIENTE_ID;
+SELECT FIRST 1 CLAVE_CLIENTE FROM CLAVES_CLIENTES WHERE CLIENTE_ID = 3300000 ORDER BY CLAVE_CLIENTE_ID;
 -- [PENDIENTE: confirmar con lock liberado]
 ```
 
@@ -485,7 +485,7 @@ Columnas relevantes para identidad (documentado en `microsip-crear-cliente-paso-
 | `CELULAR` | VARCHAR(99) | Alternativo — en práctica vacío; el teléfono va en `DIRS_CLIENTES.TELEFONO1` |
 | `COMPROBANTE_DE_DOMICILIO` | INTEGER | FK catálogo Mueblera; `2992`=default observado |
 | `IDENTIFICACION_OFICIAL` | INTEGER | FK catálogo Mueblera; `6597`/`6598`=INE/pasaporte |
-| `REFERENCIA` | VARCHAR(99) | Descripción de ubicación: "CASA COLOR AZUL, 2 PISOS" |
+| `REFERENCIA` | VARCHAR(99) | Descripción de ubicación: "PORTON BLANCO, 2 PISOS" |
 | `U_LATITUD` / `U_LONGITUD` | VARCHAR(99) | GPS opcional capturado en el alta |
 | `LOCALIDAD` | INTEGER | FK catálogo; `-1`=sin localidad |
 

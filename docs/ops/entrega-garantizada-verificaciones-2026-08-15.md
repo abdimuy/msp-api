@@ -11,7 +11,7 @@ banderas; la configuración y el catálogo cambian poco, los conteos sí.
 | ZONA_CLIENTE_ID | NOMBRE | CLIENTES | ACTIVOS |
 |---|---|---|---|
 | 71190 | MEDIO MAYOREO | 14 | **9** |
-| 2990694 | R/SUP RICARDO MORALES | 0 | 0 |
+| 2990694 | R/SUP JOAQUIN BARRERA | 0 | 0 |
 
 **No bloquea.** Ninguna de las dos vende desde la app:
 
@@ -19,7 +19,7 @@ banderas; la configuración y el catálogo cambian poco, los conteos sí.
   app** (confirmado por el negocio el 2026-08-15). Sus 9 clientes activos se
   atienden por otra vía, así que la falta de caja nunca se ejercita. **No hay
   que sembrar su fila.**
-- `R/SUP RICARDO MORALES` (2990694) está vacía y es inerte.
+- `R/SUP JOAQUIN BARRERA` (2990694) está vacía y es inerte.
 
 Por lo tanto `VENTAS_ZONA_OBLIGATORIA` sólo espera a que la adopción de la app
 que exige zona sea ~total. La cobertura del catálogo ya no es una precondición.
