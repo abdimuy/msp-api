@@ -151,6 +151,26 @@ The `auth` module is the reference for simple modules (single aggregate, no chil
 
 The `ventas` module is the reference for complex modules (aggregate with child collections, CQRS, Huma auto-OpenAPI, blob storage).
 
+## Antes de tocar el sync de cobranza
+
+**Lea `docs/COBRANZA-SYNC.md` COMPLETO. No es opcional y no es documentación de
+cortesía.**
+
+El sync de cobranza mueve pagos: un defecto ahí hace que un cobrador no vea un
+pago, crea que no se registró y **vuelva a cobrarle a un cliente que ya pagó**.
+El 2026-08-15 se encontraron **siete defectos simultáneos en producción con la
+suite en verde**, y varios de ellos se habían introducido con comentarios que
+justificaban el atajo.
+
+Ese documento tiene los invariantes duros (el cursor es un **par**
+`(UPDATED_AT, PK)`; los tres canales —sync, digest, by-ids— deben entregar
+conjuntos **idénticos**; el colapso del gemelo va en la **misma transacción**
+que el insert), el orden de despliegue no negociable, el catálogo de incidentes
+con la prueba que guarda cada uno, y las trampas que no son obvias — entre
+ellas que **los nombres de conceptos en el código mienten** y que subir el
+`sync_epoch` es obligatorio cuando cambia el `WHERE` de lo que se entrega,
+aunque no se mueva ningún `UPDATED_AT`.
+
 ## When in doubt
 
 1. Read this file again.
