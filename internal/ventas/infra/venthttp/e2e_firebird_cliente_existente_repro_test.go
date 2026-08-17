@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/abdimuy/msp-api/internal/platform/fbtestutil"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
+	"github.com/abdimuy/msp-api/internal/platform/microsipseed"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/venthttp"
 )
 
@@ -70,13 +72,44 @@ func TestRepro_CrearVentaConClienteExistente(t *testing.T) {
 
 // pickActiveClienteID returns the CLIENTE_ID of an active Microsip cliente,
 // suitable as the FK target for MSP_VENTAS.CLIENTE_ID.
+//
+// It SEEDS the cliente instead of picking one from the padrón. It used to read
+// `FIRST 1 ... WHERE ESTATUS='A'`, which made the test depend on the shared DB
+// carrying real clients — against the test artifact, which no longer ships the
+// padrón (docs/base-de-datos-de-pruebas.md), that query returns no rows and the
+// test fails for a reason that has nothing to do with the code under test.
+//
+// Everything runs inside the caller's rollback-only transaction, so the seeded
+// cliente disappears with it.
 func pickActiveClienteID(ctx context.Context, t *testing.T, pool *firebird.Pool) int {
 	t.Helper()
+	return seedClienteConClave(ctx, t, pool, "VENTAS E2E CLIENTE EXISTENTE")
+}
+
+// seedClienteConClave inserts a synthetic cliente together with its
+// CLAVES_CLIENTES row and returns the CLIENTE_ID.
+//
+// The clave is not optional for anything that reaches AplicarVenta: the
+// Microsip writer reads CLAVE_CLIENTE before inserting the venta and fails with
+// clave_cliente_not_found when it is missing.
+func seedClienteConClave(ctx context.Context, t *testing.T, pool *firebird.Pool, nombre string) int {
+	t.Helper()
 	q := firebird.GetQuerier(ctx, pool.DB)
-	var id int
-	err := q.QueryRowContext(ctx,
-		`SELECT FIRST 1 CLIENTE_ID FROM CLIENTES WHERE ESTATUS = 'A' ORDER BY CLIENTE_ID`,
-	).Scan(&id)
-	require.NoError(t, err, "debe existir al menos un cliente activo en CLIENTES")
-	return id
+	clienteID := microsipseed.Cliente(t, q, nombre)
+
+	var rolClaveID int
+	require.NoError(t,
+		q.QueryRowContext(ctx,
+			`SELECT FIRST 1 ROL_CLAVE_CLI_ID FROM ROLES_CLAVES_CLIENTES ORDER BY ROL_CLAVE_CLI_ID`,
+		).Scan(&rolClaveID),
+		"ROLES_CLAVES_CLIENTES debe tener al menos una fila")
+
+	_, err := q.ExecContext(ctx,
+		`INSERT INTO CLAVES_CLIENTES
+		   (CLAVE_CLIENTE_ID, CLAVE_CLIENTE, CLIENTE_ID, ROL_CLAVE_CLI_ID)
+		 VALUES (-1, ?, ?, ?)`,
+		strconv.Itoa(clienteID), clienteID, rolClaveID)
+	require.NoError(t, err, "insertar CLAVES_CLIENTES del cliente sembrado")
+
+	return clienteID
 }

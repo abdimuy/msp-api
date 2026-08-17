@@ -33,6 +33,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -41,6 +42,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/fbtestutil"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
+	"github.com/abdimuy/msp-api/internal/platform/microsipseed"
 )
 
 // ─── skip guard ──────────────────────────────────────────────────────────────
@@ -54,12 +56,13 @@ func requireFBEnv(t *testing.T) {
 
 // ─── well-known test fixtures ─────────────────────────────────────────────────
 
-// These IDs must exist in the dev MUEBLERA.FDB database. They are used across
-// all E2E tests so every test exercises the same real Microsip rows.
+// These IDs come from catalogs that the test artifact keeps populated.
+//
+// The client does NOT: it used to be a hardcoded CLIENTES row (11486) from the
+// production padrón, and the test artifact no longer ships that padrón — see
+// docs/base-de-datos-de-pruebas.md. Every test now seeds its own client with
+// seedCliente.
 const (
-	// testClienteID is a known CLIENTES row in MUEBLERA.FDB (used in
-	// concurrency and saldo tests too — see internal/cobranza/infra/ventfb/).
-	testClienteID = 11486
 	// testCobradorID is the first COBRADORES row (RUTA 01).
 	testCobradorID = 11294
 	// testFormaCobroID is the "Efectivo" FORMAS_COBRO row (ID 67).
@@ -67,6 +70,69 @@ const (
 	// testConceptoCCID is the cobranza-en-ruta concepto (87327 = PAGO RUTA).
 	testConceptoCCID = 87327
 )
+
+// ─── cliente seeding ─────────────────────────────────────────────────────────
+
+// seedCliente inserts a synthetic CLIENTES row plus its CLAVES_CLIENTES row in
+// a committed transaction and registers their deletion.
+//
+// It must commit for the same reason seedCargo does: PagoWriter.Aplicar opens
+// its own transaction and has to see the row. The CLAVES_CLIENTES row is not
+// decoration — PagoWriter copies CLAVE_CLIENTE onto the abono, and
+// TestE2E_PagoWriter_Aplicar_ClaveClientePersisted asserts it came through.
+func seedCliente(
+	t *testing.T,
+	ctx context.Context, //nolint:revive // context-as-argument: ctx is second by test convention (t first).
+	pool *firebird.Pool,
+	txMgr *firebird.TxManager,
+) int {
+	t.Helper()
+
+	var clienteID int
+	err := txMgr.RunInTx(ctx, func(txCtx context.Context) error {
+		q := firebird.GetQuerier(txCtx, pool.DB)
+		// CLIENTES_AK1 es único sobre NOMBRE: el sufijo evita que dos tests del
+		// paquete —o una corrida cuya limpieza no alcanzó— choquen contra el
+		// índice en vez de contra el código.
+		clienteID = microsipseed.Cliente(t, q, "COBRANZA E2E PRUEBA "+uuid.NewString()[:8])
+
+		var rolClaveID int
+		if serr := q.QueryRowContext(txCtx,
+			`SELECT FIRST 1 ROL_CLAVE_CLI_ID FROM ROLES_CLAVES_CLIENTES ORDER BY ROL_CLAVE_CLI_ID`,
+		).Scan(&rolClaveID); serr != nil {
+			return serr
+		}
+
+		_, serr := q.ExecContext(txCtx,
+			`INSERT INTO CLAVES_CLIENTES
+			   (CLAVE_CLIENTE_ID, CLAVE_CLIENTE, CLIENTE_ID, ROL_CLAVE_CLI_ID)
+			 VALUES (-1, ?, ?, ?)`,
+			strconv.Itoa(clienteID), clienteID, rolClaveID,
+		)
+		return serr
+	})
+	require.NoError(t, err, "seedCliente: committed cliente + clave")
+
+	// El borrado va hijos antes que padre. SALDOS_CC no lo inserta este test:
+	// lo crea un trigger de Microsip al dar de alta el cliente, y su llave
+	// foránea CLI_A_SALDOS impide borrar CLIENTES si se omite. Sin esta línea
+	// el cliente sembrado queda para siempre en la base compartida — el error
+	// se descarta y la limpieza parece haber funcionado.
+	t.Cleanup(func() {
+		q := firebird.GetQuerier(context.Background(), pool.DB)
+		for _, sentencia := range []string{
+			`DELETE FROM SALDOS_CC WHERE CLIENTE_ID = ?`,
+			`DELETE FROM CLAVES_CLIENTES WHERE CLIENTE_ID = ?`,
+			`DELETE FROM CLIENTES WHERE CLIENTE_ID = ?`,
+		} {
+			if _, err := q.ExecContext(context.Background(), sentencia, clienteID); err != nil {
+				t.Errorf("limpieza del cliente sembrado (%s): %v", sentencia, err)
+			}
+		}
+	})
+
+	return clienteID
+}
 
 // ─── cargo seeding ───────────────────────────────────────────────────────────
 
@@ -264,11 +330,13 @@ func TestE2E_PagoWriter_Aplicar_HappyPath(t *testing.T) {
 	h := newE2EHarness(t)
 	ctx := context.Background()
 
-	cargo := seedCargo(t, ctx, h.pool, h.txMgr, 11486, decimal.NewFromInt(1000))
+	clienteID := seedCliente(t, ctx, h.pool, h.txMgr)
+
+	cargo := seedCargo(t, ctx, h.pool, h.txMgr, clienteID, decimal.NewFromInt(1000))
 
 	in := outbound.MicrosipPagoInput{
 		CargoDoctoCCID: cargo.doctoCCID,
-		ClienteID:      testClienteID,
+		ClienteID:      clienteID,
 		CobradorID:     testCobradorID,
 		Cobrador:       "Ramírez García, Jorge",
 		Importe:        decimal.NewFromInt(500),
@@ -331,12 +399,14 @@ func TestE2E_PagoWriter_Aplicar_DecimalPrecision(t *testing.T) {
 	h := newE2EHarness(t)
 	ctx := context.Background()
 
-	cargo := seedCargo(t, ctx, h.pool, h.txMgr, 11486, decimal.NewFromInt(1000))
+	clienteID := seedCliente(t, ctx, h.pool, h.txMgr)
+
+	cargo := seedCargo(t, ctx, h.pool, h.txMgr, clienteID, decimal.NewFromInt(1000))
 
 	importe := decimal.NewFromFloat(123.45)
 	in := outbound.MicrosipPagoInput{
 		CargoDoctoCCID: cargo.doctoCCID,
-		ClienteID:      testClienteID,
+		ClienteID:      clienteID,
 		CobradorID:     testCobradorID,
 		Cobrador:       "Ramírez García, Jorge",
 		Importe:        importe,
@@ -377,11 +447,13 @@ func TestE2E_PagoWriter_Aplicar_ClaveClientePersisted(t *testing.T) {
 	h := newE2EHarness(t)
 	ctx := context.Background()
 
-	cargo := seedCargo(t, ctx, h.pool, h.txMgr, testClienteID, decimal.NewFromInt(200))
+	clienteID := seedCliente(t, ctx, h.pool, h.txMgr)
+
+	cargo := seedCargo(t, ctx, h.pool, h.txMgr, clienteID, decimal.NewFromInt(200))
 
 	in := outbound.MicrosipPagoInput{
 		CargoDoctoCCID: cargo.doctoCCID,
-		ClienteID:      testClienteID,
+		ClienteID:      clienteID,
 		CobradorID:     testCobradorID,
 		Cobrador:       "Ramírez García, Jorge",
 		Importe:        decimal.NewFromInt(100),
@@ -396,7 +468,7 @@ func TestE2E_PagoWriter_Aplicar_ClaveClientePersisted(t *testing.T) {
 	assert.Positive(t, result.DoctoCCID, "Aplicar must succeed")
 
 	// Verify CLAVE_CLIENTE was persisted from CLAVES_CLIENTES — it must be a
-	// non-NULL value because testClienteID has a CLAVES_CLIENTES row.
+	// non-NULL value because seedCliente inserted the CLAVES_CLIENTES row.
 	q := firebird.GetQuerier(ctx, h.pool.DB)
 	var claveCliente sql.NullString
 	require.NoError(t,
@@ -417,11 +489,13 @@ func TestE2E_PagoWriter_Aplicar_NullableLatLon(t *testing.T) {
 	h := newE2EHarness(t)
 	ctx := context.Background()
 
-	cargo := seedCargo(t, ctx, h.pool, h.txMgr, 11486, decimal.NewFromInt(300))
+	clienteID := seedCliente(t, ctx, h.pool, h.txMgr)
+
+	cargo := seedCargo(t, ctx, h.pool, h.txMgr, clienteID, decimal.NewFromInt(300))
 
 	in := outbound.MicrosipPagoInput{
 		CargoDoctoCCID: cargo.doctoCCID,
-		ClienteID:      testClienteID,
+		ClienteID:      clienteID,
 		CobradorID:     testCobradorID,
 		Cobrador:       "Ramírez García, Jorge",
 		Importe:        decimal.NewFromInt(150),
@@ -455,14 +529,16 @@ func TestE2E_PagoWriter_Aplicar_LatLonProvided(t *testing.T) {
 	h := newE2EHarness(t)
 	ctx := context.Background()
 
-	cargo := seedCargo(t, ctx, h.pool, h.txMgr, 11486, decimal.NewFromInt(400))
+	clienteID := seedCliente(t, ctx, h.pool, h.txMgr)
+
+	cargo := seedCargo(t, ctx, h.pool, h.txMgr, clienteID, decimal.NewFromInt(400))
 
 	const wantLat = "23.123456"
 	const wantLon = "-104.654321"
 
 	in := outbound.MicrosipPagoInput{
 		CargoDoctoCCID: cargo.doctoCCID,
-		ClienteID:      testClienteID,
+		ClienteID:      clienteID,
 		CobradorID:     testCobradorID,
 		Cobrador:       "Ramírez García, Jorge",
 		Importe:        decimal.NewFromInt(200),
@@ -500,13 +576,15 @@ func TestE2E_PagoWriter_Aplicar_FolioFormat(t *testing.T) {
 	h := newE2EHarness(t)
 	ctx := context.Background()
 
-	cargo1 := seedCargo(t, ctx, h.pool, h.txMgr, 11486, decimal.NewFromInt(600))
-	cargo2 := seedCargo(t, ctx, h.pool, h.txMgr, 11486, decimal.NewFromInt(600))
+	clienteID := seedCliente(t, ctx, h.pool, h.txMgr)
+
+	cargo1 := seedCargo(t, ctx, h.pool, h.txMgr, clienteID, decimal.NewFromInt(600))
+	cargo2 := seedCargo(t, ctx, h.pool, h.txMgr, clienteID, decimal.NewFromInt(600))
 
 	makeInput := func(cargoDoctoCCID int) outbound.MicrosipPagoInput {
 		return outbound.MicrosipPagoInput{
 			CargoDoctoCCID: cargoDoctoCCID,
-			ClienteID:      testClienteID,
+			ClienteID:      clienteID,
 			CobradorID:     testCobradorID,
 			Cobrador:       "Ramírez García, Jorge",
 			Importe:        decimal.NewFromInt(300),
@@ -538,6 +616,8 @@ func TestE2E_PagoWriter_Aplicar_ConceptoMapping(t *testing.T) {
 	ctx := context.Background()
 	q := firebird.GetQuerier(ctx, h.pool.DB)
 
+	clienteID := seedCliente(t, ctx, h.pool, h.txMgr)
+
 	cases := []struct {
 		name         string
 		conceptoCCID int
@@ -547,11 +627,11 @@ func TestE2E_PagoWriter_Aplicar_ConceptoMapping(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		cargo := seedCargo(t, ctx, h.pool, h.txMgr, 11486, decimal.NewFromInt(500))
+		cargo := seedCargo(t, ctx, h.pool, h.txMgr, clienteID, decimal.NewFromInt(500))
 
 		in := outbound.MicrosipPagoInput{
 			CargoDoctoCCID: cargo.doctoCCID,
-			ClienteID:      testClienteID,
+			ClienteID:      clienteID,
 			CobradorID:     testCobradorID,
 			Cobrador:       "Ramírez García, Jorge",
 			Importe:        decimal.NewFromInt(250),

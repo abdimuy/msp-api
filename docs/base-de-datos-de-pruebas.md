@@ -1,10 +1,13 @@
 # Base de datos de pruebas — cómo se genera y cómo se usa
 
-- **Fecha:** 2026-07-31
-- **Artefacto:** `msp-test-db.fbk.gz` (~15 MB comprimido, 139 MB restaurado)
+- **Fecha:** 2026-08-17
+- **Artefacto:** `msp-test-db.fbk.gz` (4.4 MB comprimido, 88 MB restaurado)
 - **Origen:** `MUEBLERA.FDB` del contenedor `mueblera-firebird` (3.9 GB)
+- **Generador:** [`scripts/make-test-db.sh`](../scripts/make-test-db.sh)
 
-La base de desarrollo pesa 3.9 GB y contiene datos reales de clientes. Ni una cosa ni la otra sirve para repartirla entre desarrolladores. Este documento describe cómo se produce una versión de 15 MB con la que **pasa la suite de integración completa**.
+La base de desarrollo pesa 3.9 GB y contiene datos personales reales. Ni una cosa ni la otra sirve para repartirla entre desarrolladores. Este documento describe cómo se produce una versión de 4.4 MB, **sin datos personales**, con la que **pasa la suite de integración completa**.
+
+> **Estado (2026-08-17): el artefacto ya no contiene datos personales.** El padrón sale por `-skip_data` y lo que sobrevive se sustituye por datos sintéticos. La sección [Cómo se demuestra que no quedan datos personales](#cómo-se-demuestra-que-no-quedan-datos-personales) explica con qué se mide. Publicarlo o no sigue siendo decisión de quien sea dueño del repositorio; este documento sólo sostiene que el contenido ya no lo impide.
 
 ---
 
@@ -18,18 +21,20 @@ docker compose --profile firebird up -d firebird
 # 1. Descomprimir
 gunzip msp-test-db.fbk.gz
 
-# 2. Restaurar dentro del contenedor de Firebird
+# 2. Restaurar dentro del contenedor de Firebird, EN SU PROPIO ARCHIVO
 docker cp msp-test-db.fbk mueblera-firebird:/tmp/
 docker exec -i mueblera-firebird /usr/local/firebird/bin/gbak -c \
   -user sysdba -password masterkey \
-  /tmp/msp-test-db.fbk /firebird/data/MUEBLERA.FDB
+  /tmp/msp-test-db.fbk /firebird/data/MSPTEST.FDB
 
 # 3. Apuntar el .env
-#    FB_DATABASE=/firebird/data/MUEBLERA.FDB
+#    FB_DATABASE=/firebird/data/MSPTEST.FDB
 
 # 4. Verificar
 make test-firebird-all
 ```
+
+> ⚠ **No restaures encima de `/firebird/data/MUEBLERA.FDB`.** En una máquina que ya tiene la base de desarrollo, ese archivo es la base de desarrollo: restaurar sobre él la destruye. Dale su propio nombre y apunta el `.env` ahí. En una máquina nueva, donde `MUEBLERA.FDB` no existe, da lo mismo — pero el nombre aparte no cuesta nada y quita el filo.
 
 > El paso 0 está detrás de un profile a propósito: `docker compose up` no lo arranca. Quien ya tenga un contenedor `mueblera-firebird` levantado a mano **no debe correrlo** — el servicio existe para que una máquina nueva reproduzca el mismo servidor sin adivinar la imagen ni la configuración.
 
@@ -75,19 +80,31 @@ docker compose up -d meilisearch
 
 ## Qué contiene y qué no
 
-**Conserva** todos los catálogos, que es de lo que dependen los tests:
+**Conserva** los catálogos, que es de lo que dependen los tests. Conteos reales del artefacto restaurado:
 
 | Tabla | Filas |
 |---|---|
+| `SALDOS_IN` (inventario) | 94,073 |
 | `ARTICULOS` | 6,113 |
+| `MSP_AN_CARTERA_SNAPSHOT` | 2,645 |
+| `LISTAS_ATRIBUTOS` | 1,246 |
+| `CAJEROS` | 66 |
 | `CAJAS` | 61 |
+| `COBRADORES` | 52 |
 | `ALMACENES` | 50 |
-| `ZONAS_CLIENTES` | 46 |
+| `ZONAS_CLIENTES` | 46 · `VENDEDORES` 46 |
 | `MSP_CFG_ZONA_CAJA` | 44 |
-| `MSP_CFG_PLAZO_CREDITO` · `MSP_CFG_VENDEDOR_MICROSIP` · `MSP_CFG_APLICAR` | 8 |
-| `SALDOS_IN` | existencias de inventario |
+| `MSP_USUARIOS` | 9 · `MSP_ROLES` 4 |
 
-**Omite** los movimientos (4.5 millones de filas entre cuentas por cobrar y punto de venta), **la lista de precios** (`PRECIOS_ARTICULOS`, 97,071 renglones), las bitácoras, el rastreo GPS del sistema legado, las cachés derivadas y **todas las imágenes**.
+**Omite los datos** de 179 tablas: los movimientos (4.5 millones de filas entre cuentas por cobrar y punto de venta), **el padrón de clientes completo**, la lista de precios (`PRECIOS_ARTICULOS`, 97,071 renglones), las compras y los proveedores, las bitácoras, el rastreo GPS del sistema legado, las cachés derivadas y **todas las imágenes**. Quedan en cero:
+
+| Tabla | Filas |
+|---|---|
+| `CLIENTES` · `DIRS_CLIENTES` · `LIBRES_CLIENTES` | 0 |
+| `DOCTOS_PV` (ventas) · `DOCTOS_CC` (crédito) | 0 |
+| `MSP_LOCAL_SALE` · `MSP_AN_WINBACK_CANDIDATOS` | 0 |
+| `MSP_OUTBOX_EVENTS` · `MSP_FAILED_INTENTS` | 0 |
+| `PROVEEDORES` · `BITACORA` · `MOTIVOS_CANCELACION` | 0 |
 
 > La lista de precios se omite y la suite pasa igual: **la API no consulta `PRECIOS_ARTICULOS` al aplicar una venta.** El precio viaja en la petición desde la app del cobrador. Es la pieza de información comercial más sensible que había y no hace falta para probar.
 
@@ -97,40 +114,69 @@ docker compose up -d meilisearch
 
 ## Cómo se genera
 
-### Paso 1 — Respaldo consistente de la base viva
-
-`gbak` es seguro sobre una base en uso; no hay que detener nada.
+Con un comando:
 
 ```sh
-docker exec -i mueblera-firebird /usr/local/firebird/bin/gbak -b \
-  -user sysdba -password masterkey \
-  /firebird/data/MUEBLERA.FDB /firebird/data/full.fbk
+./scripts/make-test-db.sh
 ```
 
-### Paso 2 — Restaurar omitiendo datos
+Tarda unos quince minutos, casi todos de espera. Deja tres archivos en el directorio actual: el artefacto `msp-test-db.fbk.gz`, el volcado `pii-corpus.txt` con todo el texto de la base ya restaurada, y `pii-padron.txt` con los nombres reales de la base viva **para poder cruzarlos**.
 
-`gbak -skip_data` acepta **una sola expresión regular** (no varios nombres) y omite los datos de las tablas que coincidan, sin borrar nada. La lista completa está en [`scripts/db-test-skip-tables.txt`](../scripts/db-test-skip-tables.txt).
+> ⚠ `pii-padron.txt` **sí** contiene datos personales. Es local, sirve sólo para la auditoría y hay que borrarlo al terminar.
+
+El script hace cinco pasos, y ninguno toca la base de desarrollo después del primero:
+
+| Paso | Qué hace |
+|---|---|
+| 1 | `gbak -b` de la base viva. Es seguro sobre una base en uso; no hay que detener nada |
+| 2 | `gbak -c -skip_data` con la expresión de [`scripts/db-test-skip-tables.txt`](../scripts/db-test-skip-tables.txt) |
+| 3 | `isql` con [`scripts/db-test-anonymize.sql`](../scripts/db-test-anonymize.sql), que sustituye lo que sobrevivió |
+| 4 | Respaldo y `gzip -9` del resultado |
+| 5 | Restaura el `.gz` a una base **aparte** y vuelca de ahí todo el texto |
+
+Dos variables ayudan cuando hay que iterar:
 
 ```sh
-docker exec -i mueblera-firebird /usr/local/firebird/bin/gbak -c \
-  -skip_data "$(cat scripts/db-test-skip-tables.txt)" \
-  -user sysdba -password masterkey \
-  /firebird/data/full.fbk /firebird/data/CAT.FDB
+REUSE_BACKUP=1 ./scripts/make-test-db.sh                  # salta el paso 1
+VERIFY_DB=/firebird/data/CATVERIF2.FDB ./scripts/make-test-db.sh
 ```
 
-### Paso 3 — Respaldar y comprimir
+La segunda existe por una trampa real: si una corrida de `go test` quedó a medias, el servidor conserva la conexión contra la base de verificación y `gbak` responde `database already exists` **aunque el archivo ya no esté**. Usar otro nombre sale más barato que reiniciar el contenedor.
+
+El paso 5 es deliberado: **se verifica el artefacto, no la base de la que salió.** Un archivo que nunca se restauró no está verificado.
+
+---
+
+## Cómo se demuestra que no quedan datos personales
+
+Dos herramientas, y ninguna se fía de los nombres de las columnas.
+
+**[`scripts/db-test-dump-text.sh`](../scripts/db-test-dump-text.sh)** vuelca a `TABLA.COLUMNA::valor` el contenido de **todas** las columnas `CHAR`, `VARCHAR` y `BLOB SUB_TYPE TEXT` de **todas** las tablas con filas. Es a propósito exhaustivo: buscar sólo en columnas llamadas `NOMBRE` o `TELEFONO` es exactamente cómo se pasan por alto `LISTAS_ATRIBUTOS.VALOR_DESPLEGADO` y `MOTIVOS_CANCELACION.MOTIVO`, que traían nombres de clientes reales y no se llaman así.
+
+**[`scripts/db-test-pii-scan.py`](../scripts/db-test-pii-scan.py)** cruza ese volcado contra el padrón real y reporta tres cosas:
+
+1. **Nombres reales encontrados**, por columna. Busca cada nombre del padrón como **subcadena**, no como valor completo, para atrapar los que van embebidos en un texto libre ("el pago era para el cliente FULANO DE TAL"). Si encuentra alguno que no esté en la lista de excepciones, el script **sale con código 1**.
+2. Patrones de correo, teléfono, RFC y CURP, agrupados por columna, para revisión humana.
+3. Todas las columnas con frases de 2 a 5 palabras, para revisión humana.
 
 ```sh
-docker exec -i mueblera-firebird /usr/local/firebird/bin/gbak -b \
-  -user sysdba -password masterkey \
-  /firebird/data/CAT.FDB /firebird/data/msp-test-db.fbk
-docker exec -i mueblera-firebird gzip -9 /firebird/data/msp-test-db.fbk
-docker cp mueblera-firebird:/firebird/data/msp-test-db.fbk.gz .
+python3 scripts/db-test-pii-scan.py pii-corpus.txt pii-padron.txt
 ```
 
-### Paso 4 — Verificar el artefacto, no la base de la que salió
+Resultado sobre el artefacto del 2026-08-17: **cero aciertos, código de salida 0.**
 
-Restaurar el `.gz` a una base nueva y correr la suite **contra esa**. Un archivo que nunca se restauró no está verificado.
+Hay **una** excepción declarada en el propio script: `TIPOS_CLIENTES.NOMBRE = 'PUBLICO EN GENERAL'`, un valor del catálogo de tipos de cliente de Microsip que coincide con el nombre del cliente genérico de mostrador. No es el dato de nadie. La lista de excepciones vive en el código, con su justificación, y se revisa como se revisa un `nolint`: es la única forma de que este escaneo mienta.
+
+El escaneo tarda unos segundos y **hay que correrlo cada vez que se regenera el artefacto.**
+
+### Lo que este método NO garantiza
+
+Con esto dicho, y sin adornarlo:
+
+- **El cruce sólo conoce a los clientes que hoy están en `CLIENTES`.** Un nombre de empleado, o el de un cliente dado de baja, no lo detecta. Por eso la lista de columnas con frases se imprime completa y hay que leerla: así aparecieron `MOTIVOS_CANCELACION` (307 renglones de texto libre con nombres de clientes y de personal) y `BITACORA` (usuarios de Microsip), que ninguna consulta automática habría señalado.
+- **Los apellidos sintéticos se eligieron ausentes del padrón a propósito.** Con apellidos comunes, 47 de las 132 combinaciones generadas coincidían con clientes reales; no eran fugas, pero volvían ruidosa la verificación. Los que están en el script —ZUBIETA, ARRIETA, GOROSTIZA, ELIZONDO…— se comprobaron ausentes de las 43,834 filas del padrón.
+- **Quedan identificadores de la EMPRESA**, que no son datos personales pero conviene saber que están: el nombre comercial en `REGISTRY` y `MG_EXSIM_LICENCIAS`, los nombres y domicilios de sus almacenes y sucursales, y el catálogo público de colonias de `LISTAS_ATRIBUTOS` (atributo 787502). El RFC del titular y el registro patronal del IMSS **sí** se sustituyen: el primero es de persona física y codifica su fecha de nacimiento.
+- **`SALDOS_EDOFIN.NOMBRE` trae `JUAN PEREZ`.** Es la etiqueta de una línea de estado financiero, no está en el padrón, y todo apunta a que alguien la escribió como relleno. Se deja como está.
 
 ---
 
@@ -182,15 +228,40 @@ Cuesta 8 MB. Se queda.
 
 ---
 
-## Sobre los datos de clientes
+## Qué se hizo con los datos personales
 
-La base conserva `CLIENTES` (43,834 filas) y `DIRS_CLIENTES` con **nombres, domicilios y teléfonos reales**. Las fotografías sí se omiten.
+Se probaron los dos caminos obvios y ninguno bastaba solo.
 
-Pesan poco —2,728 y 1,384 páginas— así que quitarlos no es cuestión de tamaño sino de no repartir datos personales entre máquinas de desarrollo.
+**Omitir el padrón** (`-skip_data` sobre `CLIENTES` y su cierre transitivo) saca 43,834 clientes, 43,835 domicilios y 45,287 formas de cobro de un plumazo. Pero deja intactos a los **empleados**: `COBRADORES` traía nombres de personas dentro de la cadena "RUTA 01 - …", `AGENTES` nombre y celular, `EMPLEADOS` CURP, RFC y hasta los nombres del padre y de la madre. Esas tablas los tests las necesitan pobladas —`MSP_CFG_ZONA_CAJA` referencia cobradores, vendedores y cajeros— así que omitirlas no era opción.
 
-**Esto es también lo que impide publicar el artefacto.** El repositorio es público; subir el `.fbk.gz` a un release, a un artefacto de Actions o al propio repositorio sería divulgar nombres, domicilios y teléfonos de 43,834 personas. Mientras `CLIENTES` siga dentro, el artefacto sólo puede viajar por canales privados.
+**Sustituir todo por datos sintéticos** habría obligado a reescribir 43,834 filas de `CLIENTES` más sus tablas hijas, con los triggers de Microsip disparando en cada `UPDATE`. Caro y frágil.
 
-**Ya no queda ningún test que dependa de un cliente real** (2026-08-16): los que buscaban a `12387` o `12440` ahora siembran el suyo con `microsipseed.Cliente`. Lo que falta para omitir `CLIENTES` y `DIRS_CLIENTES` es calcular su cierre transitivo de llaves foráneas —es amplio— y volver a correr la suite.
+Lo que se hizo es la combinación:
+
+| Qué | Cómo | Cuántas filas |
+|---|---|---|
+| Padrón de clientes y todo lo que cuelga de él | `-skip_data` | 0 filas en el artefacto |
+| `MSP_LOCAL_SALE` (nombre, teléfono, domicilio y GPS de clientes) | `-skip_data` | 0 |
+| `MSP_OUTBOX_EVENTS`, `MSP_FAILED_INTENTS` (cargas de petición) | `-skip_data` | 0 |
+| `MOTIVOS_CANCELACION`, `BITACORA`, proveedores y compras | `-skip_data` | 0 |
+| Catálogos de personas que los tests necesitan | `db-test-anonymize.sql` | ~950 |
+
+### Las tablas con datos personales que no eran obvias
+
+Este es el hallazgo que más tiempo costó, y la razón de que el volcado sea exhaustivo. Ninguna de estas se llama como para sospechar:
+
+| Tabla | Qué traía | Filas |
+|---|---|---|
+| `LISTAS_ATRIBUTOS.VALOR_DESPLEGADO` | El padrón de vendedores del campo libre `LIBRES_CARGOS_CC.VENDEDOR_1/2/3`: nombres de personas, 16 de ellos también clientes | 622 |
+| `MOTIVOS_CANCELACION.MOTIVO` | Texto libre del capturista, con nombres de clientes dentro de la frase | 307 |
+| `MSP_LOCAL_SALE` | Nombre, teléfono, domicilio, colonia y GPS del cliente de cada venta local | 2,231 |
+| `LIBRES_CLIENTES` | Celular, comprobante de domicilio y coordenadas del cliente | 43,834 |
+| `BITACORA` | Usuarios de Microsip y valores de los cambios | 1,187 |
+| `MSP_AN_CLIENTE_NARRATIVA` | Texto generado por IA **sobre clientes reales** | 11 |
+| `REGISTRY` | El RFC de persona física del titular y el domicilio fiscal | 384 |
+| `CLAVES_PROVEEDORES` / `DOCTOS_CM` / `DOCTOS_CP` | RFC de 13 caracteres —persona física— de un proveedor | ~30 |
+
+`LISTAS_ATRIBUTOS` no se puede omitir: el módulo `config` la lee para resolver los vendedores de crédito, y `internal/clientes` compara `UPPER(VALOR_DESPLEGADO) = 'CONTADO'`. Se sustituyen **sólo** los seis atributos que son listas de personas (11350, 11351, 11702, 19985, 19986, 19987), y el nombre sintético se deriva de `HASH()` del valor original, no del identificador de la fila: la misma persona aparece en los tres atributos y `ListarIdentidadesMicrosip` **agrupa por `VALOR_DESPLEGADO`**. Un reemplazo por fila rompería esa agrupación y el test de `config` con ella.
 
 ---
 
@@ -233,28 +304,15 @@ Volver a llamar `/v2/me`: debe devolver los 40 permisos.
 
 ### Qué se puede desarrollar y qué no
 
-La base conserva los catálogos y **omite los movimientos**. Conteos reales del artefacto:
+La base conserva los catálogos y **omite los movimientos y el padrón**.
 
-| Tabla | Filas |
-|---|---|
-| `CLIENTES` | 43,834 |
-| `SALDOS_IN` (inventario) | 94,073 |
-| `ARTICULOS` | 6,113 |
-| `ZONAS_CLIENTES` | 46 |
-| **`DOCTOS_PV`** (ventas) | **0** |
-| **`DOCTOS_CC`** (crédito) | **0** |
-| `MSP_SALDOS_VENTAS` | 88 |
-| `MSP_PAGOS_VENTAS` | 18 |
+**Ventas funciona.** Hay catálogos e inventario, y la suite prueba el flujo de aplicar una venta de principio a fin. Quien trabaje ahí crea sus propios datos y avanza — incluido el cliente, que antes venía dado.
 
-**Ventas funciona bien.** Hay catálogos e inventario, y la suite prueba el flujo de aplicar una venta de principio a fin. Quien trabaje ahí crea sus propios datos y avanza.
-
-**Cobranza, reportes, analítica y el Cliente 360 van a ver pantallas vacías**, porque leen los movimientos que se omitieron. No es coincidencia que los diez tests frágiles de abajo sean justamente de `clientes` y `cobranza`.
+**Cobranza, reportes, analítica, el Cliente 360 y el directorio van a ver pantallas vacías**, porque leen movimientos y clientes que ya no están. Para trabajar ahí hay que sembrar: `internal/platform/microsipseed` hace exactamente eso y es lo que usan sus tests.
 
 ---
 
 ## Limitaciones conocidas
-
-Dos cosas quedan sin resolver a propósito. Están documentadas aquí para que quien las encuentre sepa que ya se conocían y no crea que las rompió.
 
 ### ~~Diez tests leen filas de producción por identificador fijo~~ — RESUELTO (2026-08-16)
 
@@ -272,13 +330,35 @@ Había tests que traían filas reales por identificadores escritos a mano —`cl
 | `rutas/infra/rutasfb` | 1 | la zona 12271 con ventas en los últimos 30 días |
 | `reactivacion/infra/reactivacionfb` | 1 | el universo de Tehuacán: clientes reales CON TELÉFONO |
 
-`internal/cobranza`, que este documento señalaba, **pasa completo**: sus pruebas ya sembraban sus propios documentos (`insertCargoDoctosCC` y compañía). Los dos de `analytics`, el de `rutas` y el de `reactivacion` sólo aparecen si se corre `./...`; el target de nueve paquetes ni los toca.
-
 Ahora siembran lo que verifican, vía [`internal/platform/microsipseed`](../internal/platform/microsipseed/seed.go). El sembrador no inserta el cargo de cuentas por cobrar a mano: inserta el documento de punto de venta y voltea `APLICADO` de `'N'` a `'S'`, dejando que la cascada de Microsip genere el cargo, el puente `DOCTOS_ENTRE_SIS`, los importes y las cachés `MSP_SALDOS_VENTAS` / `MSP_PAGOS_VENTAS` — el mismo camino que el writer de producción.
 
-De paso quedaron reforzadas: antes afirmaban `TotalComprado > 0` porque nadie sabía cuánto debía dar; ahora afirman la igualdad exacta, y `ConSaldo`, que contra la base reducida recorría una lista vacía y pasaba **sin verificar nada**, ahora siembra un cliente con saldo y otro sin él.
+### ~~Otros veinte tests seguían atados al padrón~~ — RESUELTO (2026-08-17)
 
-También se quitó la dependencia de `CLIENTES` reales (`12387`, `12440`, zona `21566`), que no fallaba pero era la misma fragilidad. Eso desbloquea lo de la sección siguiente.
+Vaciar `CLIENTES` sacó a la luz una segunda tanda que el trabajo anterior no había tocado, porque contra una base **con** padrón pasaban sin quejarse: veinte tests en cuatro paquetes.
+
+| Paquete | De qué dependía | Cómo quedó |
+|---|---|---|
+| `cobranza/infra/microsip` | `testClienteID = 11486`, una fila del padrón | `seedCliente` siembra cliente + `CLAVES_CLIENTES` en transacción confirmada |
+| `ventas/infra/ventfb` | la misma constante `11486` | `seedClienteFixture`, **idempotente**: contra la base de desarrollo completa no hace nada |
+| `ventas/infra/venthttp` | `SELECT FIRST 1 … WHERE ESTATUS='A'` y `11486` escrito a mano | `seedClienteConClave`, dentro de la transacción con rollback |
+| `clientes/app` | `n > 0` y "el índice tiene ≥1000 documentos" | siembra 3 clientes y afirma contra ese número, no contra el tamaño del padrón |
+
+El umbral de 1000 documentos merece una nota: era el tamaño del padrón real disfrazado de aserción. Es la misma bomba de tiempo que describe la sección de abajo, sólo que apuntando hacia el otro lado — no fallaba cuando la base crecía, fallaba cuando dejaba de tenerla.
+
+### Sembrar un cliente confirmado exige borrar `SALDOS_CC` primero
+
+Un trigger de Microsip crea una fila en `SALDOS_CC` al dar de alta un cliente. La llave foránea `CLI_A_SALDOS` impide entonces borrar la fila de `CLIENTES`, así que un `DELETE FROM CLIENTES` de limpieza **falla**. Si el error se descarta —`_, _ = q.ExecContext(...)`— la limpieza parece funcionar y el cliente sembrado se queda para siempre en la base compartida.
+
+Dos reglas para cualquier siembra que confirme:
+
+1. Borrar hijos antes que padre: `SALDOS_CC` → `CLAVES_CLIENTES` → `CLIENTES`.
+2. **No descartar el error de la limpieza.** Reportarlo con `t.Errorf`. Una limpieza que falla en silencio es indistinguible de una que funciona.
+
+Y una tercera, que costó una corrida entera: **`defer pool.Close()` corre ANTES que los `t.Cleanup`.** Un test que abre su propio pool con `defer pool.Close()` deja a toda limpieza registrada con `t.Cleanup` hablándole a un pool cerrado (`sql: database is closed`). Se arregla registrando el cierre también con `t.Cleanup`, antes de sembrar: el LIFO lo pone al final.
+
+### `CLIENTES_AK1` es único sobre `NOMBRE`
+
+Dos tests del mismo paquete que siembran el mismo nombre chocan contra el índice, no contra el código. Cualquier siembra que confirme debe llevar un sufijo único (`uuid.NewString()[:8]`).
 
 ### El target de integración cubre 9 de 25 paquetes
 
@@ -290,6 +370,10 @@ Queda una advertencia, con la evidencia que hay y no más: al correr `clientes` 
 
 Lo que sí es un hecho es la condición de fondo: `go test ./...` corre los paquetes en PARALELO y esta suite comparte una sola base Firebird; el propio comentario de ese test dice que su marca de agua sale del `MinActiveTransactionID` vivo, que es estado global del servidor. Por eso el job de CI usa `-p 1`: cuesta tiempo de reloj y compra determinismo, que es lo único que hace útil una señal remota. Si alguien amplía `make test-firebird-all`, conviene que haga lo mismo.
 
+### `cobranza/infra/microsip` escribe filas confirmadas
+
+Ese paquete está **excluido a propósito** de `make test-firebird-all` porque confirma escrituras en Microsip y depende de `t.Cleanup` para borrarlas. `go test ./...` **sí** lo corre. Contra una base desechable —la de CI, o la restaurada del artefacto— eso es correcto; contra la base de desarrollo compartida, no.
+
 ### Cómo no volver a plantar una bomba de tiempo
 
 Un tercer caso ya se corrigió. Dos tests de `analyticsfb` insertaban instantáneas con fecha del día y las buscaban en `ListRecentSnapshots(100)`, que ordena por `FECHA_CORTE DESC`. Pasaron hasta que el job diario acumuló más de cien instantáneas más recientes; ese día empezaron a fallar solos, sin que nadie tocara código.
@@ -300,21 +384,30 @@ La regla que dejan: **un test afirma sobre el código, no sobre el estado de la 
 
 ## Regenerar cuando la base cambie
 
-Este artefacto es una foto del esquema y los catálogos al 2026-07-31. Hay que regenerarlo cuando se agreguen migraciones que cambien el esquema, o cuando cambien catálogos de los que dependan los tests.
+Este artefacto es una foto del esquema y los catálogos al 2026-08-17. Hay que regenerarlo cuando se agreguen migraciones que cambien el esquema, o cuando cambien catálogos de los que dependan los tests.
 
-El procedimiento completo toma unos **quince minutos**, casi todos de espera.
+```sh
+./scripts/make-test-db.sh
+python3 scripts/db-test-pii-scan.py pii-corpus.txt pii-padron.txt
+make FB_DATABASE=/firebird/data/CATVERIF.FDB test-firebird-all
+rm pii-padron.txt          # contiene datos personales reales
+```
+
+**Al regenerar, vuelve a correr el escaneo.** Una tabla nueva con datos personales entra al artefacto sin avisar; la lista de omisión no se entera sola.
 
 ---
 
 ## Qué se probó y qué no
 
-Cada recorte se validó corriendo los siete paquetes de integración contra la base resultante, y el artefacto final se verificó **descomprimiéndolo y restaurándolo a una base nueva**, no sobre la base desde la que se generó.
+El artefacto se verificó **descomprimiéndolo y restaurándolo a una base nueva**, no sobre la base desde la que se generó, y contra esa base se corrió `go test ./... -p 1 -race` completo.
 
-Dos recortes se intentaron y se revirtieron porque rompían tests:
+Dos recortes se intentaron y uno se revirtió:
 
 | Tabla | Qué pasó |
 |---|---|
 | `SALDOS_IN` | Sin ella fallan seis tests de combos y juegos que verifican la descarga de inventario. Cuesta 8 MB; se queda |
 | `PRECIOS_ARTICULOS` | Se probó quitarla y **la suite pasa completa**. Se queda fuera |
 
-**Piso teórico: 12 MB.** Es el tamaño del respaldo con el esquema vacío. El artefacto pesa 15 MB, así que todos los catálogos juntos cuestan 3 MB comprimidos. No hay margen relevante para seguir recortando por tamaño.
+**Lo que NO se hizo, y es a propósito:** el artefacto no se subió a ningún lado. No hay release, ni artefacto de CI, ni commit del `.fbk.gz`. El trabajo termina con el archivo generado en local y el procedimiento escrito. Publicarlo es decisión de quien sea dueño del repositorio.
+
+**Lo que queda fuera del alcance de esto:** el índice de Meilisearch de la máquina de desarrollo sigue teniendo 43,729 documentos con nombres, domicilios y teléfonos reales. No viaja en el artefacto ni en el repositorio, pero está ahí y se repuebla solo con cada reconciliación contra la base viva.

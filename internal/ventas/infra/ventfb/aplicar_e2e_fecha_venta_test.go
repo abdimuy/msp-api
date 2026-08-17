@@ -203,6 +203,7 @@ func TestE2E_AplicarVenta_FechaVenta_Contado(t *testing.T) {
 	fechaVenta := time.Date(2025, 3, 15, 12, 0, 0, 0, time.UTC)
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		seedClienteFixture(t, firebird.GetQuerier(ctx, pool.DB))
 		userID := seedUsuarioRow(ctx, t, pool)
 		q := firebird.GetQuerier(ctx, pool.DB)
 
@@ -253,6 +254,7 @@ func TestE2E_AplicarVenta_FechaVenta_Credito_Enganche(t *testing.T) {
 	fechaVenta := time.Date(2025, 3, 15, 12, 0, 0, 0, time.UTC)
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		seedClienteFixture(t, firebird.GetQuerier(ctx, pool.DB))
 		userID := seedUsuarioRow(ctx, t, pool)
 		q := firebird.GetQuerier(ctx, pool.DB)
 
