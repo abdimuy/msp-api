@@ -103,6 +103,8 @@ A 1-hour ticker in `CobranzaReconciler` calls `Pagos/SaldosChangelogRepo.DeleteO
 - **`lastSeenSeq` is in-memory**: a process restart loses it. Recovered by the Start-time `MaxSeqID(watermark)` probe + cursor sync at the bus subscriber level. Persisting was considered and rejected: digest reconciler at 5 min is the authoritative safety net, restarts are rare, and persistence adds boundary complexity for marginal ROI.
 - **Long Microsip GUI transactions stall the watermark**: if an operator leaves a tx open for hours, the watermark stays low and cursor sync stops advancing. The system is **correct** during this window (no lost updates, the next watermark advance catches up), but other cobradores see fresh cargos delayed. Mitigation is operational: Microsip already warns on long sessions; if it becomes a problem we add a per-zona watermark or surface it on the admin dashboard. **Not solving this in this sprint.**
 
+  > **Update 2026-08-17 — this stopped being theoretical, and the read-only half is fixed.** Microsip's GUI transactions sat open 4-5 hours in normal operation and held the watermark down; **889 payments and 860 sales never reached the phones** over five days, and a cobrador who cannot see a payment may charge the client again. `MinActiveTransactionID` now excludes read-only transactions (`AND MON$READ_ONLY = 0`) — those windows cannot write rows, so they contribute nothing to the guarantee this watermark provides. What remains unsolved is a **read-write** transaction left open (a Microsip screen mid-edit), and the cursors the API itself leaks on context cancel (commit `408350e`, still unmerged).
+
 ## Operator runbook
 
 ### "¿Por qué este pago no apareció en la app del cobrador?"
@@ -111,7 +113,17 @@ A 1-hour ticker in `CobranzaReconciler` calls `Pagos/SaldosChangelogRepo.DeleteO
 
 2. **Check that it landed in the changelog** — `SELECT SEQ_ID, TX_ID, COMMIT_AT FROM MSP_PAGOS_CHANGELOG WHERE IMPTE_DOCTO_CC_ID = ? ORDER BY SEQ_ID DESC`. If absent, the procedure exit path that should have appended (mig 23) did not run for this row — likely a `WHEN ANY DO` swallowed the upsert, see `MSP_SALDOS_ERRORS`.
 
-3. **Check the current watermark** — `SELECT COALESCE(MIN(MON$TRANSACTION_ID), 9223372036854775807) FROM MON$TRANSACTIONS WHERE MON$STATE = 1`. Compare to the row's `TX_ID`. If `TX_ID >= watermark`, the row is correctly excluded right now; the watermark will advance when the holding tx commits. If you see a watermark stuck far below the current `MON$TRANSACTION_ID`, find the long-running tx: `SELECT * FROM MON$TRANSACTIONS WHERE MON$STATE = 1 ORDER BY MON$TRANSACTION_ID LIMIT 5` — the lowest is the culprit. Most often this is an open Microsip GUI form.
+3. **Check the current watermark** — `SELECT COALESCE(MIN(MON$TRANSACTION_ID), 9223372036854775807) FROM MON$TRANSACTIONS WHERE MON$STATE = 1 AND MON$READ_ONLY = 0`. The `MON$READ_ONLY = 0` is not optional: without it the query answers a different question than the code does and will point at an innocent Microsip window. Compare to the row's `TX_ID`. If `TX_ID >= watermark`, the row is correctly excluded right now; the watermark will advance when the holding tx commits. If you see a watermark stuck far below the current `MON$TRANSACTION_ID`, find the long-running tx and who owns it:
+
+   ```sql
+   SELECT t.MON$TRANSACTION_ID, t.MON$TIMESTAMP, a.MON$REMOTE_PROCESS
+   FROM MON$TRANSACTIONS t
+   LEFT JOIN MON$ATTACHMENTS a ON a.MON$ATTACHMENT_ID = t.MON$ATTACHMENT_ID
+   WHERE t.MON$STATE = 1 AND t.MON$READ_ONLY = 0
+   ORDER BY 1;
+   ```
+
+   The lowest is the culprit. A statement in **state 2 (STALLED)** held for hours is a cursor the client never closed — that is the API's own driver bug, not Microsip.
 
 4. **Check the listener's cursor** (log line `fb_event_listener.published_ids`): if the `to_seq` is far behind the changelog's `MAX(SEQ_ID)`, the listener fell behind. A reconnect (kill the Firebird event TCP session) will trigger the synthetic `[]int{}` publish + cursor-sync recovery.
 
