@@ -302,7 +302,7 @@ tablas sortable (rutas/lib/tableOps), filtros (WinbackFilters), hooks con AbortC
   `golangci-lint run ./internal/analytics/... ./cmd/...` 0 issues; `go test ./internal/analytics/...`;
   `make test-firebird-*` (integración rollback de B3); `gremlins` ≥80%; migración 000042 aplica.
 - FE: `npx tsc --noEmit` limpio; `npx vitest run src/modules/cartera` verde; `eslint` 0 warnings.
-- Live (la BD dev ya está poblada; `noe@gmail.com` = super_admin): correr la API local (dev mode) y
+- Live (la BD dev ya está poblada; el usuario de prueba tiene `super_admin`): correr la API local (dev mode) y
   verificar cada endpoint `/v2/analytics/cartera/*` 200 con datos reales. Cargar la pantalla `/cartera`.
 
 ## Fuera de alcance
