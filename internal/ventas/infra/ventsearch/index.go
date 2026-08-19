@@ -167,7 +167,7 @@ func mapDoc(d outbound.VentaSearchDoc) VentaDoc {
 		Situacion:      d.Situacion,
 		Sincronizacion: d.Sincronizacion,
 		ZonaClienteID:  d.ZonaClienteID,
-		VendedorEmail:  d.VendedorEmail,
+		VendedorEmails: vendedorEmailsOrEmpty(d.VendedorEmails),
 		ClienteID:      d.ClienteID,
 		Estado:         d.Estado,
 		PrecioTotal:    d.PrecioTotal.InexactFloat64(), // numeric: sort/filter key only
@@ -190,4 +190,15 @@ func mapDoc(d outbound.VentaSearchDoc) VentaDoc {
 	}
 
 	return vd
+}
+
+// vendedorEmailsOrEmpty guarantees a non-nil slice so the wire document
+// always carries `"vendedor_emails": []` instead of `null`. A null attribute
+// is not an empty array in Meilisearch, and a mix of the two across
+// documents makes the array filter behave inconsistently.
+func vendedorEmailsOrEmpty(emails []string) []string {
+	if emails == nil {
+		return []string{}
+	}
+	return emails
 }

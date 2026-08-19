@@ -66,9 +66,11 @@ type VentaDoc struct {
 	// ZonaClienteID is the Microsip zona identifier. Filterable.
 	ZonaClienteID int `json:"zona_cliente_id"`
 
-	// VendedorEmail is the auth identity of the vendedor who registered the
-	// venta. Filterable.
-	VendedorEmail string `json:"vendedor_email"`
+	// VendedorEmails carries the auth identity of every vendedor on the
+	// venta. Filterable: Meilisearch matches an array attribute with `=`
+	// when ANY element equals the value. Always serialized as an array (mapDoc
+	// substitutes an empty slice for nil) so no document carries a null here.
+	VendedorEmails []string `json:"vendedor_emails"`
 
 	// ClienteID is the Microsip CLIENTE_ID once linked; 0 when unlinked.
 	// Filterable.
@@ -142,7 +144,7 @@ var filterableAttributes = []string{
 	"situacion",
 	"sincronizacion",
 	"zona_cliente_id",
-	"vendedor_email",
+	"vendedor_emails",
 	"cliente_id",
 	"estado",
 	"fecha_venta_ts",

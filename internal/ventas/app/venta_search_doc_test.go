@@ -10,7 +10,42 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/abdimuy/msp-api/internal/ventas/app"
+	"github.com/abdimuy/msp-api/internal/ventas/domain"
 )
+
+// newVentaConVendedores hydrates a venta carrying one vendedor per supplied
+// email. Used to exercise VentaToSearchDoc against vendedor shapes CrearVenta
+// would reject (blank emails on legacy rows) but the repository can rebuild.
+func newVentaConVendedores(t *testing.T, emails []string) *domain.Venta {
+	t.Helper()
+	v := newMinimalVenta(t)
+	vendedores := make([]*domain.Vendedor, 0, len(emails))
+	for i, email := range emails {
+		vendedores = append(vendedores, domain.HydrateVendedor(domain.HydrateVendedorParams{
+			ID: uuid.New(),
+			Snapshot: domain.HydrateVendedorSnapshot(domain.NewVendedorSnapshotParams{
+				UsuarioID: uuid.New(),
+				Email:     email,
+				Nombre:    "Vendedor " + string(rune('A'+i)),
+			}),
+		}))
+	}
+	aud := v.Audit()
+	return domain.HydrateVenta(domain.HydrateVentaParams{
+		ID:             v.ID(),
+		Cliente:        v.Cliente(),
+		Direccion:      v.Direccion(),
+		FechaVenta:     v.FechaVenta(),
+		TipoVenta:      v.TipoVenta(),
+		Montos:         v.Montos(),
+		Estado:         v.Estado(),
+		Situacion:      v.Situacion(),
+		Sincronizacion: v.Sincronizacion(),
+		Vendedores:     vendedores,
+		CreatedAt:      aud.CreatedAt(),
+		UpdatedAt:      aud.UpdatedAt(),
+	})
+}
 
 // ─── PrecioTotal decision ───────────────────────────────────────────────────
 
@@ -38,9 +73,9 @@ func TestVentaToSearchDoc_PrecioTotal_Credito_UsesAnualTier(t *testing.T) {
 		"CREDITO ventas should surface the Anual tier as precio_total, got %s", doc.PrecioTotal)
 }
 
-// ─── VendedorEmail decision ─────────────────────────────────────────────────
+// ─── VendedorEmails decision ────────────────────────────────────────────────
 
-func TestVentaToSearchDoc_VendedorEmail_FirstVendedorInIterationOrder(t *testing.T) {
+func TestVentaToSearchDoc_VendedorEmails_CarriesEveryVendedor(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	in := validContadoInput()
@@ -52,12 +87,25 @@ func TestVentaToSearchDoc_VendedorEmail_FirstVendedorInIterationOrder(t *testing
 	require.NoError(t, err)
 
 	doc := app.VentaToSearchDoc(v)
-	assert.Equal(t, "vendedor@example.com", doc.VendedorEmail, "must be the FIRST vendedor's email")
+	assert.ElementsMatch(t,
+		[]string{"vendedor@example.com", "segundo@example.com"}, doc.VendedorEmails,
+		"every vendedor's email must be indexed, not just the first")
 	assert.Contains(t, doc.Vendedor, "Ana Vendedora")
 	assert.Contains(t, doc.Vendedor, "Segundo Vendedor")
 }
 
-func TestVentaToSearchDoc_VendedorEmail_EmptyWhenNoVendedores(t *testing.T) {
+func TestVentaToSearchDoc_VendedorEmails_SkipsBlankEmails(t *testing.T) {
+	t.Parallel()
+	// A vendedor row rebuilt from persistence can carry an empty email
+	// (legacy rows predate the NOT NULL guarantee). A blank entry would make
+	// `vendedor_emails = ""` match, so it must never reach the document.
+	v := newVentaConVendedores(t, []string{"uno@example.com", "", "  "})
+
+	doc := app.VentaToSearchDoc(v)
+	assert.Equal(t, []string{"uno@example.com"}, doc.VendedorEmails)
+}
+
+func TestVentaToSearchDoc_VendedorEmails_EmptySliceWhenNoVendedores(t *testing.T) {
 	t.Parallel()
 	// CrearVenta requires at least one vendedor (domain invariant), so this
 	// case — a venta with an empty vendedores collection — is exercised via
@@ -66,7 +114,8 @@ func TestVentaToSearchDoc_VendedorEmail_EmptyWhenNoVendedores(t *testing.T) {
 	v := newMinimalVenta(t)
 
 	doc := app.VentaToSearchDoc(v)
-	assert.Empty(t, doc.VendedorEmail)
+	assert.NotNil(t, doc.VendedorEmails, "must be an empty slice, never nil (nil marshals to JSON null)")
+	assert.Empty(t, doc.VendedorEmails)
 	assert.Empty(t, doc.Vendedor)
 }
 

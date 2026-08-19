@@ -125,7 +125,10 @@ func buildFilter(q outbound.VentasSearchQuery) string {
 		clauses = append(clauses, fmt.Sprintf("zona_cliente_id = %d", *q.ZonaClienteID))
 	}
 	if q.VendedorEmail != nil {
-		clauses = append(clauses, fmt.Sprintf("vendedor_email = %q", *q.VendedorEmail))
+		// vendedor_emails is an array attribute: `=` matches when ANY element
+		// equals the value, so the clause shape is unchanged from when the
+		// document held a single email.
+		clauses = append(clauses, fmt.Sprintf("vendedor_emails = %q", *q.VendedorEmail))
 	}
 	if q.ClienteID != nil {
 		clauses = append(clauses, fmt.Sprintf("cliente_id = %d", *q.ClienteID))
@@ -133,7 +136,13 @@ func buildFilter(q outbound.VentasSearchQuery) string {
 	if q.Estado != nil {
 		clauses = append(clauses, fmt.Sprintf("estado = %q", *q.Estado))
 	}
-	if !q.IncluirCanceladas {
+	// The canceladas guard is skipped when the caller explicitly filters by
+	// Situacion == "cancelada": keeping it would build
+	// `situacion = "cancelada" AND situacion != "cancelada"`, which matches
+	// nothing and returns an empty list with no error. This mirrors
+	// appendCanceladasFilter in the Firebird fallback (venta_repo.go) — both
+	// paths must resolve the same query to the same set.
+	if !q.IncluirCanceladas && !situacionEsCancelada(q.Situacion) {
 		clauses = append(clauses, fmt.Sprintf("situacion != %q", situacionCancelada))
 	}
 	if q.FechaDesde != nil {
@@ -150,6 +159,12 @@ func buildFilter(q outbound.VentasSearchQuery) string {
 	}
 
 	return strings.Join(clauses, " AND ")
+}
+
+// situacionEsCancelada reports whether the caller filtered by the cancelada
+// situacion, in which case excluding canceladas would contradict the request.
+func situacionEsCancelada(situacion *string) bool {
+	return situacion != nil && *situacion == situacionCancelada
 }
 
 // buildSort returns the Meilisearch sort clause list for the given sort

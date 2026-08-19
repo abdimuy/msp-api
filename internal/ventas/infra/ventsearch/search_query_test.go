@@ -68,7 +68,9 @@ func TestBuildFilter_VendedorEmail_Set(t *testing.T) {
 	t.Parallel()
 	q := outbound.VentasSearchQuery{VendedorEmail: strp("v@muebleriamsp.mx"), IncluirCanceladas: true}
 	filter := ventsearchmeili.BuildFilterForTest(q)
-	assert.Equal(t, `vendedor_email = "v@muebleriamsp.mx"`, filter)
+	// Meilisearch matches an array attribute with `=` when ANY element equals
+	// the value, so a venta with several vendedores is found by any of them.
+	assert.Equal(t, `vendedor_emails = "v@muebleriamsp.mx"`, filter)
 }
 
 func TestBuildFilter_ClienteID_Set(t *testing.T) {
@@ -91,6 +93,30 @@ func TestBuildFilter_IncluirCanceladas_False_ExcludesCancelada(t *testing.T) {
 	t.Parallel()
 	q := outbound.VentasSearchQuery{IncluirCanceladas: false}
 	filter := ventsearchmeili.BuildFilterForTest(q)
+	assert.Contains(t, filter, `situacion != "cancelada"`)
+}
+
+// Asking explicitly for situacion="cancelada" must not be silently negated by
+// the canceladas guard: `situacion = "cancelada" AND situacion != "cancelada"`
+// matches nothing, so the screen shows an empty list with no error. The
+// Firebird fallback already carries this coherence rule in
+// appendCanceladasFilter; both paths must agree.
+func TestBuildFilter_SituacionCancelada_WithoutIncluirCanceladas_OmitsExclusion(t *testing.T) {
+	t.Parallel()
+	q := outbound.VentasSearchQuery{Situacion: strp("cancelada"), IncluirCanceladas: false}
+	filter := ventsearchmeili.BuildFilterForTest(q)
+	assert.Equal(t, `situacion = "cancelada"`, filter)
+	assert.NotContains(t, filter, `!=`)
+}
+
+// The guard still applies when the caller filters by any other situacion:
+// "aprobada" and "cancelada" are mutually exclusive, so keeping the exclusion
+// costs nothing and preserves the default of hiding canceladas.
+func TestBuildFilter_SituacionAprobada_WithoutIncluirCanceladas_KeepsExclusion(t *testing.T) {
+	t.Parallel()
+	q := outbound.VentasSearchQuery{Situacion: strp("aprobada"), IncluirCanceladas: false}
+	filter := ventsearchmeili.BuildFilterForTest(q)
+	assert.Contains(t, filter, `situacion = "aprobada"`)
 	assert.Contains(t, filter, `situacion != "cancelada"`)
 }
 

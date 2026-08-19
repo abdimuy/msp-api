@@ -42,7 +42,7 @@ func TestDefaultIndexConfig_FilterableAttributes(t *testing.T) {
 	require.NotEmpty(t, cfg.FilterableAttributes)
 	for _, expected := range []string{
 		"tipo_venta", "situacion", "sincronizacion", "zona_cliente_id",
-		"vendedor_email", "cliente_id", "estado", "fecha_venta_ts", "precio_total",
+		"vendedor_emails", "cliente_id", "estado", "fecha_venta_ts", "precio_total",
 	} {
 		assert.True(t, slices.Contains(cfg.FilterableAttributes, expected),
 			"filterable must include %q", expected)
@@ -118,7 +118,7 @@ func TestMapDoc_FilterableFields(t *testing.T) {
 		Situacion:      "aprobada",
 		Sincronizacion: "pendiente",
 		ZonaClienteID:  7,
-		VendedorEmail:  "vendedor@muebleriamsp.mx",
+		VendedorEmails: []string{"vendedor@muebleriamsp.mx", "socio@muebleriamsp.mx"},
 		ClienteID:      42,
 		Estado:         "active",
 	}
@@ -128,9 +128,22 @@ func TestMapDoc_FilterableFields(t *testing.T) {
 	assert.Equal(t, "aprobada", got.Situacion)
 	assert.Equal(t, "pendiente", got.Sincronizacion)
 	assert.Equal(t, 7, got.ZonaClienteID)
-	assert.Equal(t, "vendedor@muebleriamsp.mx", got.VendedorEmail)
+	assert.Equal(t, []string{"vendedor@muebleriamsp.mx", "socio@muebleriamsp.mx"}, got.VendedorEmails)
 	assert.Equal(t, 42, got.ClienteID)
 	assert.Equal(t, "active", got.Estado)
+}
+
+// TestMapDoc_VendedorEmails_NilBecomesEmptyArrayOnWire pins the wire shape:
+// a nil slice marshals to JSON `null`, which Meilisearch stores as a null
+// attribute rather than an empty array. The document must always carry an
+// array so `vendedor_emails = "x"` behaves consistently across documents.
+func TestMapDoc_VendedorEmails_NilBecomesEmptyArrayOnWire(t *testing.T) {
+	t.Parallel()
+	got := ventsearchmeili.MapDocForTest(outbound.VentaSearchDoc{ID: uuid.New()})
+
+	raw, err := json.Marshal(got)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"vendedor_emails":[]`)
 }
 
 func TestMapDoc_MoneyRoundTripExact(t *testing.T) {

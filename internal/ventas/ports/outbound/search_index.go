@@ -51,9 +51,12 @@ type VentaSearchDoc struct {
 	Sincronizacion string
 	// ZonaClienteID is the Microsip zona identifier for the venta's cliente.
 	ZonaClienteID int
-	// VendedorEmail is the email of the vendedor who registered the venta
-	// (auth identity, not the display vendedor snapshot).
-	VendedorEmail string
+	// VendedorEmails carries the email of EVERY vendedor on the venta (auth
+	// identity, not the display vendedor snapshot). A venta routinely has
+	// more than one; indexing only the first made the vendedor_emails filter
+	// silently under-report. Never nil — an empty slice when the venta has
+	// no vendedores — so the wire document always carries an array.
+	VendedorEmails []string
 	// ClienteID is the Microsip CLIENTE_ID once linked; 0 when unlinked.
 	ClienteID int
 	// Estado is domain.EstadoRegistro.String() ("active" | "deleted").
@@ -82,7 +85,10 @@ type VentasSearchQuery struct {
 	Sincronizacion *string
 	// ZonaClienteID restricts to a specific zona. Nil = no filter.
 	ZonaClienteID *int
-	// VendedorEmail restricts to a specific vendedor email. Nil = no filter.
+	// VendedorEmail restricts to ventas carrying this vendedor email. The
+	// document side is an array (VendedorEmails); Meilisearch's `=` on an
+	// array attribute matches when ANY element equals the value, so a single
+	// value here still finds ventas with several vendedores. Nil = no filter.
 	VendedorEmail *string
 	// ClienteID restricts to a specific Microsip cliente. Nil = no filter.
 	ClienteID *int
