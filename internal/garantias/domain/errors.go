@@ -54,4 +54,25 @@ var (
 		"warranty_decider_role_invalid",
 		"rol de quien decide inválido",
 	)
+
+	// ErrEtapaInvalida is returned by ParseEtapa when the input is not one
+	// of the 19 recognized stages.
+	ErrEtapaInvalida = apperror.NewValidation(
+		"warranty_stage_invalid",
+		"etapa inválida",
+	)
+
+	// ErrUbicacionInvalida is returned by ParseUbicacion when the input is
+	// not one of the 8 recognized locations.
+	ErrUbicacionInvalida = apperror.NewValidation(
+		"warranty_location_invalid",
+		"ubicación inválida",
+	)
+
+	// ErrDesenlaceInvalido is returned by ParseDesenlace when the input is
+	// not one of the 6 recognized outcomes.
+	ErrDesenlaceInvalido = apperror.NewValidation(
+		"warranty_outcome_invalid",
+		"desenlace inválido",
+	)
 )
