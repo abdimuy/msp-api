@@ -80,6 +80,25 @@ func provideVentasAlmacenResolver(p *firebird.Pool) ventasoutbound.AlmacenNombre
 	return ventfb.NewAlmacenNombreRepo(p)
 }
 
+// provideVentasZonaNombreResolver builds the zona name resolver used to label
+// each venta's direccion with the zona NAME instead of the opaque
+// ZONA_CLIENTE_ID, so the desktop listing does not need a local catalog.
+// ZONAS_CLIENTES is a Microsip table readable from the ventas fb adapter, so
+// this needs no cross-module dependency.
+func provideVentasZonaNombreResolver(p *firebird.Pool) ventasoutbound.ZonaNombreResolver {
+	return ventfb.NewZonaNombreRepo(p)
+}
+
+// provideVentasFaseResolver builds the resolver that answers WHEN each venta
+// entered its current fase and HOW FAR it ever got, reading the
+// phase-changing events from MSP_OUTBOX_EVENTS. It exists because neither
+// UPDATED_AT (any edit bumps it) nor a revisada_at column (there is none) can
+// tell the desktop how long a venta has been sitting where it is, and because
+// a cancelación overwrites the situacion that says how far it had advanced.
+func provideVentasFaseResolver(p *firebird.Pool) ventasoutbound.FaseResolver {
+	return ventfb.NewFaseRepo(p)
+}
+
 // provideVentasImageProcessor selects the image-processing implementation
 // for the ventas module. When IMAGEPROCESSOR_ENABLED=false the factory
 // returns the NoOp passthrough so uploads land verbatim on disk.
@@ -147,6 +166,8 @@ func provideVentasService(
 	eventReader ventasoutbound.VentaEventReader,
 	usuarioResolver ventasoutbound.UsuarioNombreResolver,
 	almacenResolver ventasoutbound.AlmacenNombreResolver,
+	zonaNombreResolver ventasoutbound.ZonaNombreResolver,
+	faseResolver ventasoutbound.FaseResolver,
 	searchIndex ventasoutbound.VentaSearchIndex,
 	p *firebird.Pool,
 	cfg *config.Config,
@@ -156,6 +177,8 @@ func provideVentasService(
 		WithEventReader(eventReader).
 		WithUsuarioResolver(usuarioResolver).
 		WithAlmacenResolver(almacenResolver).
+		WithZonaNombreResolver(zonaNombreResolver).
+		WithFaseResolver(faseResolver).
 		WithJuegos(provideVentasMicrosipJuegoResolver(p), cfg.MicrosipVenta.JuegosEnabled, cfg.MicrosipVenta.JuegosLineaArticuloID).
 		WithZonaReader(ventfb.NewClienteRepo(p)).
 		WithEstatusReader(ventfb.NewClienteRepo(p)).

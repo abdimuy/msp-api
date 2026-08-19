@@ -56,6 +56,18 @@ type Service struct {
 	// almacén names unresolved — the route labels are best-effort and their
 	// absence must not break the timeline.
 	almacenResolver outbound.AlmacenNombreResolver
+	// zonaNombreResolver is optional. Tests omit it; production wires it via
+	// WithZonaNombreResolver. When nil, NombresDeZonas returns an empty map
+	// and the venta DTO simply carries no zona name — the label is
+	// best-effort and its absence must not break the read.
+	zonaNombreResolver outbound.ZonaNombreResolver
+	// faseResolver is optional. Tests omit it; production wires it via
+	// WithFaseResolver. When nil, Fases returns an empty map and the venta
+	// DTO simply carries neither fase_desde nor fase_alcanzada — the
+	// desktop's "Fase" column degrades to showing no elapsed time and its
+	// progress ring to showing no arcs, which must never cost the read
+	// itself.
+	faseResolver outbound.FaseResolver
 	// juegoResolver is optional. Tests omit it; production wires it via
 	// WithJuegos. When nil or juegosEnabled is false, AplicarVenta skips the
 	// combo→juego resolution step and passes an empty JuegosPorCombo map to
@@ -125,6 +137,22 @@ func (s *Service) WithUsuarioResolver(r outbound.UsuarioNombreResolver) *Service
 // Returns s for fluent wiring at the composition root.
 func (s *Service) WithAlmacenResolver(r outbound.AlmacenNombreResolver) *Service {
 	s.almacenResolver = r
+	return s
+}
+
+// WithZonaNombreResolver attaches a ZonaNombreResolver so the venta read
+// paths can label each direccion with its zona name. Returns s for fluent
+// wiring at the composition root.
+func (s *Service) WithZonaNombreResolver(r outbound.ZonaNombreResolver) *Service {
+	s.zonaNombreResolver = r
+	return s
+}
+
+// WithFaseResolver attaches a FaseResolver so the venta read paths can report
+// WHEN each venta entered its current fase and HOW FAR it ever got. Returns s
+// for fluent wiring at the composition root.
+func (s *Service) WithFaseResolver(r outbound.FaseResolver) *Service {
+	s.faseResolver = r
 	return s
 }
 
@@ -254,6 +282,71 @@ func (s *Service) NombresDeUsuarios(ctx context.Context, ids []uuid.UUID) map[uu
 		return map[uuid.UUID]string{}
 	}
 	return nombres
+}
+
+// NombresDeZonas resolves the display name of every zona referenced by the
+// given ventas, best-effort and in a SINGLE resolver call per page. A nil
+// resolver, an empty page, a page whose ventas carry no zona, or a lookup
+// error all yield an empty map rather than failing — the zona name decorates
+// the venta's direccion and its absence must not break the read. Ids without
+// a matching ZONAS_CLIENTES row are simply absent from the returned map.
+func (s *Service) NombresDeZonas(ctx context.Context, ventas []*domain.Venta) map[int]string {
+	if s.zonaNombreResolver == nil || len(ventas) == 0 {
+		return map[int]string{}
+	}
+	ids := make([]int, 0, len(ventas))
+	seen := make(map[int]struct{}, len(ventas))
+	for _, v := range ventas {
+		if v == nil {
+			continue
+		}
+		z := v.Direccion().ZonaClienteID()
+		if z == nil {
+			continue
+		}
+		if _, dup := seen[*z]; dup {
+			continue
+		}
+		seen[*z] = struct{}{}
+		ids = append(ids, *z)
+	}
+	if len(ids) == 0 {
+		return map[int]string{}
+	}
+	nombres, err := s.zonaNombreResolver.NombresPorID(ctx, ids)
+	if err != nil {
+		return map[int]string{}
+	}
+	return nombres
+}
+
+// Fases resolves, for the given ventas, WHEN each entered its current fase
+// and the HIGHEST fase each ever reached — best-effort and in a SINGLE
+// resolver call per page. A nil resolver, an empty page, or a lookup error
+// all yield an empty map rather than failing: both fields are decoration and
+// their absence must not break the read. Ventas with no phase event recorded
+// (captured before the event timeline existed) are simply absent from the
+// returned map, so the caller omits the fields instead of inventing a date or
+// a fase.
+func (s *Service) Fases(ctx context.Context, ventas []*domain.Venta) map[uuid.UUID]outbound.FaseDeVenta {
+	if s.faseResolver == nil || len(ventas) == 0 {
+		return map[uuid.UUID]outbound.FaseDeVenta{}
+	}
+	ids := make([]uuid.UUID, 0, len(ventas))
+	for _, v := range ventas {
+		if v == nil {
+			continue
+		}
+		ids = append(ids, v.ID())
+	}
+	if len(ids) == 0 {
+		return map[uuid.UUID]outbound.FaseDeVenta{}
+	}
+	fases, err := s.faseResolver.FasesPorVenta(ctx, ids)
+	if err != nil {
+		return map[uuid.UUID]outbound.FaseDeVenta{}
+	}
+	return fases
 }
 
 // validateClienteID consults the configured checker to ensure clienteID

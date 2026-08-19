@@ -102,6 +102,8 @@ func appOptions() []fx.Option {
 			provideVentasEventReader,
 			provideVentasUsuarioResolver,
 			provideVentasAlmacenResolver,
+			provideVentasZonaNombreResolver,
+			provideVentasFaseResolver,
 			provideVentasImageProcessor,
 			provideVentasAplicarConfig,
 			provideVentasMicrosipWriter,

@@ -3,11 +3,13 @@ package ventfb
 
 import (
 	"context"
-	"strings"
 
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 	"github.com/abdimuy/msp-api/internal/ventas/ports/outbound"
 )
+
+// almacenesCatalogo locates the almacén display names inside Microsip.
+var almacenesCatalogo = catalogoNombreQuery{table: "ALMACENES", idColumn: "ALMACEN_ID"}
 
 // AlmacenNombreRepo implements outbound.AlmacenNombreResolver by reading
 // display names from Microsip's ALMACENES table. Used to label venta-event
@@ -27,56 +29,10 @@ var _ outbound.AlmacenNombreResolver = (*AlmacenNombreRepo)(nil)
 
 // NombresPorID returns a map from almacén id to NOMBRE for every id that has a
 // row in ALMACENES. Ids without a row are absent from the map (the caller
-// treats them as "unknown almacén"). Duplicate ids are collapsed before the
-// query so the placeholder list stays bounded by the unique count. The pool's
-// FB_CHARSET=UTF8 makes the server transcode the legacy WIN1252 NOMBRE column,
-// so a plain string scan + TrimSpace is enough.
+// treats them as "unknown almacén"). See catalogoNombreQuery.nombresPorID for
+// the dedup and encoding contract.
 func (r *AlmacenNombreRepo) NombresPorID(
 	ctx context.Context, ids []int,
 ) (map[int]string, error) {
-	out := make(map[int]string, len(ids))
-	if len(ids) == 0 {
-		return out, nil
-	}
-
-	unique := make([]int, 0, len(ids))
-	seen := make(map[int]struct{}, len(ids))
-	for _, id := range ids {
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		unique = append(unique, id)
-	}
-
-	placeholders := strings.Repeat("?,", len(unique))
-	placeholders = placeholders[:len(placeholders)-1] // drop trailing comma
-	query := "SELECT ALMACEN_ID, NOMBRE FROM ALMACENES WHERE ALMACEN_ID IN (" + placeholders + ")"
-
-	args := make([]any, len(unique))
-	for i, id := range unique {
-		args[i] = id
-	}
-
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-	rows, err := q.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, firebird.MapError(err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	for rows.Next() {
-		var (
-			id     int
-			nombre string
-		)
-		if scanErr := rows.Scan(&id, &nombre); scanErr != nil {
-			return nil, firebird.MapError(scanErr)
-		}
-		out[id] = strings.TrimSpace(nombre)
-	}
-	if rowsErr := rows.Err(); rowsErr != nil {
-		return nil, firebird.MapError(rowsErr)
-	}
-	return out, nil
+	return almacenesCatalogo.nombresPorID(ctx, r.pool, ids)
 }
