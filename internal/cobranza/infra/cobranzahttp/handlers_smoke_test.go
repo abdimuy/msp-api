@@ -31,6 +31,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
 	"github.com/abdimuy/msp-api/internal/cobranza/domain"
 	"github.com/abdimuy/msp-api/internal/cobranza/infra/cobranzahttp"
+	"github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/config"
 )
 
@@ -47,7 +48,7 @@ func buildSmokeRouter(
 	}
 	r := chi.NewRouter()
 	r.Use(planter(byIDsUser())) // byIDsUser has PermCobranzaVerPagos + PermCobranzaVerSaldos
-	cobranzahttp.MountReadRouter(r, nil, bus, sseCfg, slog.Default(), pagos, ventas)
+	cobranzahttp.MountReadRouter(r, nil, bus, sseCfg, slog.Default(), pagos, ventas, outbound.ProductionClock{})
 	return r
 }
 

@@ -60,3 +60,52 @@ type UsuarioNombreResolver interface {
 type AlmacenNombreResolver interface {
 	NombresPorID(ctx context.Context, ids []int) (map[int]string, error)
 }
+
+// ZonaNombreResolver maps Microsip zona-de-cliente ids to their display names.
+// Used by the venta read paths (listing + detail) to surface the zona NAME
+// next to the raw ZONA_CLIENTE_ID, so the desktop table does not have to
+// resolve it against a local catalog. ZONAS_CLIENTES is a Microsip table
+// readable from any fb adapter — same justification as AlmacenNombreResolver
+// above — so this needs no cross-module dependency. Ids with no matching row
+// are simply absent from the returned map.
+type ZonaNombreResolver interface {
+	NombresPorID(ctx context.Context, ids []int) (map[int]string, error)
+}
+
+// FaseDeVenta is what the outbox timeline can settle about ONE venta's
+// fases. Both answers come from the same rows and the same single query, but
+// they answer different questions — see FaseResolver.
+type FaseDeVenta struct {
+	// Desde is when the venta entered the fase it is in RIGHT NOW: the
+	// timestamp of its newest phase-changing event, in UTC.
+	Desde time.Time
+	// Alcanzada is the HIGHEST fase (1..4, see domain.FaseDelEvento) the
+	// venta ever reached, regardless of where it stands now. Zero means
+	// unknown — the venta's only recorded phase event carries no fase (a
+	// lone venta.cancelada) — and the caller must omit the field rather
+	// than report a fase the venta cannot be proven to have reached.
+	Alcanzada int
+}
+
+// FaseResolver answers two questions about each venta's fase, both derived
+// from its outbox event timeline and both served by a SINGLE batched query so
+// a listing page costs one round trip.
+//
+//  1. WHEN it entered its current fase (FaseDeVenta.Desde). The desktop
+//     listing renders a "Fase" column with the elapsed time and flags the
+//     ventas that stopped moving, which neither UPDATED_AT (any edit bumps
+//     it, so a venta stuck six days looks fresh) nor a dedicated revisada_at
+//     column (it does not exist) can provide.
+//  2. HOW FAR it ever got (FaseDeVenta.Alcanzada). A cancelled venta's
+//     situacion becomes "cancelada" and erases every trace of the fase it was
+//     in; the desktop's progress ring still has to draw the arcs the venta
+//     earned before leaving the rail.
+//
+// See domain.EsEventoDeCambioDeFase for which events count at all, and
+// domain.FaseDelEvento for the fase each one places the venta in. Ventas
+// without any phase event (captured before the timeline existed) are simply
+// absent from the returned map — the caller must leave both fields out rather
+// than invent a date or a fase.
+type FaseResolver interface {
+	FasesPorVenta(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]FaseDeVenta, error)
+}

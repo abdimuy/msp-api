@@ -1,0 +1,569 @@
+### commits
+84d58ad feat(clientes): panel de lectura del analista (IA) y rasgos conductuales en la ficha
+
+### stat
+ .../clientes/components/ficha/ClienteFicha.tsx     |   2 +
+ .../components/ficha/FichaInteligenciaScores.tsx   |  38 +------
+ .../components/ficha/FichaLecturaAnalista.test.tsx | 117 +++++++++++++++++++++
+ .../components/ficha/FichaLecturaAnalista.tsx      |  41 ++++++++
+ .../clientes/components/ficha/RasgoBadge.tsx       |  30 ++++++
+ .../clientes/components/ficha/lib/Panel.tsx        |  37 +++++++
+ .../clientes/domain/entities/FichaCliente.ts       |   2 +
+ src/modules/clientes/infrastructure/http/dtos.ts   |   2 +
+ .../mappers/dtoToFichaCliente.test.ts              |  24 +++++
+ .../infrastructure/mappers/dtoToFichaCliente.ts    |   2 +
+ src/test/msw/handlers/clientes.ts                  |   2 +
+ 11 files changed, 260 insertions(+), 37 deletions(-)
+
+### diff
+diff --git a/src/modules/clientes/components/ficha/ClienteFicha.tsx b/src/modules/clientes/components/ficha/ClienteFicha.tsx
+index 006e979..34af77a 100644
+--- a/src/modules/clientes/components/ficha/ClienteFicha.tsx
++++ b/src/modules/clientes/components/ficha/ClienteFicha.tsx
+@@ -4,20 +4,21 @@ import { useFichaCliente } from "../../presentation/hooks/useFichaCliente";
+ import { useVentasCliente } from "../../presentation/hooks/useVentasCliente";
+ import { useRitmoPago } from "../../presentation/hooks/useRitmoPago";
+ import { VentaModal } from "../detalle/VentaModal";
+ import { PagoModal } from "../detalle/PagoModal";
+ import { FichaHeader } from "./FichaHeader";
+ import { FichaHero } from "./FichaHero";
+ import { FichaKpis } from "./FichaKpis";
+ import { FichaCharts } from "./FichaCharts";
+ import { FichaUbicacion } from "./FichaUbicacion";
+ import { FichaInteligenciaScores } from "./FichaInteligenciaScores";
++import { FichaLecturaAnalista } from "./FichaLecturaAnalista";
+ import { FichaVentasList } from "./FichaVentasList";
+ import { FichaRitmoPago } from "./FichaRitmoPago";
+ import { FichaSaludStrip } from "./FichaSaludStrip";
+ import { ReporteModal } from "./ReporteModal";
+ 
+ interface Props {
+   clienteId: number;
+ }
+ 
+ export function ClienteFicha({ clienteId }: Props) {
+@@ -81,20 +82,21 @@ export function ClienteFicha({ clienteId }: Props) {
+       <FichaHero ficha={ficha} />
+       <FichaSaludStrip resumen={ficha.resumen} pulso={ficha.pulso} />
+       {/* Ocultos por ahora (siguen en el repo para reactivarlos):
+           - Acción recomendada (FichaNextBestAction): el motor aún no está listo.
+           - Filtro de rango de fechas (FichaRangeFilter): a pedido del usuario. */}
+       <FichaKpis resumen={ficha.resumen} isLoading={isLoading} />
+ 
+       {/* ── Zona 2 — Inteligencia ── */}
+       <FichaRitmoPago ritmo={ritmoState.ritmo} isLoading={ritmoState.isLoading} onVentaClick={setSelectedDoctoPvId} onPagoClick={setSelectedPagoId} pulso={ficha.pulso} />
+       <FichaInteligenciaScores pulso={ficha.pulso} />
++      <FichaLecturaAnalista pulso={ficha.pulso} />
+ 
+       {/* ── Zona 3 — Detalle ── */}
+       <FichaCharts
+         compradoVsAbonado={ficha.resumen.compradoVsAbonado}
+         isLoading={isLoading}
+       />
+       <FichaUbicacion ubicacion={ficha.ubicacion} />
+       <FichaVentasList
+         ventas={ventasState.ventas}
+         isLoading={ventasState.isLoading}
+diff --git a/src/modules/clientes/components/ficha/FichaInteligenciaScores.tsx b/src/modules/clientes/components/ficha/FichaInteligenciaScores.tsx
+index 7414d83..3bc5f8c 100644
+--- a/src/modules/clientes/components/ficha/FichaInteligenciaScores.tsx
++++ b/src/modules/clientes/components/ficha/FichaInteligenciaScores.tsx
+@@ -1,16 +1,16 @@
+ import dayjs from "dayjs";
+ import "dayjs/locale/es";
+ import { ScoreMeter, type MeterBand } from "./ScoreMeter";
+ import { formatMoney } from "../lib/format";
+ import SegmentoBadge from "../badges/SegmentoBadge";
+-import { InfoHint } from "./lib/InfoHint";
++import { Panel, Titular } from "./lib/Panel";
+ import type { Pulso } from "../../domain/entities/FichaCliente";
+ 
+ dayjs.locale("es");
+ 
+ // FichaInteligenciaScores — the three customer-intelligence scores (credit risk,
+ // repurchase propensity, lifetime value) shown side by side, each as a band
+ // thermometer with a bullet list of drivers.
+ 
+ // ─── Band scales (mirror the committed backend cuts: msp-api
+ // internal/analytics/app/{scorecard,recompra_scorecard,clv_params}.json).
+@@ -92,56 +92,20 @@ function DriverList({ drivers, accent }: { drivers: readonly string[]; accent: A
+       {drivers.map((driver, i) => (
+         <li key={i} className="flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
+           <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${ACCENT_DOT[accent]}`} aria-hidden="true" />
+           {driver}
+         </li>
+       ))}
+     </ul>
+   );
+ }
+ 
+-function Titular({ text }: { text?: string }) {
+-  if (!text) return null;
+-  return (
+-    <p className="font-serif text-[13px] leading-snug text-foreground/80">
+-      {text}
+-    </p>
+-  );
+-}
+-
+-function Panel({
+-  title,
+-  titleHint,
+-  subtitle,
+-  children,
+-}: {
+-  title: string;
+-  titleHint?: string;
+-  subtitle: string;
+-  children: React.ReactNode;
+-}) {
+-  return (
+-    <section className="flex flex-col gap-4 rounded-md border border-border/60 px-5 py-5">
+-      <div>
+-        <h4 className="flex items-center gap-1 font-serif text-sm font-normal text-foreground">
+-          {title}
+-          {titleHint && <InfoHint text={titleHint} label={title} />}
+-        </h4>
+-        <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/70">
+-          {subtitle}
+-        </p>
+-      </div>
+-      {children}
+-    </section>
+-  );
+-}
+-
+ function EmptyPanel({
+   title,
+   titleHint,
+   subtitle,
+   text,
+ }: {
+   title: string;
+   titleHint?: string;
+   subtitle: string;
+   text: string;
+diff --git a/src/modules/clientes/components/ficha/FichaLecturaAnalista.test.tsx b/src/modules/clientes/components/ficha/FichaLecturaAnalista.test.tsx
+new file mode 100644
+index 0000000..06e96db
+--- /dev/null
++++ b/src/modules/clientes/components/ficha/FichaLecturaAnalista.test.tsx
+@@ -0,0 +1,117 @@
++import { describe, it, expect } from "vitest";
++import { render, screen } from "@testing-library/react";
++import { FichaLecturaAnalista } from "./FichaLecturaAnalista";
++import type { Pulso } from "../../domain/entities/FichaCliente";
++
++function makePulso(overrides: Partial<Pulso> = {}): Pulso {
++  const base: Pulso = {
++    score: 75,
++    segmento: "LEAL_POR_LIQUIDAR",
++    estadoPago: "AL_CORRIENTE",
++    recenciaDias: 30,
++    frecuencia: 12,
++    monetary: "85000.00",
++    saldo: "13000.00",
++    porLiquidarPct: "15.29",
++    fechaUltimaCompra: new Date("2025-02-15T09:00:00Z"),
++    fechaUltimoPago: new Date("2025-03-01T14:30:00Z"),
++    nextBestProduct: "Comedor 6 personas",
++    numPagos: 48,
++    cadenciaDias: 30,
++    diasAtrasoProm: 2,
++    pctPagosATiempo: "94.68",
++    fechaProxPago: new Date("2026-01-12T12:00:00Z"),
++    montoProxPago: "4000.00",
++    tierRiesgo: "AL_DIA",
++    bandaCredito: "BAJO",
++    scoreCredito: 91,
++    creditoDrivers: ["pagos al corriente"],
++    bandaRecompra: "MEDIA",
++    scoreRecompra: 32,
++    recompraDrivers: ["buen historial de pago"],
++    clv: "302.17",
++    bandaClv: "MEDIO",
++    clvDrivers: ["recompra moderada esperada"],
++    creditoResumen: "Buen pagador.",
++    recompraResumen: "Recompra moderada.",
++    clvResumen: "Valor estimado $302 en 24m.",
++  };
++  return { ...base, ...overrides };
++}
++
++describe("FichaLecturaAnalista", () => {
++  it("renders nothing when pulso is undefined", () => {
++    const { container } = render(<FichaLecturaAnalista />);
++    expect(container.firstChild).toBeNull();
++  });
++
++  it("renders nothing when narrativa empty and rasgosIA absent", () => {
++    const { container } = render(
++      <FichaLecturaAnalista pulso={makePulso({ narrativa: undefined, rasgosIA: undefined })} />,
++    );
++    expect(container.firstChild).toBeNull();
++  });
++
++  it("renders nothing when both narrativa and rasgosIA empty", () => {
++    render(
++      <FichaLecturaAnalista pulso={makePulso({ narrativa: undefined, rasgosIA: [] })} />,
++    );
++    expect(screen.queryByText("Lectura del analista (IA)")).not.toBeInTheDocument();
++  });
++
++  it("renders panel title and narrativa when narrativa non-empty, no rasgos", () => {
++    render(
++      <FichaLecturaAnalista
++        pulso={makePulso({
++          narrativa: "Cliente con potencial moderado.",
++          rasgosIA: undefined,
++        })}
++      />,
++    );
++    expect(screen.getByText("Lectura del analista (IA)")).toBeInTheDocument();
++    expect(screen.getByText("Cliente con potencial moderado.")).toBeInTheDocument();
++    expect(screen.queryByText("Rasgos (IA)")).not.toBeInTheDocument();
++  });
++
++  it("renders chips but no narrativa paragraph when narrativa absent, rasgos present", () => {
++    render(
++      <FichaLecturaAnalista
++        pulso={makePulso({
++          narrativa: undefined,
++          rasgosIA: ["Reactivación reciente", "Patrón de compra estable"],
++        })}
++      />,
++    );
++    expect(screen.getByText("Lectura del analista (IA)")).toBeInTheDocument();
++    expect(screen.getByText("Rasgos (IA)")).toBeInTheDocument();
++    expect(screen.getByText("Reactivación reciente")).toBeInTheDocument();
++    expect(screen.getByText("Patrón de compra estable")).toBeInTheDocument();
++  });
++
++  it("renders both narrativa and all rasgo chips when both present", () => {
++    render(
++      <FichaLecturaAnalista
++        pulso={makePulso({
++          narrativa: "Cliente con potencial moderado. Últimamente activo.",
++          rasgosIA: ["Reactivación reciente", "Patrón de compra estable"],
++        })}
++      />,
++    );
++    expect(screen.getByText("Lectura del analista (IA)")).toBeInTheDocument();
++    expect(screen.getByText("Cliente con potencial moderado. Últimamente activo.")).toBeInTheDocument();
++    expect(screen.getByText("Rasgos (IA)")).toBeInTheDocument();
++    expect(screen.getByText("Reactivación reciente")).toBeInTheDocument();
++    expect(screen.getByText("Patrón de compra estable")).toBeInTheDocument();
++  });
++
++  it("shows the InfoHint tooltip trigger when panel is rendered", () => {
++    render(
++      <FichaLecturaAnalista
++        pulso={makePulso({ narrativa: "Texto de prueba." })}
++      />,
++    );
++    expect(
++      screen.getByRole("button", { name: /Lectura del analista \(IA\)/i }),
++    ).toBeInTheDocument();
++  });
++});
+diff --git a/src/modules/clientes/components/ficha/FichaLecturaAnalista.tsx b/src/modules/clientes/components/ficha/FichaLecturaAnalista.tsx
+new file mode 100644
+index 0000000..5a78ff6
+--- /dev/null
++++ b/src/modules/clientes/components/ficha/FichaLecturaAnalista.tsx
+@@ -0,0 +1,41 @@
++import { Panel, Titular } from "./lib/Panel";
++import { RasgoBadge } from "./RasgoBadge";
++import type { Pulso } from "../../domain/entities/FichaCliente";
++
++interface Props {
++  pulso?: Pulso | null;
++}
++
++export function FichaLecturaAnalista({ pulso }: Props) {
++  const hasNarrativa = Boolean(pulso?.narrativa);
++  const hasRasgos = (pulso?.rasgosIA?.length ?? 0) > 0;
++
++  if (!hasNarrativa && !hasRasgos) return null;
++
++  return (
++    <section
++      className="border-b border-border/60 px-8 py-8"
++      aria-label="Lectura del analista"
++    >
++      <Panel
++        title="Lectura del analista (IA)"
++        titleHint="Asignado por IA"
++        subtitle="análisis conductual"
++      >
++        {hasNarrativa && <Titular text={pulso!.narrativa} />}
++        {hasRasgos && (
++          <div className="flex flex-col gap-2">
++            <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/70">
++              Rasgos (IA)
++            </p>
++            <div className="flex flex-wrap gap-2">
++              {pulso!.rasgosIA!.map((rasgo, i) => (
++                <RasgoBadge key={i} label={rasgo} />
++              ))}
++            </div>
++          </div>
++        )}
++      </Panel>
++    </section>
++  );
++}
+diff --git a/src/modules/clientes/components/ficha/RasgoBadge.tsx b/src/modules/clientes/components/ficha/RasgoBadge.tsx
+new file mode 100644
+index 0000000..dd86163
+--- /dev/null
++++ b/src/modules/clientes/components/ficha/RasgoBadge.tsx
+@@ -0,0 +1,30 @@
++import React from "react";
++
++interface ColorConfig {
++  bg: string;
++  text: string;
++  border: string;
++  dot: string;
++}
++
++const aiAccent: ColorConfig = {
++  bg: "bg-indigo-500/10",
++  text: "text-indigo-600",
++  border: "border-indigo-500/25",
++  dot: "bg-indigo-500",
++};
++
++interface Props {
++  label: string;
++}
++
++export const RasgoBadge: React.FC<Props> = ({ label }) => {
++  return (
++    <span
++      className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border ${aiAccent.bg} ${aiAccent.text} ${aiAccent.border}`}
++    >
++      <span className={`w-1.5 h-1.5 rounded-full ${aiAccent.dot}`} />
++      {label}
++    </span>
++  );
++};
+diff --git a/src/modules/clientes/components/ficha/lib/Panel.tsx b/src/modules/clientes/components/ficha/lib/Panel.tsx
+new file mode 100644
+index 0000000..6d4e93f
+--- /dev/null
++++ b/src/modules/clientes/components/ficha/lib/Panel.tsx
+@@ -0,0 +1,37 @@
++import { InfoHint } from "./InfoHint";
++
++export function Titular({ text }: { text?: string }) {
++  if (!text) return null;
++  return (
++    <p className="font-serif text-[13px] leading-snug text-foreground/80">
++      {text}
++    </p>
++  );
++}
++
++export function Panel({
++  title,
++  titleHint,
++  subtitle,
++  children,
++}: {
++  title: string;
++  titleHint?: string;
++  subtitle: string;
++  children: React.ReactNode;
++}) {
++  return (
++    <section className="flex flex-col gap-4 rounded-md border border-border/60 px-5 py-5">
++      <div>
++        <h4 className="flex items-center gap-1 font-serif text-sm font-normal text-foreground">
++          {title}
++          {titleHint && <InfoHint text={titleHint} label={title} />}
++        </h4>
++        <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/70">
++          {subtitle}
++        </p>
++      </div>
++      {children}
++    </section>
++  );
++}
+diff --git a/src/modules/clientes/domain/entities/FichaCliente.ts b/src/modules/clientes/domain/entities/FichaCliente.ts
+index 265c50d..aeff090 100644
+--- a/src/modules/clientes/domain/entities/FichaCliente.ts
++++ b/src/modules/clientes/domain/entities/FichaCliente.ts
+@@ -73,20 +73,22 @@ export type Pulso = {
+   readonly scoreRecompra?: number;          // 0–100, higher = more likely
+   readonly recompraDrivers?: readonly string[]; // up to 3 Spanish propensity reasons
+   // Customer Lifetime Value — undefined when no aplica; decimal as string
+   readonly clv?: string;
+   readonly bandaClv?: string;               // ALTO | MEDIO | BAJO
+   // Razones / titulares — resúmenes siempre presentes; clvDrivers gated por banda
+   readonly clvDrivers?: readonly string[];
+   readonly creditoResumen?: string;
+   readonly recompraResumen?: string;
+   readonly clvResumen?: string;
++  readonly narrativa?: string;                // IA analyst reading
++  readonly rasgosIA?: readonly string[];      // IA-detected traits
+ };
+ 
+ // DireccionCliente holds the address components for a client.
+ export type DireccionCliente = {
+   readonly calle: string;
+   readonly colonia: string;
+   readonly poblacion: string;
+   readonly estado: string;
+ };
+ 
+diff --git a/src/modules/clientes/infrastructure/http/dtos.ts b/src/modules/clientes/infrastructure/http/dtos.ts
+index b9b43fd..7f48681 100644
+--- a/src/modules/clientes/infrastructure/http/dtos.ts
++++ b/src/modules/clientes/infrastructure/http/dtos.ts
+@@ -116,20 +116,22 @@ export type PulsoDTO = {
+   score_recompra: number;     // 0–100, higher = more likely; 0 when no aplica
+   recompra_drivers: string[]; // up to 3 Spanish propensity reason strings; [] when no aplica
+   // Customer Lifetime Value
+   clv: string;                // decimal as string; "" when no aplica
+   banda_clv: string;          // ALTO | MEDIO | BAJO; "" when no aplica
+   // Razones / titulares de los scores (Fase 1)
+   clv_drivers: string[];      // quantified CLV drivers; [] when no aplica
+   credito_resumen: string;    // titular crédito (always present)
+   recompra_resumen: string;   // titular recompra (always present)
+   clv_resumen: string;        // titular CLV (always present)
++  narrativa: string;       // IA analyst reading (Spanish); "" when LLM off
++  rasgos_ia: string[];     // IA-detected behavioral traits; [] when none
+ };
+ 
+ export type UbicacionDTO = {
+   lat: number;
+   lng: number;
+   disponible: boolean;
+ };
+ 
+ export type FichaDTO = {
+   cliente_id: number;
+diff --git a/src/modules/clientes/infrastructure/mappers/dtoToFichaCliente.test.ts b/src/modules/clientes/infrastructure/mappers/dtoToFichaCliente.test.ts
+index d588136..10a8f06 100644
+--- a/src/modules/clientes/infrastructure/mappers/dtoToFichaCliente.test.ts
++++ b/src/modules/clientes/infrastructure/mappers/dtoToFichaCliente.test.ts
+@@ -79,20 +79,22 @@ function buildValidDTO(overrides: Partial<FichaDTO> = {}): FichaDTO {
+       credito_drivers: ["Historial limpio de pagos"],
+       banda_recompra: "ALTA",
+       score_recompra: 78,
+       recompra_drivers: ["Alta frecuencia de compra"],
+       clv: "8204.83",
+       banda_clv: "ALTO",
+       clv_drivers: ["recompra recurrente esperada", "ticket $9,483"],
+       credito_resumen: "Buen pagador: al corriente.",
+       recompra_resumen: "Muy probable que recompre — compró este mes.",
+       clv_resumen: "Valor estimado $8,205 en 24m por su recompra y ticket de $9,483.",
++      narrativa: "",
++      rasgos_ia: [],
+     },
+     ubicacion: {
+       lat: 19.4326,
+       lng: -99.1332,
+       disponible: true,
+     },
+     ...overrides,
+   };
+ }
+ 
+@@ -367,17 +369,39 @@ describe("dtoToFichaCliente", () => {
+   // ── Titulares y drivers cuantificados (Fase 1) ───────────────────────────────
+ 
+   it("maps clv_drivers, credito_resumen, recompra_resumen and clv_resumen from pulso DTO", () => {
+     const ficha = dtoToFichaCliente(buildValidDTO());
+     const p = ficha.pulso!;
+     expect(p.clvDrivers).toEqual(["recompra recurrente esperada", "ticket $9,483"]);
+     expect(p.creditoResumen).toBe("Buen pagador: al corriente.");
+     expect(p.recompraResumen).toBe("Muy probable que recompre — compró este mes.");
+     expect(p.clvResumen).toBe("Valor estimado $8,205 en 24m por su recompra y ticket de $9,483.");
+   });
++
++  // ── Narrativa y rasgos IA ────────────────────────────────────────────────────
++
++  it("maps narrativa and rasgos_ia from pulso DTO when populated", () => {
++    const dto = buildValidDTO();
++    dto.pulso!.narrativa = "Cliente con potencial moderado. Últimamente activo tras período dormido.";
++    dto.pulso!.rasgos_ia = ["Reactivación reciente", "Patrón de compra estable"];
++    const ficha = dtoToFichaCliente(dto);
++    const p = ficha.pulso!;
++    expect(p.narrativa).toBe("Cliente con potencial moderado. Últimamente activo tras período dormido.");
++    expect(p.rasgosIA).toEqual(["Reactivación reciente", "Patrón de compra estable"]);
++  });
++
++  it("maps narrativa to undefined and rasgosIA to undefined when both empty", () => {
++    const dto = buildValidDTO();
++    dto.pulso!.narrativa = "";
++    dto.pulso!.rasgos_ia = [];
++    const ficha = dtoToFichaCliente(dto);
++    const p = ficha.pulso!;
++    expect(p.narrativa).toBeUndefined();
++    expect(p.rasgosIA).toBeUndefined();
++  });
+ });
+ 
+ // ── Helpers ──────────────────────────────────────────────────────────────────
+ 
+ function pulso(ficha: ReturnType<typeof dtoToFichaCliente>) {
+   return ficha.pulso!;
+ }
+diff --git a/src/modules/clientes/infrastructure/mappers/dtoToFichaCliente.ts b/src/modules/clientes/infrastructure/mappers/dtoToFichaCliente.ts
+index 9b6d9d0..46b0736 100644
+--- a/src/modules/clientes/infrastructure/mappers/dtoToFichaCliente.ts
++++ b/src/modules/clientes/infrastructure/mappers/dtoToFichaCliente.ts
+@@ -73,20 +73,22 @@ function mapPulso(dto: PulsoDTO): Pulso {
+     bandaRecompra: dto.banda_recompra || undefined,
+     scoreRecompra: dto.banda_recompra ? dto.score_recompra : undefined,
+     recompraDrivers: dto.banda_recompra ? (dto.recompra_drivers ?? []) : undefined,
+     // CLV — only present when clv is non-empty
+     clv: dto.clv || undefined,
+     bandaClv: dto.banda_clv || undefined,
+     clvDrivers: dto.banda_clv ? (dto.clv_drivers ?? []) : undefined,
+     creditoResumen: dto.credito_resumen,
+     recompraResumen: dto.recompra_resumen,
+     clvResumen: dto.clv_resumen,
++    narrativa: dto.narrativa || undefined,
++    rasgosIA: dto.rasgos_ia && dto.rasgos_ia.length > 0 ? dto.rasgos_ia : undefined,
+   };
+ }
+ 
+ export function dtoToFichaCliente(dto: FichaDTO): FichaCliente {
+   const direccion: DireccionCliente = {
+     calle: dto.direccion.calle,
+     colonia: dto.direccion.colonia,
+     poblacion: dto.direccion.poblacion,
+     estado: dto.direccion.estado,
+   };
+diff --git a/src/test/msw/handlers/clientes.ts b/src/test/msw/handlers/clientes.ts
+index 9382824..844243e 100644
+--- a/src/test/msw/handlers/clientes.ts
++++ b/src/test/msw/handlers/clientes.ts
+@@ -120,20 +120,22 @@ const DEFAULT_FICHA: FichaDTO = {
+     credito_drivers: ["Algunos retrasos recientes"],
+     banda_recompra: "ALTA",
+     score_recompra: 76,
+     recompra_drivers: ["Alta frecuencia de compra"],
+     clv: "9200.00",
+     banda_clv: "ALTO",
+     clv_drivers: ["recompra recurrente esperada", "ticket $17,142"],
+     credito_resumen: "Algunos retrasos recientes — monitorear.",
+     recompra_resumen: "Muy probable que recompre — alta frecuencia.",
+     clv_resumen: "Valor estimado $9,200 en 24m por su recompra y ticket.",
++    narrativa: "",
++    rasgos_ia: [],
+   },
+   ubicacion: {
+     lat: 19.4326,
+     lng: -99.1332,
+     disponible: true,
+   },
+ };
+ 
+ const DEFAULT_VENTAS: ListResponseDTO<VentaListItemDTO> = {
+   items: [

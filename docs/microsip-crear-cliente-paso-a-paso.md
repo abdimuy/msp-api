@@ -5,11 +5,11 @@
 > `CLAVES_CLIENTES` + `LIBRES_CLIENTES`).
 >
 > **Verificado tres veces**:
-> 1. Captura del flujo del GUI Microsip para URIEL ISAI CORTERO GONZALEZ
->    (`CLIENTE_ID=3083038`) y ALDRICH ABDIEL CORTERO GONZALEZ (`CLIENTE_ID=3083041`)
+> 1. Captura del flujo del GUI Microsip para GERMAN ULISES BARRAGAN SOTO
+>    (`CLIENTE_ID=3300000`) y OSVALDO EMILIO BARRAGAN SOTO (`CLIENTE_ID=3300003`)
 >    vía `fbtracemgr`.
 > 2. **Cliente real creado con éxito desde msp-api**: "PRUEBA AGENTE GO 20260602"
->    (`CLIENTE_ID=15239220`, `CLAVE_CLIENTE=0044523`). Aparece y abre
+>    (`CLIENTE_ID=15239220`, `CLAVE_CLIENTE=0044823`). Aparece y abre
 >    correctamente en el GUI Microsip CXC con zona, cobrador y vendedor visibles.
 > 3. Schema validado contra `RDB$RELATION_FIELDS` en `DESARROLLO.FDB`.
 >
@@ -123,7 +123,7 @@ Pero los nombres siguen una **convención por ruta**:
 
 ```
 ZONA:      "R/25"
-COBRADOR:  "RUTA 25 - NOE CORTERO"   (un cobrador por ruta)
+COBRADOR:  "RUTA 25 - ISMAEL DURAN"   (un cobrador por ruta)
 VENDEDOR:  "RUTA25"                   (un vendedor por ruta, Microsip)
 ```
 
@@ -170,8 +170,8 @@ coinciden por nombre de ruta.
 
 ## La `CLAVE_CLIENTE`
 
-Es un identificador alterno tipo `0044521` (7 dígitos zero-padded). **Es
-incremental** — verificado: las tres altas usaron `0044521 → 0044522 → 0044523`
+Es un identificador alterno tipo `0044821` (7 dígitos zero-padded). **Es
+incremental** — verificado: las tres altas usaron `0044821 → 0044822 → 0044823`
 (GUI, GUI, agente). No hay generator Firebird visible (probablemente el GUI
 calcula `MAX(CAST(CLAVE_CLIENTE AS INTEGER)) + 1` en una conexión separada
 antes del INSERT).
@@ -192,8 +192,8 @@ alfanuméricas pero las "principales" son siempre numéricas.)
 
 Vienen de un **generador compartido** — `ID_DOCTOS`, el mismo que se usa para
 `DOCTOS_PV.DOCTO_PV_ID`, `DOCTOS_CC.DOCTO_CC_ID`, etc. Salto entre dos altas
-GUI consecutivas: `3083038 → 3083041`. Salto al alta del agente:
-`3083041 → 15239220` (un mes de tráfico de ventas entre medias). **Esperar
+GUI consecutivas: `3300000 → 3300003`. Salto al alta del agente:
+`3300003 → 15239220` (un mes de tráfico de ventas entre medias). **Esperar
 gaps de muchos miles** entre altas si hay otra actividad.
 
 ```sql
@@ -209,10 +209,10 @@ SELECT GEN_ID(ID_DOCTOS, 1) FROM RDB$DATABASE  -- next DIR_CLI_ID
 
 ### `CLIENTES` (28 columnas en el INSERT del GUI)
 
-| Columna | Tipo | URIEL | ALDRICH | NOT NULL sin default? | Notas |
+| Columna | Tipo | GERMAN | OSVALDO | NOT NULL sin default? | Notas |
 |---|---|---|---|---|---|
-| `CLIENTE_ID` | integer | `3083038` | `3083041` | ✅ | Generator `ID_DOCTOS` |
-| `NOMBRE` | varchar(200) | "URIEL …" | "ALDRICH …" | ✅ | Único por convención del GUI (warning, no UNIQUE) |
+| `CLIENTE_ID` | integer | `3300000` | `3300003` | ✅ | Generator `ID_DOCTOS` |
+| `NOMBRE` | varchar(200) | "GERMAN …" | "OSVALDO …" | ✅ | Único por convención del GUI (warning, no UNIQUE) |
 | `CONTACTO1`, `CONTACTO2` | varchar(50) | NULL | NULL | | No usados en showroom |
 | `ESTATUS` | varchar(1) | `'A'` | `'A'` | (default `'A'`) | Dominio real: `CHECK_432` → `ESTATUS IN ('A','C','V','B')`. **No existe `'S'` (suspendido)** en esta base. `A`=activo (con saldo vigente), `B`=baja/bloqueado (63% de la base), `V`=cliente real sin saldo vigente (liquidado/inactivo, con historial de ventas; 14%), `C`=cancelado (0.2%). Ver [`inteligencia-cliente-diccionario-datos.md`](./research/inteligencia-cliente-diccionario-datos.md) |
 | `FECHA_SUSP` | date | NULL | NULL | | Se puebla 100% en `B`/`C`/`V`; en `A` solo ~53% — son ex-suspendidos **reactivados** (Microsip no limpia `FECHA_SUSP` al reactivar). Ver [`microsip-reactivar-cliente.md`](./microsip-reactivar-cliente.md) |
@@ -239,17 +239,17 @@ SELECT GEN_ID(ID_DOCTOS, 1) FROM RDB$DATABASE  -- next DIR_CLI_ID
 
 ### `DIRS_CLIENTES` (27 columnas)
 
-| Columna | Tipo | URIEL | ALDRICH | Notas |
+| Columna | Tipo | GERMAN | OSVALDO | Notas |
 |---|---|---|---|---|
-| `DIR_CLI_ID` | integer | `3083040` | `3083043` | Generator `ID_DOCTOS` |
-| `CLIENTE_ID` | integer | `3083038` | `3083041` | FK al cliente |
+| `DIR_CLI_ID` | integer | `3300002` | `3300005` | Generator `ID_DOCTOS` |
+| `CLIENTE_ID` | integer | `3300000` | `3300003` | FK al cliente |
 | `NOMBRE_CONSIG` | varchar(200) | "Dirección principal" | "Dirección principal" | Hardcoded |
-| `CALLE` | varchar(430) | "VICENTE GUERRERO 12\nSAN PEDRO …" | idem | Composición: `NOMBRE_CALLE` + " " + `NUM_EXT` + "\n" + `COLONIA` + ", " + `POBLACION` |
+| `CALLE` | varchar(430) | "FRANCISCO SARABIA 47\nSAN LORENZO …" | idem | Composición: `NOMBRE_CALLE` + " " + `NUM_EXT` + "\n" + `COLONIA` + ", " + `POBLACION` |
 | `CIUDAD_ID` | integer | `338` | `338` | Catálogo |
 | `ESTADO_ID` | integer | `337` | `337` | Catálogo |
-| `CODIGO_POSTAL` | varchar(10) | NULL | `"74750"` | Opcional |
+| `CODIGO_POSTAL` | varchar(10) | NULL | `"75770"` | Opcional |
 | `PAIS_ID` | integer | `336` | `336` | México |
-| `TELEFONO1` | varchar(35) | NULL | `"2381863330"` | Opcional, del snapshot del cliente |
+| `TELEFONO1` | varchar(35) | NULL | `"2385550142"` | Opcional, del snapshot del cliente |
 | `TELEFONO2`, `FAX` | varchar(35) | NULL | NULL | No usados |
 | `EMAIL` | varchar(200) | NULL | NULL | No usado en showroom |
 | `RFC_CURP` | varchar(18) | NULL | NULL | **No requerido** — venta a "público en general" |
@@ -260,27 +260,27 @@ SELECT GEN_ID(ID_DOCTOS, 1) FROM RDB$DATABASE  -- next DIR_CLI_ID
 | `ES_DIR_PPAL` | varchar(1) | `'S'` | `'S'` | Hardcode S (es la única dir) |
 | `USAR_PARA_ENVIOS` | varchar(1) | `'S'` | `'S'` | Hardcode S |
 | `USAR_PARA_FACTURAR` | varchar(1) | `'S'` | `'S'` | Hardcode S |
-| `NOMBRE_CALLE` | varchar(100) | "VICENTE GUERRERO" | idem | Calle sin número |
-| `NUM_EXTERIOR` | varchar(10) | `"12"` | `"12"` | |
+| `NOMBRE_CALLE` | varchar(100) | "FRANCISCO SARABIA" | idem | Calle sin número |
+| `NUM_EXTERIOR` | varchar(10) | `"47"` | `"47"` | |
 | `NUM_INTERIOR` | varchar(10) | NULL | NULL | Opcional |
-| `COLONIA` | varchar(100) | "SAN PEDRO ACOQUIACO" | idem | |
+| `COLONIA` | varchar(100) | "SAN LORENZO TEOTIPILCO" | idem | |
 | `POBLACION` | varchar(100) | "TEHUACAN" | idem | |
 | `REFERENCIA` | varchar(100) | NULL | NULL | Opcional — campo distinto al `REFERENCIA` de `LIBRES_CLIENTES` |
 
 ### `CLAVES_CLIENTES` (4 columnas)
 
-| Columna | Tipo | URIEL | ALDRICH | Notas |
+| Columna | Tipo | GERMAN | OSVALDO | Notas |
 |---|---|---|---|---|
 | `CLAVE_CLIENTE_ID` | integer | `-1` | `-1` | **Siempre −1** — trigger `CLAVES_CLIENTES_BEFINS` asigna el valor real |
-| `CLAVE_CLIENTE` | varchar(20) | `"0044521"` | `"0044522"` | Incremental, 7 dígitos padded |
-| `CLIENTE_ID` | integer | `3083038` | `3083041` | FK |
+| `CLAVE_CLIENTE` | varchar(20) | `"0044821"` | `"0044822"` | Incremental, 7 dígitos padded |
+| `CLIENTE_ID` | integer | `3300000` | `3300003` | FK |
 | `ROL_CLAVE_CLI_ID` | integer | `2` | `2` | Rol "principal" |
 
 ### `LIBRES_CLIENTES` (15 columnas — tabla custom Mueblera)
 
-| Columna | Tipo | URIEL | ALDRICH | Notas |
+| Columna | Tipo | GERMAN | OSVALDO | Notas |
 |---|---|---|---|---|
-| `CLIENTE_ID` | integer | `3083038` | `3083041` | PK + FK |
+| `CLIENTE_ID` | integer | `3300000` | `3300003` | PK + FK |
 | `PASSPED` | varchar(99) | NULL | NULL | No usado |
 | `CELULAR` | varchar(99) | NULL | NULL | El teléfono va en `DIRS_CLIENTES.TELEFONO1` |
 | `SENDPED`, `DIAS_VISITA`, `DIAS_COBRANZA` | varchar(99) | NULL | NULL | No usados |
@@ -288,7 +288,7 @@ SELECT GEN_ID(ID_DOCTOS, 1) FROM RDB$DATABASE  -- next DIR_CLI_ID
 | `QR`, `SUSPENSION` | varchar(99) | NULL | NULL | No usados |
 | `COMPROBANTE_DE_DOMICILIO` | integer | `2992` | `2992` | Catálogo Mueblera, default observado |
 | `IDENTIFICACION_OFICIAL` | integer | `6597` | `6598` | Catálogo Mueblera (INE/pasaporte/etc.) |
-| `REFERENCIA` | varchar(99) | NULL | `"CASA COLOR AZUL, 2 PISOS"` | Texto libre — referencia de ubicación |
+| `REFERENCIA` | varchar(99) | NULL | `"PORTON BLANCO, 2 PISOS"` | Texto libre — referencia de ubicación |
 | `U_LATITUD`, `U_LONGITUD` | varchar(99) | NULL | NULL | Opcionales — del GPS de la venta |
 | `LOCALIDAD` | integer | `-1` | `793694` | Catálogo; `-1` = sin localidad |
 
@@ -332,7 +332,7 @@ quemados no se devuelven), pero ese hueco numérico es inocuo.
 ## SQL que ya probamos (y funcionó)
 
 Validado contra `DESARROLLO.FDB` el 2026-06-02. Creó al cliente
-`CLIENTE_ID=15239220, CLAVE_CLIENTE=0044523` que aparece correctamente en
+`CLIENTE_ID=15239220, CLAVE_CLIENTE=0044823` que aparece correctamente en
 Microsip GUI:
 
 ```sql
@@ -392,7 +392,7 @@ COMMIT;
 Notas del experimento:
 - El INSERT a `CLIENTES` omitió `CAMPOS_ADDENDA` (lo dejamos NULL) y `NOTAS`
   (NULL). El cliente abre correctamente en Microsip GUI sin esos campos.
-- El trigger `CLAVES_CLIENTES_BEFINS` asignó `CLAVE_CLIENTE_ID = 3083044`
+- El trigger `CLAVES_CLIENTES_BEFINS` asignó `CLAVE_CLIENTE_ID = 3300006`
   (substituyendo el `-1` que mandamos).
 - Verificado en GUI: la zona, cobrador, vendedor, dirección y teléfono se
   ven correctamente. El cliente se puede editar y guardar como cualquier otro.

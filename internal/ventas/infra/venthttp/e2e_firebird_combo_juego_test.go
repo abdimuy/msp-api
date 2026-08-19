@@ -257,6 +257,9 @@ func TestE2E_ComboJuego_FullCycle_WithResolver(t *testing.T) {
 
 		// zona 21563 is testZonaID — MSP_CFG_ZONA_CAJA row used in other E2E tests.
 		const e2eZonaID = 21563
+
+		// El cliente se siembra: el artefacto de pruebas ya no trae padrón.
+		clienteID := seedClienteConClave(ctx, t, pool, "COMBO JUEGO E2E")
 		comboID := uuid.NewString()
 
 		// comboQty=2, c1 per-juego=1, c2 per-juego=2 → discharge: c1+=2, c2+=4
@@ -267,7 +270,7 @@ func TestE2E_ComboJuego_FullCycle_WithResolver(t *testing.T) {
 		body := venthttp.CrearVentaBody{
 			ID: uuid.NewString(),
 			Cliente: venthttp.ClienteSnapshotDTO{
-				ClienteID: intPtr(11486), // testClienteID
+				ClienteID: &clienteID,
 				Nombre:    "García Morales Beatriz",
 			},
 			Direccion: venthttp.DireccionDTO{

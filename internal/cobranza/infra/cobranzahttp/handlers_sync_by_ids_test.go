@@ -22,6 +22,7 @@ import (
 
 	"github.com/abdimuy/msp-api/internal/auth"
 	authdomain "github.com/abdimuy/msp-api/internal/auth/domain"
+	cobranzaapp "github.com/abdimuy/msp-api/internal/cobranza/app"
 	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
 	"github.com/abdimuy/msp-api/internal/cobranza/domain"
 	"github.com/abdimuy/msp-api/internal/cobranza/infra/cobranzahttp"
@@ -45,6 +46,7 @@ type fakePagosByIDsRepo struct {
 	err        error
 	lastIDs    []int
 	lastZonaID int
+	lastDesde  time.Time
 }
 
 func (f *fakePagosByIDsRepo) PorVenta(_ context.Context, _ int) ([]domain.Pago, error) {
@@ -63,9 +65,10 @@ func (f *fakePagosByIDsRepo) SyncPorZona(_ context.Context, _ int, _ time.Time, 
 	return outbound.SyncPage[domain.Pago]{}, nil
 }
 
-func (f *fakePagosByIDsRepo) ByIDs(_ context.Context, zonaID int, ids []int) ([]domain.Pago, error) {
+func (f *fakePagosByIDsRepo) ByIDs(_ context.Context, zonaID int, ids []int, desde time.Time) ([]domain.Pago, error) {
 	f.lastZonaID = zonaID
 	f.lastIDs = ids
+	f.lastDesde = desde
 	return f.rows, f.err
 }
 
@@ -76,15 +79,17 @@ type fakeVentasByIDsRepo struct {
 	err        error
 	lastIDs    []int
 	lastZonaID int
+	lastDesde  time.Time
 }
 
 func (f *fakeVentasByIDsRepo) SyncPorZona(_ context.Context, _ int, _ time.Time, _, _ int, _ time.Time) (outbound.SyncPage[domain.Venta], error) {
 	return outbound.SyncPage[domain.Venta]{}, nil
 }
 
-func (f *fakeVentasByIDsRepo) ByIDs(_ context.Context, zonaID int, ids []int) ([]domain.Venta, error) {
+func (f *fakeVentasByIDsRepo) ByIDs(_ context.Context, zonaID int, ids []int, desde time.Time) ([]domain.Venta, error) {
 	f.lastZonaID = zonaID
 	f.lastIDs = ids
+	f.lastDesde = desde
 	return f.rows, f.err
 }
 
@@ -124,7 +129,7 @@ func byIDsSaldosOnlyUser() auth.CurrentUser {
 func mountByIDsRouter(cu auth.CurrentUser, pagos outbound.PagosRepo, ventas outbound.VentasRepo) http.Handler {
 	r := chi.NewRouter()
 	r.Use(planter(cu))
-	cobranzahttp.MountReadRouter(r, nil, eventbus.New(), config.Cobranza{}, slog.Default(), pagos, ventas)
+	cobranzahttp.MountReadRouter(r, nil, eventbus.New(), config.Cobranza{}, slog.Default(), pagos, ventas, outbound.ProductionClock{})
 	return r
 }
 
@@ -497,4 +502,60 @@ func TestProperty_ByIDs_ResponseSubsetOfRequest(t *testing.T) {
 			}
 		}
 	})
+}
+
+// ─── ventana `desde` ──────────────────────────────────────────────────────────
+
+// TestByIDs_AplicaLaVentanaPorDefecto fija que by-ids dejó de ser el canal sin
+// filtro. El handler no puede llamar al repo con una ventana vacía: si lo
+// hiciera, el teléfono se llevaría por aquí filas que ni /sync ni /ids
+// reconocen, y el reconciliador las borraría acto seguido — el parpadeo que
+// en campo se reporta como pago duplicado.
+func TestByIDs_AplicaLaVentanaPorDefecto(t *testing.T) {
+	t.Parallel()
+
+	pagosRepo := &fakePagosByIDsRepo{rows: []domain.Pago{makePago(1, 21552)}}
+	ventasRepo := &fakeVentasByIDsRepo{rows: []domain.Venta{makeVenta(1, 21552)}}
+	handler := mountByIDsRouter(byIDsUser(), pagosRepo, ventasRepo)
+
+	antes := time.Now()
+	for _, path := range []string{
+		"/sync/pagos/by-ids?zona_id=21552&ids=1",
+		"/sync/saldos/by-ids?zona_id=21552&ids=1",
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusOK, rec.Code, path)
+	}
+	despues := time.Now()
+
+	esperadaMin := antes.AddDate(0, 0, -cobranzaapp.DefaultVentanaDias).Add(-time.Second)
+	esperadaMax := despues.AddDate(0, 0, -cobranzaapp.DefaultVentanaDias).Add(time.Second)
+
+	for nombre, got := range map[string]time.Time{
+		"pagos":  pagosRepo.lastDesde,
+		"saldos": ventasRepo.lastDesde,
+	} {
+		assert.False(t, got.IsZero(), "%s/by-ids: la ventana no puede llegar vacía al repo", nombre)
+		assert.WithinRange(t, got, esperadaMin, esperadaMax,
+			"%s/by-ids: debe usar el default de servidor (now - %d días)", nombre, cobranzaapp.DefaultVentanaDias)
+	}
+}
+
+// TestByIDs_RespetaElDesdeExplicito comprueba la otra mitad: cuando el cliente
+// manda ?desde=, el handler lo pasa tal cual en vez de sustituirlo.
+func TestByIDs_RespetaElDesdeExplicito(t *testing.T) {
+	t.Parallel()
+
+	pagosRepo := &fakePagosByIDsRepo{rows: []domain.Pago{makePago(1, 21552)}}
+	handler := mountByIDsRouter(byIDsUser(), pagosRepo, &fakeVentasByIDsRepo{})
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/sync/pagos/by-ids?zona_id=21552&ids=1&desde=2026-06-01T00:00:00Z", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	esperada := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	assert.True(t, esperada.Equal(pagosRepo.lastDesde),
+		"el desde explícito debe llegar al repo sin cambios; got=%s", pagosRepo.lastDesde)
 }

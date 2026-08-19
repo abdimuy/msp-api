@@ -341,6 +341,12 @@ type Firebird struct {
 	PoolSize     int    `env:"FB_POOL_SIZE" envDefault:"10"`
 	WireCrypt    bool   `env:"FB_WIRE_CRYPT" envDefault:"true"`
 	WireCompress bool   `env:"FB_WIRE_COMPRESS" envDefault:"false"`
+	// StatementTimeout is the server-side ceiling applied to every connection
+	// via SET STATEMENT TIMEOUT. It is a guard against hung statements, not a
+	// per-request SLA: legitimate background work (the clientes reconcile)
+	// runs for minutes, so the default is deliberately generous. Set to 0 to
+	// disable the SET entirely.
+	StatementTimeout time.Duration `env:"FB_STATEMENT_TIMEOUT" envDefault:"10m"`
 }
 
 // DSN returns the connection string for the Firebird driver.

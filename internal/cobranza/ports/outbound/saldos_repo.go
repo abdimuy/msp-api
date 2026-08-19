@@ -47,8 +47,11 @@ type SaldosRepo interface {
 	// zona does not match are silently excluded (authorization filter, not 404).
 	// No watermark filtering — callers expect to see the IDs they asked for.
 	//
+	// desde aplica el mismo filtro de ventana que el resto de canales —
+	// ver la nota en PagosRepo.ByIDs.
+	//
 	// ids may contain duplicates; the result deduplicates by PK.
-	ByIDs(ctx context.Context, zonaID int, ids []int) ([]domain.Saldo, error)
+	ByIDs(ctx context.Context, zonaID int, ids []int, desde time.Time) ([]domain.Saldo, error)
 }
 
 // SaldosTombstoneCleaner physically deletes saldo rows marked as cancelled

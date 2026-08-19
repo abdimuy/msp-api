@@ -10,10 +10,10 @@ package clienteshttp_test
 import (
 	"context"
 	"os"
-	"strconv"
 	"testing"
 	"time"
 
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -21,13 +21,30 @@ import (
 	"github.com/abdimuy/msp-api/internal/clientes/infra/clientesfb"
 	"github.com/abdimuy/msp-api/internal/clientes/infra/clientespdf"
 	"github.com/abdimuy/msp-api/internal/platform/fbtestutil"
+	"github.com/abdimuy/msp-api/internal/platform/firebird"
+	"github.com/abdimuy/msp-api/internal/platform/microsipseed"
 )
 
-// TestReporteIntegration_MinervaLopez verifies that GenerarReporteCliente
-// correctly fetches all ventas and payment details for cliente 24037
-// (MINERVA LOPEZ MERINO, ~45 ventas) and that clientespdf.Render produces a
-// valid PDF from the assembled data. READ-ONLY.
-func TestReporteIntegration_MinervaLopez(t *testing.T) {
+// conceptoCobranza es el concepto de "Cobranza en ruta" del catálogo
+// CONCEPTOS_CC, que `gbak -skip_data` conserva. Se usa para saldar las ventas
+// sembradas; no es una fila de producción.
+const conceptoCobranza = 87327
+
+// TestReporteIntegration_ReporteCliente verifica que GenerarReporteCliente
+// arme el reporte completo —ventas, conteos y saldos— y que clientespdf.Render
+// produzca un PDF a partir de él.
+//
+// ANTES: la prueba se llamaba TestReporteIntegration_MinervaLopez y leía al
+// cliente de producción 24037, afirmando que tenía 4 ventas, 3 liquidadas y 1
+// activa. Esos números eran una FOTO de la base compartida: cualquier venta o
+// abono nuevo de esa señora rompía la prueba sin que nadie tocara código, y
+// contra la base reducida de 15 MB fallaba siempre porque sus movimientos son
+// justamente lo que `-skip_data` omite.
+//
+// AHORA la prueba siembra las cuatro ventas y decide cuáles quedan saldadas, así
+// que 4/3/1 dejan de ser observaciones y pasan a ser el contrato que se está
+// verificando.
+func TestReporteIntegration_ReporteCliente(t *testing.T) {
 	if os.Getenv("FB_DATABASE") == "" {
 		t.Skip("FB_DATABASE not set — apunta al dev DB de Microsip para correr tests de integración Firebird")
 	}
@@ -41,27 +58,42 @@ func TestReporteIntegration_MinervaLopez(t *testing.T) {
 
 	genFijo := time.Date(2026, 6, 20, 14, 30, 0, 0, time.UTC)
 
-	// Client can be overridden for manual visual review of other clients.
-	clienteID := 24037
-	if v := os.Getenv("REPORTE_CLIENTE_ID"); v != "" {
-		if n, perr := strconv.Atoi(v); perr == nil {
-			clienteID = n
-		}
-	}
-
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		q := firebird.GetQuerier(ctx, pool.DB)
+		microsipseed.RequiereConceptos(t, q, conceptoCobranza)
+
+		clienteID := microsipseed.Cliente(t, q, "REPORTE PDF PRUEBA")
+
+		const (
+			ventasSembradas = 4
+			liquidadas      = 3
+		)
+		total := decimal.NewFromInt(8800)
+		for i := range ventasSembradas {
+			venta := microsipseed.VentaCredito(t, q, clienteID, microsipseed.OpcionesVenta{
+				Fecha: time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i),
+				Total: total,
+			})
+			// Las primeras tres se saldan por completo; la cuarta queda con saldo.
+			abono := total
+			if i >= liquidadas {
+				abono = total.Div(decimal.NewFromInt(4)).Round(2)
+			}
+			microsipseed.AbonoAplicado(t, q, venta, microsipseed.OpcionesAbono{
+				ConceptoCCID: conceptoCobranza,
+				Importe:      abono,
+				Fecha:        venta.Fecha,
+			})
+		}
+
 		rep, err := svc.GenerarReporteCliente(ctx, clienteID, nil)
 		require.NoError(t, err, "error al generar el reporte del cliente")
 
 		t.Logf("cliente: %s, ventas: %d", rep.Cliente.Nombre, len(rep.Ventas))
-		if clienteID == 24037 {
-			// Solo ventas reales (TIPO_DOCTO='V'): 24037 tiene 4 (antes salían 45
-			// porque se contaban los documentos de cobranza 'P').
-			assert.Len(t, rep.Ventas, 4, "cliente 24037 debe tener 4 ventas reales")
-			assert.Equal(t, 4, rep.TotalVentas, "TotalVentas debe ser 4")
-			assert.Equal(t, 3, rep.VentasLiquidadas, "VentasLiquidadas debe ser 3")
-			assert.Equal(t, 1, rep.VentasActivas, "VentasActivas debe ser 1")
-		}
+		assert.Len(t, rep.Ventas, ventasSembradas, "el reporte debe traer las ventas sembradas")
+		assert.Equal(t, ventasSembradas, rep.TotalVentas, "TotalVentas")
+		assert.Equal(t, liquidadas, rep.VentasLiquidadas, "VentasLiquidadas — las saldadas por completo")
+		assert.Equal(t, ventasSembradas-liquidadas, rep.VentasActivas, "VentasActivas — la que conserva saldo")
 
 		pdf, err := clientespdf.Render(rep, genFijo, "Juan Pérez")
 		require.NoError(t, err, "error al renderizar el PDF")

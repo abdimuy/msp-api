@@ -30,6 +30,12 @@ type DireccionDTO struct {
 	Poblacion      string  `json:"poblacion"`
 	Ciudad         string  `json:"ciudad"`
 	ZonaClienteID  *int    `json:"zona_cliente_id,omitempty"`
+	// ZonaCliente is the display name of ZonaClienteID, resolved from
+	// Microsip's ZONAS_CLIENTES. Best-effort: absent when the venta carries
+	// no zona, when the id has no catalog row, or when the resolver is not
+	// wired — never an empty string, so the client can tell "unknown" from
+	// "named blank".
+	ZonaCliente *string `json:"zona_cliente,omitempty"`
 }
 
 // GPSDTO captures latitud/longitud as floats.
@@ -162,6 +168,8 @@ type VentaDTO struct {
 	ZonaMismatch           bool               `json:"zona_mismatch"                      doc:"true cuando la zona de la dirección de entrega difiere de la zona actual del cliente en Microsip"`
 	ZonaClienteMicrosipID  *int               `json:"zona_cliente_microsip_id,omitempty" doc:"Zona actual del cliente en Microsip; ausente cuando no hay cliente vinculado, zona nula, o cliente no encontrado"`
 	EstatusClienteMicrosip *string            `json:"estatus_cliente_microsip,omitempty" doc:"ESTATUS actual del cliente en Microsip (A/B/V/C); ausente cuando no hay cliente vinculado o no se encontró"`
+	FaseDesde              *string            `json:"fase_desde,omitempty"               doc:"Momento en que la venta entró a su fase actual (RFC3339 UTC). Se calcula con el evento de cambio de fase más reciente: creada, enviada a revisión, aprobada, regresada a borrador, aplicada o cancelada. Las ediciones NO lo mueven. Ausente cuando la venta no tiene ningún evento de fase registrado"`
+	FaseAlcanzada          *int               `json:"fase_alcanzada,omitempty"           minimum:"1" maximum:"4" doc:"Fase más alta que la venta alcanzó alguna vez: 1 borrador, 2 revisada, 3 aprobada, 4 aplicada. Se conserva aunque la venta se cancele o regrese a borrador, para que el avance logrado siga siendo visible. Ausente cuando la venta no tiene ningún evento de fase registrado"`
 }
 
 // ─── Request bodies ─────────────────────────────────────────────────────────

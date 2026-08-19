@@ -143,15 +143,13 @@ ORDER BY FECHA DESC`, zonaID, firebird.ToWallClock(desde))
 // SyncPorZona returns a page of pagos for incremental sync. See port doc.
 //
 // Filtro de saldo dinámico (ver queryPagoSyncPage):
-//   - cursor zero + desde zero: solo pagos de cargos con saldo activo.
-//   - cursor zero + desde set:  + pagos cuyo p.FECHA >= desde (incluye el
-//     pago final que saldó una venta).
-//   - cursor set:               sin filtro de saldo; los pagos de ventas
-//     recién saldadas viajan al cliente.
+//   - desde zero: solo pagos de cargos con saldo activo.
+//   - desde set:  + pagos de ventas cuyo s.FECHA_ULT_PAGO >= desde (incluye
+//     el pago final que saldó una venta y TODO su historial).
 //
-// El filtro de concepto IN (87327, 27969) — cobranza en ruta y abono
-// mostrador — se mantiene en todos los modos para excluir conceptos
-// internos del cache (155, 11, ...) que confundirían al cobrador.
+// El filtro de concepto IN (87327, 27969) se mantiene en todos los modos para
+// excluir conceptos internos del cache (155, 11, ...) que confundirían al
+// cobrador.
 //
 // Nota: tombstones (CANCELADO='S') NO se filtran en el sync — se incluyen
 // intencionalmente para que el cliente móvil reciba la señal de borrado y
@@ -328,6 +326,26 @@ LEFT JOIN FORMAS_COBRO_DOCTOS fcd
 // no debe ver (155, 11, 27968…). Se mantiene en todos los modos.
 const pagoConceptoFilter = `p.CONCEPTO_CC_ID IN (87327, 27969)`
 
+// pagoSaldoFilterConVentana es EL predicado de ventana que comparten los tres
+// canales del recurso pagos: el sync (queryPagoSyncPage), el inventario
+// (PagosRepo.Digest / ListIDs vía pagoDigestSaldoFilter) y ByIDs.
+//
+// El pago se ve si su VENTA se ve. Un pago no puede decidir por su cuenta si
+// sigue vigente: el que salda una venta la deja en SALDO = 0 y, con un filtro
+// por p.FECHA, se borra a sí mismo en cuanto sale de la ventana — y con él
+// todo el historial anterior de esa venta, cuyas FECHAs son aún más viejas.
+// El cobrador deja de ver el abono, cree que no se registró y vuelve a cobrar.
+// La legacy derivaba los pagos de las ventas ya filtradas
+// (`IMPORTES_DOCTOS_CC.DOCTO_CC_ACR_ID IN (ventasIds)`); esto es lo mismo
+// expresado como JOIN.
+//
+// Coste: s.FECHA_ULT_PAGO entra por IDX_MSP_SALDOS_ZONA_FUP
+// (ZONA_CLIENTE_ID, FECHA_ULT_PAGO), que ya existe desde la migración 000012.
+// Medido en el clon sobre la zona 21563: 0.285 s / 18,163 lecturas.
+//
+// Toma UN bind: `desde`.
+const pagoSaldoFilterConVentana = `(s.SALDO > 0 OR s.FECHA_ULT_PAGO >= ?)`
+
 // pagoSyncSpec parametriza el query de sync de pagos. desde acota el filtro
 // de saldo en TODAS las páginas (no solo la primera): el cliente debe
 // mandar el mismo `desde` en cada request para que las páginas 2+ no se
@@ -353,12 +371,12 @@ func queryPagoSyncPage(ctx context.Context, q firebird.Querier, spec pagoSyncSpe
 	upper := firebird.ToWallClock(spec.upperBound)
 	// Filtro de saldo dinámico según `desde` (independiente del cursor):
 	//   - desde zero: solo pagos de cargos con SALDO > 0.
-	//   - desde set:  + pagos con p.FECHA >= desde (incluye el pago final
-	//                 que saldó una venta dentro de la ventana del cobrador).
+	//   - desde set:  + pagos de ventas con FECHA_ULT_PAGO >= desde.
+	// Ver pagoSaldoFilterConVentana: el criterio es de la VENTA, no del pago.
 	saldoFilter := `s.SALDO > 0`
 	var statusArgs []any
 	if !spec.desde.IsZero() {
-		saldoFilter = `(s.SALDO > 0 OR p.FECHA >= ?)`
+		saldoFilter = pagoSaldoFilterConVentana
 		statusArgs = []any{firebird.ToWallClock(spec.desde)}
 	}
 	if spec.cursor.IsZero() {
@@ -400,16 +418,24 @@ ORDER BY p.UPDATED_AT, p.IMPTE_DOCTO_CC_ID`
 }
 
 // ByIDs returns the enriched Pago rows for the given primary keys, constrained
-// to ZONA_CLIENTE_ID = zonaID. Uses selectPagoColsP + pagoFromClause for
-// drift-free parity with SyncPorZona. No watermark filtering — the caller
-// (by-ids HTTP endpoint) already obtained these PKs from the SSE listener
-// which only publishes committed rows.
+// to ZONA_CLIENTE_ID = zonaID y a los MISMOS filtros que SyncPorZona (concepto
+// + ventana). Uses selectPagoColsP + pagoFromClause for drift-free parity with
+// SyncPorZona. No watermark filtering — the caller (by-ids HTTP endpoint)
+// already obtained these PKs from the SSE listener which only publishes
+// committed rows.
+//
+// Hasta este cambio el WHERE era solo zona + PK: cualquier fila del cache
+// salía por aquí aunque el sync y el inventario la excluyeran. Ese es el
+// canal por el que entraban al teléfono los pagos que el reconciliador
+// después borra como fantasmas — el parpadeo que en campo se reporta como
+// pago duplicado. Los tres canales responden ahora lo mismo para la misma
+// zona y el mismo `desde`.
 //
 // Duplicate IDs in the input are deduplicated before querying. Rows whose
 // PK is in ids but whose zona does not match are silently excluded.
 //
 //nolint:dupl // structurally mirrors VentasRepo.ByIDs; differs in column list + scanner + return type — abstraction not worth it
-func (r *PagosRepo) ByIDs(ctx context.Context, zonaID int, ids []int) ([]domain.Pago, error) {
+func (r *PagosRepo) ByIDs(ctx context.Context, zonaID int, ids []int, desde time.Time) ([]domain.Pago, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -433,10 +459,18 @@ func (r *PagosRepo) ByIDs(ctx context.Context, zonaID int, ids []int) ([]domain.
 		args = append(args, id)
 	}
 
+	saldoFilter := `s.SALDO > 0`
+	if !desde.IsZero() {
+		saldoFilter = pagoSaldoFilterConVentana
+		args = append(args, firebird.ToWallClock(desde))
+	}
+
 	query := `
 SELECT ` + selectPagoColsP + pagoFromClause + `
 WHERE p.ZONA_CLIENTE_ID = ?
-  AND p.IMPTE_DOCTO_CC_ID IN (` + strings.Join(placeholders, ",") + `)`
+  AND p.IMPTE_DOCTO_CC_ID IN (` + strings.Join(placeholders, ",") + `)
+  AND ` + pagoConceptoFilter + `
+  AND ` + saldoFilter
 
 	var result []domain.Pago
 	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {

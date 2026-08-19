@@ -20,9 +20,9 @@ var (
 
 // Digest streams pago PKs and UPDATED_AT under a snapshot transaction and
 // computes (count, xor, sum, max_updated_at) in Go. The query mirrors the
-// /sync filter: CONCEPTO_CC_ID IN (87327, 27969) and either s.SALDO > 0
-// (desde zero) or s.SALDO > 0 OR p.FECHA >= desde (desde set). This ensures
-// the digest is always comparable to what /sync would deliver.
+// /sync filter literalmente: CONCEPTO_CC_ID IN (87327, 27969) más
+// pagoDigestSaldoFilter, que devuelve la misma constante que usa el sync
+// (pagoSaldoFilterConVentana). Comparable por construcción, no por parecido.
 //
 // The firebirdsql driver does not provide a native XOR aggregate so we stream
 // the rows — at 50k rows that is roughly 800 kB over loopback, well within
@@ -111,13 +111,19 @@ ORDER BY p.IMPTE_DOCTO_CC_ID ASC`
 
 // pagoDigestSaldoFilter returns the saldo WHERE fragment and any extra bind
 // args for the digest/ids queries. When desde is zero it mirrors the legacy
-// sync filter (s.SALDO > 0 only). When desde is set it also includes pagos
-// whose p.FECHA >= desde — exactly the condition used by queryPagoSyncPage.
+// sync filter (s.SALDO > 0 only). When desde is set it applies
+// pagoSaldoFilterConVentana — literalmente la misma constante que
+// queryPagoSyncPage y que PagosRepo.ByIDs.
+//
+// Que sea la misma constante y no una copia es el punto: cuando este filtro
+// era `p.FECHA >= ?` y el sync entregaba otra cosa, el inventario declaraba
+// fantasma justo lo que el sync acababa de mandar y el teléfono entraba en un
+// ciclo de alta y baja de la misma fila.
 func pagoDigestSaldoFilter(desde time.Time) (string, []any) {
 	if desde.IsZero() {
 		return `s.SALDO > 0`, nil
 	}
-	return `(s.SALDO > 0 OR p.FECHA >= ?)`, []any{firebird.ToWallClock(desde)}
+	return pagoSaldoFilterConVentana, []any{firebird.ToWallClock(desde)}
 }
 
 // ─── SaldosRepo — Digest + ListIDs ────────────────────────────────────────────
@@ -201,22 +207,23 @@ ORDER BY DOCTO_CC_ID ASC`
 }
 
 // saldoDigestSaldoFilter returns the saldo WHERE fragment and any extra bind
-// args for the saldos digest/ids queries. When desde is zero it mirrors the
-// legacy sync filter (SALDO > 0 only). When desde is set it also includes
-// recently-paid saldos (SALDO <= 0 AND FECHA_ULT_PAGO >= desde).
-// saldoDigestSaldoFilter: SALDO > 0 estricto, igual que la API legacy.
+// args for the saldos digest/ids queries. desde zero mantiene el filtro
+// estricto (SALDO > 0); con desde entran además las saldadas cuya
+// FECHA_ULT_PAGO cae en la ventana.
 //
-// Antes tenia una segunda rama que conservaba las saldadas con FECHA_ULT_PAGO
-// dentro de la ventana del cobrador. Se quito por decision de negocio: la
-// legacy nunca las mostro (`... - M.TOTAL_IMPORTE - M.IMPTE_REST > 0`) y los
-// cobradores las leian como clientes de mas en su ruta. En la zona 34 eran 13
-// de 317.
-//
-// `desde` se conserva en la firma porque el llamador lo tiene y porque la
-// simetria con el sync importa: los dos filtros TIENEN que decir lo mismo o el
-// reconciler ve extras/phantoms donde no los hay.
-func saldoDigestSaldoFilter(_ time.Time) (string, []any) {
-	return `SALDO > 0`, nil
+// Es la contraparte sin alias —y sin la rama de cancelados, porque estas dos
+// consultas ya filtran CARGO_CANCELADO = 'N'— de
+// ventaStatusFilterConVentana, el predicado que aplica el sync de ventas. Los
+// dos TIENEN que decir lo mismo: el inventario es lo que el reconciliador usa
+// para decidir qué sobra en el teléfono, así que un inventario más estrecho
+// que el sync borra exactamente las ventas que el sync acaba de entregar
+// —las que se saldaron esta semana— y el cobrador las ve aparecer y
+// desaparecer.
+func saldoDigestSaldoFilter(desde time.Time) (string, []any) {
+	if desde.IsZero() {
+		return `SALDO > 0`, nil
+	}
+	return `(SALDO > 0 OR FECHA_ULT_PAGO >= ?)`, []any{firebird.ToWallClock(desde)}
 }
 
 // ─── computation helpers ──────────────────────────────────────────────────────

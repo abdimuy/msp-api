@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/abdimuy/msp-api/internal/ventas/domain"
+	"github.com/abdimuy/msp-api/internal/ventas/ports/outbound"
 )
 
 // moneyScale is the number of decimal places enforced for every monetary
@@ -28,12 +29,27 @@ const cantidadScale int32 = 4
 // updated_by / aprobacion.by / cancelacion.by). It may be nil — callers that
 // do not resolve names (edits, creación) pass nil and the *_nombre fields stay
 // empty, so the JSON encoder omits them.
-func toVentaDTO(v *domain.Venta, nombres map[uuid.UUID]string) VentaDTO {
+//
+// zonas maps Microsip zona ids to display names for direccion.zona_cliente.
+// Same contract as nombres: nil (or a miss) leaves the field absent.
+//
+// fases maps venta ids to what the event timeline says about their fase: the
+// moment each entered its current one (fase_desde) and the highest one each
+// ever reached (fase_alcanzada). Same contract again: a nil map or a venta
+// absent from it leaves BOTH fields out of the JSON — the desktop renders
+// "sin dato" and an empty ring rather than a wrong elapsed time or an
+// invented arc, which is the whole point of the fields.
+func toVentaDTO(
+	v *domain.Venta,
+	nombres map[uuid.UUID]string,
+	zonas map[int]string,
+	fases map[uuid.UUID]outbound.FaseDeVenta,
+) VentaDTO {
 	a := v.Audit()
 	dto := VentaDTO{
 		ID:                 v.ID().String(),
 		Cliente:            toClienteSnapshotDTO(v.ClienteID(), v.Cliente()),
-		Direccion:          toDireccionDTO(v.Direccion()),
+		Direccion:          toDireccionDTO(v.Direccion(), zonas),
 		GPS:                toGPSDTO(v.GPS()),
 		FechaVenta:         formatTime(v.FechaVenta()),
 		TipoVenta:          v.TipoVenta().String(),
@@ -60,6 +76,16 @@ func toVentaDTO(v *domain.Venta, nombres map[uuid.UUID]string) VentaDTO {
 		UpdatedBy:          a.UpdatedBy().String(),
 		UpdatedByNombre:    nombres[a.UpdatedBy()],
 	}
+	if fase, ok := fases[v.ID()]; ok {
+		dto.FaseDesde = formatTimePtr(&fase.Desde)
+		// Alcanzada == 0 means the timeline proves no fase (a lone
+		// venta.cancelada): omit rather than report a fase the venta cannot
+		// be shown to have reached.
+		if fase.Alcanzada > 0 {
+			alcanzada := fase.Alcanzada
+			dto.FaseAlcanzada = &alcanzada
+		}
+	}
 	return dto
 }
 
@@ -75,6 +101,28 @@ func ventaActorIDs(v *domain.Venta) []uuid.UUID {
 	}
 	if c := v.Cancelacion(); c != nil {
 		ids = append(ids, c.By())
+	}
+	return ids
+}
+
+// pageActorIDs collects the DISTINCT usuario ids referenced by every venta in
+// a listing page, so the handler resolves the whole page with a single
+// NombresDeUsuarios call instead of one per venta (the N+1 that would follow
+// from calling ventaActorIDs inside the projection loop).
+func pageActorIDs(ventas []*domain.Venta) []uuid.UUID {
+	ids := make([]uuid.UUID, 0, len(ventas)*2)
+	seen := make(map[uuid.UUID]struct{}, len(ventas)*2)
+	for _, v := range ventas {
+		if v == nil {
+			continue
+		}
+		for _, id := range ventaActorIDs(v) {
+			if _, dup := seen[id]; dup {
+				continue
+			}
+			seen[id] = struct{}{}
+			ids = append(ids, id)
+		}
 	}
 	return ids
 }
@@ -101,9 +149,12 @@ func toClienteSnapshotDTO(clienteID *int, c domain.ClienteSnapshot) ClienteSnaps
 	}
 }
 
-// toDireccionDTO projects the postal-address snapshot.
-func toDireccionDTO(d domain.Direccion) DireccionDTO {
-	return DireccionDTO{
+// toDireccionDTO projects the postal-address snapshot, decorating it with the
+// zona display name when zonas resolves the address' ZonaClienteID. An
+// unresolved id leaves ZonaCliente nil (absent from the JSON) rather than
+// setting an empty string.
+func toDireccionDTO(d domain.Direccion, zonas map[int]string) DireccionDTO {
+	dto := DireccionDTO{
 		Calle:          d.Calle(),
 		NumeroExterior: d.NumeroExterior(),
 		Colonia:        d.Colonia(),
@@ -111,6 +162,12 @@ func toDireccionDTO(d domain.Direccion) DireccionDTO {
 		Ciudad:         d.Ciudad(),
 		ZonaClienteID:  d.ZonaClienteID(),
 	}
+	if z := d.ZonaClienteID(); z != nil {
+		if nombre, ok := zonas[*z]; ok {
+			dto.ZonaCliente = &nombre
+		}
+	}
+	return dto
 }
 
 // toGPSDTO projects the GPS coordinates.

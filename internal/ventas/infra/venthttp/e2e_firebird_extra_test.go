@@ -1063,16 +1063,18 @@ func TestE2E_Firebird_IdempotencyKey_Aplicar_Replays(t *testing.T) {
 		// firebird_fk_violation. Mirrors the constants from
 		// e2e_firebird_aplicar_test.go in the ventfb_test package.
 		const (
-			aplicarClienteID  = 11486 // testClienteID
 			aplicarZonaID     = 21563 // testZonaID  (MSP_CFG_ZONA_CAJA row)
 			aplicarArticuloID = 378   // testArticuloID — TASA 0%, almacenable
 			aplicarAlmacenID  = 11058 // testAlmacenID — RUTA25 source
 			aplicarAlmDestID  = 11059 // destination warehouse
 		)
 
+		// El cliente se siembra: el artefacto de pruebas ya no trae padrón.
+		aplicarClienteID := seedClienteConClave(ctx, t, pool, "IDEMPOTENCIA APLICAR E2E")
+
 		body := validCreateBody()
 		body.Vendedores[0].UsuarioID = usuarioID.String()
-		body.Cliente.ClienteID = intPtr(aplicarClienteID)
+		body.Cliente.ClienteID = &aplicarClienteID
 		body.Direccion.ZonaClienteID = intPtr(aplicarZonaID)
 		body.Productos[0].ArticuloID = aplicarArticuloID
 		body.Productos[0].AlmacenOrigenID = intPtr(aplicarAlmacenID)

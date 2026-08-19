@@ -21,6 +21,7 @@ import (
 	authdomain "github.com/abdimuy/msp-api/internal/auth/domain"
 	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
 	"github.com/abdimuy/msp-api/internal/cobranza/infra/cobranzahttp"
+	"github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/config"
 )
 
@@ -56,7 +57,7 @@ func sseNopermUser() auth.CurrentUser {
 func buildSSERouter(bus *eventbus.Bus, sseCfg config.Cobranza, cu auth.CurrentUser) http.Handler {
 	r := chi.NewRouter()
 	r.Use(planter(cu))
-	cobranzahttp.MountReadRouter(r, nil, bus, sseCfg, slog.Default(), nil, nil)
+	cobranzahttp.MountReadRouter(r, nil, bus, sseCfg, slog.Default(), nil, nil, outbound.ProductionClock{})
 	return r
 }
 
@@ -158,7 +159,7 @@ func TestSSE_Unauthenticated_Returns401(t *testing.T) {
 	cfg := config.Cobranza{SSEEnabled: true, SSEPingEvery: 25 * time.Second}
 	// Build router WITHOUT planting a CurrentUser.
 	r := chi.NewRouter()
-	cobranzahttp.MountReadRouter(r, nil, bus, cfg, slog.Default(), nil, nil)
+	cobranzahttp.MountReadRouter(r, nil, bus, cfg, slog.Default(), nil, nil, outbound.ProductionClock{})
 
 	req := httptest.NewRequest(http.MethodGet, "/sync/pagos/zona/1/stream", nil)
 	rec := httptest.NewRecorder()

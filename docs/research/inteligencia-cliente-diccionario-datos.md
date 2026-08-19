@@ -615,7 +615,7 @@ Cualquier consulta de cobertura debe filtrar por `CLIENTE_ID` o usar un índice.
 
 ```sql
 -- Cobertura estimada (NO ejecutar como full scan):
-SELECT FIRST 1 CLAVE_CLIENTE FROM CLAVES_CLIENTES WHERE CLIENTE_ID = 3083038 ORDER BY CLAVE_CLIENTE_ID;
+SELECT FIRST 1 CLAVE_CLIENTE FROM CLAVES_CLIENTES WHERE CLIENTE_ID = 3300000 ORDER BY CLAVE_CLIENTE_ID;
 -- [PENDIENTE: confirmar con lock liberado]
 ```
 
@@ -629,7 +629,7 @@ Columnas relevantes para identidad (documentado en `microsip-crear-cliente-paso-
 | `CELULAR` | VARCHAR(99) | Alternativo — en práctica vacío; el teléfono va en `DIRS_CLIENTES.TELEFONO1` |
 | `COMPROBANTE_DE_DOMICILIO` | INTEGER | FK catálogo Mueblera; `2992`=default observado |
 | `IDENTIFICACION_OFICIAL` | INTEGER | FK catálogo Mueblera; `6597`/`6598`=INE/pasaporte |
-| `REFERENCIA` | VARCHAR(99) | Descripción de ubicación: "CASA COLOR AZUL, 2 PISOS" |
+| `REFERENCIA` | VARCHAR(99) | Descripción de ubicación: "PORTON BLANCO, 2 PISOS" |
 | `U_LATITUD` / `U_LONGITUD` | VARCHAR(99) | GPS opcional capturado en el alta |
 | `LOCALIDAD` | INTEGER | FK catálogo; `-1`=sin localidad |
 
@@ -1305,14 +1305,14 @@ Nomenclatura: `RUTA XX - NOMBRE COMPLETO`. Ejemplos representativos:
 
 | COBRADOR_ID | Nombre | OCULTO |
 |---|---|---|
-| 11294 | RUTA 01 - JUAN CARLOS CASTRO | N |
-| 11335 | RUTA 11 - PABLO VARGAS | N |
+| 11294 | RUTA 01 - HUGO ERNESTO SALINAS | N |
+| 11335 | RUTA 11 - BENJAMIN LOZANO | N |
 | 11499 | R/MSP_MATRIZ | N |
 | 11505 | R/MSP_ZOQUITLAN | N |
 | 23302 | MAYOREO | N |
-| 77486 | RUTA 36 - OSCAR ROQUE | N |
+| 77486 | RUTA 36 - HUMBERTO SEGURA | N |
 | 179183 | R/MSP_TEHUACAN | N |
-| 841525 | RUTA 39 - EMMANUEL MENDEZ | N |
+| 841525 | RUTA 39 - GILBERTO ARREOLA | N |
 
 **Uso en DOCTOS_CC (cobros concepto 87327):**
 
@@ -1325,11 +1325,11 @@ GROUP BY d.COBRADOR_ID, c.NOMBRE ORDER BY cnt DESC ROWS 1 TO 5;
 
 | Cobrador | Nombre | Cobros históricos |
 |---|---|---|
-| 11335 | RUTA 11 - PABLO VARGAS | 68,815 |
-| 11491 | RUTA 14 - MIGUEL ANGEL SUAREZ | 56,964 |
-| 77486 | RUTA 36 - OSCAR ROQUE | 56,335 |
-| 320087 | RUTA 38 - ALEXIS MARTINEZ | 55,943 |
-| 11494 | RUTA 17 - JUAN ROGELIO MARTINEZ | 54,814 |
+| 11335 | RUTA 11 - BENJAMIN LOZANO | 68,815 |
+| 11491 | RUTA 14 - RODRIGO ELIAS PONCE | 56,964 |
+| 77486 | RUTA 36 - HUMBERTO SEGURA | 56,335 |
+| 320087 | RUTA 38 - EFRAIN CARMONA | 55,943 |
+| 11494 | RUTA 17 - MARCOS ADRIAN VILLEGAS | 54,814 |
 
 Cobertura `COBRADOR_ID` en cobros 87327: **99.5%** poblado (null: 8,272 / 1,810,718).
 
@@ -1364,16 +1364,16 @@ WHERE r.ESTATUS = 'A' ORDER BY r.RUTA_ID ROWS 1 TO 5;
 | RUTA_ID | Nombre | Agente | COBRADOR_ID | VENDEDOR_ID |
 |---|---|---|---|---|
 | 87343 | R3 | PATRICIO DE LA LUZ | 11296 | 87340 |
-| 87642 | R16 | GERARDO GINES | 11493 | 87639 |
-| 99035 | R18 | RIGOBERTO LINARES | 11495 | 88259 |
-| 102312 | R25 | NOE CORTERO | 11502 | 88266 |
-| 104857 | R1 | JUAN CARLOS CASTRO | 11294 | 88240 |
+| 87642 | R16 | SAUL PIZARRO | 11493 | 87639 |
+| 99035 | R18 | TEODORO MACIAS | 11495 | 88259 |
+| 102312 | R25 | ISMAEL DURAN | 11502 | 88266 |
+| 104857 | R1 | HUGO ERNESTO SALINAS | 11294 | 88240 |
 
 ### 8.5 VENDEDORES
 
 **Columnas:** `VENDEDOR_ID` (INTEGER PK NOT NULL), `NOMBRE` (VARCHAR 50 NOT NULL), `POLITICA_COMIS_VEN_ID` (FK), `ES_PREDET`, `OCULTO` (NOT NULL), + auditoría.
 
-**Total:** 46 activos. Nomenclatura: `RUTA01`–`RUTA39` + especiales (`MAYOREO`, `RUTA_MSP_MATRIZ`, `TRABAJADORES MSP`, `RUTA_ABOGADO`, `OLIVER VAZQUEZ`). Los IDs de VENDEDORES (ej. 87340, 88240) son distintos de los IDs en `LIBRES_CARGOS_CC.VENDEDOR_1` (ej. 289817, 3944703).
+**Total:** 46 activos. Nomenclatura: `RUTA01`–`RUTA39` + especiales (`MAYOREO`, `RUTA_MSP_MATRIZ`, `TRABAJADORES MSP`, `RUTA_ABOGADO`, `ALFONSO TREJO`). Los IDs de VENDEDORES (ej. 87340, 88240) son distintos de los IDs en `LIBRES_CARGOS_CC.VENDEDOR_1` (ej. 289817, 3944703).
 
 ### 8.6 AGENTES — tabla puente de atribución
 
@@ -2280,7 +2280,7 @@ GROUP BY la.NOMBRE ORDER BY 3 DESC ROWS 10;
 
 ### Caveats reales que quedan
 
-1. **Cuentas de revendedor / ruta inflan la frecuencia.** Los líderes son personas reales pero operan como mayoristas/ruta (`12387` VICTORINO ENRIQUEZ: F=2,381, M=$32.7 M; `12440`: F=1,075). 109 clientes 150k+ concentran $128 M. Para RFM de cliente final conviene marcarlos/excluirlos (umbral p.ej. F>50 o M>150k).
+1. **Cuentas de revendedor / ruta inflan la frecuencia.** Los líderes son personas reales pero operan como mayoristas/ruta (`12387` FAUSTINO ZAMORA: F=2,381, M=$32.7 M; `12440`: F=1,075). 109 clientes 150k+ concentran $128 M. Para RFM de cliente final conviene marcarlos/excluirlos (umbral p.ej. F>50 o M>150k).
 2. **Separación enganche vs contado puro.** "Contado" aquí = venta sin línea 71. El monto financiado del crédito (forma 71, $733 M) ≠ `SUM(IMPORTE_NETO)` del crédito ($664.6 M); la diferencia incluye intereses/recargos del plan, no es comparable peso a peso con el contado.
 3. **No hay FK PV → CC.** El enlace al ledger de crédito es heurístico (`FOLIO + CLIENTE_ID + SISTEMA_ORIGEN`), validado 1:1 en muestra pero con ~3,022 cargos CC sin venta-crédito viva exacta (cancelaciones/ediciones).
 4. **Exclusión de cancelados/devoluciones.** Todo el análisis filtra `ESTATUS='N'` y `TIPO_DOCTO IN ('V','P')`. Cancelados (`C`) y devoluciones (`D`) se excluyen; las devoluciones parciales (`UNIDADES_DEV`) no se restan línea a línea (impacto menor en §5).
@@ -2303,10 +2303,10 @@ GROUP BY pv.CLIENTE_ID ORDER BY pv.CLIENTE_ID;
 
 | CLIENTE_ID | Cohorte | R_FULL (d) | **F_FULL** | M_FULL | **F_CRED_ONLY** | Eventos perdidos por RFM-crédito |
 |-----------:|---------|-----------:|-----------:|-------:|----------------:|---------------------------------:|
-| 11515 (LAURA A. SANCHEZ) | ambos | 2,520 | **12** | $16,255 | 3 | **9 (75 %)** |
-| 11749 (EMARIEL S. ANDRADE) | ambos | 2,380 | **12** | $12,293 | 2 | **10 (83 %)** |
+| 11515 (BEATRIZ M. GALINDO) | ambos | 2,520 | **12** | $16,255 | 3 | **9 (75 %)** |
+| 11749 (ROSALBA T. QUINTERO) | ambos | 2,380 | **12** | $12,293 | 2 | **10 (83 %)** |
 | 23649 | solo contado | 2,973 | **2** | $15,103 | 0 | **2 (100 %) — invisible** |
-| 12387 (VICTORINO ENRIQUEZ) | ambos/reseller | 0 | **2,381** | $32.7 M | 1,921 | 460 (19 %) |
+| 12387 (FAUSTINO ZAMORA) | ambos/reseller | 0 | **2,381** | $32.7 M | 1,921 | 460 (19 %) |
 | 38327 | ambos | 7 | **494** | $4.0 M | 259 | 235 (48 %) |
 
 > El RFM de crédito subcontaba la frecuencia entre 19 % y 100 % por cliente y volvía invisibles a los solo-contado. La base corregida (`DOCTOS_PV`, contado+crédito) es la única atribución completa.

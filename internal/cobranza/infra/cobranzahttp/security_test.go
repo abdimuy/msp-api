@@ -25,6 +25,7 @@ import (
 	authdomain "github.com/abdimuy/msp-api/internal/auth/domain"
 	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
 	"github.com/abdimuy/msp-api/internal/cobranza/infra/cobranzahttp"
+	"github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/config"
 )
 
@@ -66,7 +67,7 @@ func secReadRouter(cu *auth.CurrentUser) http.Handler {
 	if cu != nil {
 		r.Use(planter(*cu))
 	}
-	cobranzahttp.MountReadRouter(r, nil, eventbus.New(), config.Cobranza{}, slog.Default(), nil, nil)
+	cobranzahttp.MountReadRouter(r, nil, eventbus.New(), config.Cobranza{}, slog.Default(), nil, nil, outbound.ProductionClock{})
 	return r
 }
 

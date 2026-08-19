@@ -378,7 +378,7 @@ GROUP BY la.NOMBRE ORDER BY 3 DESC ROWS 10;
 
 ### Caveats reales que quedan
 
-1. **Cuentas de revendedor / ruta inflan la frecuencia.** Los líderes son personas reales pero operan como mayoristas/ruta (`12387` VICTORINO ENRIQUEZ: F=2,381, M=$32.7 M; `12440`: F=1,075). 109 clientes 150k+ concentran $128 M. Para RFM de cliente final conviene marcarlos/excluirlos (umbral p.ej. F>50 o M>150k).
+1. **Cuentas de revendedor / ruta inflan la frecuencia.** Los líderes son personas reales pero operan como mayoristas/ruta (`12387` FAUSTINO ZAMORA: F=2,381, M=$32.7 M; `12440`: F=1,075). 109 clientes 150k+ concentran $128 M. Para RFM de cliente final conviene marcarlos/excluirlos (umbral p.ej. F>50 o M>150k).
 2. **Separación enganche vs contado puro.** "Contado" aquí = venta sin línea 71. El monto financiado del crédito (forma 71, $733 M) ≠ `SUM(IMPORTE_NETO)` del crédito ($664.6 M); la diferencia incluye intereses/recargos del plan, no es comparable peso a peso con el contado.
 3. **No hay FK PV → CC.** El enlace al ledger de crédito es heurístico (`FOLIO + CLIENTE_ID + SISTEMA_ORIGEN`), validado 1:1 en muestra pero con ~3,022 cargos CC sin venta-crédito viva exacta (cancelaciones/ediciones).
 4. **Exclusión de cancelados/devoluciones.** Todo el análisis filtra `ESTATUS='N'` y `TIPO_DOCTO IN ('V','P')`. Cancelados (`C`) y devoluciones (`D`) se excluyen; las devoluciones parciales (`UNIDADES_DEV`) no se restan línea a línea (impacto menor en §5).
@@ -401,10 +401,10 @@ GROUP BY pv.CLIENTE_ID ORDER BY pv.CLIENTE_ID;
 
 | CLIENTE_ID | Cohorte | R_FULL (d) | **F_FULL** | M_FULL | **F_CRED_ONLY** | Eventos perdidos por RFM-crédito |
 |-----------:|---------|-----------:|-----------:|-------:|----------------:|---------------------------------:|
-| 11515 (LAURA A. SANCHEZ) | ambos | 2,520 | **12** | $16,255 | 3 | **9 (75 %)** |
-| 11749 (EMARIEL S. ANDRADE) | ambos | 2,380 | **12** | $12,293 | 2 | **10 (83 %)** |
+| 11515 (BEATRIZ M. GALINDO) | ambos | 2,520 | **12** | $16,255 | 3 | **9 (75 %)** |
+| 11749 (ROSALBA T. QUINTERO) | ambos | 2,380 | **12** | $12,293 | 2 | **10 (83 %)** |
 | 23649 | solo contado | 2,973 | **2** | $15,103 | 0 | **2 (100 %) — invisible** |
-| 12387 (VICTORINO ENRIQUEZ) | ambos/reseller | 0 | **2,381** | $32.7 M | 1,921 | 460 (19 %) |
+| 12387 (FAUSTINO ZAMORA) | ambos/reseller | 0 | **2,381** | $32.7 M | 1,921 | 460 (19 %) |
 | 38327 | ambos | 7 | **494** | $4.0 M | 259 | 235 (48 %) |
 
 > El RFM de crédito subcontaba la frecuencia entre 19 % y 100 % por cliente y volvía invisibles a los solo-contado. La base corregida (`DOCTOS_PV`, contado+crédito) es la única atribución completa.

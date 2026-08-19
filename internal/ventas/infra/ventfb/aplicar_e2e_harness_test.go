@@ -4,6 +4,7 @@ package ventfb_test
 import (
 	"context"
 	"io"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -167,6 +168,69 @@ func (h *aplicarE2EHarness) persistAprobada(ctx context.Context, t *testing.T, v
 	return v.ID()
 }
 
+// ─── seedClienteFixture ──────────────────────────────────────────────────────
+
+// seedClienteFixture guarantees that testClienteID exists in CLIENTES with its
+// CLAVES_CLIENTES row, inserting it when missing.
+//
+// It must run inside the test transaction, so nothing persists.
+//
+// WHY: testClienteID used to be a row of the production padrón. The test
+// artifact no longer ships that padrón (docs/base-de-datos-de-pruebas.md), and
+// without the row the writer fails with clave_cliente_not_found — the CLAVE is
+// read from CLAVES_CLIENTES before the venta is inserted.
+//
+// It is idempotent on purpose: against the full dev DB the row is already
+// there and this is a no-op, so the same test passes against both databases.
+func seedClienteFixture(t *testing.T, q firebird.Querier) {
+	t.Helper()
+	ctx := context.Background()
+
+	var n int
+	require.NoError(t,
+		q.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM CLIENTES WHERE CLIENTE_ID = ?`, testClienteID,
+		).Scan(&n),
+		"contar CLIENTES fixture")
+	if n == 0 {
+		var condPagoID int
+		require.NoError(t,
+			q.QueryRowContext(ctx,
+				`SELECT FIRST 1 COND_PAGO_ID FROM CONDICIONES_PAGO ORDER BY COND_PAGO_ID`,
+			).Scan(&condPagoID),
+			"CONDICIONES_PAGO debe tener al menos una fila")
+
+		_, err := q.ExecContext(ctx,
+			`INSERT INTO CLIENTES
+			   (CLIENTE_ID, NOMBRE, SUJETO_IEPS, DIFERIR_CFDI_COBROS,
+			    MONEDA_ID, COND_PAGO_ID, ESTATUS, ZONA_CLIENTE_ID)
+			 VALUES (?, 'CLIENTE FIXTURE E2E', 'N', FALSE, 1, ?, 'A', ?)`,
+			testClienteID, condPagoID, testZonaID)
+		require.NoError(t, err, "insertar CLIENTES fixture")
+	}
+
+	require.NoError(t,
+		q.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM CLAVES_CLIENTES WHERE CLIENTE_ID = ?`, testClienteID,
+		).Scan(&n),
+		"contar CLAVES_CLIENTES fixture")
+	if n == 0 {
+		var rolClaveID int
+		require.NoError(t,
+			q.QueryRowContext(ctx,
+				`SELECT FIRST 1 ROL_CLAVE_CLI_ID FROM ROLES_CLAVES_CLIENTES ORDER BY ROL_CLAVE_CLI_ID`,
+			).Scan(&rolClaveID),
+			"ROLES_CLAVES_CLIENTES debe tener al menos una fila")
+
+		_, err := q.ExecContext(ctx,
+			`INSERT INTO CLAVES_CLIENTES
+			   (CLAVE_CLIENTE_ID, CLAVE_CLIENTE, CLIENTE_ID, ROL_CLAVE_CLI_ID)
+			 VALUES (-1, ?, ?, ?)`,
+			strconv.Itoa(testClienteID), testClienteID, rolClaveID)
+		require.NoError(t, err, "insertar CLAVES_CLIENTES fixture")
+	}
+}
+
 // ─── requireCatalog ──────────────────────────────────────────────────────────
 
 // requireCatalog verifies that the catalog IDs hardcoded in
@@ -179,16 +243,14 @@ func requireCatalog(t *testing.T, q firebird.Querier) {
 	t.Helper()
 	ctx := context.Background()
 
+	// El cliente ya no es un catálogo: se siembra. Ver seedClienteFixture.
+	seedClienteFixture(t, q)
+
 	checks := []struct {
 		label string
 		query string
 		args  []any
 	}{
-		{
-			label: "CLIENTES testClienteID",
-			query: `SELECT COUNT(*) FROM CLIENTES WHERE CLIENTE_ID = ?`,
-			args:  []any{testClienteID},
-		},
 		{
 			label: "ARTICULOS testArticuloID",
 			query: `SELECT COUNT(*) FROM ARTICULOS WHERE ARTICULO_ID = ?`,

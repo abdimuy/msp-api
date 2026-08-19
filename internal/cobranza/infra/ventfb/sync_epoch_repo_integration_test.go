@@ -436,7 +436,7 @@ func (fakeSyncVentasRepo) SyncPorZona(_ context.Context, _ int, cursor time.Time
 	}, nil
 }
 
-func (fakeSyncVentasRepo) ByIDs(_ context.Context, _ int, _ []int) ([]domain.Venta, error) {
+func (fakeSyncVentasRepo) ByIDs(_ context.Context, _ int, _ []int, _ time.Time) ([]domain.Venta, error) {
 	return nil, nil
 }
 
@@ -465,7 +465,7 @@ func (fakeSyncPagosRepo) SyncPorZona(_ context.Context, _ int, cursor time.Time,
 	}, nil
 }
 
-func (fakeSyncPagosRepo) ByIDs(_ context.Context, _ int, _ []int) ([]domain.Pago, error) {
+func (fakeSyncPagosRepo) ByIDs(_ context.Context, _ int, _ []int, _ time.Time) ([]domain.Pago, error) {
 	return nil, nil
 }
 
@@ -584,5 +584,46 @@ func TestSyncEpoch_SinFilasLaRespuestaSigueSaliendo(t *testing.T) {
 		outP, err := h.SyncPagosPorZona(authCtx, &cobranzahttp.SyncPagosInput{ZonaID: epochZonaA})
 		require.NoError(t, err)
 		assert.Equal(t, 0, outP.Body.SyncEpoch)
+	})
+}
+
+// ─── migración 000056 ────────────────────────────────────────────────────────
+
+// TestMigracion000056_EpochSubidoParaVentasYPagos comprueba que el epoch de
+// los dos recursos quedó por encima de la semilla de la migración 000055
+// (EPOCH = 0).
+//
+// Por qué hace falta: el cambio de ventana de esta rama no mueve ningún
+// UPDATED_AT — las filas de MSP_SALDOS_VENTAS y MSP_PAGOS_VENTAS son las
+// mismas de ayer. Sin subir el epoch, todas quedan por debajo del cursor que
+// cada teléfono ya guardó y las filas que ahora sí califican no llegan nunca:
+// el defecto se vería arreglado en el servidor y seguiría roto en campo.
+//
+// Lee las filas globales sin escribir nada. Falla si alguien despliega el
+// código sin aplicar la migración 000056.
+//
+//nolint:paralleltest // serial: comparte la BD compartida.
+func TestMigracion000056_EpochSubidoParaVentasYPagos(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		q := firebird.GetQuerier(ctx, pool.DB)
+		requireMigration000055(t, q)
+
+		var aplicada int
+		require.NoError(t, q.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM MSP_MIGRATIONS WHERE ID = 56`).Scan(&aplicada))
+		require.Equal(t, 1, aplicada,
+			"la migración 000056 no está aplicada: los teléfonos no resincronizarían")
+
+		for _, recurso := range []domain.RecursoSync{domain.RecursoSyncVentas, domain.RecursoSyncPagos} {
+			var epoch int
+			require.NoError(t, q.QueryRowContext(ctx,
+				`SELECT EPOCH FROM MSP_CFG_SYNC_EPOCH WHERE RECURSO = ? AND ZONA_CLIENTE_ID = ?`,
+				recurso.String(), domain.ZonaEpochGlobal).Scan(&epoch))
+			assert.Positive(t, epoch,
+				"%s: el epoch global debe estar por encima de la semilla 0", recurso.String())
+		}
 	})
 }

@@ -149,8 +149,15 @@ func (h *Handlers) Errors(ctx context.Context, in *ErrorsInput) (*ErrorsOutput, 
 }
 
 // parseOptionalDesde resolves the optional ?desde= query parameter. Empty
-// input yields a nil pointer (treated by the service as "not supplied"); a
-// parse error is translated through mapAppError.
+// input yields a nil pointer; a parse error is translated through mapAppError.
+//
+// nil NO significa "sin ventana" para los endpoints de sync: el servicio lo
+// pasa por app.ResolveSyncDesde y resuelve el default de servidor (7 días),
+// el mismo que resuelven /digest y /ids. La resolución vive en el servicio y
+// no aquí por dos razones: necesita el reloj inyectado, y este helper lo
+// comparten además /saldos/zona y /pagos/zona, donde `desde` es EXCLUYENTE
+// con `ventana_dias` — devolver aquí un default no-nil haría que cualquier
+// llamada con ?ventana_dias= fallara con cobranza_parametros_excluyentes.
 func parseOptionalDesde(raw string) (*time.Time, error) {
 	if raw == "" {
 		return nil, nil //nolint:nilnil // nil = not supplied, by handler contract.

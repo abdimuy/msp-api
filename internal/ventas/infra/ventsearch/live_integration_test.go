@@ -89,7 +89,7 @@ func TestIntegration_VentaSearchIndex_LiveRoundTrip(t *testing.T) { //nolint:par
 			Situacion:      "aprobada",
 			Sincronizacion: "aplicada",
 			ZonaClienteID:  21563,
-			VendedorEmail:  "ana@example.com",
+			VendedorEmails: []string{"ana@example.com", "socio@example.com"},
 			ClienteID:      555,
 			Estado:         "active",
 			FechaVenta:     now,
@@ -107,7 +107,7 @@ func TestIntegration_VentaSearchIndex_LiveRoundTrip(t *testing.T) { //nolint:par
 			Situacion:      "borrador",
 			Sincronizacion: "pendiente",
 			ZonaClienteID:  99,
-			VendedorEmail:  "luis@example.com",
+			VendedorEmails: []string{"luis@example.com"},
 			ClienteID:      0,
 			Estado:         "active",
 			FechaVenta:     now,
@@ -145,6 +145,28 @@ func TestIntegration_VentaSearchIndex_LiveRoundTrip(t *testing.T) { //nolint:par
 	resFolio, err := idx.Buscar(ctx, outbound.VentasSearchQuery{Q: "Y00001234", Limit: 10})
 	require.NoError(t, err)
 	assert.Contains(t, resFolio.IDs, idJuan, "search by folio must find Juan")
+
+	// Filter by the SECOND vendedor of Juan's venta. This is the claim the
+	// whole vendedor_emails change rests on: Meilisearch's `=` against an
+	// array attribute matches when ANY element equals the value. Before the
+	// change only "ana@example.com" was indexed and this returned nothing.
+	segundo := "socio@example.com"
+	resSegundo, err := idx.Buscar(ctx, outbound.VentasSearchQuery{
+		VendedorEmail: &segundo, IncluirCanceladas: true, Limit: 10,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, resSegundo.IDs, idJuan,
+		"filtering by the second vendedor's email must still find the venta")
+	assert.NotContains(t, resSegundo.IDs, idMaria,
+		"the array filter must not match a venta that lacks the email")
+
+	// The first vendedor still matches — the array holds both.
+	primero := "ana@example.com"
+	resPrimero, err := idx.Buscar(ctx, outbound.VentasSearchQuery{
+		VendedorEmail: &primero, IncluirCanceladas: true, Limit: 10,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, resPrimero.IDs, idJuan)
 }
 
 // TestIntegration_VentaSearchIndex_ReconciliarAutoCreatesIndex_WithFullSettings

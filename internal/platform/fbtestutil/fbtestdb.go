@@ -96,16 +96,33 @@ func loadFirebirdConfig() (config.Firebird, error) {
 		return config.Firebird{}, fmt.Errorf("fbtestutil: FB_POOL_SIZE: %w", err)
 	}
 	return config.Firebird{
-		Host:         envOr("FB_HOST", "localhost"),
-		Port:         port,
-		Database:     os.Getenv("FB_DATABASE"),
-		User:         envOr("FB_USER", "SYSDBA"),
-		Password:     os.Getenv("FB_PASSWORD"),
-		Charset:      envOr("FB_CHARSET", "UTF8"),
-		PoolSize:     poolSize,
-		WireCrypt:    envBool("FB_WIRE_CRYPT", true),
-		WireCompress: envBool("FB_WIRE_COMPRESS", false),
+		Host:             envOr("FB_HOST", "localhost"),
+		Port:             port,
+		Database:         os.Getenv("FB_DATABASE"),
+		User:             envOr("FB_USER", "SYSDBA"),
+		Password:         os.Getenv("FB_PASSWORD"),
+		Charset:          envOr("FB_CHARSET", "UTF8"),
+		PoolSize:         poolSize,
+		WireCrypt:        envBool("FB_WIRE_CRYPT", true),
+		WireCompress:     envBool("FB_WIRE_COMPRESS", false),
+		StatementTimeout: envDuration("FB_STATEMENT_TIMEOUT", 10*time.Minute),
 	}, nil
+}
+
+// TestFirebirdConfig returns the same FB_* configuration the shared pool uses,
+// for the rare test that needs a pool of its own (e.g. one that deliberately
+// stresses pool capacity and must not disturb the shared one). Skips the
+// calling test when FB_DATABASE is unset, exactly like NewTestFirebirdPool.
+func TestFirebirdConfig(tb testing.TB) config.Firebird {
+	tb.Helper()
+	if os.Getenv("FB_DATABASE") == "" {
+		tb.Skip("FB_DATABASE not set — point it at the dev Microsip DB to run Firebird tests")
+	}
+	cfg, err := loadFirebirdConfig()
+	if err != nil {
+		tb.Fatalf("fbtestutil: %v", err)
+	}
+	return cfg
 }
 
 func envOr(key, fallback string) string {
@@ -125,6 +142,18 @@ func envInt(key string, fallback int) (int, error) {
 		return 0, err
 	}
 	return n, nil
+}
+
+func envDuration(key string, fallback time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return fallback
+	}
+	return d
 }
 
 func envBool(key string, fallback bool) bool {

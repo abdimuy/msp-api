@@ -26,10 +26,12 @@ import (
 //     total the office quotes unless a shorter term is negotiated; the DTO
 //     surfaces all three tiers with no single headline field, so this
 //     mirrors the tier callers most commonly treat as canonical).
-//   - VendedorEmail: a venta can carry multiple vendedores, but the port
-//     models VendedorEmail as a single string (filterable exact-match
-//     field, not a multi-value facet). We store the FIRST vendedor's email
-//     in iteration order ("" when there are none).
+//   - VendedorEmails: a venta routinely carries more than one vendedor, so
+//     the document holds EVERY vendedor email and the index filters the
+//     array (Meilisearch `=` on an array matches any element). Storing only
+//     the first, as this did before, made a filter on the second vendedor
+//     return nothing. Blank emails are dropped so `vendedor_emails = ""`
+//     never matches; the slice is empty (never nil) when there are none.
 func VentaToSearchDoc(v *domain.Venta) outbound.VentaSearchDoc {
 	dir := v.Direccion()
 	direccion := strings.Join(nonEmptyDireccionParts(dir.Calle(), dir.Colonia(), dir.Poblacion(), dir.Ciudad()), " ")
@@ -44,7 +46,7 @@ func VentaToSearchDoc(v *domain.Venta) outbound.VentaSearchDoc {
 		folio = *f
 	}
 
-	vendedorNombre, vendedorEmail := vendedorFields(v)
+	vendedorNombre, vendedorEmails := vendedorFields(v)
 
 	var zonaClienteID int
 	if z := dir.ZonaClienteID(); z != nil {
@@ -69,7 +71,7 @@ func VentaToSearchDoc(v *domain.Venta) outbound.VentaSearchDoc {
 		Situacion:      v.Situacion().String(),
 		Sincronizacion: v.Sincronizacion().String(),
 		ZonaClienteID:  zonaClienteID,
-		VendedorEmail:  vendedorEmail,
+		VendedorEmails: vendedorEmails,
 		ClienteID:      clienteID,
 		Estado:         v.Estado().String(),
 		FechaVenta:     v.FechaVenta(),
@@ -79,21 +81,21 @@ func VentaToSearchDoc(v *domain.Venta) outbound.VentaSearchDoc {
 }
 
 // vendedorFields concatenates every vendedor's nombre (space-separated, for
-// full-text search) and returns the FIRST vendedor's email in iteration
-// order — see VentaToSearchDoc's doc comment for the VendedorEmail decision.
-func vendedorFields(v *domain.Venta) (string, string) {
+// full-text search) and collects every non-blank vendedor email in iteration
+// order — see VentaToSearchDoc's doc comment for the VendedorEmails decision.
+// The email slice is always non-nil so the wire document carries [] and not
+// JSON null.
+func vendedorFields(v *domain.Venta) (string, []string) {
 	var nombres []string
-	var email string
-	first := true
+	emails := []string{}
 	for vd := range v.Vendedores() {
 		snap := vd.Snapshot()
 		nombres = append(nombres, snap.Nombre())
-		if first {
-			email = snap.Email()
-			first = false
+		if email := strings.TrimSpace(snap.Email()); email != "" {
+			emails = append(emails, email)
 		}
 	}
-	return strings.Join(nombres, " "), email
+	return strings.Join(nombres, " "), emails
 }
 
 // precioTotalDe picks the MontoSnapshot tier that represents the sale's

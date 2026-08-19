@@ -91,7 +91,7 @@ func (f *fakeSaldosRepo) SyncPorZona(
 	return f.syncPage, nil
 }
 
-func (f *fakeSaldosRepo) ByIDs(_ context.Context, _ int, _ []int) ([]domain.Saldo, error) {
+func (f *fakeSaldosRepo) ByIDs(_ context.Context, _ int, _ []int, _ time.Time) ([]domain.Saldo, error) {
 	return nil, nil
 }
 
@@ -143,7 +143,7 @@ func (f *fakePagosRepo) SyncPorZona(
 	return f.syncPage, nil
 }
 
-func (f *fakePagosRepo) ByIDs(_ context.Context, _ int, _ []int) ([]domain.Pago, error) {
+func (f *fakePagosRepo) ByIDs(_ context.Context, _ int, _ []int, _ time.Time) ([]domain.Pago, error) {
 	return nil, nil
 }
 
@@ -440,7 +440,10 @@ func TestService_SyncPagosPorZona_DelegatesToRepo(t *testing.T) {
 	page, err := svc.SyncPagosPorZona(context.Background(), 21563, time.Time{}, 0, 1000, nil)
 	require.NoError(t, err)
 	assert.Len(t, page.Items, 1)
-	assert.True(t, pagos.lastSyncCall.desde.IsZero(), "desde nil debe propagarse como zero time al repo")
+	// desde nil YA NO significa "sin ventana": el servicio resuelve el default
+	// de servidor antes de tocar el repo. Ver app.ResolveSyncDesde.
+	assert.False(t, pagos.lastSyncCall.desde.IsZero(),
+		"desde nil debe llegar al repo como la ventana por defecto, no como zero")
 }
 
 func TestService_SyncPagosPorZona_PropagatesDesde(t *testing.T) {

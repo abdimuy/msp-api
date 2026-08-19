@@ -2,9 +2,7 @@
 
 > Spec de diseño. Reactivación de clientes leales dormidos por WhatsApp con IA, con
 > grupo de control para atribución. El objetivo es generar **venta incremental medible
-> y atribuible al software**, base de la compensación del desarrollador (comisión sobre
-> venta nueva). Complementa la estrategia y números en
-> [`ventas-ai-estrategia.md`](../../ventas-ai-estrategia.md) (doc maestro privado).
+> y atribuible al software**.
 >
 > Fecha: 2026-06-06.
 
@@ -229,7 +227,7 @@ contacto) → tasa por brazo y delta, con IC 95%.
 - **Código + tests:** pocos días (Claude Code + IA + tests robustos).
 - **Sistema afinado y confiable** (número calentado, prompts que convierten, whatsmeow
   estable 24/7): ~1-2 semanas de iteración en vivo.
-- **Resultado del demo para negociar:** ~3 meses (ventana de decisión 60-90 días). **No
+- **Resultado medible del piloto:** ~3 meses (ventana de decisión 60-90 días). **No
   se comprime** — es tiempo humano de decisión de compra.
 
 El build no es el cuello de botella; lo son el calentamiento del número, el afinado de la

@@ -14,13 +14,15 @@ import (
 // ─── Input DTOs ───────────────────────────────────────────────────────────────
 
 // SyncDigestInput is the path + query parameters for the digest endpoints.
-// Desde is optional: when present it must be RFC3339 UTC and extends the
-// filter to match the /sync window (see SyncPagosInput.Desde). When absent,
-// only active rows (saldo > 0 for saldos, saldo > 0 for pagos) are counted,
-// which matches the legacy behavior.
+// Desde, cuando viene, debe ser RFC3339 UTC y tiene que ser el MISMO que el
+// cliente manda al /sync: el inventario existe para compararse contra lo que
+// el sync entregó, y dos ventanas distintas hacen que el reconciliador
+// declare fantasma lo que el sync acaba de mandar. Cuando falta, el servidor
+// resuelve el default (app.ResolveSyncDesde) — el mismo que resuelve el sync,
+// así que omitirlo en ambos lados sigue siendo consistente.
 type SyncDigestInput struct {
 	ZonaID int    `path:"zona_id"                                                                             doc:"ID de la zona"`
-	Desde  string `query:"desde"  doc:"Ventana RFC3339 UTC que extiende el digest con saldadas recientes; vacío para filtro solo por saldo > 0"`
+	Desde  string `query:"desde"  doc:"Ventana RFC3339 UTC; debe ser la MISMA que usa el sync. Si se omite, el servidor aplica su ventana por defecto (7 días)"`
 }
 
 // SyncListIDsInput contains the path and query params for the IDs endpoints.
@@ -28,7 +30,7 @@ type SyncListIDsInput struct {
 	ZonaID int    `path:"zona_id"                                          doc:"ID de la zona"`
 	After  int    `query:"after"  minimum:"0"             default:"0"       doc:"Paginación: devuelve IDs > after. Default 0 (inicio)"`
 	Limit  int    `query:"limit"  minimum:"1" maximum:"10000" default:"5000" doc:"Máximo de IDs por página. Default 5000, máximo 10000"`
-	Desde  string `query:"desde"  doc:"Ventana RFC3339 UTC que extiende el listado con saldadas recientes; vacío para filtro solo por saldo > 0"`
+	Desde  string `query:"desde"  doc:"Ventana RFC3339 UTC; debe ser la MISMA que usa el sync. Si se omite, el servidor aplica su ventana por defecto (7 días)"`
 }
 
 // ─── Response DTOs ────────────────────────────────────────────────────────────
@@ -132,8 +134,14 @@ func (h *Handlers) SyncSaldosIDs(ctx context.Context, in *SyncListIDsInput) (*Li
 // parseReconcileDesde parses the optional ?desde= query parameter for the
 // digest/ids reconcile endpoints. Unlike parseOptionalDesde (which also
 // accepts YYYY-MM-DD), these endpoints require a full RFC3339 UTC timestamp
-// because the window must be deterministic across calls. Empty/missing input
-// returns the zero time (no window — saldo > 0 filter only).
+// because the window must be deterministic across calls.
+//
+// Empty/missing input devuelve el zero time, que NO significa "sin ventana":
+// el servicio lo pasa por app.ResolveSyncDesde y resuelve el default de
+// servidor, el mismo que aplica el sync. La resolución vive ahí y no aquí
+// porque el default necesita el reloj inyectado y porque así hay UNA sola
+// implementación para los tres canales — dos copias en dos handlers es
+// exactamente como se separaron la primera vez.
 func parseReconcileDesde(raw string) (time.Time, error) {
 	if raw == "" {
 		return time.Time{}, nil

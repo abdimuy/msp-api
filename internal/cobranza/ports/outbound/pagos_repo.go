@@ -48,12 +48,15 @@ type PagosRepo interface {
 	// ascending; afterID is used for sub-cursor pagination when has_more=true.
 	// Pass cursor=time.Time{} for a full initial sync.
 	//
-	// desde controla el filtro de saldo en el sync inicial (cursor zero):
-	//   - desde zero:   solo pagos de cargos con saldo activo (legacy).
-	//   - desde set:    pagos de cargos activos + pagos cuyo p.FECHA >= desde
-	//                   (incluye pagos finales que saldaron una venta).
-	// En sync incremental (cursor set) el filtro de saldo se quita; el filtro
-	// de concepto (87327, 27969) se mantiene siempre.
+	// desde acota la ventana en TODAS las páginas (no solo la primera):
+	//   - desde zero:   solo pagos de cargos con saldo activo.
+	//   - desde set:    pagos de cargos activos + pagos de ventas cuyo
+	//                   FECHA_ULT_PAGO >= desde (el pago que saldó la venta y
+	//                   todo el historial de esa venta).
+	// El filtro de concepto (87327, 27969) se mantiene siempre.
+	//
+	// El HTTP nunca pasa zero: app.ResolveSyncDesde le da un default de
+	// servidor. Zero queda para llamadas internas y tests.
 	SyncPorZona(ctx context.Context, zonaID int, cursor time.Time, afterID, limit int, desde time.Time) (SyncPage[domain.Pago], error)
 
 	// ByIDs returns the Pago rows for the given primary keys (IMPTE_DOCTO_CC_IDs)
@@ -61,8 +64,13 @@ type PagosRepo interface {
 	// zona does not match are silently excluded (authorization filter, not 404).
 	// No watermark filtering — callers expect to see the IDs they asked for.
 	//
+	// desde aplica el MISMO filtro de ventana que SyncPorZona y que
+	// PagosReconcileRepo.ListIDs. No es opcional por comodidad: los tres
+	// canales tienen que devolver el mismo conjunto para (zona, desde) o el
+	// reconciliador borra como fantasma lo que by-ids acaba de entregar.
+	//
 	// ids may contain duplicates; the result deduplicates by PK.
-	ByIDs(ctx context.Context, zonaID int, ids []int) ([]domain.Pago, error)
+	ByIDs(ctx context.Context, zonaID int, ids []int, desde time.Time) ([]domain.Pago, error)
 }
 
 // PagosRecomputer wraps the MSP_RECOMPUTE_PAGO stored procedure. Used only

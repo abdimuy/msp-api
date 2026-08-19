@@ -251,6 +251,7 @@ func TestE2E_AplicarVenta_Contado(t *testing.T) {
 	writer := microsip.NewVentaWriter(pool)
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		seedClienteFixture(t, firebird.GetQuerier(ctx, pool.DB))
 		userID := seedUsuarioRow(ctx, t, pool)
 		v := buildAplicarContado(t, userID)
 
@@ -316,6 +317,7 @@ func TestE2E_AplicarVenta_TresContado(t *testing.T) {
 	cfg := ventfb.NewAplicarConfigRepo(pool)
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		seedClienteFixture(t, firebird.GetQuerier(ctx, pool.DB))
 		userID := seedUsuarioRow(ctx, t, pool)
 		q := firebird.GetQuerier(ctx, pool.DB)
 
@@ -388,6 +390,7 @@ func TestE2E_AplicarVenta_Contado_16PctIVA(t *testing.T) {
 	cfg := ventfb.NewAplicarConfigRepo(pool)
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		seedClienteFixture(t, firebird.GetQuerier(ctx, pool.DB))
 		userID := seedUsuarioRow(ctx, t, pool)
 		q := firebird.GetQuerier(ctx, pool.DB)
 
@@ -452,6 +455,7 @@ func TestE2E_AplicarVenta_Credito(t *testing.T) {
 	writer := microsip.NewVentaWriter(pool)
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		seedClienteFixture(t, firebird.GetQuerier(ctx, pool.DB))
 		userID := seedUsuarioRow(ctx, t, pool)
 		v := buildAplicarCredito(t, userID)
 
@@ -552,6 +556,7 @@ func TestE2E_AplicarVenta_Credito_CamposNuevos(t *testing.T) {
 	const vendedorListaID1 = 19985001
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		seedClienteFixture(t, firebird.GetQuerier(ctx, pool.DB))
 		userID := seedUsuarioRow(ctx, t, pool)
 		v := buildAplicarCredito(t, userID) // 1 vendedor, monto corto plazo 8200.00
 

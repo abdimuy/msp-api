@@ -14,6 +14,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/auth"
 	"github.com/abdimuy/msp-api/internal/platform/apperror"
 	ventasapp "github.com/abdimuy/msp-api/internal/ventas/app"
+	"github.com/abdimuy/msp-api/internal/ventas/domain"
 )
 
 // Handlers groups every Huma handler for the ventas module.
@@ -81,7 +82,7 @@ func (h *Handlers) CrearVenta(ctx context.Context, in *CrearVentaInput) (*CrearV
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	return &CrearVentaOutput{Body: toVentaDTO(v, nil)}, nil
+	return &CrearVentaOutput{Body: toVentaDTO(v, nil, nil, nil)}, nil
 }
 
 // decodeCrearVentaDatos validates that `datos` was supplied and parses it
@@ -124,8 +125,15 @@ func (h *Handlers) ObtenerVenta(ctx context.Context, in *ObtenerVentaInput) (*Ob
 	// cancelada_by) to display names so the detail panel shows people, not
 	// UUIDs. Best-effort: an unresolved id leaves its *_nombre field empty.
 	nombres := h.svc.NombresDeUsuarios(ctx, ventaActorIDs(v))
+	// Resolve the zona name so the detail panel shows the zona, not its id.
+	// Best-effort, same contract as the actor names above.
+	zonas := h.svc.NombresDeZonas(ctx, []*domain.Venta{v})
+	// Resolve WHEN the venta entered its current fase and HOW FAR it ever
+	// got, so the detail panel can show the elapsed time and the progress
+	// ring. Best-effort, same contract as above.
+	fases := h.svc.Fases(ctx, []*domain.Venta{v})
 	zm, mismatch := h.svc.ZonaMicrosipDeVenta(ctx, v)
-	dto := toVentaDTO(v, nombres)
+	dto := toVentaDTO(v, nombres, zonas, fases)
 	dto.ZonaMismatch = mismatch
 	dto.ZonaClienteMicrosipID = zm
 	dto.EstatusClienteMicrosip = h.svc.EstatusMicrosipDeCliente(ctx, v)
@@ -187,7 +195,7 @@ func (h *Handlers) CancelarVenta(ctx context.Context, in *CancelarVentaInput) (*
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	return &CancelarVentaOutput{Body: toVentaDTO(v, nil)}, nil
+	return &CancelarVentaOutput{Body: toVentaDTO(v, nil, nil, nil)}, nil
 }
 
 // ListarVentas is the handler for GET /v2/ventas. Routes to Meilisearch when
@@ -211,11 +219,18 @@ func (h *Handlers) ListarVentas(ctx context.Context, in *ListarVentasInput) (*Li
 	if err != nil {
 		return nil, mapAppError(err)
 	}
+	// Three resolver calls for the WHOLE page — never one per venta. Each
+	// batches the distinct ids across the page into a single query, before
+	// the projection loop. The listing used to pass nil names, which is why
+	// the desktop table showed raw UUIDs in the created_by / updated_by
+	// columns; every one of these is best-effort, so a failure degrades the
+	// decoration and never the listing.
+	zonas := h.svc.NombresDeZonas(ctx, page.Items)
+	nombres := h.svc.NombresDeUsuarios(ctx, pageActorIDs(page.Items))
+	fases := h.svc.Fases(ctx, page.Items)
 	items := make([]VentaDTO, 0, len(page.Items))
 	for _, v := range page.Items {
-		// nil nombres: keeps the DTO byte-identical to the Firebird-fallback
-		// path (see ObtenerVenta for the actor-name-decorated read).
-		items = append(items, toVentaDTO(v, nil))
+		items = append(items, toVentaDTO(v, nombres, zonas, fases))
 	}
 	return &ListarVentasOutput{Body: ListResponse[VentaDTO]{Items: items, NextCursor: page.NextCursor}}, nil
 }
@@ -692,7 +707,7 @@ func (h *Handlers) RevisarVenta(ctx context.Context, in *RevisarVentaInput) (*Re
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	return &RevisarVentaOutput{Body: toVentaDTO(v, nil)}, nil
+	return &RevisarVentaOutput{Body: toVentaDTO(v, nil, nil, nil)}, nil
 }
 
 // AprobarVenta is the handler for POST /v2/ventas/{id}/aprobar.
@@ -712,7 +727,7 @@ func (h *Handlers) AprobarVenta(ctx context.Context, in *AprobarVentaInput) (*Ap
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	return &AprobarVentaOutput{Body: toVentaDTO(v, nil)}, nil
+	return &AprobarVentaOutput{Body: toVentaDTO(v, nil, nil, nil)}, nil
 }
 
 // RegresarBorradorVenta is the handler for POST /v2/ventas/{id}/regresar-borrador.
@@ -732,7 +747,7 @@ func (h *Handlers) RegresarBorradorVenta(ctx context.Context, in *RegresarBorrad
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	return &RegresarBorradorVentaOutput{Body: toVentaDTO(v, nil)}, nil
+	return &RegresarBorradorVentaOutput{Body: toVentaDTO(v, nil, nil, nil)}, nil
 }
 
 // AplicarVenta is the handler for POST /v2/ventas/{id}/aplicar.
@@ -752,7 +767,7 @@ func (h *Handlers) AplicarVenta(ctx context.Context, in *AplicarVentaInput) (*Ap
 	if err != nil {
 		return nil, mapAppError(err)
 	}
-	return &AplicarVentaOutput{Body: toVentaDTO(v, nil)}, nil
+	return &AplicarVentaOutput{Body: toVentaDTO(v, nil, nil, nil)}, nil
 }
 
 // Compile-time assertions: handler signatures match Huma's expected shape.

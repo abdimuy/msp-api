@@ -244,13 +244,19 @@ func (r *SaldosRepo) SyncPorZona(
 }
 
 // ByIDs returns the Saldo rows for the given primary keys (DOCTO_CC_IDs),
-// constrained to ZONA_CLIENTE_ID = zonaID. Rows whose PK is in ids but whose
-// zona does not match are silently excluded (authorization filter, not 404).
-// No watermark filtering — the caller (by-ids HTTP endpoint) obtained these
-// PKs from the SSE listener which only publishes committed rows.
+// constrained to ZONA_CLIENTE_ID = zonaID y a la misma ventana que el resto
+// de canales. Rows whose PK is in ids but whose zona does not match are
+// silently excluded (authorization filter, not 404). No watermark filtering —
+// the caller (by-ids HTTP endpoint) obtained these PKs from the SSE listener
+// which only publishes committed rows.
+//
+// Hoy ningún endpoint lo usa: /v2/cobranza/sync/saldos/by-ids resuelve por
+// VentasRepo.ByIDs, que devuelve la proyección enriquecida. Lleva el mismo
+// filtro de ventana de todas formas — el hueco era idéntico y no se deja una
+// puerta permisiva abierta esperando a que alguien la cablee.
 //
 // Duplicate IDs in the input are deduplicated before querying.
-func (r *SaldosRepo) ByIDs(ctx context.Context, zonaID int, ids []int) ([]domain.Saldo, error) {
+func (r *SaldosRepo) ByIDs(ctx context.Context, zonaID int, ids []int, desde time.Time) ([]domain.Saldo, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -274,11 +280,18 @@ func (r *SaldosRepo) ByIDs(ctx context.Context, zonaID int, ids []int) ([]domain
 		args = append(args, id)
 	}
 
+	statusFilter := `(SALDO > 0 OR CARGO_CANCELADO = 'S')`
+	if !desde.IsZero() {
+		statusFilter = `(SALDO > 0 OR FECHA_ULT_PAGO >= ? OR CARGO_CANCELADO = 'S')`
+		args = append(args, firebird.ToWallClock(desde))
+	}
+
 	query := `
 SELECT ` + selectSaldoCols + `
 FROM MSP_SALDOS_VENTAS
 WHERE ZONA_CLIENTE_ID = ?
-  AND DOCTO_CC_ID IN (` + strings.Join(placeholders, ",") + `)`
+  AND DOCTO_CC_ID IN (` + strings.Join(placeholders, ",") + `)
+  AND ` + statusFilter
 
 	var result []domain.Saldo
 	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {

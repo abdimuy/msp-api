@@ -1,0 +1,1884 @@
+<title>Checador MSP — propuesta de interfaz</title>
+
+<style>
+  /* ============================================================
+     TOKENS
+     Identidad tomada de la tarjeta checadora: cifras monoespaciadas,
+     renglones reglados, y el gesto del sello.
+     ============================================================ */
+  :root {
+    --paper:      #EDF0F2;   /* papel de libro rayado, azul muy pálido */
+    --surface:    #FFFFFF;
+    --surface-2:  #F6F8F9;
+    --rule:       #D9E0E5;
+    --rule-soft:  #E7ECEF;
+    --text:       #171C21;
+    --text-2:     #5C676F;
+    --text-3:     #8A959D;
+
+    --stamp:      #4A3FA8;   /* tinta de sello */
+    --stamp-soft: #EDEBF9;
+    --on-stamp:   #FFFFFF;   /* texto sobre el acento */
+    --amber:      #A9670F;
+    --amber-soft: #F8EFE0;
+
+    --device:     #14171B;   /* la tablet siempre va oscura */
+    --device-2:   #1D2228;
+    --device-rule:#2C333B;
+    --device-text:#F2F5F7;
+    --device-dim: #8B979F;
+    --device-stamp:#9B92F5;
+    --device-amber:#E0A44A;
+
+    --r-sm: 6px;
+    --r-md: 10px;
+    --r-lg: 16px;
+
+    --font-ui: "Avenir Next", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --font-stamp: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "Cascadia Mono", Consolas, monospace;
+
+    --ease-out: cubic-bezier(0, 0, 0.2, 1);
+    --ease-io:  cubic-bezier(0.4, 0, 0.2, 1);
+    --ease-stamp: cubic-bezier(0.2, 0.85, 0.25, 1);
+
+    --maxw: 1080px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper:     #101317;
+      --surface:   #171B20;
+      --surface-2: #1C2127;
+      --rule:      #2A3138;
+      --rule-soft: #232931;
+      --text:      #EDF1F4;
+      --text-2:    #A2ADB6;
+      --text-3:    #74808A;
+      --stamp:     #9B92F5;
+      --stamp-soft:#221F3D;
+      --on-stamp:  #12101F;
+      --amber:     #E0A44A;
+      --amber-soft:#2E2415;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:     #101317;
+    --surface:   #171B20;
+    --surface-2: #1C2127;
+    --rule:      #2A3138;
+    --rule-soft: #232931;
+    --text:      #EDF1F4;
+    --text-2:    #A2ADB6;
+    --text-3:    #74808A;
+    --stamp:     #9B92F5;
+    --stamp-soft:#221F3D;
+    --on-stamp:  #12101F;
+    --amber:     #E0A44A;
+    --amber-soft:#2E2415;
+  }
+  :root[data-theme="light"] {
+    --paper:     #EDF0F2;
+    --surface:   #FFFFFF;
+    --surface-2: #F6F8F9;
+    --rule:      #D9E0E5;
+    --rule-soft: #E7ECEF;
+    --text:      #171C21;
+    --text-2:    #5C676F;
+    --text-3:    #8A959D;
+    --stamp:     #4A3FA8;
+    --stamp-soft:#EDEBF9;
+    --on-stamp:  #FFFFFF;
+    --amber:     #A9670F;
+    --amber-soft:#F8EFE0;
+  }
+
+  /* ============================================================
+     BASE
+     ============================================================ */
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--text);
+    font-family: var(--font-ui);
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: var(--maxw);
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  /* Etiqueta de ubicación: dice DÓNDE vive cada pantalla. */
+  .place {
+    font-family: var(--font-stamp);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 14px;
+  }
+  .place::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--rule);
+  }
+
+  h2.sec-title {
+    font-size: clamp(1.5rem, 3.2vw, 2.1rem);
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    margin: 0 0 8px;
+    font-weight: 600;
+    text-wrap: balance;
+  }
+  .hero-copy h1, .colofon h2 { text-wrap: balance; }
+  .sec-note {
+    color: var(--text-2);
+    max-width: 62ch;
+    margin: 0 0 32px;
+    font-size: 15px;
+  }
+
+  .band { padding: 72px 0; border-top: 1px solid var(--rule); }
+  .band:first-of-type { border-top: 0; }
+
+  .num { font-family: var(--font-stamp); font-variant-numeric: tabular-nums; }
+
+  /* ============================================================
+     ENCABEZADO
+     ============================================================ */
+  .masthead {
+    padding: 40px 0 8px;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  .brand {
+    font-family: var(--font-stamp);
+    font-size: 12px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-2);
+  }
+  .brand b { color: var(--stamp); font-weight: 600; }
+  .theme-btn {
+    font-family: var(--font-stamp);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    background: transparent;
+    border: 1px solid var(--rule);
+    color: var(--text-2);
+    border-radius: 999px;
+    padding: 6px 14px;
+    cursor: pointer;
+    transition: border-color 150ms var(--ease-io), color 150ms var(--ease-io);
+  }
+  .theme-btn:hover { border-color: var(--stamp); color: var(--stamp); }
+  .theme-btn:focus-visible { outline: 2px solid var(--stamp); outline-offset: 2px; }
+
+  /* ============================================================
+     HERO — el producto es el héroe: la tablet estampando.
+     ============================================================ */
+  .hero {
+    padding: 28px 0 76px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 460px);
+    gap: 56px;
+    align-items: center;
+  }
+  .hero-copy h1 {
+    font-size: clamp(2.1rem, 5.4vw, 3.6rem);
+    line-height: 1.04;
+    letter-spacing: -0.032em;
+    font-weight: 600;
+    margin: 0 0 18px;
+  }
+  .hero-copy h1 em {
+    font-style: normal;
+    color: var(--stamp);
+  }
+  .hero-copy p {
+    color: var(--text-2);
+    font-size: 17px;
+    max-width: 46ch;
+    margin: 0 0 24px;
+  }
+  .hero-meta {
+    display: flex;
+    gap: 28px;
+    flex-wrap: wrap;
+    font-family: var(--font-stamp);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .hero-meta span { display: block; }
+  .hero-meta b {
+    display: block;
+    font-size: 20px;
+    letter-spacing: -0.01em;
+    text-transform: none;
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  /* ============================================================
+     TABLET DE PARED
+     ============================================================ */
+  .mount {
+    position: relative;
+    display: flex;
+    justify-content: center;
+  }
+  .mount::before {   /* sombra de montaje en muro */
+    content: "";
+    position: absolute;
+    inset: auto 8% -14px 8%;
+    height: 26px;
+    background: radial-gradient(ellipse at center, rgba(0,0,0,.22), transparent 70%);
+    filter: blur(6px);
+    z-index: 0;
+  }
+  .tablet {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 430px;
+    background: #0B0E11;
+    border-radius: 22px;
+    padding: 13px;
+    box-shadow: 0 0 0 1px rgba(255,255,255,.06), 0 18px 40px rgba(0,0,0,.34);
+  }
+  .screen {
+    background: var(--device);
+    border-radius: 12px;
+    aspect-ratio: 3 / 4;
+    padding: 26px 22px;
+    display: flex;
+    flex-direction: column;
+    color: var(--device-text);
+    position: relative;
+    overflow: hidden;
+  }
+  .screen-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: var(--font-stamp);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--device-dim);
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--device-rule);
+    flex: 0 0 auto;
+  }
+  .screen-body {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: 0;
+  }
+
+  .kstate { display: none; }
+  .kstate[data-on="1"] { display: flex; flex-direction: column; height: 100%; justify-content: center; }
+
+  /* --- reposo: el lector es el protagonista --- */
+  .kstate[data-k="idle"][data-on="1"] { justify-content: space-between; }
+  .idle-clock {
+    font-family: var(--font-stamp);
+    font-variant-numeric: tabular-nums;
+    font-size: clamp(2rem, 8.5vw, 2.7rem);
+    line-height: 1;
+    letter-spacing: -0.04em;
+    font-weight: 500;
+    text-align: center;
+    margin: 8px 0 0;
+    color: var(--device-dim);
+  }
+  .idle-date {
+    text-align: center;
+    font-family: var(--font-stamp);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--device-dim);
+    margin: 7px 0 0;
+    opacity: .75;
+  }
+  .idle-mid { text-align: center; }
+  .idle-cta {
+    text-align: center;
+    font-size: 18px;
+    color: var(--device-text);
+    margin-top: 14px;
+  }
+  .idle-foot { text-align: center; padding-bottom: 2px; }
+
+  /* superficie del lector */
+  .fp-btn {
+    background: transparent;
+    border: 0;
+    padding: 10px;
+    margin: 0 auto;
+    display: block;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: transform 120ms var(--ease-io);
+  }
+  .fp-btn:active { transform: scale(0.94); }
+  .fp-btn:focus-visible { outline: 2px solid var(--device-stamp); outline-offset: 4px; }
+  .fp-idle path { animation: breathe 2800ms var(--ease-io) infinite; opacity: .5; }
+  .fp-idle path:nth-child(2) { animation-delay: 120ms; }
+  .fp-idle path:nth-child(3) { animation-delay: 240ms; }
+  .fp-idle path:nth-child(4) { animation-delay: 360ms; }
+  .fp-idle path:nth-child(5) { animation-delay: 480ms; }
+  @keyframes breathe { 0%, 100% { opacity: .42 } 50% { opacity: 1 } }
+
+  .link-btn {
+    background: transparent;
+    border: 0;
+    color: var(--device-dim);
+    font-family: var(--font-stamp);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+    padding: 9px 12px;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    transition: color 150ms var(--ease-io);
+  }
+  .link-btn:hover { color: var(--device-text); }
+  .link-btn:focus-visible { outline: 2px solid var(--device-stamp); outline-offset: 2px; }
+
+  /* --- captura de número --- */
+  .pin-label {
+    font-family: var(--font-stamp);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--device-dim);
+    text-align: center;
+    margin-bottom: 10px;
+  }
+  .pin-slots {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    margin-bottom: 22px;
+  }
+  .pin-slot {
+    width: 42px;
+    height: 54px;
+    border-bottom: 2px solid var(--device-rule);
+    font-family: var(--font-stamp);
+    font-size: 30px;
+    line-height: 54px;
+    text-align: center;
+    color: var(--device-text);
+    transition: border-color 150ms var(--ease-io);
+  }
+  .pin-slot[data-filled="1"] { border-bottom-color: var(--device-stamp); }
+
+  .keypad {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 9px;
+  }
+  .key {
+    height: 52px;                 /* ≥48px: guante y prisa */
+    border: 1px solid var(--device-rule);
+    background: var(--device-2);
+    color: var(--device-text);
+    border-radius: var(--r-md);
+    font-family: var(--font-stamp);
+    font-size: 20px;
+    cursor: pointer;
+    transition: background 120ms var(--ease-io), transform 90ms var(--ease-io);
+  }
+  .key:hover { background: #262D35; }
+  .key:active { transform: scale(0.96); }
+  .key:focus-visible { outline: 2px solid var(--device-stamp); outline-offset: 2px; }
+  .key[data-act] { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--device-dim); }
+  .key[data-act="ok"] { background: var(--device-stamp); border-color: var(--device-stamp); color: #12101F; font-weight: 600; }
+  .key[data-act="ok"][disabled] { opacity: .3; cursor: not-allowed; }
+
+  /* --- lectura de huella --- */
+  .scan-wrap { text-align: center; }
+  .scan-name {
+    font-size: 19px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .scan-sub {
+    font-family: var(--font-stamp);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--device-dim);
+    margin-bottom: 26px;
+  }
+  .fp {
+    width: 122px;
+    height: 122px;
+    margin: 0 auto 20px;
+    display: block;
+    color: var(--device-stamp);
+  }
+  .fp path { stroke: currentColor; fill: none; stroke-width: 5; stroke-linecap: round; }
+  .fp-live path { animation: fpsweep 1400ms var(--ease-io) infinite; opacity: .25; }
+  .fp-live path:nth-child(1) { animation-delay: 0ms; }
+  .fp-live path:nth-child(2) { animation-delay: 90ms; }
+  .fp-live path:nth-child(3) { animation-delay: 180ms; }
+  .fp-live path:nth-child(4) { animation-delay: 270ms; }
+  .fp-live path:nth-child(5) { animation-delay: 360ms; }
+  @keyframes fpsweep { 0%,100% { opacity:.22 } 45% { opacity:1 } }
+  .scan-msg { font-size: 16px; }
+
+  /* --- confirmación: EL SELLO --- */
+  .ok-wrap { text-align: center; position: relative; }
+  .ok-person {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 11px;
+    margin-bottom: 20px;
+  }
+  .ok-ini {
+    width: 40px; height: 40px;
+    border-radius: 999px;
+    background: var(--device-2);
+    border: 1px solid var(--device-rule);
+    display: grid; place-items: center;
+    font-family: var(--font-stamp);
+    font-size: 13px;
+    color: var(--device-text);
+  }
+  .ok-name { font-size: 18px; font-weight: 600; text-align: left; line-height: 1.2; }
+  .ok-name small {
+    display: block;
+    font-family: var(--font-stamp);
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--device-dim);
+  }
+
+  .stamp-area { position: relative; display: inline-block; }
+  .stamp-time {
+    font-family: var(--font-stamp);
+    font-variant-numeric: tabular-nums;
+    font-size: clamp(3.4rem, 16vw, 5rem);
+    line-height: 1;
+    letter-spacing: -0.05em;
+    font-weight: 600;
+    color: var(--device-stamp);
+    position: relative;
+    z-index: 2;
+  }
+  /* impresión residual de tinta: queda debajo, apenas visible */
+  .stamp-ghost {
+    position: absolute;
+    inset: 0;
+    font-family: var(--font-stamp);
+    font-variant-numeric: tabular-nums;
+    font-size: clamp(3.4rem, 16vw, 5rem);
+    line-height: 1;
+    letter-spacing: -0.05em;
+    font-weight: 600;
+    color: var(--device-stamp);
+    opacity: .13;
+    transform: rotate(-1.6deg) translate(2px, 1px);
+    z-index: 1;
+    pointer-events: none;
+  }
+  .played .stamp-time { animation: stamp 375ms var(--ease-stamp) both; }
+  .played .stamp-ghost { animation: ghost 520ms var(--ease-out) both; }
+  @keyframes stamp {
+    0%   { opacity: 0; transform: scale(1.16) rotate(-2.4deg); filter: blur(7px); }
+    55%  { opacity: 1; filter: blur(0); }
+    72%  { transform: scale(0.982) rotate(0.5deg); }
+    100% { opacity: 1; transform: scale(1) rotate(0); filter: blur(0); }
+  }
+  @keyframes ghost {
+    0%, 40% { opacity: 0; }
+    100% { opacity: .13; }
+  }
+  .ok-verb {
+    font-size: 16px;
+    margin-top: 14px;
+    color: var(--device-text);
+  }
+  .ok-where {
+    font-family: var(--font-stamp);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--device-dim);
+    margin-top: 6px;
+  }
+  .ok-bar {
+    margin-top: 24px;
+    height: 2px;
+    background: var(--device-rule);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .ok-bar i {
+    display: block; height: 100%; width: 100%;
+    background: var(--device-stamp);
+    transform-origin: left;
+  }
+  .played .ok-bar i { animation: drain 4000ms linear both; }
+  @keyframes drain { from { transform: scaleX(1) } to { transform: scaleX(0) } }
+
+  /* --- rechazo: neutro, sin foto, sin comparación --- */
+  .err-wrap { text-align: center; }
+  .err-mark {
+    width: 58px; height: 58px;
+    margin: 0 auto 18px;
+    border-radius: 999px;
+    border: 2px solid var(--device-amber, #E0A44A);
+    color: #E0A44A;
+    display: grid; place-items: center;
+    font-family: var(--font-stamp);
+    font-size: 24px;
+  }
+  .err-title { font-size: 20px; font-weight: 600; margin-bottom: 8px; }
+  .err-sub { font-size: 15px; color: var(--device-dim); }
+  .err-alt {
+    margin-top: 22px;
+    font-family: var(--font-ui);
+    font-size: 14px; font-weight: 600;
+    background: transparent;
+    color: var(--device-text);
+    border: 1px solid var(--device-rule);
+    border-radius: var(--r-md);
+    padding: 11px 20px;
+    cursor: pointer;
+    transition: border-color 150ms var(--ease-io), background 150ms var(--ease-io);
+  }
+  .err-alt:hover { border-color: var(--device-stamp); background: var(--device-2); }
+  .err-alt:focus-visible { outline: 2px solid var(--device-stamp); outline-offset: 2px; }
+  .err-alt[hidden] { display: none; }
+
+  /* controles de la maqueta: chrome de la página, no del producto */
+  .demo {
+    margin: 18px auto 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    flex-wrap: wrap;
+    font-family: var(--font-stamp);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .demo button {
+    font-family: inherit;
+    font-size: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    background: transparent;
+    border: 1px dashed var(--rule);
+    color: var(--text-2);
+    border-radius: 999px;
+    padding: 5px 12px;
+    cursor: pointer;
+    transition: border-color 150ms var(--ease-io), color 150ms var(--ease-io);
+  }
+  .demo button:hover { border-color: var(--stamp); color: var(--stamp); }
+  .demo button:focus-visible { outline: 2px solid var(--stamp); outline-offset: 2px; }
+  .demo button[aria-pressed="true"] {
+    border-style: solid;
+    border-color: var(--stamp);
+    color: var(--stamp);
+    background: var(--stamp-soft);
+  }
+
+  /* indicador de voz en el kiosko */
+  .say {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 12px;
+    font-family: var(--font-stamp);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--device-dim);
+  }
+  .say i {
+    display: inline-block;
+    width: 3px; height: 9px;
+    background: currentColor;
+    border-radius: 2px;
+    animation: bars 900ms var(--ease-io) infinite;
+  }
+  .say i:nth-child(2) { height: 14px; animation-delay: 110ms; }
+  .say i:nth-child(3) { height: 7px;  animation-delay: 220ms; }
+  @keyframes bars { 0%, 100% { transform: scaleY(.45) } 50% { transform: scaleY(1) } }
+  .say[hidden] { display: none; }
+
+  /* ============================================================
+     ESTADOS — color + FORMA (NN/g: no depender solo del tono)
+     ============================================================ */
+  .glyph {
+    width: 13px; height: 13px;
+    border-radius: 999px;
+    display: inline-block;
+    flex: 0 0 auto;
+    position: relative;
+  }
+  .glyph[data-s="in"]   { background: var(--stamp); }
+  .glyph[data-s="late"] { border: 2px solid var(--amber); background: linear-gradient(90deg, var(--amber) 50%, transparent 50%); }
+  .glyph[data-s="out"]  { border: 2px solid var(--text-3); background: transparent; }
+
+  .legend {
+    display: flex; gap: 22px; flex-wrap: wrap;
+    font-family: var(--font-stamp);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-2);
+    margin-top: 22px;
+    padding-top: 18px;
+    border-top: 1px solid var(--rule);
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 8px; }
+
+  /* ============================================================
+     TABLERO
+     ============================================================ */
+  .board {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+  }
+  .board-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap;
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .board-head h3 { margin: 0; font-size: 16px; font-weight: 600; }
+  .live {
+    font-family: var(--font-stamp);
+    font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--text-3);
+    display: inline-flex; align-items: center; gap: 7px;
+  }
+  .live i {
+    width: 6px; height: 6px; border-radius: 999px;
+    background: var(--stamp);
+    animation: pulse 2200ms var(--ease-io) infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
+
+  .kpis {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    border-bottom: 1px solid var(--rule);
+  }
+  .kpi { padding: 16px 18px; border-right: 1px solid var(--rule); }
+  .kpi:last-child { border-right: 0; }
+  .kpi b {
+    display: block;
+    font-family: var(--font-stamp);
+    font-variant-numeric: tabular-nums;
+    font-size: 30px;
+    line-height: 1;
+    letter-spacing: -0.04em;
+    font-weight: 600;
+  }
+  .kpi span {
+    display: block;
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--text-2);
+    line-height: 1.3;
+  }
+  .kpi[data-tone="late"] b { color: var(--amber); }
+  .kpi[data-tone="in"] b { color: var(--stamp); }
+
+  /* consola en dos paneles */
+  .board-split { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); }
+  .board-split > div + div { border-left: 1px solid var(--rule); }
+  .panel-cap {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+    padding: 13px 24px;
+    font-family: var(--font-stamp);
+    font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--text-3);
+    border-bottom: 1px solid var(--rule);
+  }
+
+  /* pendientes: la lista de trabajo del administrador */
+  .todo { list-style: none; margin: 0; padding: 0; }
+  .todo li {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 10px;
+    align-items: center;
+    padding: 11px 24px;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  .todo li:last-child { border-bottom: 0; }
+  .todo-what { font-size: 14px; min-width: 0; }
+  .todo-what b { font-weight: 600; }
+  .todo-what span {
+    display: block;
+    font-family: var(--font-stamp);
+    font-size: 11px;
+    color: var(--text-3);
+    margin-top: 1px;
+  }
+  .mini {
+    font-family: var(--font-stamp);
+    font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+    background: transparent;
+    border: 1px solid var(--rule);
+    color: var(--text-2);
+    border-radius: var(--r-sm);
+    padding: 5px 10px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: border-color 150ms var(--ease-io), color 150ms var(--ease-io);
+  }
+  .mini:hover { border-color: var(--stamp); color: var(--stamp); }
+  .mini:focus-visible { outline: 2px solid var(--stamp); outline-offset: 2px; }
+
+  /* ============================================================
+     REJILLA DEL PERIODO — todos contra todos los días
+     ============================================================ */
+  .grid-wrap { overflow-x: auto; }
+  .gtable {
+    border-collapse: separate;
+    border-spacing: 0;
+    min-width: 820px;
+    width: 100%;
+    font-size: 13px;
+  }
+  .gtable th, .gtable td {
+    border-bottom: 1px solid var(--rule-soft);
+    padding: 7px 10px;
+    text-align: right;
+    white-space: nowrap;
+  }
+  .gtable thead th {
+    background: var(--surface-2);
+    font-family: var(--font-stamp);
+    font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--text-3);
+    font-weight: 400;
+    border-bottom: 1px solid var(--rule);
+    padding-top: 10px; padding-bottom: 10px;
+  }
+  .gtable th.gname, .gtable td.gname {
+    text-align: left;
+    position: sticky;
+    left: 0;
+    background: var(--surface);
+    border-right: 1px solid var(--rule);
+    z-index: 1;
+    min-width: 190px;
+  }
+  .gtable thead th.gname { background: var(--surface-2); z-index: 2; }
+  .gtable td.gname b { font-weight: 500; }
+  .gtable td.gname i {
+    display: block;
+    font-style: normal;
+    font-family: var(--font-stamp);
+    font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .gtable tbody tr:hover td { background: var(--surface-2); }
+  .gtable tbody tr:hover td.gname { background: var(--surface-2); }
+  .cell {
+    font-family: var(--font-stamp);
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+  }
+  .cell[data-c="late"] { color: var(--amber); background: var(--amber-soft); }
+  .cell[data-c="rest"] { color: var(--text-3); }
+  .cell[data-c="absent"] { color: var(--text-3); }
+  .cell[data-c="open"] {
+    color: var(--stamp);
+    background: var(--stamp-soft);
+    border-bottom: 1px dashed var(--stamp);
+  }
+  .gtot {
+    font-family: var(--font-stamp);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    background: var(--surface-2);
+    border-left: 1px solid var(--rule);
+  }
+  .gtable tfoot td {
+    font-family: var(--font-stamp);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    background: var(--surface-2);
+    border-top: 1px solid var(--rule);
+    border-bottom: 0;
+  }
+  .glegend {
+    display: flex; gap: 20px; flex-wrap: wrap;
+    padding: 13px 24px;
+    border-top: 1px solid var(--rule);
+    font-family: var(--font-stamp);
+    font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .glegend b {
+    font-weight: 400;
+    padding: 1px 6px;
+    border-radius: 3px;
+    margin-right: 6px;
+  }
+  .glegend b[data-c="late"] { color: var(--amber); background: var(--amber-soft); }
+  .glegend b[data-c="open"] { color: var(--stamp); background: var(--stamp-soft); border-bottom: 1px dashed var(--stamp); }
+  .glegend b[data-c="rest"] { color: var(--text-3); }
+
+  .site-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding: 15px 24px 9px;
+    font-family: var(--font-stamp);
+    font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--text-3);
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  .roster { list-style: none; margin: 0; padding: 0; }
+  .roster li {
+    display: grid;
+    grid-template-columns: 13px minmax(0,1fr) auto;
+    align-items: center;
+    gap: 14px;
+    padding: 13px 24px;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  .roster li:last-child { border-bottom: 0; }
+  .r-name { font-size: 15px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .r-time {
+    font-family: var(--font-stamp);
+    font-variant-numeric: tabular-nums;
+    font-size: 15px;
+    color: var(--text-2);
+    display: inline-flex; align-items: center; gap: 9px;
+  }
+  .tag {
+    font-family: var(--font-stamp);
+    font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 2px 7px; border-radius: 4px;
+    background: var(--amber-soft); color: var(--amber);
+  }
+  .tag[data-t="none"] { background: transparent; color: var(--text-3); }
+
+  .reveal .roster li { opacity: 0; animation: rise 220ms var(--ease-out) both; animation-delay: calc(var(--i) * 42ms); }
+  @keyframes rise { from { opacity: 0; transform: translateY(9px) } to { opacity: 1; transform: none } }
+
+  /* ============================================================
+     TARJETA DE LA SEMANA
+     ============================================================ */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+  }
+  .card-head {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--rule);
+    display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  }
+  .card-who { font-size: 17px; font-weight: 600; }
+  .card-who small {
+    display: block; font-weight: 400;
+    font-family: var(--font-stamp);
+    font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--text-3); margin-top: 3px;
+  }
+  .card-tot { text-align: right; }
+  .card-tot b {
+    font-family: var(--font-stamp); font-variant-numeric: tabular-nums;
+    font-size: 26px; letter-spacing: -0.03em; font-weight: 600;
+    display: block; line-height: 1;
+  }
+  .card-tot span { font-size: 12px; color: var(--text-2); }
+
+  .scroller { overflow-x: auto; }
+  .week { min-width: 660px; }
+
+  .wk-axis {
+    display: grid;
+    grid-template-columns: 118px minmax(0,1fr) 118px;
+    gap: 18px;
+    padding: 10px 24px 6px;
+    font-family: var(--font-stamp);
+    font-size: 10px; letter-spacing: 0.1em;
+    color: var(--text-3);
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  .ticks { display: flex; justify-content: space-between; }
+  .ticks i { font-style: normal; }
+
+  .day {
+    display: grid;
+    grid-template-columns: 118px minmax(0,1fr) 118px;
+    gap: 18px;
+    align-items: center;
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  .day:last-child { border-bottom: 0; }
+  .d-label { font-size: 14px; }
+  .d-label b { font-weight: 600; }
+  .d-label span {
+    display: block;
+    font-family: var(--font-stamp);
+    font-size: 11px;
+    color: var(--text-3);
+  }
+
+  .track {
+    position: relative;
+    height: 30px;
+    background: repeating-linear-gradient(90deg, var(--rule-soft) 0 1px, transparent 1px calc(100% / 14));
+    border-radius: var(--r-sm);
+  }
+  .expect {   /* horario esperado: contorno */
+    position: absolute; top: 3px; bottom: 3px;
+    left: var(--s); width: var(--w);
+    border: 1px dashed var(--rule);
+    border-radius: var(--r-sm);
+  }
+  .actual {   /* lo realmente trabajado: sólido */
+    position: absolute; top: 7px; bottom: 7px;
+    left: var(--s); width: var(--w);
+    background: var(--stamp);
+    border-radius: 4px;
+    transform-origin: left;
+  }
+  .reveal .actual { animation: draw 460ms var(--ease-out) both; animation-delay: calc(var(--i) * 55ms); }
+  @keyframes draw { from { transform: scaleX(0) } to { transform: scaleX(1) } }
+
+  .actual[data-x="late"] { background: var(--amber); }
+  /* falta la salida: el bloque se queda abierto del lado derecho */
+  .actual[data-x="open"] {
+    background: repeating-linear-gradient(135deg, var(--stamp) 0 5px, transparent 5px 10px);
+    border: 1px dashed var(--stamp);
+    border-right: 0;
+    border-radius: 4px 0 0 4px;
+    -webkit-mask-image: linear-gradient(90deg, #000 72%, transparent 100%);
+    mask-image: linear-gradient(90deg, #000 72%, transparent 100%);
+  }
+  .d-rest {
+    font-family: var(--font-stamp);
+    font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--text-3);
+    align-self: center;
+  }
+  .d-sum { text-align: right; }
+  .d-sum b {
+    font-family: var(--font-stamp); font-variant-numeric: tabular-nums;
+    font-size: 15px; font-weight: 600; display: block;
+  }
+  .d-sum span { font-size: 11px; font-family: var(--font-stamp); color: var(--text-3); }
+  .d-sum[data-x="late"] b { color: var(--amber); }
+  .d-sum[data-x="open"] b { color: var(--stamp); }
+
+  .fix-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap;
+    padding: 15px 24px;
+    background: var(--stamp-soft);
+    border-top: 1px solid var(--rule);
+    font-size: 14px;
+  }
+  .fix-row p { margin: 0; color: var(--text); }
+  .fix-row p b { font-weight: 600; }
+  .btn {
+    font-family: var(--font-ui);
+    font-size: 13px; font-weight: 600;
+    background: var(--stamp); color: var(--on-stamp);
+    border: 0; border-radius: var(--r-sm);
+    padding: 9px 16px; cursor: pointer;
+    transition: opacity 150ms var(--ease-io);
+  }
+  .btn:hover { opacity: .88; }
+  .btn:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+
+  /* ============================================================
+     HORARIO POR DÍA
+     ============================================================ */
+  .sched { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r-lg); overflow: hidden; }
+  .sched-head { padding: 20px 24px; border-bottom: 1px solid var(--rule); }
+  .sched-head h3 { margin: 0 0 3px; font-size: 16px; font-weight: 600; }
+  .sched-head p { margin: 0; font-size: 13px; color: var(--text-2); }
+  .srow {
+    display: grid;
+    grid-template-columns: 110px 1fr 1fr 128px;
+    gap: 14px;
+    align-items: center;
+    padding: 12px 24px;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  .srow:last-child { border-bottom: 0; }
+  .srow[data-off="1"] { background: var(--surface-2); }
+  .s-day { font-size: 14px; font-weight: 500; }
+  .field {
+    font-family: var(--font-stamp); font-variant-numeric: tabular-nums;
+    font-size: 15px;
+    background: var(--surface-2);
+    border: 1px solid var(--rule);
+    border-radius: var(--r-sm);
+    padding: 8px 11px;
+    color: var(--text);
+    width: 100%;
+  }
+  .field:focus-visible { outline: 2px solid var(--stamp); outline-offset: 1px; }
+  .field[disabled] { color: var(--text-3); background: transparent; border-style: dashed; }
+  .sw {
+    display: inline-flex; align-items: center; gap: 9px;
+    font-family: var(--font-stamp);
+    font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--text-2);
+    cursor: pointer;
+    user-select: none;
+  }
+  .sw input { position: absolute; opacity: 0; width: 0; height: 0; }
+  .sw i {
+    width: 34px; height: 19px; border-radius: 999px;
+    background: var(--rule); position: relative;
+    transition: background 180ms var(--ease-io);
+    flex: 0 0 auto;
+  }
+  .sw i::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 15px; height: 15px; border-radius: 999px; background: var(--surface);
+    transition: transform 180ms var(--ease-io);
+    box-shadow: 0 1px 2px rgba(0,0,0,.2);
+  }
+  .sw input:checked + i { background: var(--stamp); }
+  .sw input:checked + i::after { transform: translateX(15px); }
+  .sw input:focus-visible + i { outline: 2px solid var(--stamp); outline-offset: 2px; }
+
+  .sched-foot {
+    padding: 15px 24px; border-top: 1px solid var(--rule);
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    font-size: 13px; color: var(--text-2);
+  }
+  .sched-foot .field { width: 78px; }
+
+  /* ============================================================
+     CIERRE
+     ============================================================ */
+  .colofon { padding: 60px 0 80px; border-top: 1px solid var(--rule); }
+  .colofon h2 { font-size: 1.3rem; margin: 0 0 20px; font-weight: 600; }
+  .notes { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; max-width: 66ch; }
+  .notes li { display: grid; grid-template-columns: 22px 1fr; gap: 12px; font-size: 14.5px; color: var(--text-2); }
+  .notes li b { color: var(--text); font-weight: 600; }
+  .notes li::before {
+    content: "";
+    width: 9px; height: 9px; margin-top: 8px;
+    border-radius: 2px;
+    background: var(--stamp);
+  }
+
+  /* ============================================================
+     RESPONSIVO
+     ============================================================ */
+  @media (max-width: 900px) {
+    .hero { grid-template-columns: 1fr; gap: 40px; }
+    .mount { order: -1; }
+    .kpis { grid-template-columns: repeat(2, 1fr); }
+    .kpi { border-bottom: 1px solid var(--rule); }
+    .board-split { grid-template-columns: 1fr; }
+    .board-split > div + div { border-left: 0; border-top: 1px solid var(--rule); }
+    .srow { grid-template-columns: 88px 1fr 1fr; row-gap: 10px; }
+    .srow > .sw { grid-column: 1 / -1; }
+  }
+  @media (max-width: 560px) {
+    .wrap { padding: 0 18px; }
+    .band { padding: 54px 0; }
+    .roster li, .day, .srow, .site-head, .board-head, .card-head, .kpi { padding-left: 18px; padding-right: 18px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
+</style>
+
+
+<header class="wrap masthead">
+  <div class="brand">Mueblería <b>MSP</b> · Propuesta de interfaz</div>
+  <button class="theme-btn" id="themeBtn" type="button">Tema</button>
+</header>
+
+<section class="wrap hero">
+  <div class="hero-copy">
+    <h1>La hora <em>se estampa</em>, no se captura.</h1>
+    <p>Control de asistencia para oficinas y bodegas. Cuatro pantallas: la que vive en la pared y las tres que viven en el escritorio.</p>
+    <div class="hero-meta">
+      <span>Sedes<b class="num">3</b></span>
+      <span>Personal<b class="num">15</b></span>
+      <span>Sin red<b>Sigue marcando</b></span>
+    </div>
+  </div>
+
+  <div class="mount">
+    <div class="tablet">
+      <div class="screen" id="kiosk">
+        <div class="screen-top">
+          <span id="kTop">Bodega Norte · Lector 2</span>
+          <span class="num" id="kMini">—</span>
+        </div>
+        <div class="screen-body">
+
+          <!-- reposo: el lector al frente -->
+          <div class="kstate" data-k="idle" data-on="1">
+            <div>
+              <p class="idle-clock num" id="bigClock">00:00</p>
+              <p class="idle-date" id="bigDate">—</p>
+            </div>
+            <div class="idle-mid">
+              <button class="fp-btn" type="button" id="fpBtn" aria-label="Poner el dedo en el lector">
+                <svg class="fp fp-idle" viewBox="0 0 100 100" aria-hidden="true">
+                  <path d="M50 84c-9-8-13-19-13-31a13 13 0 0 1 26 0c0 8 1 15 4 21"/>
+                  <path d="M28 76c-5-8-7-16-7-23a29 29 0 0 1 58 0c0 10-2 19-6 27"/>
+                  <path d="M50 63v-10"/>
+                  <path d="M17 47a33 33 0 0 1 66 0c0 6-1 12-2 17"/>
+                  <path d="M35 84c-3-5-4-12-4-19"/>
+                </svg>
+              </button>
+              <div class="idle-cta">Pon el dedo</div>
+            </div>
+            <div class="idle-foot">
+              <button class="link-btn" type="button" id="toPin">Usar número</button>
+            </div>
+          </div>
+
+          <!-- respaldo: número -->
+          <div class="kstate" data-k="pin">
+            <div class="pin-label">Número de empleado</div>
+            <div class="pin-slots" id="slots">
+              <div class="pin-slot"></div><div class="pin-slot"></div>
+              <div class="pin-slot"></div><div class="pin-slot"></div>
+            </div>
+            <div class="keypad" id="pad">
+              <button class="key" type="button" data-d="1">1</button>
+              <button class="key" type="button" data-d="2">2</button>
+              <button class="key" type="button" data-d="3">3</button>
+              <button class="key" type="button" data-d="4">4</button>
+              <button class="key" type="button" data-d="5">5</button>
+              <button class="key" type="button" data-d="6">6</button>
+              <button class="key" type="button" data-d="7">7</button>
+              <button class="key" type="button" data-d="8">8</button>
+              <button class="key" type="button" data-d="9">9</button>
+              <button class="key" type="button" data-act="del">Borrar</button>
+              <button class="key" type="button" data-d="0">0</button>
+              <button class="key" type="button" data-act="ok" id="okKey" disabled>Sigue</button>
+            </div>
+          </div>
+
+          <!-- huella -->
+          <div class="kstate" data-k="scan">
+            <div class="scan-wrap">
+              <div class="scan-name" id="scanName">—</div>
+              <div class="scan-sub" id="scanSub">—</div>
+              <svg class="fp fp-live" viewBox="0 0 100 100" aria-hidden="true">
+                <path d="M50 84c-9-8-13-19-13-31a13 13 0 0 1 26 0c0 8 1 15 4 21"/>
+                <path d="M28 76c-5-8-7-16-7-23a29 29 0 0 1 58 0c0 10-2 19-6 27"/>
+                <path d="M50 63v-10"/>
+                <path d="M17 47a33 33 0 0 1 66 0c0 6-1 12-2 17"/>
+                <path d="M35 84c-3-5-4-12-4-19"/>
+              </svg>
+              <div class="scan-msg">Pon el dedo</div>
+            </div>
+          </div>
+
+          <!-- confirmación -->
+          <div class="kstate" data-k="ok">
+            <div class="ok-wrap">
+              <div class="ok-person">
+                <div class="ok-ini num" id="okIni">—</div>
+                <div class="ok-name" id="okName">—<small id="okNum">—</small></div>
+              </div>
+              <div class="stamp-area">
+                <span class="stamp-ghost num" id="okGhost">00:00</span>
+                <span class="stamp-time num" id="okTime">00:00</span>
+              </div>
+              <div class="ok-verb" id="okVerb">Entrada registrada</div>
+              <div class="ok-where" id="okWhere">—</div>
+              <div class="say" id="sayInd" hidden><i></i><i></i><i></i> Diciendo el nombre</div>
+              <div class="ok-bar"><i></i></div>
+            </div>
+          </div>
+
+          <!-- rechazo -->
+          <div class="kstate" data-k="err">
+            <div class="err-wrap">
+              <div class="err-mark num">?</div>
+              <div class="err-title" id="errTitle">Intenta otra vez</div>
+              <div class="err-sub" id="errSub">Limpia el dedo y vuelve a poner</div>
+              <button class="err-alt" type="button" id="errAlt">Usar número</button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <div class="demo">
+      <span>Simular lectura</span>
+      <button type="button" data-sim="ok">Correcta</button>
+      <button type="button" data-sim="fail">Fallida</button>
+      <button type="button" id="voiceBtn" aria-pressed="true">Voz activada</button>
+    </div>
+  </div>
+</section>
+
+
+<section class="band">
+  <div class="wrap">
+    <p class="place">Pared · Bodega</p>
+    <h2 class="sec-title">El kiosko</h2>
+    <p class="sec-note"><b>Ésta es la única pantalla que ve el personal.</b> No hay app ni portal del empleado: quien quiera revisar sus horas las pide en administración. Tres segundos de interacción, de pie, con las manos ocupadas y gente atrás. El dedo basta: nadie teclea nada en la mañana. Cuando el lector falla —dedo seco, polvo, un corte— el número entra como respaldo en la misma pantalla, sin ir a buscar al supervisor. Y el rechazo no dice a quién no reconoció ni muestra su foto: la fila no tiene por qué enterarse.</p>
+
+    <div class="legend">
+      <span><i class="glyph" data-s="in"></i> Adentro</span>
+      <span><i class="glyph" data-s="late"></i> Retardo</span>
+      <span><i class="glyph" data-s="out"></i> No ha llegado</span>
+      <span style="color:var(--text-3)">Forma + color: se lee sin distinguir tonos</span>
+    </div>
+  </div>
+</section>
+
+
+<section class="band">
+  <div class="wrap">
+    <p class="place">Escritorio · Administración</p>
+    <h2 class="sec-title">La consola del día</h2>
+    <p class="sec-note">Nadie más que administración tiene pantalla, así que ésta carga con todo: el estado de las tres sedes y la lista de lo que hay que resolver, sin cambiar de vista. El retardo es una etiqueta junto al nombre, no un renglón rojo que convierta la consola en reporte contable.</p>
+
+    <div class="board" id="board">
+      <div class="board-head">
+        <h3>Martes 21 de julio</h3>
+        <span class="live"><i></i> En vivo · 08:24</span>
+      </div>
+
+      <div class="kpis">
+        <div class="kpi" data-tone="in"><b class="num" data-count="14">0</b><span>Adentro ahora</span></div>
+        <div class="kpi" data-tone="late"><b class="num" data-count="2">0</b><span>Retardos hoy</span></div>
+        <div class="kpi"><b class="num" data-count="1">0</b><span>Sin llegar</span></div>
+        <div class="kpi"><b class="num" data-count="3">0</b><span>Marcajes sin par</span></div>
+        <div class="kpi"><b class="num grand-total">—</b><span>Horas de la semana</span></div>
+      </div>
+
+      <div class="board-split">
+      <div>
+      <div class="panel-cap"><span>Presencia por sede</span><span class="num">14 / 15</span></div>
+      <div class="site-head"><span>Matriz Centro</span><span class="num">5 / 6</span></div>
+      <ul class="roster">
+        <li style="--i:0"><i class="glyph" data-s="in"></i><span class="r-name">Ernesto Vázquez Bonilla</span><span class="r-time">07:47</span></li>
+        <li style="--i:1"><i class="glyph" data-s="in"></i><span class="r-name">Bertha Solís Ramírez</span><span class="r-time">07:52</span></li>
+        <li style="--i:2"><i class="glyph" data-s="in"></i><span class="r-name">Sofía Herrera Palacios</span><span class="r-time">07:58</span></li>
+        <li style="--i:3"><i class="glyph" data-s="in"></i><span class="r-name">Alonso Cid Miranda</span><span class="r-time">08:02</span></li>
+        <li style="--i:4"><i class="glyph" data-s="late"></i><span class="r-name">Lucía Cortés Mendoza</span><span class="r-time"><span class="tag">+19 min</span> 08:19</span></li>
+        <li style="--i:5"><i class="glyph" data-s="out"></i><span class="r-name">Guadalupe Nava Ortiz</span><span class="r-time"><span class="tag" data-t="none">—</span></span></li>
+      </ul>
+
+      <div class="site-head"><span>Bodega Norte</span><span class="num">5 / 5</span></div>
+      <ul class="roster">
+        <li style="--i:6"><i class="glyph" data-s="in"></i><span class="r-name">Raúl Tepox Andrade</span><span class="r-time">07:28</span></li>
+        <li style="--i:7"><i class="glyph" data-s="in"></i><span class="r-name">Marcos Aguilar Rojas</span><span class="r-time">07:31</span></li>
+        <li style="--i:8"><i class="glyph" data-s="in"></i><span class="r-name">Julián Peña Carmona</span><span class="r-time">07:35</span></li>
+        <li style="--i:9"><i class="glyph" data-s="in"></i><span class="r-name">Noé Barragán Lucero</span><span class="r-time">07:40</span></li>
+        <li style="--i:10"><i class="glyph" data-s="late"></i><span class="r-name">Óscar Lira Fuentes</span><span class="r-time"><span class="tag">+11 min</span> 08:11</span></li>
+      </ul>
+
+      <div class="site-head"><span>Sucursal Ajalpan</span><span class="num">4 / 4</span></div>
+      <ul class="roster">
+        <li style="--i:11"><i class="glyph" data-s="in"></i><span class="r-name">Teresa Galindo Cruz</span><span class="r-time">08:41</span></li>
+        <li style="--i:12"><i class="glyph" data-s="in"></i><span class="r-name">Ismael Rangel Osorio</span><span class="r-time">08:44</span></li>
+        <li style="--i:13"><i class="glyph" data-s="in"></i><span class="r-name">Paulina Escobar Ruiz</span><span class="r-time">08:47</span></li>
+        <li style="--i:14"><i class="glyph" data-s="in"></i><span class="r-name">Gerardo Tello Aparicio</span><span class="r-time">08:52</span></li>
+      </ul>
+      </div>
+
+      <div>
+        <div class="panel-cap"><span>Pendientes de resolver</span><span class="num">4</span></div>
+        <ul class="todo">
+          <li>
+            <div class="todo-what"><b>Bertha Solís</b> entró y no salió<span>Jueves 17 · Matriz Centro</span></div>
+            <button class="mini" type="button">Corregir</button>
+          </li>
+          <li>
+            <div class="todo-what"><b>Óscar Lira</b> entró y no salió<span>Martes 15 · Bodega Norte</span></div>
+            <button class="mini" type="button">Corregir</button>
+          </li>
+          <li>
+            <div class="todo-what"><b>Teresa Galindo</b> salió sin entrada<span>Lunes 14 · Sucursal Ajalpan</span></div>
+            <button class="mini" type="button">Corregir</button>
+          </li>
+          <li>
+            <div class="todo-what"><b>Guadalupe Nava</b> no ha llegado<span>Hoy · esperada 08:00</span></div>
+            <button class="mini" type="button">Justificar</button>
+          </li>
+        </ul>
+
+        <div class="panel-cap" style="border-top:1px solid var(--rule)"><span>Últimos marcajes</span><span class="num">08:52</span></div>
+        <ul class="todo">
+          <li><div class="todo-what"><b>Gerardo Tello</b> entrada<span>08:52 · Ajalpan · huella</span></div><span class="r-time num">08:52</span></li>
+          <li><div class="todo-what"><b>Paulina Escobar</b> entrada<span>08:47 · Ajalpan · huella</span></div><span class="r-time num">08:47</span></li>
+          <li><div class="todo-what"><b>Ismael Rangel</b> entrada<span>08:44 · Ajalpan · número</span></div><span class="r-time num">08:44</span></li>
+          <li><div class="todo-what"><b>Teresa Galindo</b> entrada<span>08:41 · Ajalpan · huella</span></div><span class="r-time num">08:41</span></li>
+        </ul>
+      </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<section class="band">
+  <div class="wrap">
+    <p class="place">Escritorio · Administración</p>
+    <h2 class="sec-title">La semana completa, de un vistazo</h2>
+    <p class="sec-note">Quince personas contra siete días en una sola pantalla. Cada celda son las horas del día; el color y el subrayado marcan lo que necesita atención. La columna del nombre se queda fija al desplazar a lo ancho, y el total de cada quien vive al final del renglón.</p>
+
+    <div class="card">
+      <div class="card-head">
+        <div class="card-who">Semana del 14 al 20 de julio<small>Las tres sedes · 15 personas</small></div>
+        <div class="card-tot"><b class="num grand-total">—</b><span>horas del periodo</span></div>
+      </div>
+
+      <div class="grid-wrap">
+        <table class="gtable" id="gtable">
+          <thead>
+            <tr>
+              <th class="gname">Empleado</th>
+              <th>Lun 14</th><th>Mar 15</th><th>Mié 16</th><th>Jue 17</th>
+              <th>Vie 18</th><th>Sáb 19</th><th>Dom 20</th>
+              <th class="gtot">Total</th>
+            </tr>
+          </thead>
+          <tbody id="gbody"></tbody>
+        </table>
+      </div>
+
+      <div class="glegend">
+        <span><b data-c="late">8:43</b> Retardo</span>
+        <span><b data-c="open">7:55</b> Sin salida</span>
+        <span><b data-c="rest">·</b> Descanso</span>
+        <span><b data-c="rest">○</b> Falta</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<section class="band">
+  <div class="wrap">
+    <p class="place">Escritorio · Detalle de persona</p>
+    <h2 class="sec-title">Cuando hay que mirar de cerca</h2>
+    <p class="sec-note">Al hacer clic en un renglón de la rejilla. El contorno punteado es el horario esperado; el bloque sólido es lo que realmente pasó. El jueves nadie marcó salida: el bloque se queda abierto del lado derecho en vez de pintarse de rojo. La barra dice más rápido lo que una tabla tardaría en explicar.</p>
+
+    <div class="card" id="card">
+      <div class="card-head">
+        <div class="card-who">Bertha Solís Ramírez<small>Núm. 1042 · Matriz Centro</small></div>
+        <div class="card-tot"><b class="num">41:12</b><span>horas de la semana</span></div>
+      </div>
+
+      <div class="scroller">
+        <div class="week">
+          <div class="wk-axis">
+            <span></span>
+            <span class="ticks num"><i>06</i><i>08</i><i>10</i><i>12</i><i>14</i><i>16</i><i>18</i><i>20</i></span>
+            <span></span>
+          </div>
+
+          <div class="day">
+            <div class="d-label"><b>Lunes</b><span>14 jul</span></div>
+            <div class="track">
+              <div class="expect" style="--s:14.29%; --w:64.29%"></div>
+              <div class="actual" style="--s:13.33%; --w:65.71%; --i:0"></div>
+            </div>
+            <div class="d-sum"><b>9:12</b><span>07:52 — 17:04</span></div>
+          </div>
+
+          <div class="day">
+            <div class="d-label"><b>Martes</b><span>15 jul</span></div>
+            <div class="track">
+              <div class="expect" style="--s:14.29%; --w:64.29%"></div>
+              <div class="actual" data-x="late" style="--s:16.55%; --w:62.26%; --i:1"></div>
+            </div>
+            <div class="d-sum" data-x="late"><b>8:43</b><span>08:19 — 17:02</span></div>
+          </div>
+
+          <div class="day">
+            <div class="d-label"><b>Miércoles</b><span>16 jul</span></div>
+            <div class="track">
+              <div class="expect" style="--s:14.29%; --w:64.29%"></div>
+              <div class="actual" style="--s:14.05%; --w:64.52%; --i:2"></div>
+            </div>
+            <div class="d-sum"><b>9:02</b><span>07:58 — 17:00</span></div>
+          </div>
+
+          <div class="day">
+            <div class="d-label"><b>Jueves</b><span>17 jul</span></div>
+            <div class="track">
+              <div class="expect" style="--s:14.29%; --w:64.29%"></div>
+              <div class="actual" data-x="open" style="--s:13.69%; --w:68.45%; --i:3"></div>
+            </div>
+            <div class="d-sum" data-x="open"><b>—</b><span>07:55 — falta</span></div>
+          </div>
+
+          <div class="day">
+            <div class="d-label"><b>Viernes</b><span>18 jul</span></div>
+            <div class="track">
+              <div class="expect" style="--s:14.29%; --w:64.29%"></div>
+              <div class="actual" style="--s:12.98%; --w:65.36%; --i:4"></div>
+            </div>
+            <div class="d-sum"><b>9:09</b><span>07:49 — 16:58</span></div>
+          </div>
+
+          <div class="day">
+            <div class="d-label"><b>Sábado</b><span>19 jul</span></div>
+            <div class="track">
+              <div class="expect" style="--s:21.43%; --w:35.71%"></div>
+              <div class="actual" style="--s:21.07%; --w:36.43%; --i:5"></div>
+            </div>
+            <div class="d-sum"><b>5:06</b><span>08:57 — 14:03</span></div>
+          </div>
+
+          <div class="day">
+            <div class="d-label"><b>Domingo</b><span>20 jul</span></div>
+            <div class="d-rest">Descanso</div>
+            <div class="d-sum"><b>—</b><span></span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="fix-row">
+        <p><b>Jueves 17:</b> entrada sin salida. La corrección se firma con tu usuario y la hora; el marcaje original no se borra.</p>
+        <button class="btn" type="button">Registrar salida</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<section class="band">
+  <div class="wrap">
+    <p class="place">Escritorio · Expediente</p>
+    <h2 class="sec-title">El horario esperado</h2>
+    <p class="sec-note">Fijo por persona y distinto por día de la semana, porque el sábado no se parece al martes. Siete renglones en el expediente del empleado. El descanso es un estado, no un campo vacío.</p>
+
+    <div class="sched">
+      <div class="sched-head">
+        <h3>Bertha Solís Ramírez</h3>
+        <p>Núm. 1042 · Matriz Centro</p>
+      </div>
+
+      <div class="srow">
+        <div class="s-day">Lunes</div>
+        <input class="field" type="text" value="08:00" aria-label="Entrada lunes">
+        <input class="field" type="text" value="17:00" aria-label="Salida lunes">
+        <label class="sw"><input type="checkbox" checked><i></i> Labora</label>
+      </div>
+      <div class="srow">
+        <div class="s-day">Martes</div>
+        <input class="field" type="text" value="08:00" aria-label="Entrada martes">
+        <input class="field" type="text" value="17:00" aria-label="Salida martes">
+        <label class="sw"><input type="checkbox" checked><i></i> Labora</label>
+      </div>
+      <div class="srow">
+        <div class="s-day">Miércoles</div>
+        <input class="field" type="text" value="08:00" aria-label="Entrada miércoles">
+        <input class="field" type="text" value="17:00" aria-label="Salida miércoles">
+        <label class="sw"><input type="checkbox" checked><i></i> Labora</label>
+      </div>
+      <div class="srow">
+        <div class="s-day">Jueves</div>
+        <input class="field" type="text" value="08:00" aria-label="Entrada jueves">
+        <input class="field" type="text" value="17:00" aria-label="Salida jueves">
+        <label class="sw"><input type="checkbox" checked><i></i> Labora</label>
+      </div>
+      <div class="srow">
+        <div class="s-day">Viernes</div>
+        <input class="field" type="text" value="08:00" aria-label="Entrada viernes">
+        <input class="field" type="text" value="17:00" aria-label="Salida viernes">
+        <label class="sw"><input type="checkbox" checked><i></i> Labora</label>
+      </div>
+      <div class="srow">
+        <div class="s-day">Sábado</div>
+        <input class="field" type="text" value="09:00" aria-label="Entrada sábado">
+        <input class="field" type="text" value="14:00" aria-label="Salida sábado">
+        <label class="sw"><input type="checkbox" checked><i></i> Labora</label>
+      </div>
+      <div class="srow" data-off="1">
+        <div class="s-day">Domingo</div>
+        <input class="field" type="text" value="—" disabled aria-label="Entrada domingo">
+        <input class="field" type="text" value="—" disabled aria-label="Salida domingo">
+        <label class="sw"><input type="checkbox"><i></i> Descanso</label>
+      </div>
+
+      <div class="sched-foot">
+        <span>Tolerancia antes de contar retardo</span>
+        <input class="field num" type="text" value="10" aria-label="Minutos de tolerancia">
+        <span>minutos</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<section class="wrap colofon">
+  <h2>Decisiones que se ven en pantalla</h2>
+  <ul class="notes">
+    <li><b>El dedo primero, el número de respaldo.</b> Nadie teclea en la mañana. El costo es que el lector busca contra toda la plantilla: aceptable con 15 personas, a revisar si crece.</li>
+    <li><b>La voz dice el nombre, no "gracias".</b> Como el lector adivina quién eres, oír tu nombre es la única forma de cachar que se equivocó. También vuelve opcional el monitor.</li>
+    <li><b>Estado por forma, no solo por color.</b> Disco, medio anillo y anillo hueco se distinguen sin ver el tono.</li>
+    <li><b>Una sola animación protagonista.</b> El sello dura 375 ms. El resto se mueve entre 150 y 250 ms, o no se mueve.</li>
+    <li><b>La excepción no grita.</b> Falta de salida es un bloque abierto; el retardo es una etiqueta. Ningún renglón se pinta de rojo.</li>
+    <li><b>El kiosko es oscuro y la consola clara.</b> Uno vive en pared de bodega con luz mala; el otro en un monitor de oficina.</li>
+    <li><b>El personal no tiene pantalla.</b> Sin app ni portal del empleado: una sola superficie que mantener, un solo lugar donde puede fallar algo. La consola carga con toda la densidad porque solo la usa quien administra.</li>
+    <li><b>Corregir no es borrar.</b> El marcaje original se conserva siempre; la corrección se agrega firmada con usuario y hora.</li>
+  </ul>
+</section>
+
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------- tema ---------- */
+  var root = document.documentElement;
+  document.getElementById("themeBtn").addEventListener("click", function () {
+    var now = root.getAttribute("data-theme");
+    if (!now) {
+      now = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    root.setAttribute("data-theme", now === "dark" ? "light" : "dark");
+  });
+
+  /* ---------- reloj de reposo ---------- */
+  var DIAS = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+  var MESES = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+  var bigClock = document.getElementById("bigClock");
+  var bigDate = document.getElementById("bigDate");
+  var kMini = document.getElementById("kMini");
+
+  function pad2(n) { return (n < 10 ? "0" : "") + n; }
+  function hhmm(d) { return pad2(d.getHours()) + ":" + pad2(d.getMinutes()); }
+
+  function tick() {
+    var d = new Date();
+    bigClock.textContent = hhmm(d);
+    bigDate.textContent = DIAS[d.getDay()] + " " + d.getDate() + " de " + MESES[d.getMonth()];
+    kMini.textContent = hhmm(d);
+  }
+  tick();
+  setInterval(tick, 1000);
+
+  /* ---------- kiosko ---------- */
+  var PLANTILLA = {
+    "1042": { nombre: "Bertha Solís", ini: "BS", sede: "Matriz Centro" },
+    "2318": { nombre: "Marcos Aguilar", ini: "MA", sede: "Bodega Norte" }
+  };
+  var adentro = {};              // quién ya marcó entrada
+  var buf = "";
+  var timer = null;
+
+  var slots = document.getElementById("slots").children;
+  var okKey = document.getElementById("okKey");
+  var states = document.querySelectorAll(".kstate");
+
+  function show(name) {
+    for (var i = 0; i < states.length; i++) {
+      states[i].setAttribute("data-on", states[i].getAttribute("data-k") === name ? "1" : "0");
+    }
+  }
+
+  function paintSlots() {
+    for (var i = 0; i < 4; i++) {
+      slots[i].textContent = buf[i] || "";
+      slots[i].setAttribute("data-filled", buf[i] ? "1" : "0");
+    }
+    okKey.disabled = buf.length !== 4;
+  }
+
+  function reset() {
+    clearTimeout(timer);
+    callar();
+    buf = "";
+    paintSlots();
+    show("idle");
+  }
+
+  /* ---------- confirmación hablada ----------
+     Con 1:N el aparato ADIVINA quién eres. Decir el nombre en voz alta es
+     lo único que le permite a la persona cachar una coincidencia falsa.   */
+  var vozOn = true;
+  var vozBtn = document.getElementById("voiceBtn");
+  var sayInd = document.getElementById("sayInd");
+  var vozEs = null;
+  var haySintesis = ("speechSynthesis" in window) && ("SpeechSynthesisUtterance" in window);
+
+  function cargaVoces() {
+    var vs = window.speechSynthesis.getVoices() || [];
+    vozEs = vs.filter(function (v) { return /^es[-_]?MX/i.test(v.lang); })[0]
+         || vs.filter(function (v) { return /^es/i.test(v.lang); })[0]
+         || null;
+  }
+
+  if (haySintesis) {
+    cargaVoces();
+    window.speechSynthesis.onvoiceschanged = cargaVoces;
+  } else {
+    vozOn = false;
+    vozBtn.disabled = true;
+    vozBtn.setAttribute("aria-pressed", "false");
+    vozBtn.textContent = "Voz no disponible";
+  }
+
+  vozBtn.addEventListener("click", function () {
+    if (!haySintesis) return;
+    vozOn = !vozOn;
+    vozBtn.setAttribute("aria-pressed", vozOn ? "true" : "false");
+    vozBtn.textContent = vozOn ? "Voz activada" : "Voz apagada";
+    if (!vozOn) { window.speechSynthesis.cancel(); sayInd.hidden = true; }
+  });
+
+  function callar() {
+    if (haySintesis) window.speechSynthesis.cancel();
+    sayInd.hidden = true;
+  }
+
+  function decir(texto, conNombre) {
+    if (!vozOn || !haySintesis) return;
+    window.speechSynthesis.cancel();
+    var u = new SpeechSynthesisUtterance(texto);
+    u.lang = "es-MX";
+    if (vozEs) u.voice = vozEs;
+    u.rate = 1.02;
+    if (conNombre) sayInd.hidden = false;
+    u.onend = u.onerror = function () { sayInd.hidden = true; };
+    window.speechSynthesis.speak(u);
+  }
+
+  /* Camino principal: huella. El número queda como respaldo. */
+  var DEMO = "1042";                 // a quién identifica el lector en la maqueta
+
+  function leerHuella(exito) {
+    clearTimeout(timer);
+    document.getElementById("scanName").textContent = "Leyendo";
+    document.getElementById("scanSub").textContent = "No retires el dedo";
+    show("scan");
+    timer = setTimeout(function () {
+      if (exito) { confirmar(DEMO, PLANTILLA[DEMO]); }
+      else { rechazar("finger"); }
+    }, 1000);
+  }
+
+  document.getElementById("fpBtn").addEventListener("click", function (e) {
+    e.stopPropagation();
+    leerHuella(true);
+  });
+
+  document.getElementById("toPin").addEventListener("click", function (e) {
+    e.stopPropagation();
+    buf = ""; paintSlots(); show("pin");
+  });
+
+  document.getElementById("errAlt").addEventListener("click", function (e) {
+    e.stopPropagation();
+    clearTimeout(timer);
+    buf = ""; paintSlots(); show("pin");
+  });
+
+  document.querySelector(".demo").addEventListener("click", function (e) {
+    var b = e.target.closest("button");
+    if (!b) return;
+    leerHuella(b.dataset.sim === "ok");
+  });
+
+  document.getElementById("pad").addEventListener("click", function (e) {
+    var b = e.target.closest("button");
+    if (!b) return;
+    if (b.dataset.d && buf.length < 4) { buf += b.dataset.d; paintSlots(); return; }
+    if (b.dataset.act === "del") { buf = buf.slice(0, -1); paintSlots(); return; }
+    if (b.dataset.act === "ok" && buf.length === 4) { verificarNumero(); }
+  });
+
+  document.getElementById("kiosk").addEventListener("click", function (e) {
+    var st = document.querySelector('.kstate[data-on="1"]');
+    if (!st) return;
+    var k = st.getAttribute("data-k");
+    if (k === "err" || k === "ok") { reset(); }
+  });
+
+  function verificarNumero() {
+    var p = PLANTILLA[buf];
+    if (!p) { rechazar("pin"); return; }
+    document.getElementById("scanName").textContent = p.nombre;
+    document.getElementById("scanSub").textContent = p.sede;
+    show("scan");
+    var num = buf;
+    timer = setTimeout(function () { confirmar(num, p); }, 700);
+  }
+
+  function rechazar(origen) {
+    var esHuella = origen === "finger";
+    document.getElementById("errTitle").textContent = esHuella ? "Intenta otra vez" : "Número no encontrado";
+    document.getElementById("errSub").textContent = esHuella
+      ? "Limpia el dedo y vuelve a poner"
+      : "Revisa el número con tu supervisor";
+    document.getElementById("errAlt").hidden = !esHuella;
+    decir(esHuella ? "Intenta otra vez" : "Número no encontrado", false);
+    show("err");
+    timer = setTimeout(reset, 4200);
+  }
+
+  function confirmar(num, p) {
+    var d = new Date();
+    var t = hhmm(d);
+    var esSalida = !!adentro[num];
+    adentro[num] = !esSalida;
+
+    document.getElementById("okIni").textContent = p.ini;
+    document.getElementById("okName").firstChild.nodeValue = p.nombre;
+    document.getElementById("okNum").textContent = "Núm. " + num;
+    document.getElementById("okTime").textContent = t;
+    document.getElementById("okGhost").textContent = t;
+    document.getElementById("okVerb").textContent = esSalida ? "Salida registrada" : "Entrada registrada";
+    document.getElementById("okWhere").textContent = p.sede + " · Lector 2";
+
+    var st = document.querySelector('.kstate[data-k="ok"]');
+    st.classList.remove("played");
+    void st.offsetWidth;               // reinicia la animación del sello
+    st.classList.add("played");
+
+    // nombre + acción, corto: la fila no espera un discurso
+    decir(p.nombre + ". " + (esSalida ? "Salida." : "Entrada."), true);
+
+    show("ok");
+    timer = setTimeout(reset, 4000);
+  }
+
+  /* ---------- rejilla del periodo ----------
+     Códigos: "9:05" trabajado · "L:8:43" retardo · "O:7:55" marcaje sin par
+              "R" descanso · "A" falta                                      */
+  var NOMINA = [
+    ["Ernesto Vázquez Bonilla", "1015", "Matriz Centro",    ["9:05","9:12","8:58","9:03","9:10","5:02","R"]],
+    ["Bertha Solís Ramírez",    "1042", "Matriz Centro",    ["9:12","L:8:43","9:02","O:7:55","9:09","5:06","R"]],
+    ["Sofía Herrera Palacios",  "1058", "Matriz Centro",    ["8:56","9:04","9:01","8:59","9:07","5:00","R"]],
+    ["Alonso Cid Miranda",      "1073", "Matriz Centro",    ["9:00","8:57","L:8:38","9:05","9:02","4:58","R"]],
+    ["Lucía Cortés Mendoza",    "1090", "Matriz Centro",    ["L:8:41","9:06","9:00","8:54","9:11","5:04","R"]],
+    ["Guadalupe Nava Ortiz",    "1104", "Matriz Centro",    ["9:03","8:58","A","9:07","9:00","5:01","R"]],
+    ["Raúl Tepox Andrade",      "2301", "Bodega Norte",     ["9:18","9:22","9:15","9:20","9:17","5:10","R"]],
+    ["Marcos Aguilar Rojas",    "2318", "Bodega Norte",     ["9:20","9:16","9:19","9:14","9:21","5:08","R"]],
+    ["Julián Peña Carmona",     "2327", "Bodega Norte",     ["9:12","9:19","9:10","9:16","9:13","5:05","R"]],
+    ["Noé Barragán Lucero",     "2340", "Bodega Norte",     ["9:15","9:11","9:17","9:09","9:14","5:07","R"]],
+    ["Óscar Lira Fuentes",      "2356", "Bodega Norte",     ["9:08","O:7:31","L:8:49","9:12","9:06","5:03","R"]],
+    ["Teresa Galindo Cruz",     "3402", "Sucursal Ajalpan", ["O:17:02","8:52","8:58","9:01","8:55","4:56","R"]],
+    ["Ismael Rangel Osorio",    "3418", "Sucursal Ajalpan", ["8:59","9:02","8:57","9:04","9:00","4:59","R"]],
+    ["Paulina Escobar Ruiz",    "3425", "Sucursal Ajalpan", ["9:01","8:56","9:03","8:58","L:8:47","5:02","R"]],
+    ["Gerardo Tello Aparicio",  "3437", "Sucursal Ajalpan", ["8:54","9:00","8:59","9:02","8:57","4:57","R"]]
+  ];
+
+  function aMin(hm) { var p = hm.split(":"); return (+p[0]) * 60 + (+p[1]); }
+  function aHM(m) { return Math.floor(m / 60) + ":" + pad2(m % 60); }
+
+  (function pintaRejilla() {
+    var tb = document.getElementById("gbody");
+    if (!tb) return;
+    var granTotal = 0;
+    var filas = "";
+
+    NOMINA.forEach(function (emp) {
+      var celdas = "", totalFila = 0;
+
+      emp[3].forEach(function (code) {
+        var clase, texto;
+        if (code === "R") { clase = "rest"; texto = "·"; }
+        else if (code === "A") { clase = "absent"; texto = "○"; }
+        else if (code.charAt(0) === "L") { clase = "late"; texto = code.slice(2); totalFila += aMin(texto); }
+        else if (code.charAt(0) === "O") { clase = "open"; texto = code.slice(2); }
+        else { clase = "ok"; texto = code; totalFila += aMin(code); }
+        celdas += '<td class="cell" data-c="' + clase + '">' + texto + "</td>";
+      });
+
+      granTotal += totalFila;
+      filas += "<tr>"
+        + '<td class="gname"><b>' + emp[0] + "</b><i>" + emp[1] + " · " + emp[2] + "</i></td>"
+        + celdas
+        + '<td class="gtot">' + aHM(totalFila) + "</td>"
+        + "</tr>";
+    });
+
+    tb.innerHTML = filas;
+
+    var tot = aHM(granTotal);
+    document.querySelectorAll(".grand-total").forEach(function (el) { el.textContent = tot; });
+  })();
+
+  /* ---------- revelado al entrar en vista ---------- */
+  var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  function countUp(el) {
+    var target = parseInt(el.getAttribute("data-count"), 10);
+    if (reduce) { el.textContent = target; return; }
+    var t0 = null, dur = 450;
+    function step(ts) {
+      if (!t0) t0 = ts;
+      var k = Math.min(1, (ts - t0) / dur);
+      el.textContent = Math.round(target * (1 - Math.pow(1 - k, 3)));
+      if (k < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+
+  if ("IntersectionObserver" in window) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (!en.isIntersecting) return;
+        en.target.classList.add("reveal");
+        en.target.querySelectorAll("[data-count]").forEach(countUp);
+        io.unobserve(en.target);
+      });
+    }, { threshold: 0.18 });
+    io.observe(document.getElementById("board"));
+    io.observe(document.getElementById("card"));
+  } else {
+    document.getElementById("board").classList.add("reveal");
+    document.getElementById("card").classList.add("reveal");
+  }
+})();
+</script>

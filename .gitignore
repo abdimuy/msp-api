@@ -52,3 +52,4 @@ analysis/**
 !analysis/**/*.py
 !analysis/**/requirements.txt
 !analysis/**/README.md
+.claude/settings.local.json

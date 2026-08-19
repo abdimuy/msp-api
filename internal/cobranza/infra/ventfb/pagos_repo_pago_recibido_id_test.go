@@ -159,7 +159,7 @@ func TestE2E_PagosRepo_ByIDs_PagoRecibidoID_Matches(t *testing.T) {
 		insertPagoRecibidoLinked(t, q, recibidoID, impteID)
 
 		repo := cobranzaventfb.NewPagosRepo(pool)
-		rows, err := repo.ByIDs(ctx, zonaID, []int{impteID})
+		rows, err := repo.ByIDs(ctx, zonaID, []int{impteID}, time.Time{})
 		require.NoError(t, err)
 		require.Len(t, rows, 1)
 		require.NotNil(t, rows[0].PagoRecibidoID())

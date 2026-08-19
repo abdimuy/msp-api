@@ -2,6 +2,7 @@
 package domain
 
 import (
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -384,4 +385,82 @@ func (e VentaAplicadaEvent) Payload() map[string]any {
 		"microsip_folio":       e.folio,
 		"applied_by":           e.by.String(),
 	}
+}
+
+// eventTypesCambioDeFase is the canonical set of event types that move a
+// venta from one fase (borrador → revisada → aprobada → aplicada, plus the
+// terminal cancelada and the backwards regresada_a_borrador) to another.
+//
+// It deliberately EXCLUDES every edit event (header, cliente, productos,
+// combos, vendedores, imágenes): editing a venta must not restart the clock
+// that measures how long it has been sitting in its current fase, otherwise a
+// venta stuck six days in revisión looks fresh because somebody fixed a typo
+// yesterday.
+var eventTypesCambioDeFase = map[string]struct{}{
+	EventTypeVentaCreada:             {},
+	EventTypeVentaEnviadaARevision:   {},
+	EventTypeVentaAprobada:           {},
+	EventTypeVentaRegresadaABorrador: {},
+	EventTypeVentaAplicada:           {},
+	EventTypeVentaCancelada:          {},
+}
+
+// EsEventoDeCambioDeFase reports whether eventType marks the moment a venta
+// entered a new fase. It is the single authority on that question: infra uses
+// it both to narrow the query and to filter the rows it read back.
+func EsEventoDeCambioDeFase(eventType string) bool {
+	_, ok := eventTypesCambioDeFase[eventType]
+	return ok
+}
+
+// EventTypesCambioDeFase returns the phase-changing event types, sorted so
+// the generated SQL text is stable across calls. The returned slice is a
+// fresh copy — callers may mutate it without corrupting the canonical set.
+func EventTypesCambioDeFase() []string {
+	out := make([]string, 0, len(eventTypesCambioDeFase))
+	for et := range eventTypesCambioDeFase {
+		out = append(out, et)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Fase numbers, as the desktop's progress ring draws them: one arc per fase
+// the venta reached. They are ordinals, not a state machine — the canonical
+// state lives in Situacion/Sincronizacion; these only rank how far a venta
+// got so a cancelled venta can still show the arcs it earned.
+const (
+	// FaseBorrador is the fase a venta occupies right after being created
+	// (or after being sent back to borrador).
+	FaseBorrador = 1
+	// FaseRevisada is the fase a venta occupies once sent to revisión.
+	FaseRevisada = 2
+	// FaseAprobada is the fase a venta occupies once approved.
+	FaseAprobada = 3
+	// FaseAplicada is the fase a venta occupies once materialized in
+	// Microsip. It is the highest.
+	FaseAplicada = 4
+)
+
+// faseDeEvento maps each ADVANCING event to the fase the venta occupies right
+// after it. venta.cancelada is deliberately absent: cancelling is not
+// advancing, and a cancelled venta must keep the arcs it had already earned
+// — "el aspa no borra el avance". venta.regresada_a_borrador maps back to
+// FaseBorrador because that IS where the venta lands; it contributes a 1 to
+// the maximum, which by construction can never lower it.
+var faseDeEvento = map[string]int{
+	EventTypeVentaCreada:             FaseBorrador,
+	EventTypeVentaRegresadaABorrador: FaseBorrador,
+	EventTypeVentaEnviadaARevision:   FaseRevisada,
+	EventTypeVentaAprobada:           FaseAprobada,
+	EventTypeVentaAplicada:           FaseAplicada,
+}
+
+// FaseDelEvento returns the fase number (1..4) the venta occupies right after
+// eventType, and false when the event places it in no fase at all — every
+// edit event, plus venta.cancelada. It is the single authority on that
+// numbering: infra reduces outbox rows with it and never hardcodes a number.
+func FaseDelEvento(eventType string) (int, bool) {
+	fase, ok := faseDeEvento[eventType]
+	return fase, ok
 }

@@ -74,11 +74,15 @@ func (m *AuthnMiddleware) Handler(next http.Handler) http.Handler {
 			u, err = m.provisioner.SyncFromFirebase(r.Context(), token)
 		}
 		if err != nil {
-			if _, ok := apperror.As(err); ok {
-				response.Error(w, r, err)
+			// Only a genuinely missing usuario is a 401. Anything else —
+			// Firebird down, statement timeout, pool exhausted — must keep its
+			// own status so the client sees "base no disponible" (503) instead
+			// of being told its account does not exist.
+			if errors.Is(err, domain.ErrUsuarioNotFound) {
+				response.Error(w, r, apperror.NewUnauthorized("user_not_found", "usuario no encontrado").WithError(err))
 				return
 			}
-			response.Error(w, r, apperror.NewUnauthorized("user_not_found", "usuario no encontrado").WithError(err))
+			response.Error(w, r, err)
 			return
 		}
 		if !u.Activo() {

@@ -203,8 +203,10 @@ procesador** del server y bloqueaba el `narrativa_worker`. Se cambió a **Gemini
 - **Firebase project:** `msp-dev-96ff5` (NUEVO). Los **roles/permisos nuevos viven
   en Firebird** (`MSP_USUARIOS`, `MSP_USUARIOS_ROLES`), NO en Firestore (eso es lo
   viejo, se migrará después). Auto-provisioner crea `MSP_USUARIOS` al primer login.
-- **Usuario de prueba:** `noe@gmail.com` → rol `super_admin` (otorgado por SQL
-  directo en `MSP_USUARIOS_ROLES` tras crear el rol al arranque).
+- **Usuario de prueba:** `<correo del usuario de prueba>` → rol `super_admin`
+  (otorgado por SQL directo en `MSP_USUARIOS_ROLES` tras crear el rol al
+  arranque). El correo concreto NO se documenta aquí: es un dato personal y
+  este repositorio es público. Consúltelo con el responsable del entorno.
 - **`super_admin` al arranque:** solo se crea si ya existe ≥1 usuario; el
   `auth-bootstrap` se niega en sistema no vacío → usar grant por SQL.
 - **Obtener un ID token real para curls** (dev mode está OFF, hay que token real):
@@ -213,7 +215,7 @@ procesador** del server y bloqueaba el `narrativa_worker`. Se cambió a **Gemini
   APIKEY=AIzaSyAx9Ts4kGoqEmzDiI-mQCp8Jd4FZhczxos
   curl -s -X POST "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=$APIKEY" \
     -H "Content-Type: application/json" \
-    -d '{"email":"noe@gmail.com","password":"<pass de noe>","returnSecureToken":true}' \
+    -d '{"email":"<correo>","password":"<password>","returnSecureToken":true}' \
     | python3 -c 'import sys,json;print(json.load(sys.stdin)["idToken"])'
   # Token válido ~1h. Usar como: -H "Authorization: Bearer <token>"
   ```

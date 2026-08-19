@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -33,6 +34,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/platform/config"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 	platformmeili "github.com/abdimuy/msp-api/internal/platform/meilisearch"
+	"github.com/abdimuy/msp-api/internal/platform/microsipseed"
 )
 
 func requireMeiliAndFBEnv(t *testing.T) {
@@ -43,6 +45,96 @@ func requireMeiliAndFBEnv(t *testing.T) {
 	if os.Getenv("FB_DATABASE") == "" {
 		t.Skip("FB_DATABASE not set — set it to run Firebird integration tests")
 	}
+}
+
+// clientesSembrados es cuántos clientes sintéticos siembra cada test antes de
+// reconciliar. Con tres basta para que el índice tenga documentos y para que
+// las aserciones sobre la forma del documento tengan algo que mirar.
+const clientesSembrados = 3
+
+// sembrarClientesDirectorio inserta clientes sintéticos en una transacción
+// CONFIRMADA y registra su borrado.
+//
+// Tiene que confirmar porque ReconciliarDirectorio abre su propia conexión: un
+// cliente sembrado dentro de una transacción con rollback no lo vería.
+//
+// POR QUÉ EXISTE: estos tests afirmaban `n > 0` y "el índice tiene al menos
+// 1000 documentos" apoyándose en el padrón real de la base compartida. Es la
+// misma bomba de tiempo que documenta docs/base-de-datos-de-pruebas.md — un
+// test afirma sobre el código, no sobre el estado de la base. Contra el
+// artefacto de pruebas, que ya no trae padrón, esas dos aserciones fallaban
+// con cero documentos aunque la reconciliación funcionara perfectamente.
+func sembrarClientesDirectorio(t *testing.T, pool *firebird.Pool, cuantos int) []int {
+	t.Helper()
+
+	ids := make([]int, 0, cuantos)
+	txMgr := firebird.NewTxManager(pool.DB)
+	err := txMgr.RunInTx(context.Background(), func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, pool.DB)
+		zona := microsipseed.PrimeraZona(t, q)
+		// CLIENTES_AK1 es único sobre NOMBRE: el sufijo evita que dos tests del
+		// mismo paquete —o una corrida cuyo cleanup no alcanzó a borrar— choquen
+		// contra el índice en vez de contra el código.
+		sufijo := uuid.NewString()[:8]
+		for _, nombre := range []string{
+			"ROSALINDA MEJIA ANGUIANO",
+			"EVERARDO PALOMINO SEGURA",
+			"MARIBEL OCHOA CASTELLANOS",
+		}[:cuantos] {
+			ids = append(ids, microsipseed.ClienteEnZona(t, q, nombre+" "+sufijo, zona))
+		}
+		return nil
+	})
+	require.NoError(t, err, "sembrarClientesDirectorio: clientes confirmados")
+
+	// El borrado va hijos antes que padre. SALDOS_CC no lo inserta este test:
+	// lo crea un trigger de Microsip al dar de alta el cliente, y su llave
+	// foránea CLI_A_SALDOS impide borrar CLIENTES si se omite.
+	t.Cleanup(func() {
+		q := firebird.GetQuerier(context.Background(), pool.DB)
+		for _, id := range ids {
+			for _, sentencia := range []string{
+				`DELETE FROM SALDOS_CC WHERE CLIENTE_ID = ?`,
+				`DELETE FROM CLIENTES WHERE CLIENTE_ID = ?`,
+			} {
+				if _, err := q.ExecContext(context.Background(), sentencia, id); err != nil {
+					t.Errorf("limpieza del cliente sembrado (%s): %v", sentencia, err)
+				}
+			}
+		}
+	})
+
+	return ids
+}
+
+// Presupuesto de tiempo de la reconciliación completa.
+//
+// POR QUÉ ES PROPORCIONAL Y NO UN NÚMERO FIJO
+// ===========================================
+// Este aserto era `elapsed < 120s`. Un presupuesto absoluto sobre un trabajo que
+// crece con el padrón es una bomba de tiempo: el 2026-08 la reconciliación de
+// 43,726 documentos tardaba 2m26s en frío contra los 2m del límite, y nadie
+// había tocado el código — sólo habían entrado clientes nuevos. Es la misma
+// trampa que ya se documentó en docs/base-de-datos-de-pruebas.md ("un test
+// afirma sobre el código, no sobre el estado de la base compartida").
+//
+// El presupuesto proporcional separa las dos causas de que esto tarde más:
+// crecer el padrón (legítimo, no debe fallar) y encarecer el documento
+// (regresión, debe fallar). Sólo la segunda mueve el ms/documento.
+//
+// Los valores son generosos a propósito: esto es un guardián contra
+// regresiones de orden de magnitud, no un banco de pruebas. Medido en una Mac
+// M2: ~3.3 ms/documento en frío, ~0.6 ms/documento en caliente. El corredor de
+// CI es más lento, así que el piso se fija en 10 ms/documento.
+const (
+	arranqueReconcile     = 60 * time.Second      // costo fijo: pool, EnsureIndex, primera consulta
+	porDocumentoReconcile = 10 * time.Millisecond // piso de rendimiento por documento
+)
+
+// presupuestoReconcile devuelve el tiempo máximo aceptable para reconciliar n
+// documentos.
+func presupuestoReconcile(n int) time.Duration {
+	return arranqueReconcile + time.Duration(n)*porDocumentoReconcile
 }
 
 // TestReconciliarDirectorio_LiveIntegration exercises the full pipeline:
@@ -58,7 +150,12 @@ func TestReconciliarDirectorio_LiveIntegration(t *testing.T) {
 	// Build Firebird pool.
 	pool, err := firebird.New(cfg.Firebird)
 	require.NoError(t, err, "firebird pool must initialise")
-	defer pool.Close()
+	// t.Cleanup y no `defer`: los defer de la función de test corren ANTES que
+	// los t.Cleanup, así que un `defer pool.Close()` deja la limpieza de
+	// sembrarClientesDirectorio con el pool ya cerrado y los clientes sembrados
+	// se quedan en la base. Registrado aquí, el LIFO de t.Cleanup lo pone al
+	// final, después de los borrados.
+	t.Cleanup(func() { _ = pool.Close() })
 
 	// Build Meilisearch client.
 	meiliClient, err := platformmeili.NewMeilisearchClient(cfg.Meilisearch)
@@ -74,6 +171,8 @@ func TestReconciliarDirectorio_LiveIntegration(t *testing.T) {
 	// Wire the service with real repo, noop analytics (pulse enrichment is
 	// tested in unit tests; here we verify the pipeline shape), and the real
 	// Meilisearch directory index.
+	sembrarClientesDirectorio(t, pool, clientesSembrados)
+
 	repo := clientesfb.NewClientesRepo(pool)
 	dirIdx := clientessearchmeili.NewMeilisearchDirectoryIndex(meiliClient, cfg.Meilisearch.IndexName)
 
@@ -92,9 +191,18 @@ func TestReconciliarDirectorio_LiveIntegration(t *testing.T) {
 	elapsed := time.Since(start)
 	require.NoError(t, err, "ReconciliarDirectorio must succeed against live DB")
 
-	t.Logf("ReconciliarDirectorio: docs=%d elapsed=%s", n, elapsed)
-	assert.Positive(t, n, "should index at least one document")
-	assert.Less(t, elapsed, 120*time.Second, "full reconcile should complete within 2 minutes")
+	t.Logf("ReconciliarDirectorio: docs=%d elapsed=%s (presupuesto %s)",
+		n, elapsed, presupuestoReconcile(n))
+	assert.GreaterOrEqual(t, n, clientesSembrados,
+		"la reconciliación debe indexar al menos los %d clientes sembrados por este test",
+		clientesSembrados)
+	assert.Lessf(t, elapsed, presupuestoReconcile(n),
+		"la reconciliación tardó %s para %d documentos (%.1f ms/doc). El presupuesto es "+
+			"proporcional al trabajo: %s de arranque + %s por documento. Rebasarlo significa que el "+
+			"COSTO POR DOCUMENTO empeoró —una consulta N+1, un lote más chico, un índice perdido—, "+
+			"no que el padrón creció.",
+		elapsed, n, float64(elapsed.Milliseconds())/float64(max(n, 1)),
+		arranqueReconcile, porDocumentoReconcile)
 
 	// Poll until Meilisearch has processed all documents (or 30s timeout).
 	indexName := cfg.Meilisearch.IndexName
@@ -116,8 +224,10 @@ func TestReconciliarDirectorio_LiveIntegration(t *testing.T) {
 		time.Sleep(500 * time.Millisecond)
 	}
 	t.Logf("Meilisearch index %q: numberOfDocuments=%d (reconciled %d)", indexName, finalCount, n)
-	assert.GreaterOrEqual(t, finalCount, int64(1000),
-		"index should contain at least 1000 documents after reconcile")
+	// El umbral era 1000, un número tomado del tamaño del padrón real. Lo que
+	// este test puede afirmar es que Meilisearch recibió lo que se reconcilió.
+	assert.GreaterOrEqual(t, finalCount, int64(n),
+		"el índice debe contener al menos los %d documentos reconciliados", n)
 
 	// Fetch one document and verify it has the expected fields.
 	docURL := fmt.Sprintf("%s/indexes/%s/documents?limit=1", cfg.Meilisearch.URL, indexName)
@@ -155,7 +265,9 @@ func TestReconciliarDirectorio_B2_CobranzaSignalsInIndex(t *testing.T) {
 
 	pool, err := firebird.New(cfg.Firebird)
 	require.NoError(t, err)
-	defer pool.Close()
+	// Ver la nota de TestReconciliarDirectorio_LiveIntegration: `defer` cerraría
+	// el pool antes de que corra la limpieza de los clientes sembrados.
+	t.Cleanup(func() { _ = pool.Close() })
 
 	meiliClient, err := platformmeili.NewMeilisearchClient(cfg.Meilisearch)
 	require.NoError(t, err)
@@ -178,6 +290,8 @@ func TestReconciliarDirectorio_B2_CobranzaSignalsInIndex(t *testing.T) {
 	// Adapter that bridges analyticsapp.Service → clientesoutbound.AnalyticsClient.
 	adapter := &b2AnalyticsAdapter{svc: analyticsSvc}
 
+	sembrarClientesDirectorio(t, pool, clientesSembrados)
+
 	repo := clientesfb.NewClientesRepo(pool)
 	dirIdx := clientessearchmeili.NewMeilisearchDirectoryIndex(meiliClient, cfg.Meilisearch.IndexName)
 	svc := clientesapp.NewService(repo, adapter, dirIdx, clientesoutbound.ProductionClock{})
@@ -186,7 +300,9 @@ func TestReconciliarDirectorio_B2_CobranzaSignalsInIndex(t *testing.T) {
 	n, err := svc.ReconciliarDirectorio(ctx)
 	t.Logf("B2 reconcile with real analytics: docs=%d elapsed=%s", n, time.Since(start))
 	require.NoError(t, err)
-	assert.Positive(t, n)
+	assert.GreaterOrEqual(t, n, clientesSembrados,
+		"la reconciliación debe indexar al menos los %d clientes sembrados por este test",
+		clientesSembrados)
 
 	// Wait for Meilisearch to finish processing the upserted batch.
 	time.Sleep(3 * time.Second)

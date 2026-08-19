@@ -156,6 +156,22 @@ func TestWatermarkAdvances_AfterRepoQueries(t *testing.T) {
 	// "Climbed monotonically by exactly our query count" is the unambiguous
 	// signature of the bug — without the fix, w1 would equal w0 + ~10 (one
 	// per leaked probe). With the fix, w1 == w0 in a quiet env.
+	//
+	// Reaching SentinelNoActiveTx is exempt, for the same reason spelled out
+	// in TestMinActiveTransactionID_ConsecutiveCallsDoNotLeak: it means every
+	// foreign writer that was in flight at w0 committed before w1, which is
+	// noise from the shared dev DB. A leak of our own probe could never
+	// produce the sentinel — it would surface as a real, leaked TX_ID. The
+	// exemption started to matter once read-only transactions stopped
+	// counting: the watermark now sits at the sentinel most of the time, so
+	// the real → sentinel transition became common (measured 2 failures in 8
+	// runs against the dev container).
+	if w1 == cobranzaventfb.SentinelNoActiveTx && w0 != cobranzaventfb.SentinelNoActiveTx {
+		t.Logf("foreign writers active at w0 all committed; no active write tx at w1")
+
+		return
+	}
+
 	assert.LessOrEqual(t, w1, w0,
 		"watermark climbed after our own reads (w0=%d w1=%d) — looks like the self-include leak", w0, w1)
 }

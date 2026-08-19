@@ -25,14 +25,22 @@ var (
 	errOtelDriver  error
 )
 
-func registerOtelDriver() (string, error) {
+func registerOtelDriver(statementTimeout time.Duration) (string, error) {
 	otelDriverOnce.Do(func() {
+		// Order matters: otelsql(cancelProof(firebirdsql)). Tracing wraps the
+		// cancellation-proof driver so every span still sees the real calls,
+		// while the driver underneath never receives a cancelled context.
+		wrapped, err := registerCancelProofDriver(statementTimeout)
+		if err != nil {
+			errOtelDriver = err
+			return
+		}
 		// db.system follows the OTel semantic conventions: a free-form string
 		// identifying the engine, so dashboards can group spans by backend.
 		// We pin v1.7 of the convention (still supported by every collector
 		// we care about) rather than the newer db.system.name from v1.39.
 		name, err := otelsql.Register(
-			"firebirdsql",
+			wrapped,
 			otelsql.WithAttributes(attribute.String("db.system", "firebird")),
 		)
 		if err != nil {
@@ -53,7 +61,7 @@ type Pool struct {
 // New opens a Pool against the configured Firebird instance. It does not yet
 // verify connectivity; call Start() to ping.
 func New(cfg config.Firebird) (*Pool, error) {
-	name, err := registerOtelDriver()
+	name, err := registerOtelDriver(cfg.StatementTimeout)
 	if err != nil {
 		return nil, err
 	}
