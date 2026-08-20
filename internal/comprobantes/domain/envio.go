@@ -45,7 +45,6 @@ type CrearEnvioParams struct {
 	ProgramadoPara   time.Time
 	DocumentoRuta    *string
 	Canal            Canal
-	MensajeExternoID *string
 }
 
 // CrearEnvio construye un nuevo Envio validando cada campo.
