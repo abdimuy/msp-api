@@ -336,8 +336,14 @@ Y esta vez con la regla que salió de la tarea anterior, porque nos costó dos v
 
 | Cuándo | Qué |
 |---|---|
-| **Jueves 21** | El arreglo de `transitionTo` y los cuatro puertos copiados o triviales: `storage`, `sender`, `clock`, `saldo_reader`. |
-| **Viernes 22, fin de jornada** | **Punto de control: `envio_repo.go` escrito.** Mándamelo. Es el único con diseño real y del que dependen las nueve tareas siguientes. |
-| **Martes 25, fin de jornada** | **Entrega.** |
+| **Jueves 20 (hoy)** | **Sólo leer.** El brief completo y las dos secciones «El puerto — copiar exactamente» del `task-3`. No empieces a escribir: llegar el viernes sabiendo qué vas a hacer vale más que media jornada de código a ciegas. |
+| **Viernes 21** | El arreglo de `transitionTo` y los cuatro puertos copiados o triviales: `storage`, `sender`, `clock`, `saldo_reader`. |
+| **Viernes 21, fin de jornada** | **Punto de control: `envio_repo.go` escrito.** Mándamelo. Es el único de los once con diseño real y del que dependen las nueve tareas siguientes. |
+| **Lunes 24** | Los seis puertos restantes. |
+| **Martes 25, fin de jornada** | **Entrega**, con el reporte. |
+
+El plazo es ajustado y lo sabes de antemano: son ~4 h de trabajo, y con el ritmo de tus tres entregas anteriores eso te da unas 12 h — tres medias jornadas, que son exactamente las que hay. No hay margen para descubrir el viernes que no leíste el brief el jueves.
+
+Por eso el punto de control es el **viernes** y no el lunes: `envio_repo.go` es el único de los once que tiene diseño, y si sale con correcciones prefiero que las apliques el lunes y no el martes a las seis de la tarde.
 
 Si te atoras más de dos horas en una sola cosa, avisa. Y si algo del spec no alcanza para decidir, pregunta antes de escribirlo: en esta tarea, adivinar una firma cuesta nueve tareas de retrabajo.
