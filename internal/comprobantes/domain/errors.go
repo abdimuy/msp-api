@@ -132,4 +132,9 @@ var (
 		"receipt_envio_referencia_requerido",
 		"la referencia es obligatoria",
 	)
+	// ErrEnvioClienteIDInvalido is returned when clienteID is not positive.
+	ErrEnvioClienteIDInvalido = apperror.NewValidation(
+		"receipt_envio_cliente_id_invalido",
+		"el cliente id debe ser un número positivo",
+	)
 )

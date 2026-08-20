@@ -93,7 +93,6 @@ func TestEstadoEnvio_CanTransitionTo(t *testing.T) {
 	}{
 		{domain.EstadoEnvioEnEspera, domain.EstadoEnvioEnviando, true},
 		{domain.EstadoEnvioEnEspera, domain.EstadoEnvioDetenido, true},
-		{domain.EstadoEnvioEnEspera, domain.EstadoEnvioSinTelefono, true},
 		{domain.EstadoEnvioEnviando, domain.EstadoEnvioEnviado, true},
 		{domain.EstadoEnvioEnviando, domain.EstadoEnvioFallido, true},
 		{domain.EstadoEnvioFallido, domain.EstadoEnvioEnEspera, true},

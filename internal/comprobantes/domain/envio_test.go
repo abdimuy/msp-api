@@ -10,25 +10,27 @@ import (
 	"github.com/abdimuy/msp-api/internal/comprobantes/domain"
 )
 
-func envioParamsValido() domain.NewEnvioParams {
-	return domain.NewEnvioParams{
+var now = time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+
+func crearParamsValido() domain.CrearEnvioParams {
+	return domain.CrearEnvioParams{
 		Tipo:           domain.TipoVenta,
 		Referencia:     uuid.New().String(),
 		ClienteID:      42,
 		Telefono:       strPtr("5551234567"),
-		Estado:         domain.EstadoEnvioEnEspera,
-		ProgramadoPara: time.Now().UTC().Add(time.Hour),
+		ProgramadoPara: now.Add(time.Hour),
 		Canal:          domain.CanalLocal,
 	}
 }
 
 func strPtr(s string) *string { return &s }
 
-func TestNewEnvio_HappyPath(t *testing.T) {
+// --- CrearEnvio ---
+
+func TestCrearEnvio_HappyPath(t *testing.T) {
 	t.Parallel()
-	now := time.Now().UTC()
-	p := envioParamsValido()
-	e, err := domain.NewEnvio(p)
+	p := crearParamsValido()
+	e, err := domain.CrearEnvio(p, now)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -36,7 +38,7 @@ func TestNewEnvio_HappyPath(t *testing.T) {
 		t.Fatal("ID() returned zero UUID")
 	}
 	if e.Tipo() != domain.TipoVenta {
-		t.Fatalf("Tipo() = %v, want %v", e.Tipo(), domain.TipoVenta)
+		t.Fatalf("Tipo() = %v, want TipoVenta", e.Tipo())
 	}
 	if e.ClienteID() != 42 {
 		t.Fatalf("ClienteID() = %d, want 42", e.ClienteID())
@@ -45,13 +47,10 @@ func TestNewEnvio_HappyPath(t *testing.T) {
 		t.Fatalf("Telefono() = %v", e.Telefono())
 	}
 	if e.Estado() != domain.EstadoEnvioEnEspera {
-		t.Fatalf("Estado() = %v, want %v", e.Estado(), domain.EstadoEnvioEnEspera)
-	}
-	if e.ProgramadoPara().Before(now) {
-		t.Fatal("ProgramadoPara() is in the past")
+		t.Fatalf("Estado() = %v, want en_espera", e.Estado())
 	}
 	if e.Canal() != domain.CanalLocal {
-		t.Fatalf("Canal() = %v, want %v", e.Canal(), domain.CanalLocal)
+		t.Fatalf("Canal() = %v, want local", e.Canal())
 	}
 	if e.Intentos() != 0 {
 		t.Fatalf("Intentos() = %d, want 0", e.Intentos())
@@ -76,64 +75,77 @@ func TestNewEnvio_HappyPath(t *testing.T) {
 	}
 }
 
-func TestNewEnvio_TipoInvalido(t *testing.T) {
+func TestCrearEnvio_SinTelefono_NaceEnSinTelefono(t *testing.T) {
 	t.Parallel()
-	p := envioParamsValido()
-	p.Tipo = "invalido"
-	_, err := domain.NewEnvio(p)
-	if !errors.Is(err, domain.ErrTipoComprobanteInvalido) {
-		t.Fatalf("expected ErrTipoComprobanteInvalido, got %v", err)
-	}
-}
-
-func TestNewEnvio_ReferenciaVacia(t *testing.T) {
-	t.Parallel()
-	p := envioParamsValido()
-	p.Referencia = "  "
-	_, err := domain.NewEnvio(p)
-	if !errors.Is(err, domain.ErrEnvioReferenciaRequerido) {
-		t.Fatalf("expected ErrEnvioReferenciaRequerido, got %v", err)
-	}
-}
-
-func TestNewEnvio_EstadoInvalido(t *testing.T) {
-	t.Parallel()
-	p := envioParamsValido()
-	p.Estado = "invalido"
-	_, err := domain.NewEnvio(p)
-	if !errors.Is(err, domain.ErrEstadoEnvioInvalido) {
-		t.Fatalf("expected ErrEstadoEnvioInvalido, got %v", err)
-	}
-}
-
-func TestNewEnvio_CanalInvalido(t *testing.T) {
-	t.Parallel()
-	p := envioParamsValido()
-	p.Canal = "invalido"
-	_, err := domain.NewEnvio(p)
-	if !errors.Is(err, domain.ErrCanalInvalido) {
-		t.Fatalf("expected ErrCanalInvalido, got %v", err)
-	}
-}
-
-func TestNewEnvio_TelefonoNil(t *testing.T) {
-	t.Parallel()
-	p := envioParamsValido()
+	p := crearParamsValido()
 	p.Telefono = nil
-	e, err := domain.NewEnvio(p)
+	e, err := domain.CrearEnvio(p, now)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
+	}
+	if e.Estado() != domain.EstadoEnvioSinTelefono {
+		t.Fatalf("Estado() = %v, want sin_telefono", e.Estado())
 	}
 	if e.Telefono() != nil {
 		t.Fatal("Telefono() should be nil")
 	}
 }
 
-func TestNewEnvio_ReferenciaTrimeada(t *testing.T) {
+func TestCrearEnvio_TipoInvalido(t *testing.T) {
 	t.Parallel()
-	p := envioParamsValido()
+	p := crearParamsValido()
+	p.Tipo = "invalido"
+	_, err := domain.CrearEnvio(p, now)
+	if !errors.Is(err, domain.ErrTipoComprobanteInvalido) {
+		t.Fatalf("expected ErrTipoComprobanteInvalido, got %v", err)
+	}
+}
+
+func TestCrearEnvio_ReferenciaVacia(t *testing.T) {
+	t.Parallel()
+	p := crearParamsValido()
+	p.Referencia = "  "
+	_, err := domain.CrearEnvio(p, now)
+	if !errors.Is(err, domain.ErrEnvioReferenciaRequerido) {
+		t.Fatalf("expected ErrEnvioReferenciaRequerido, got %v", err)
+	}
+}
+
+func TestCrearEnvio_ClienteIDCero(t *testing.T) {
+	t.Parallel()
+	p := crearParamsValido()
+	p.ClienteID = 0
+	_, err := domain.CrearEnvio(p, now)
+	if !errors.Is(err, domain.ErrEnvioClienteIDInvalido) {
+		t.Fatalf("expected ErrEnvioClienteIDInvalido, got %v", err)
+	}
+}
+
+func TestCrearEnvio_ClienteIDNegativo(t *testing.T) {
+	t.Parallel()
+	p := crearParamsValido()
+	p.ClienteID = -5
+	_, err := domain.CrearEnvio(p, now)
+	if !errors.Is(err, domain.ErrEnvioClienteIDInvalido) {
+		t.Fatalf("expected ErrEnvioClienteIDInvalido, got %v", err)
+	}
+}
+
+func TestCrearEnvio_CanalInvalido(t *testing.T) {
+	t.Parallel()
+	p := crearParamsValido()
+	p.Canal = "invalido"
+	_, err := domain.CrearEnvio(p, now)
+	if !errors.Is(err, domain.ErrCanalInvalido) {
+		t.Fatalf("expected ErrCanalInvalido, got %v", err)
+	}
+}
+
+func TestCrearEnvio_ReferenciaTrimeada(t *testing.T) {
+	t.Parallel()
+	p := crearParamsValido()
 	p.Referencia = "  VENTA-123  "
-	e, err := domain.NewEnvio(p)
+	e, err := domain.CrearEnvio(p, now)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -142,9 +154,10 @@ func TestNewEnvio_ReferenciaTrimeada(t *testing.T) {
 	}
 }
 
+// --- HydrateEnvio ---
+
 func TestHydrateEnvio_BypassesValidation(t *testing.T) {
 	t.Parallel()
-	now := time.Now().UTC()
 	telefono := "5550000000"
 	docRuta := "/tmp/test.pdf"
 	msgID := "msg-123"
@@ -176,6 +189,9 @@ func TestHydrateEnvio_BypassesValidation(t *testing.T) {
 	if e.Referencia() != "" {
 		t.Fatalf("Referencia() = %q, want empty", e.Referencia())
 	}
+	if e.ClienteID() != 0 {
+		t.Fatalf("ClienteID() = %d, want 0", e.ClienteID())
+	}
 	if e.Estado() != domain.EstadoEnvioFallido {
 		t.Fatalf("Estado() = %v, want fallido", e.Estado())
 	}
@@ -201,11 +217,11 @@ func TestHydrateEnvio_BypassesValidation(t *testing.T) {
 
 // --- Transiciones ---
 
-func TestEnvio_Reclamar_HappyPath(t *testing.T) {
+func TestReclamar_HappyPath(t *testing.T) {
 	t.Parallel()
-	p := envioParamsValido()
-	e, _ := domain.NewEnvio(p)
-	if err := e.Reclamar(); err != nil {
+	p := crearParamsValido()
+	e, _ := domain.CrearEnvio(p, now)
+	if err := e.Reclamar(now); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if e.Estado() != domain.EstadoEnvioEnviando {
@@ -213,12 +229,12 @@ func TestEnvio_Reclamar_HappyPath(t *testing.T) {
 	}
 }
 
-func TestEnvio_Reclamar_DesdeEstadoInvalido(t *testing.T) {
+func TestReclamar_DesdeEnviando_NoCambiaEstado(t *testing.T) {
 	t.Parallel()
-	p := envioParamsValido()
-	p.Estado = domain.EstadoEnvioEnviando
-	e, _ := domain.NewEnvio(p)
-	if err := e.Reclamar(); !errors.Is(err, domain.ErrEnvioTransicionInvalido) {
+	p := crearParamsValido()
+	e, _ := domain.CrearEnvio(p, now)
+	e.Reclamar(now)
+	if err := e.Reclamar(now); !errors.Is(err, domain.ErrEnvioTransicionInvalido) {
 		t.Fatalf("expected ErrEnvioTransicionInvalido, got %v", err)
 	}
 	if e.Estado() != domain.EstadoEnvioEnviando {
@@ -226,37 +242,57 @@ func TestEnvio_Reclamar_DesdeEstadoInvalido(t *testing.T) {
 	}
 }
 
-func TestEnvio_MarcarEnviado_HappyPath(t *testing.T) {
+func TestReclamar_DesdeSinTelefono_NoCambiaEstado(t *testing.T) {
 	t.Parallel()
-	p := envioParamsValido()
-	e, _ := domain.NewEnvio(p)
-	e.Reclamar()
-	if err := e.MarcarEnviado(); err != nil {
+	p := crearParamsValido()
+	p.Telefono = nil
+	e, _ := domain.CrearEnvio(p, now)
+	if err := e.Reclamar(now); !errors.Is(err, domain.ErrEnvioTransicionInvalido) {
+		t.Fatalf("expected ErrEnvioTransicionInvalido, got %v", err)
+	}
+	if e.Estado() != domain.EstadoEnvioSinTelefono {
+		t.Fatalf("Estado() = %v, want sin_telefono", e.Estado())
+	}
+}
+
+func TestMarcarEnviado_HappyPath(t *testing.T) {
+	t.Parallel()
+	p := crearParamsValido()
+	e, _ := domain.CrearEnvio(p, now)
+	e.Reclamar(now)
+	enviadoEn := now.Add(time.Minute)
+	if err := e.MarcarEnviado("msg-abc", enviadoEn); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if e.Estado() != domain.EstadoEnvioEnviado {
 		t.Fatalf("Estado() = %v, want enviado", e.Estado())
 	}
-	if e.EnviadoEn() == nil {
-		t.Fatal("EnviadoEn() should be set")
+	if e.MensajeExternoID() == nil || *e.MensajeExternoID() != "msg-abc" {
+		t.Fatalf("MensajeExternoID() = %v, want msg-abc", e.MensajeExternoID())
+	}
+	if e.EnviadoEn() == nil || !e.EnviadoEn().Equal(enviadoEn) {
+		t.Fatalf("EnviadoEn() = %v, want %v", e.EnviadoEn(), enviadoEn)
 	}
 }
 
-func TestEnvio_MarcarEnviado_DesdeEstadoInvalido(t *testing.T) {
+func TestMarcarEnviado_DesdeEnEspera_NoCambiaEstado(t *testing.T) {
 	t.Parallel()
-	p := envioParamsValido()
-	e, _ := domain.NewEnvio(p)
-	if err := e.MarcarEnviado(); !errors.Is(err, domain.ErrEnvioTransicionInvalido) {
+	p := crearParamsValido()
+	e, _ := domain.CrearEnvio(p, now)
+	if err := e.MarcarEnviado("msg-abc", now); !errors.Is(err, domain.ErrEnvioTransicionInvalido) {
 		t.Fatalf("expected ErrEnvioTransicionInvalido, got %v", err)
 	}
+	if e.Estado() != domain.EstadoEnvioEnEspera {
+		t.Fatalf("Estado() changed to %v, should stay en_espera", e.Estado())
+	}
 }
 
-func TestEnvio_MarcarFallido_HappyPath(t *testing.T) {
+func TestMarcarFallido_HappyPath(t *testing.T) {
 	t.Parallel()
-	p := envioParamsValido()
-	e, _ := domain.NewEnvio(p)
-	e.Reclamar()
-	if err := e.MarcarFallido("channel rejected"); err != nil {
+	p := crearParamsValido()
+	e, _ := domain.CrearEnvio(p, now)
+	e.Reclamar(now)
+	if err := e.MarcarFallido("channel rejected", now); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if e.Estado() != domain.EstadoEnvioFallido {
@@ -267,22 +303,25 @@ func TestEnvio_MarcarFallido_HappyPath(t *testing.T) {
 	}
 }
 
-func TestEnvio_MarcarFallido_DesdeEstadoInvalido(t *testing.T) {
+func TestMarcarFallido_DesdeEnEspera_NoCambiaEstado(t *testing.T) {
 	t.Parallel()
-	p := envioParamsValido()
-	e, _ := domain.NewEnvio(p)
-	if err := e.MarcarFallido("reason"); !errors.Is(err, domain.ErrEnvioTransicionInvalido) {
+	p := crearParamsValido()
+	e, _ := domain.CrearEnvio(p, now)
+	if err := e.MarcarFallido("reason", now); !errors.Is(err, domain.ErrEnvioTransicionInvalido) {
 		t.Fatalf("expected ErrEnvioTransicionInvalido, got %v", err)
+	}
+	if e.Estado() != domain.EstadoEnvioEnEspera {
+		t.Fatalf("Estado() changed to %v, should stay en_espera", e.Estado())
 	}
 }
 
-func TestEnvio_Reenviar_HappyPath(t *testing.T) {
+func TestReenviar_HappyPath(t *testing.T) {
 	t.Parallel()
-	p := envioParamsValido()
-	e, _ := domain.NewEnvio(p)
-	e.Reclamar()
-	e.MarcarFallido("timeout")
-	if err := e.Reenviar(); err != nil {
+	p := crearParamsValido()
+	e, _ := domain.CrearEnvio(p, now)
+	e.Reclamar(now)
+	e.MarcarFallido("timeout", now)
+	if err := e.Reenviar(now); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if e.Estado() != domain.EstadoEnvioEnEspera {
@@ -296,34 +335,37 @@ func TestEnvio_Reenviar_HappyPath(t *testing.T) {
 	}
 }
 
-func TestEnvio_Reenviar_IncrementsIntentos(t *testing.T) {
+func TestReenviar_IncrementsIntentos(t *testing.T) {
 	t.Parallel()
-	p := envioParamsValido()
-	e, _ := domain.NewEnvio(p)
+	p := crearParamsValido()
+	e, _ := domain.CrearEnvio(p, now)
 	for range 3 {
-		e.Reclamar()
-		e.MarcarFallido("reason")
-		e.Reenviar()
+		e.Reclamar(now)
+		e.MarcarFallido("reason", now)
+		e.Reenviar(now)
 	}
 	if e.Intentos() != 3 {
 		t.Fatalf("Intentos() = %d, want 3", e.Intentos())
 	}
 }
 
-func TestEnvio_Reenviar_DesdeEstadoInvalido(t *testing.T) {
+func TestReenviar_DesdeEnEspera_NoCambiaEstado(t *testing.T) {
 	t.Parallel()
-	p := envioParamsValido()
-	e, _ := domain.NewEnvio(p)
-	if err := e.Reenviar(); !errors.Is(err, domain.ErrEnvioTransicionInvalido) {
+	p := crearParamsValido()
+	e, _ := domain.CrearEnvio(p, now)
+	if err := e.Reenviar(now); !errors.Is(err, domain.ErrEnvioTransicionInvalido) {
 		t.Fatalf("expected ErrEnvioTransicionInvalido, got %v", err)
+	}
+	if e.Estado() != domain.EstadoEnvioEnEspera {
+		t.Fatalf("Estado() changed to %v, should stay en_espera", e.Estado())
 	}
 }
 
-func TestEnvio_Detener_HappyPath(t *testing.T) {
+func TestDetener_HappyPath(t *testing.T) {
 	t.Parallel()
-	p := envioParamsValido()
-	e, _ := domain.NewEnvio(p)
-	if err := e.Detener("admin"); err != nil {
+	p := crearParamsValido()
+	e, _ := domain.CrearEnvio(p, now)
+	if err := e.Detener("admin", now); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if e.Estado() != domain.EstadoEnvioDetenido {
@@ -334,45 +376,28 @@ func TestEnvio_Detener_HappyPath(t *testing.T) {
 	}
 }
 
-func TestEnvio_Detener_DesdeEstadoInvalido(t *testing.T) {
+func TestDetener_DesdeEnviando_NoCambiaEstado(t *testing.T) {
 	t.Parallel()
-	p := envioParamsValido()
-	e, _ := domain.NewEnvio(p)
-	e.Reclamar()
-	if err := e.Detener("admin"); !errors.Is(err, domain.ErrEnvioTransicionInvalido) {
+	p := crearParamsValido()
+	e, _ := domain.CrearEnvio(p, now)
+	e.Reclamar(now)
+	if err := e.Detener("admin", now); !errors.Is(err, domain.ErrEnvioTransicionInvalido) {
 		t.Fatalf("expected ErrEnvioTransicionInvalido, got %v", err)
+	}
+	if e.Estado() != domain.EstadoEnvioEnviando {
+		t.Fatalf("Estado() changed to %v, should stay enviando", e.Estado())
 	}
 }
 
-func TestEnvio_MarcarSinTelefono_HappyPath(t *testing.T) {
+func TestDetener_DesdeSinTelefono_NoCambiaEstado(t *testing.T) {
 	t.Parallel()
-	p := envioParamsValido()
-	e, _ := domain.NewEnvio(p)
-	if err := e.MarcarSinTelefono(); err != nil {
-		t.Fatalf("expected no error, got %v", err)
+	p := crearParamsValido()
+	p.Telefono = nil
+	e, _ := domain.CrearEnvio(p, now)
+	if err := e.Detener("admin", now); !errors.Is(err, domain.ErrEnvioTransicionInvalido) {
+		t.Fatalf("expected ErrEnvioTransicionInvalido, got %v", err)
 	}
 	if e.Estado() != domain.EstadoEnvioSinTelefono {
 		t.Fatalf("Estado() = %v, want sin_telefono", e.Estado())
-	}
-}
-
-func TestEnvio_MarcarSinTelefono_DesdeEstadoInvalido(t *testing.T) {
-	t.Parallel()
-	p := envioParamsValido()
-	p.Estado = domain.EstadoEnvioEnviando
-	e, _ := domain.NewEnvio(p)
-	if err := e.MarcarSinTelefono(); !errors.Is(err, domain.ErrEnvioTransicionInvalido) {
-		t.Fatalf("expected ErrEnvioTransicionInvalido, got %v", err)
-	}
-}
-
-func TestEnvio_EstadoNoCambiaOnError(t *testing.T) {
-	t.Parallel()
-	p := envioParamsValido()
-	p.Estado = domain.EstadoEnvioEnviando
-	e, _ := domain.NewEnvio(p)
-	_ = e.Reclamar()
-	if e.Estado() != domain.EstadoEnvioEnviando {
-		t.Fatalf("Estado() = %v, want enviando (unchanged)", e.Estado())
 	}
 }

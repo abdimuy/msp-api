@@ -14,7 +14,7 @@ import (
 // Almacena el estado y datos de un envío en el sistema, desde su creación
 // hasta su entrega o cancelación. Es la entidad que el worker de envío reclama,
 // y sobre la que operan las transiciones (Reclamar, MarcarEnviado, MarcarFallido,
-// Reenviar, Detener, MarcarSinTelefono).
+// Reenviar, Detener).
 //
 // Type B: state-machine entity que embeds audit.Timestamped (sin usuario de
 // creación; el que detiene va en detenidoPor).
@@ -36,46 +36,55 @@ type Envio struct {
 	audit.Timestamped
 }
 
-// NewEnvioParams agrupa los campos para crear un Envio nuevo.
-type NewEnvioParams struct {
+// CrearEnvioParams agrupa los campos para crear un Envio nuevo.
+type CrearEnvioParams struct {
 	Tipo             TipoComprobante
 	Referencia       string
 	ClienteID        int
 	Telefono         *string
-	Estado           EstadoEnvio
 	ProgramadoPara   time.Time
 	DocumentoRuta    *string
 	Canal            Canal
 	MensajeExternoID *string
 }
 
-// NewEnvio construye un nuevo Envio validando cada campo.
-// Retorna (*Envio, error) — el error es un apperror con el sentinel correspondiente.
-func NewEnvio(p NewEnvioParams) (*Envio, error) {
+// CrearEnvio construye un nuevo Envio validando cada campo.
+// Nace siempre en en_espera con intentos = 0, salvo cuando el cliente no tiene
+// teléfono utilizable — en ese caso nace en sin_telefono (estado de nacimiento,
+// no una transición).
+//
+// El parámetro now se recibe para que el dominio nunca dependa del reloj
+// interno, lo que permite pruebas deterministas.
+func CrearEnvio(p CrearEnvioParams, now time.Time) (*Envio, error) {
 	if !p.Tipo.IsValid() {
 		return nil, ErrTipoComprobanteInvalido
 	}
 	if strings.TrimSpace(p.Referencia) == "" {
 		return nil, ErrEnvioReferenciaRequerido
 	}
-	if !p.Estado.IsValid() {
-		return nil, ErrEstadoEnvioInvalido
+	if p.ClienteID <= 0 {
+		return nil, ErrEnvioClienteIDInvalido
 	}
 	if !p.Canal.IsValid() {
 		return nil, ErrCanalInvalido
 	}
+	// telefono es obligatorio salvo que nazca en sin_telefono.
+	// La distinción se hace aquí: si telefono es nil, nace en sin_telefono.
+	estado := EstadoEnvioEnEspera
+	if p.Telefono == nil || strings.TrimSpace(*p.Telefono) == "" {
+		estado = EstadoEnvioSinTelefono
+	}
 	return &Envio{
-		id:               uuid.New(),
-		tipo:             p.Tipo,
-		referencia:       strings.TrimSpace(p.Referencia),
-		clienteID:        p.ClienteID,
-		telefono:         p.Telefono,
-		estado:           p.Estado,
-		programadoPara:   p.ProgramadoPara,
-		documentoRuta:    p.DocumentoRuta,
-		canal:            p.Canal,
-		mensajeExternoID: p.MensajeExternoID,
-		Timestamped:      audit.NewTimestamped(time.Now()),
+		id:             uuid.New(),
+		tipo:           p.Tipo,
+		referencia:     strings.TrimSpace(p.Referencia),
+		clienteID:      p.ClienteID,
+		telefono:       p.Telefono,
+		estado:         estado,
+		programadoPara: p.ProgramadoPara,
+		documentoRuta:  p.DocumentoRuta,
+		canal:          p.Canal,
+		Timestamped:    audit.NewTimestamped(now),
 	}, nil
 }
 
@@ -127,7 +136,7 @@ func HydrateEnvio(p HydrateEnvioParams) *Envio {
 // Reclamar intenta reclamar el envío pasando el estado a enviando.
 // Solo puede reclamarse desde en_espera. Si la transición no es válida,
 // retorna ErrEnvioTransicionInvalido y el estado NO cambia.
-func (e *Envio) Reclamar() error {
+func (e *Envio) Reclamar(now time.Time) error {
 	if !e.estado.CanTransitionTo(EstadoEnvioEnviando) {
 		return ErrEnvioTransicionInvalido
 	}
@@ -135,28 +144,29 @@ func (e *Envio) Reclamar() error {
 	return nil
 }
 
-// MarcarEnviado marca el envío como enviado, pasando el estado a enviado.
+// MarcarEnviado marca el envío como enviado, fijando el mensajeExternoID
+// devuelto por WhatsApp y el timestamp de envío.
 // Solo puede marcarse desde enviando. Si la transición no es válida,
 // retorna ErrEnvioTransicionInvalido y el estado NO cambia.
-func (e *Envio) MarcarEnviado() error {
+func (e *Envio) MarcarEnviado(mensajeExternoID string, now time.Time) error {
 	if !e.estado.CanTransitionTo(EstadoEnvioEnviado) {
 		return ErrEnvioTransicionInvalido
 	}
 	e.transitionTo(EstadoEnvioEnviado)
-	now := time.Now()
+	e.mensajeExternoID = &mensajeExternoID
 	e.enviadoEn = &now
 	return nil
 }
 
-// MarcarFallido marca el envío como fallido, pasando el estado a fallido.
+// MarcarFallido marca el envío como fallido, registrando el motivo.
 // Solo puede marcarse desde enviando. Si la transición no es válida,
 // retorna ErrEnvioTransicionInvalido y el estado NO cambia.
-func (e *Envio) MarcarFallido(razon string) error {
+func (e *Envio) MarcarFallido(motivo string, now time.Time) error {
 	if !e.estado.CanTransitionTo(EstadoEnvioFallido) {
 		return ErrEnvioTransicionInvalido
 	}
 	e.transitionTo(EstadoEnvioFallido)
-	e.ultimoError = &razon
+	e.ultimoError = &motivo
 	return nil
 }
 
@@ -164,7 +174,7 @@ func (e *Envio) MarcarFallido(razon string) error {
 // de intentos. Solo puede aplicarse desde fallido. Es la única transición
 // que muta intentos. Si el estado no es fallido, retorna
 // ErrEnvioTransicionInvalido.
-func (e *Envio) Reenviar() error {
+func (e *Envio) Reenviar(now time.Time) error {
 	if e.estado != EstadoEnvioFallido {
 		return ErrEnvioTransicionInvalido
 	}
@@ -175,27 +185,15 @@ func (e *Envio) Reenviar() error {
 }
 
 // Detener marca el envío como detenido, pasando el estado a detenido.
-// Solo puede aplicarse desde en_espera. El parámetro detenidoPor identifica
+// Solo puede aplicarse desde en_espera. El parámetro por identifica
 // quién o qué detuvo el envío. Si la transición no es válida, retorna
 // ErrEnvioTransicionInvalido.
-func (e *Envio) Detener(quien string) error {
+func (e *Envio) Detener(por string, now time.Time) error {
 	if !e.estado.CanTransitionTo(EstadoEnvioDetenido) {
 		return ErrEnvioTransicionInvalido
 	}
 	e.transitionTo(EstadoEnvioDetenido)
-	e.detenidoPor = &quien
-	return nil
-}
-
-// MarcarSinTelefono pasa el estado a sin_telefono, identificando que el envío
-// no tiene teléfono utilizable. Es un estado terminal: no tiene salida.
-// Solo puede aplicarse desde en_espera. Si la transición no es válida,
-// retorna ErrEnvioTransicionInvalido.
-func (e *Envio) MarcarSinTelefono() error {
-	if !e.estado.CanTransitionTo(EstadoEnvioSinTelefono) {
-		return ErrEnvioTransicionInvalido
-	}
-	e.transitionTo(EstadoEnvioSinTelefono)
+	e.detenidoPor = &por
 	return nil
 }
 
