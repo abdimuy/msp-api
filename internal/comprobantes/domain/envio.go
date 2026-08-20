@@ -38,13 +38,13 @@ type Envio struct {
 
 // CrearEnvioParams agrupa los campos para crear un Envio nuevo.
 type CrearEnvioParams struct {
-	Tipo             TipoComprobante
-	Referencia       string
-	ClienteID        int
-	Telefono         *string
-	ProgramadoPara   time.Time
-	DocumentoRuta    *string
-	Canal            Canal
+	Tipo           TipoComprobante
+	Referencia     string
+	ClienteID      int
+	Telefono       *string
+	ProgramadoPara time.Time
+	DocumentoRuta  *string
+	Canal          Canal
 }
 
 // CrearEnvio construye un nuevo Envio validando cada campo.
