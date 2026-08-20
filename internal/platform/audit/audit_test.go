@@ -119,3 +119,91 @@ func TestHydrateMicrosipSync(t *testing.T) {
 	require.NotNil(t, s.PulledAt())
 	assert.Nil(t, s.PushedAt())
 }
+
+func TestAuditable_MarkUpdatedAt_UsesTheGivenInstant(t *testing.T) {
+	t.Parallel()
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	creator := uuid.New()
+	updater := uuid.New()
+	at := time.Date(2026, 3, 15, 9, 30, 0, 0, time.UTC)
+
+	a := audit.NewAuditable(created, creator)
+	a.MarkUpdatedAt(at, updater)
+
+	assert.Equal(t, at, a.UpdatedAt(), "updatedAt must be exactly the instant passed in")
+	assert.Equal(t, updater, a.UpdatedBy())
+	assert.Equal(t, created, a.CreatedAt(), "createdAt must not change")
+	assert.Equal(t, creator, a.CreatedBy(), "createdBy must not change")
+}
+
+func TestAuditable_MarkUpdatedAt_AcceptsAnInstantInThePast(t *testing.T) {
+	t.Parallel()
+	// The audit embed does not police the clock: an entity rebuilt from an
+	// event stream stamps the instant the event happened, not "now".
+	created := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	past := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	a := audit.NewAuditable(created, uuid.New())
+	a.MarkUpdatedAt(past, uuid.New())
+
+	assert.Equal(t, past, a.UpdatedAt())
+}
+
+func TestTimestamped_MarkUpdatedAt_UsesTheGivenInstant(t *testing.T) {
+	t.Parallel()
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	at := time.Date(2026, 3, 15, 9, 30, 0, 0, time.UTC)
+
+	ts := audit.NewTimestamped(created)
+	ts.MarkUpdatedAt(at)
+
+	assert.Equal(t, at, ts.UpdatedAt(), "updatedAt must be exactly the instant passed in")
+	assert.Equal(t, created, ts.CreatedAt(), "createdAt must not change")
+}
+
+func TestTimestamped_MarkUpdatedAt_TwoEntitiesShareOneInstant(t *testing.T) {
+	t.Parallel()
+	// This is what the wall-clock form cannot give: two entities mutated in
+	// the same operation must carry the same updatedAt, or a reader cannot
+	// tell that they changed together.
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	at := time.Date(2026, 4, 2, 12, 0, 0, 0, time.UTC)
+
+	a := audit.NewTimestamped(created)
+	b := audit.NewTimestamped(created)
+	a.MarkUpdatedAt(at)
+	b.MarkUpdatedAt(at)
+
+	require.Equal(t, a.UpdatedAt(), b.UpdatedAt())
+	assert.Equal(t, at, a.UpdatedAt())
+}
+
+func TestMarkUpdated_StillWorksAndDelegates(t *testing.T) {
+	t.Parallel()
+	// The wall-clock forms stay for the existing callers; they now delegate.
+	created := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	ts := audit.NewTimestamped(created)
+	ts.MarkUpdated()
+	assert.True(t, ts.UpdatedAt().After(created), "updatedAt must advance")
+
+	a := audit.NewAuditable(created, uuid.New())
+	updater := uuid.New()
+	a.MarkUpdated(updater)
+	assert.True(t, a.UpdatedAt().After(created), "updatedAt must advance")
+	assert.Equal(t, updater, a.UpdatedBy())
+}
+
+func TestHydrateTimestamped_NoValidation(t *testing.T) {
+	t.Parallel()
+	// Rebuilding from persistence takes the row as it is: nothing is checked,
+	// not even that updatedAt is later than createdAt. Whatever the database
+	// holds is what the entity carries.
+	created := time.Date(2026, 2, 1, 8, 0, 0, 0, time.UTC)
+	updated := time.Date(2025, 12, 31, 23, 59, 0, 0, time.UTC)
+
+	ts := audit.HydrateTimestamped(created, updated)
+
+	assert.Equal(t, created, ts.CreatedAt())
+	assert.Equal(t, updated, ts.UpdatedAt(), "hydrate must not correct an updatedAt older than createdAt")
+}
