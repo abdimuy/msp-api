@@ -30,7 +30,7 @@ const (
 // §8): MSP_CM_ENVIO has UNIQUE (TIPO, REFERENCIA) (§5.1), so a resend reuses
 // the row instead of inserting a new one.
 var validEstadoEnvioTransitions = map[EstadoEnvio][]EstadoEnvio{
-	EstadoEnvioEnEspera:    {EstadoEnvioEnviando, EstadoEnvioDetenido},
+	EstadoEnvioEnEspera:    {EstadoEnvioEnviando, EstadoEnvioDetenido, EstadoEnvioSinTelefono},
 	EstadoEnvioEnviando:    {EstadoEnvioEnviado, EstadoEnvioFallido},
 	EstadoEnvioFallido:     {EstadoEnvioEnEspera},
 	EstadoEnvioEnviado:     {},
