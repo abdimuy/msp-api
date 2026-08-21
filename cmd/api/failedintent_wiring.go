@@ -20,6 +20,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 	"github.com/abdimuy/msp-api/internal/platform/lifecycle"
 	"github.com/abdimuy/msp-api/internal/platform/response"
+	ventasfailedintents "github.com/abdimuy/msp-api/internal/ventas/infra/failedintents"
 )
 
 // SettableReplayDispatcher wraps the root chi router but allows the router to
@@ -164,14 +165,29 @@ func provideFailedIntentHTTPService(
 	return failedintenthttp.NewService(store, dispatcher, usuarios, blobs, nil, nil)
 }
 
+// provideFailedIntentResolutionChecker conecta el puerto invertido de
+// conciliación con la implementación de ventas.
+//
+// Aquí es donde la plataforma se entera de que existe un módulo capaz de
+// contestar por sus claves — y es el ÚNICO lugar donde eso pasa. El día que
+// cobranza quiera lo mismo, este proveedor devuelve un compuesto que pregunta
+// a los dos y la plataforma no cambia.
+func provideFailedIntentResolutionChecker(pool *firebird.Pool) failedintent.ResolutionChecker {
+	return ventasfailedintents.NewResolutionChecker(pool)
+}
+
 // provideFailedIntentJanitor builds the background purge component wired to
-// delete blobs alongside their parent rows.
+// delete blobs alongside their parent rows, cerrar los intentos cuyo trabajo
+// ya aterrizó y aplicar los dos cortes de retención.
 func provideFailedIntentJanitor(
-	store failedintent.Store, blobs failedintent.BlobStorage,
+	store failedintent.Store,
+	blobs failedintent.BlobStorage,
+	resolution failedintent.ResolutionChecker,
 ) *failedintent.Janitor {
 	return failedintent.NewJanitor(failedintent.JanitorConfig{
-		Store: store,
-		Blob:  blobs,
+		Store:      store,
+		Blob:       blobs,
+		Resolution: resolution,
 	})
 }
 

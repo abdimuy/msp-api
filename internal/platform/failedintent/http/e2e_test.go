@@ -198,7 +198,7 @@ func TestE2E_AdminFailedIntents_PermissionGrid(t *testing.T) {
 		IdempotencyKey: "seed-idem-key",
 		RequestID:      uuid.New(),
 	}
-	require.NoError(t, intentStore.Save(t.Context(), seeded))
+	require.NoError(t, saveOK(intentStore.Save(t.Context(), seeded)))
 
 	fakeFB := httptesting.NewFakeFirebase(fbUID)
 	fakeUsuarios := httptesting.NewFakeUsuarioRepo()
@@ -426,7 +426,7 @@ func TestE2E_Admin_BlobIntent_DTORevealsHasBlob(t *testing.T) {
 		IdempotencyKey:  "blob-dto-idem-key",
 		RequestID:       uuid.New(),
 	}
-	require.NoError(t, intentStore.Save(t.Context(), seeded))
+	require.NoError(t, saveOK(intentStore.Save(t.Context(), seeded)))
 
 	fakeFB := httptesting.NewFakeFirebase(fbUID)
 	fakeUsuarios := httptesting.NewFakeUsuarioRepo()
@@ -582,14 +582,22 @@ func newE2EIntentStore() *e2eIntentStore {
 	return &e2eIntentStore{intents: map[uuid.UUID]failedintent.Intent{}}
 }
 
-func (s *e2eIntentStore) Save(_ context.Context, i failedintent.Intent) error {
+// MarkResolvedByKeys no hace nada en este doble: las pruebas que lo ejercitan
+// usan el store de Firebird o el fake de failedintent_test.go.
+func (s *e2eIntentStore) MarkResolvedByKeys(
+	_ context.Context, _ string, _ []string, _ time.Time,
+) (int64, error) {
+	return 0, nil
+}
+
+func (s *e2eIntentStore) Save(_ context.Context, i failedintent.Intent) (failedintent.SaveOutcome, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.intents[i.ID]; !exists {
 		s.order = append(s.order, i.ID)
 	}
 	s.intents[i.ID] = i
-	return nil
+	return failedintent.SaveOutcome{}, nil
 }
 
 func (s *e2eIntentStore) Get(_ context.Context, id uuid.UUID) (*failedintent.Intent, error) {
@@ -667,7 +675,9 @@ func (s *e2eIntentStore) IncrementRetry(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
-func (s *e2eIntentStore) PurgeOlderThan(context.Context, time.Time) (failedintent.PurgeResult, error) {
+func (s *e2eIntentStore) PurgeOlderThan(
+	context.Context, time.Time, ...failedintent.Status,
+) (failedintent.PurgeResult, error) {
 	return failedintent.PurgeResult{}, nil
 }
 

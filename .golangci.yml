@@ -222,6 +222,8 @@ linters:
           alias: authapp
         - pkg: github.com/abdimuy/msp-api/internal/auth/domain
           alias: authdomain
+        - pkg: github.com/abdimuy/msp-api/internal/ventas/infra/failedintents
+          alias: ventasfailedintents
         - pkg: github.com/abdimuy/msp-api/internal/ventas/app
           alias: ventasapp
         - pkg: github.com/abdimuy/msp-api/internal/ventas/domain

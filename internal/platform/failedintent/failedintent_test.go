@@ -28,19 +28,42 @@ import (
 
 // fakeStore is a minimal in-memory Store for unit tests. Thread-safe.
 type fakeStore struct {
-	mu      sync.Mutex
-	saved   []failedintent.Intent
-	saveErr error
+	mu          sync.Mutex
+	saved       []failedintent.Intent
+	saveErr     error
+	saveOutcome failedintent.SaveOutcome
+
+	// marcados registra cada llamada a MarkResolvedByKeys.
+	marcados  []marcaResuelta
+	marcadas  int64
+	marcarErr error
 }
 
-func (f *fakeStore) Save(_ context.Context, i failedintent.Intent) error {
+type marcaResuelta struct {
+	path string
+	keys []string
+}
+
+func (f *fakeStore) Save(_ context.Context, i failedintent.Intent) (failedintent.SaveOutcome, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.saveErr != nil {
-		return f.saveErr
+		return failedintent.SaveOutcome{}, f.saveErr
 	}
 	f.saved = append(f.saved, i)
-	return nil
+	return f.saveOutcome, nil
+}
+
+func (f *fakeStore) MarkResolvedByKeys(
+	_ context.Context, path string, keys []string, _ time.Time,
+) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.marcados = append(f.marcados, marcaResuelta{path: path, keys: keys})
+	if f.marcarErr != nil {
+		return 0, f.marcarErr
+	}
+	return f.marcadas, nil
 }
 
 func (f *fakeStore) Get(_ context.Context, _ uuid.UUID) (*failedintent.Intent, error) {
@@ -74,7 +97,9 @@ func (f *fakeStore) IncrementRetry(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
 
-func (f *fakeStore) PurgeOlderThan(_ context.Context, _ time.Time) (failedintent.PurgeResult, error) {
+func (f *fakeStore) PurgeOlderThan(
+	_ context.Context, _ time.Time, _ ...failedintent.Status,
+) (failedintent.PurgeResult, error) {
 	return failedintent.PurgeResult{}, nil
 }
 

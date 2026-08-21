@@ -3,6 +3,7 @@ package failedintent_test
 import (
 	"context"
 	"io"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -28,6 +29,8 @@ type memStore struct {
 	purgeErr error
 	purgeCh  chan struct{} // closed/signalled after each PurgeOlderThan call
 	purges   atomic.Int64  // total calls to PurgeOlderThan
+	listErr  error
+	markErr  error
 }
 
 func newMemStore() *memStore {
@@ -43,6 +46,17 @@ func (m *memStore) add(i failedintent.Intent) {
 	m.intents[i.ID] = i
 }
 
+// get devuelve una copia del intento, o nil si ya no está.
+func (m *memStore) get(id uuid.UUID) *failedintent.Intent {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	i, ok := m.intents[id]
+	if !ok {
+		return nil
+	}
+	return &i
+}
+
 func (m *memStore) has(id uuid.UUID) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -50,19 +64,96 @@ func (m *memStore) has(id uuid.UUID) bool {
 	return ok
 }
 
-func (m *memStore) Save(_ context.Context, i failedintent.Intent) error {
+// MarkResolvedByKeys cierra los pendientes de esa ruta cuya clave esté en la
+// lista, igual que la implementación real. Es de verdad y no un no-op porque
+// la conciliación se prueba de punta a punta: un doble que devuelve 0 dejaría
+// pasar un janitor que llama al checker y tira la respuesta.
+func (m *memStore) MarkResolvedByKeys(
+	_ context.Context, path string, keys []string, now time.Time,
+) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.markErr != nil {
+		return 0, m.markErr
+	}
+	buscadas := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		buscadas[k] = struct{}{}
+	}
+	var n int64
+	for id, i := range m.intents {
+		if i.Path != path || i.Status != failedintent.StatusNew {
+			continue
+		}
+		if _, ok := buscadas[i.IdempotencyKey]; !ok {
+			continue
+		}
+		i.Status = failedintent.StatusResolvedManual
+		sellado := now
+		i.ResolvedAt = &sellado
+		m.intents[id] = i
+		n++
+	}
+	return n, nil
+}
+
+func (m *memStore) Save(_ context.Context, i failedintent.Intent) (failedintent.SaveOutcome, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.intents[i.ID] = i
-	return nil
+	return failedintent.SaveOutcome{}, nil
 }
 
 func (m *memStore) Get(_ context.Context, _ uuid.UUID) (*failedintent.Intent, error) {
 	return nil, nil //nolint:nilnil // not-found sentinel per Store contract
 }
 
-func (m *memStore) List(_ context.Context, _ failedintent.ListParams) (failedintent.Page[failedintent.Intent], error) {
-	return failedintent.Page[failedintent.Intent]{}, nil
+// List devuelve los intentos que coinciden con el filtro de estado, ordenados
+// por ReceivedAt para que el cursor de la conciliación avance de verdad.
+//
+// La paginación es real (PageSize + HasMore) porque el barrido del janitor
+// pagina: con un doble que devuelve todo de un tiro, un bug de cursor —el
+// clásico que repite la primera página para siempre— pasaría inadvertido.
+func (m *memStore) List(
+	_ context.Context, p failedintent.ListParams,
+) (failedintent.Page[failedintent.Intent], error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.listErr != nil {
+		return failedintent.Page[failedintent.Intent]{}, m.listErr
+	}
+
+	var candidatos []failedintent.Intent
+	for _, i := range m.intents {
+		if p.Status != "" && i.Status != p.Status {
+			continue
+		}
+		if !p.CursorReceivedAt.IsZero() && !i.ReceivedAt.After(p.CursorReceivedAt) {
+			continue
+		}
+		candidatos = append(candidatos, i)
+	}
+	sort.Slice(candidatos, func(a, b int) bool {
+		return candidatos[a].ReceivedAt.Before(candidatos[b].ReceivedAt)
+	})
+
+	size := p.PageSize
+	if size <= 0 {
+		size = 20
+	}
+	page := failedintent.Page[failedintent.Intent]{}
+	if len(candidatos) > size {
+		page.Items = candidatos[:size]
+		page.HasMore = true
+	} else {
+		page.Items = candidatos
+	}
+	if len(page.Items) > 0 {
+		ultimo := page.Items[len(page.Items)-1]
+		page.NextReceivedAt = ultimo.ReceivedAt
+		page.NextID = ultimo.ID
+	}
+	return page, nil
 }
 
 func (m *memStore) UpdateStatus(
@@ -90,23 +181,46 @@ func (m *memStore) IncrementRetry(_ context.Context, _ uuid.UUID) error {
 
 // PurgeOlderThan removes intents whose ReceivedAt is strictly before `before`.
 // It always signals purgeCh after running (even on error).
+//
+// `estados` acota igual que la implementación real: vacío es "todos". Sin
+// respetarlo aquí, la prueba del corte corto pasaría con una implementación
+// que borra pendientes de la misma edad.
 func (m *memStore) PurgeOlderThan(
-	_ context.Context, before time.Time,
+	_ context.Context, before time.Time, estados ...failedintent.Status,
 ) (failedintent.PurgeResult, error) {
-	m.purges.Add(1)
-	defer func() {
-		m.purgeCh <- struct{}{}
-	}()
+	// El contador y la señal cuentan CICLOS, no sentencias: un tick hace dos
+	// cortes (el corto de los resueltos y el largo de todo) y el largo es el
+	// último. Contar sentencias metería el número de cortes en pruebas que no
+	// hablan de retención — "Start es idempotente" pasaría a depender de
+	// cuántos cortes tenga el janitor.
+	if len(estados) == 0 {
+		m.purges.Add(1)
+		defer func() {
+			m.purgeCh <- struct{}{}
+		}()
+	}
 
 	if m.purgeErr != nil {
 		return failedintent.PurgeResult{}, m.purgeErr
+	}
+
+	permitido := func(s failedintent.Status) bool {
+		if len(estados) == 0 {
+			return true
+		}
+		for _, e := range estados {
+			if e == s {
+				return true
+			}
+		}
+		return false
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var result failedintent.PurgeResult
 	for id, intent := range m.intents {
-		if intent.ReceivedAt.Before(before) {
+		if intent.ReceivedAt.Before(before) && permitido(intent.Status) {
 			delete(m.intents, id)
 			result.RowsDeleted++
 			if intent.BodyBlobPath != "" {
@@ -310,6 +424,13 @@ func (f *fakeBlobs) Delete(_ context.Context, path string) error {
 	defer f.mu.Unlock()
 	f.deleted = append(f.deleted, path)
 	return nil
+}
+
+// borrados devuelve una copia de los paths borrados, bajo el candado.
+func (f *fakeBlobs) borrados() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.deleted...)
 }
 
 // TestJanitor_PurgeDeletesBlobs verifies the janitor wires PurgeResult.BlobPaths

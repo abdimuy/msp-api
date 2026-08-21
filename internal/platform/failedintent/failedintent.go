@@ -142,8 +142,17 @@ func (s Status) String() string { return string(s) }
 //
 // The schema does NOT enforce this invariant — it lives here, per CLAUDE.md.
 type Intent struct {
-	ID              uuid.UUID
-	ReceivedAt      time.Time
+	ID         uuid.UUID
+	ReceivedAt time.Time
+	// LastSeenAt es el ÚLTIMO intento con esta clave. Nil cuando la fila se
+	// ha visto una sola vez.
+	//
+	// Con la dedup, ReceivedAt dejó de significar "cuándo pasó esto" para
+	// significar "el PRIMER intento". Los dos juntos son lo que permite
+	// escribir "13 intentos · desde 13:20 · el último hace 4 minutos"; sólo
+	// con el primero, una venta cuyo último reintento fue hace cuatro minutos
+	// se leería como de hace seis horas.
+	LastSeenAt      *time.Time
 	Method          string
 	Path            string
 	FirebaseUID     string
@@ -196,13 +205,44 @@ type PurgeResult struct {
 	BlobPaths   []string
 }
 
+// SaveOutcome reports what Save actually did, so the caller can keep the
+// on-disk blobs in step with the rows.
+//
+// Sin esto la dedup arreglaría la mitad del problema: la tabla dejaría de
+// crecer y el disco no. Medido en producción sobre 7 días: 609 filas para 130
+// ventas, **685 archivos y 896 MB**; una sola venta dejó 13 copias de 2.8 MB.
+// El cuerpo que la dedup descarta es un archivo ya escrito, y el único que
+// sabe borrarlo es quien tiene el BlobStorage — el middleware, no el Store.
+type SaveOutcome struct {
+	// Deduped reports that the intent was folded into an existing pending
+	// row instead of inserting a new one.
+	Deduped bool
+	// OrphanedBlobPath is the blob that no row references anymore after this
+	// Save: el nuevo cuando se conservó el guardado, el viejo cuando el nuevo
+	// lo reemplazó. Vacío cuando no sobra ninguno.
+	OrphanedBlobPath string
+}
+
 // Store persists and retrieves Intent records.
 //
-//nolint:interfacebloat // 8 methods, at the 8-method cap.
+// MarkResolvedByKeys. La alternativa era un segundo puerto con una sola
+// operación sobre la misma tabla, que reparte la custodia de la evidencia
+// entre dos interfaces sin ganar nada.
+//
+//nolint:interfacebloat // 9 métodos: el cap de 8 se subió una vez, por
 type Store interface {
-	// Save inserts an intent. Implementations should treat (id) as a
-	// uniqueness constraint and silently no-op on duplicate primary key.
-	Save(ctx context.Context, i Intent) error
+	// Save persists an intent.
+	//
+	// Cuando el intento trae IDEMPOTENCY_KEY y ya existe una fila PENDIENTE
+	// con la misma (PATH, IDEMPOTENCY_KEY), la implementación debe FUNDIRLO
+	// en ella —subir RETRY_COUNT, refrescar el error y LAST_SEEN_AT, y
+	// CONSERVAR RECEIVED_AT— en vez de insertar una fila nueva. Sin clave no
+	// hay nada que deduplicar y se inserta.
+	//
+	// Un conflicto de llave primaria (mismo id) se trata como no-op, igual
+	// que antes: un reintento de la captura no puede corromper la evidencia
+	// que ya está guardada.
+	Save(ctx context.Context, i Intent) (SaveOutcome, error)
 
 	// Get loads an intent by id. Returns (nil, nil) when not found.
 	Get(ctx context.Context, id uuid.UUID) (*Intent, error)
@@ -249,12 +289,32 @@ type Store interface {
 	// `before`. Returns the deletion count plus every non-empty
 	// body_blob_path of the deleted rows so the caller can clean the
 	// matching on-disk blobs.
-	PurgeOlderThan(ctx context.Context, before time.Time) (PurgeResult, error)
+	//
+	// `estados` acota el borrado a esos STATUS; vacío significa todos. Es
+	// variádico y no un parámetro más porque el corte por estado llegó
+	// después: sin él, los intentos ya resueltos —cuyo cuerpo ya no le sirve
+	// a nadie— ocupaban disco los mismos 90 días que los pendientes.
+	PurgeOlderThan(ctx context.Context, before time.Time, estados ...Status) (PurgeResult, error)
 
 	// ReferencedPaths returns every non-empty body_blob_path currently in
 	// failed_intents. Used by the boot-time orphan sweep to detect blob
 	// files on disk that no longer have a database referent.
 	ReferencedPaths(ctx context.Context) ([]string, error)
+
+	// MarkResolvedByKeys cierra como StatusResolvedManual los intentos
+	// PENDIENTES de `path` cuya IDEMPOTENCY_KEY esté en keys, sellando
+	// RESOLVED_AT con `now`. Devuelve cuántas filas cambiaron.
+	//
+	// Es el único camino por el que un intento se cierra sin que una persona
+	// lo toque, y por eso el criterio es estrecho: misma ruta, misma clave,
+	// y sólo filas pendientes. Una fila ya cerrada no se reabre ni se
+	// re-sella; la decisión que tomó alguien se queda.
+	//
+	// Lo usan dos llamadores con la misma pregunta: el middleware cuando ve
+	// llegar un 2xx con una clave que ya tenía intento fallido, y el janitor
+	// cuando la fuente confirma que el trabajo aterrizó por otro camino.
+	// keys vacío es un no-op sin ir a la base.
+	MarkResolvedByKeys(ctx context.Context, path string, keys []string, now time.Time) (int64, error)
 }
 
 // ReplayDispatcher dispatches a reconstructed *http.Request through the
@@ -372,6 +432,7 @@ func handleJSON(cfg Config, next http.Handler, w http.ResponseWriter, r *http.Re
 	next.ServeHTTP(cw, r)
 
 	if cw.status < http.StatusBadRequest {
+		cerrarPorExito(r, cfg, cw)
 		cw.flushDeferred("")
 		return
 	}
@@ -446,6 +507,7 @@ func handleMultipart(cfg Config, next http.Handler, w http.ResponseWriter, r *ht
 			//nolint:contextcheck // detached so a client disconnect does not abort cleanup.
 			_ = cfg.Blob.Delete(saveCtx, saveResult.path)
 		}
+		cerrarPorExito(r, cfg, cw)
 		cw.flushDeferred("")
 		return
 	}
@@ -561,7 +623,8 @@ func buildMultipartIntent(
 func saveIntent(parentCtx context.Context, cfg Config, intent Intent) bool {
 	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(parentCtx), 5*time.Second)
 	defer cancel()
-	if saveErr := cfg.Store.Save(saveCtx, intent); saveErr != nil {
+	outcome, saveErr := cfg.Store.Save(saveCtx, intent)
+	if saveErr != nil {
 		slog.ErrorContext(
 			parentCtx,
 			"failedintent: store save failed",
@@ -572,8 +635,69 @@ func saveIntent(parentCtx context.Context, cfg Config, intent Intent) bool {
 		)
 		return false
 	}
+	// El cuerpo que la dedup descartó ya está escrito en disco y ninguna fila
+	// lo referencia. Se borra aquí porque el Store no conoce el BlobStorage —
+	// ni debe: su trabajo es la fila. Best-effort: el barrido de huérfanos del
+	// arranque es la red de abajo, pero esperar a un reinicio para recuperar
+	// disco es exactamente el problema que esta parte arregla.
+	if outcome.OrphanedBlobPath != "" && cfg.Blob != nil {
+		if delErr := cfg.Blob.Delete(saveCtx, outcome.OrphanedBlobPath); delErr != nil {
+			slog.WarnContext(
+				parentCtx,
+				"failedintent: no se pudo borrar el blob descartado por la dedup",
+				"error", delErr, "path", outcome.OrphanedBlobPath,
+			)
+		}
+	}
 	emitCapturedLog(parentCtx, intent)
 	return true
+}
+
+// cerrarPorExito cierra el intento pendiente que esta misma petición acaba de
+// dejar obsoleto.
+//
+// El caso: el teléfono reintenta una venta que falló, esta vez entra, y la
+// fila de MSP_FAILED_INTENTS se queda ahí como pendiente para siempre. Quien
+// abre la consola ve trabajo que ya no existe, y el rezago de esas filas es
+// lo que hace que la pantalla deje de mirarse.
+//
+// La clave de idempotencia es lo que las liga: **el mismo trabajo acabó bien**.
+// La plataforma no aprende que existen las ventas —no sabe qué se creó, ni
+// mira ninguna tabla de negocio—; sólo sabe que una clave que había fallado
+// terminó en 2xx.
+//
+// Best-effort de principio a fin: si esto falla, el intento se queda
+// pendiente y el reconciliador del janitor lo alcanza después. Nunca puede
+// tumbar una petición que YA salió bien.
+func cerrarPorExito(r *http.Request, cfg Config, cw *captureWriter) {
+	if isIdempotentReplay(cw) {
+		// La respuesta la sirvió el caché de idempotencia: el 2xx es de la
+		// llamada original, no de ésta. Aquella ya cerró lo que tocaba.
+		return
+	}
+	key := strings.TrimSpace(r.Header.Get(idempotency.HeaderKey))
+	if key == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+	defer cancel()
+
+	n, err := cfg.Store.MarkResolvedByKeys(ctx, r.URL.Path, []string{key}, cfg.Clock())
+	if err != nil {
+		slog.WarnContext(
+			r.Context(),
+			"failedintent: no se pudo cerrar el intento tras el éxito",
+			"error", err, "path", r.URL.Path,
+		)
+		return
+	}
+	if n > 0 {
+		slog.InfoContext(
+			r.Context(),
+			"failedintent: intento cerrado porque el mismo trabajo entró",
+			"path", r.URL.Path, "rows", n,
+		)
+	}
 }
 
 // isMultipart reports whether the request's Content-Type is multipart/form-data.
