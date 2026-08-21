@@ -74,6 +74,12 @@ func TestE2E_VentasRepo_SyncPorZona_TombstonePorBorradoFisico(t *testing.T) {
 			`DELETE FROM DOCTOS_CC WHERE DOCTO_CC_ID = ?`, cargoID)
 		require.NoError(t, err, "DELETE DOCTOS_CC")
 
+		// El trigger acaba de poner UPDATED_AT = CURRENT_TIMESTAMP y el sync
+		// recorta la página en `now - syncClockSkewSeconds`. Sin esta segunda
+		// espera la lápida queda por encima del borde superior y la prueba
+		// culpa al predicado de lo que hizo el margen de reloj.
+		time.Sleep(2 * time.Second)
+
 		// ── La lápida quedó escrita ───────────────────────────────────────
 		var (
 			cargoCancelado string
