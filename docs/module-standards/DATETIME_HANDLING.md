@@ -296,6 +296,44 @@ GET /v2/ventas?desde=2026-05-01T00:00:00Z&hasta=2026-06-01T00:00:00Z
   - `desde=2026-05-13T06:00:00Z` (00:00 CDMX = 06:00 UTC)
   - `hasta=2026-05-14T06:00:00Z`
 
+### En el frontend esto NO se calcula a mano
+
+`sistema-cobro-web/src/utils/tiempoDeNegocio.ts` es la única forma soportada
+de convertir días de calendario en instantes. Es la contraparte de
+`BusinessTZ` / `ToWallClock` / `FromWallClock` del backend: la zona vive en una
+constante con nombre y las conversiones son funciones con nombre en la
+frontera.
+
+```typescript
+import { rangoDeDiasDeNegocio } from "@/utils/tiempoDeNegocio";
+
+const { desde, hasta } = rangoDeDiasDeNegocio("2026-08-20", "2026-08-20");
+// desde = "2026-08-20T06:00:00Z"   hasta = "2026-08-21T06:00:00Z"
+```
+
+| Regla | Por qué |
+|---|---|
+| El offset sale de las reglas **IANA** vía `Intl`, nunca de un `-06:00` literal | México **abolió el horario de verano en octubre de 2022**. Un literal miente sobre cualquier dato anterior, y sobre el próximo cambio de reglas |
+| Se ancla a `ZONA_DE_NEGOCIO`, **nunca** a la zona del navegador | Un vendedor remoto tiene que ver el mismo día que el admin en CDMX. La zona es un parámetro explícito, y hay una prueba que lo fija pidiendo el mismo día en dos zonas |
+| Un día de calendario **no es** un instante | `"2026-08-20"` no significa nada hasta decir en qué zona. Confundirlos es el defecto de abajo |
+| Un día inválido **lanza** | Interpretar mal un filtro de fechas pierde ventas de un reporte sin que nadie lo note. Mejor fallar fuerte |
+
+**Incidente que lo motivó (2026-08-21).** `HttpVentasListAdapter` mandaba
+`${dia}T00:00:00Z`, con un comentario que lo llamaba "una aproximación
+aceptable". Filtrar "20 ago - 20 ago" devolvía **5 ventas cuando eran 7**: las
+de 18:15 y 18:18 locales ya caen en el día UTC siguiente. El mismo corte metía
+de contrabando las de la tarde-noche del día anterior. La ventana estaba
+corrida seis horas, medio turno.
+
+El API de Go **no** tenía el defecto: Firebird bindea con `ToWallClock` y
+Meilisearch guarda el instante real, y los dos resuelven el mismo conjunto.
+
+**Latente, no roto hoy:** `parseDesde` de cobranza
+(`internal/cobranza/infra/cobranzahttp/handlers.go`) interpreta `YYYY-MM-DD`
+como medianoche **UTC**. Para la ventana rodante de 7 días del sync sólo la
+ensancha seis horas y es inofensivo; sería la misma trampa el día que alguien
+lo use como filtro de día.
+
 ---
 
 ## Tests
