@@ -4,6 +4,7 @@ package firebird_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -412,4 +413,123 @@ func TestSave_Dedup_Concurrente_NoDejaLaTablaInconsistente(t *testing.T) {
 	assert.LessOrEqual(t, filas, capturas)
 	assert.Equal(t, capturas, sumaIntentos,
 		"las %d capturas tienen que estar contadas, repartidas o no entre filas", capturas)
+}
+
+// TestMarkResolvedByKeys_CierraSoloLoQueDebe fija el criterio estrecho del
+// único camino por el que un intento se cierra sin que una persona lo toque.
+//
+//nolint:paralleltest // serial: comparte la tx con rollback.
+func TestMarkResolvedByKeys_CierraSoloLoQueDebe(t *testing.T) {
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	requireFailedIntentsTable(t, pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		s := failedintentfb.New(pool)
+		sufijo := uuid.NewString()
+
+		pendiente := capturaConClave("aterrizo-"+sufijo, `{"n":1}`)
+		require.NoError(t, saveOK(s.Save(ctx, pendiente)))
+
+		otraRuta := capturaConClave("aterrizo-"+sufijo, `{"n":2}`)
+		otraRuta.Path = "/v2/cobranza/pagos"
+		require.NoError(t, saveOK(s.Save(ctx, otraRuta)))
+
+		yaCerrado := capturaConClave("cerrado-"+sufijo, `{"n":3}`)
+		yaCerrado.Status = failedintent.StatusIgnored
+		require.NoError(t, saveOK(s.Save(ctx, yaCerrado)))
+
+		ajeno := capturaConClave("ajeno-"+sufijo, `{"n":4}`)
+		require.NoError(t, saveOK(s.Save(ctx, ajeno)))
+
+		ahora := time.Now().UTC().Truncate(time.Millisecond)
+		n, err := s.MarkResolvedByKeys(ctx, "/v2/ventas",
+			[]string{"aterrizo-" + sufijo, "cerrado-" + sufijo}, ahora)
+		require.NoError(t, err)
+		assert.Equal(t, int64(1), n, "sólo el pendiente de ESA ruta")
+
+		cerrado, err := s.Get(ctx, pendiente.ID)
+		require.NoError(t, err)
+		require.NotNil(t, cerrado)
+		assert.Equal(t, failedintent.StatusResolvedManual, cerrado.Status)
+		require.NotNil(t, cerrado.ResolvedAt)
+		assert.WithinDuration(t, ahora, *cerrado.ResolvedAt, time.Second)
+		assert.Nil(t, cerrado.ResolvedBy,
+			"nadie lo resolvió: llenar RESOLVED_BY con un uuid inventado convertiría "+
+				"la bitácora en ficción")
+
+		intacto, err := s.Get(ctx, otraRuta.ID)
+		require.NoError(t, err)
+		require.NotNil(t, intacto)
+		assert.Equal(t, failedintent.StatusNew, intacto.Status,
+			"la clave no cruza recursos: el pago no se cierra porque entró una venta")
+
+		decision, err := s.Get(ctx, yaCerrado.ID)
+		require.NoError(t, err)
+		require.NotNil(t, decision)
+		assert.Equal(t, failedintent.StatusIgnored, decision.Status,
+			"una fila cerrada no se reabre ni se re-sella")
+
+		sinTocar, err := s.Get(ctx, ajeno.ID)
+		require.NoError(t, err)
+		require.NotNil(t, sinTocar)
+		assert.Equal(t, failedintent.StatusNew, sinTocar.Status)
+	})
+}
+
+// TestMarkResolvedByKeys_TroceaLotesGrandes ejercita el troceo con MÁS claves
+// que el tamaño de lote. Sin él, un lote grande falla entero — y fallar entero
+// significa que un intento ya resuelto sigue apareciendo como pendiente.
+//
+//nolint:paralleltest // serial: comparte la tx con rollback.
+func TestMarkResolvedByKeys_TroceaLotesGrandes(t *testing.T) {
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	requireFailedIntentsTable(t, pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		s := failedintentfb.New(pool)
+		sufijo := uuid.NewString()
+
+		// 450 claves: más de dos lotes de 200.
+		const total = 450
+		claves := make([]string, 0, total)
+		reales := make([]uuid.UUID, 0, 3)
+		for n := range total {
+			clave := fmt.Sprintf("lote-%d-%s", n, sufijo)
+			claves = append(claves, clave)
+			// Sólo se siembran tres filas de verdad: lo que se ejercita es el
+			// troceo del IN (...), no el volumen de escritura.
+			if n == 0 || n == 250 || n == total-1 {
+				i := capturaConClave(clave, `{"n":1}`)
+				require.NoError(t, saveOK(s.Save(ctx, i)))
+				reales = append(reales, i.ID)
+			}
+		}
+
+		n, err := s.MarkResolvedByKeys(ctx, "/v2/ventas", claves, time.Now().UTC())
+		require.NoError(t, err, "un lote de %d claves no puede reventar la sentencia", total)
+		assert.Equal(t, int64(len(reales)), n,
+			"las tres filas sembradas caen en lotes distintos y las tres se cierran")
+
+		for _, id := range reales {
+			got, getErr := s.Get(ctx, id)
+			require.NoError(t, getErr)
+			require.NotNil(t, got)
+			assert.Equal(t, failedintent.StatusResolvedManual, got.Status)
+		}
+	})
+}
+
+// TestMarkResolvedByKeys_SinClaves_NoVaALaBase.
+//
+//nolint:paralleltest // serial: comparte la tx con rollback.
+func TestMarkResolvedByKeys_SinClaves_NoVaALaBase(t *testing.T) {
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	requireFailedIntentsTable(t, pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		s := failedintentfb.New(pool)
+		n, err := s.MarkResolvedByKeys(ctx, "/v2/ventas", nil, time.Now().UTC())
+		require.NoError(t, err)
+		assert.Zero(t, n)
+	})
 }

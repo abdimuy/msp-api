@@ -582,6 +582,14 @@ func newE2EIntentStore() *e2eIntentStore {
 	return &e2eIntentStore{intents: map[uuid.UUID]failedintent.Intent{}}
 }
 
+// MarkResolvedByKeys no hace nada en este doble: las pruebas que lo ejercitan
+// usan el store de Firebird o el fake de failedintent_test.go.
+func (s *e2eIntentStore) MarkResolvedByKeys(
+	_ context.Context, _ string, _ []string, _ time.Time,
+) (int64, error) {
+	return 0, nil
+}
+
 func (s *e2eIntentStore) Save(_ context.Context, i failedintent.Intent) (failedintent.SaveOutcome, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

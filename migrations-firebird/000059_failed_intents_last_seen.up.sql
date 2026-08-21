@@ -30,15 +30,26 @@
 --     Go con time.Now() envuelto en firebird.ToWallClock, igual que el resto
 --     de los timestamps de esta tabla.
 --
--- Sin índice: nadie filtra ni ordena por esta columna. Se lee junto con la
---   fila que ya se localizó por PK o por el índice de STATUS. Un índice de
---   más es escritura de más en la ruta caliente de la captura.
+-- Sin índice SOBRE LA COLUMNA NUEVA: nadie filtra ni ordena por ella. Se lee
+--   junto con la fila que ya se localizó por PK o por el índice de STATUS.
+--
+-- El índice que sí hace falta es otro, y es de la dedup: la captura busca
+--   ahora por (IDEMPOTENCY_KEY, PATH, STATUS) en cada 4xx/5xx, y el marcado
+--   por éxito posterior hace la misma búsqueda en cada 2xx. Sin índice eso es
+--   un barrido de la tabla en la ruta caliente de toda venta que entra —hoy
+--   son cientos de filas y no se nota, y el día que se note será por un
+--   incidente. La clave va primero por ser la columna selectiva; PATH y
+--   STATUS completan el predicado para que la lectura no toque la fila.
 --
 -- ALTER TABLE ADD de una columna nullable no reescribe las filas existentes
 --   en Firebird: es un cambio de metadatos. No hace falta ventana.
 -- ============================================================================
 
 ALTER TABLE MSP_FAILED_INTENTS ADD LAST_SEEN_AT TIMESTAMP;
+COMMIT;
+
+CREATE INDEX IDX_MSP_FAILED_INTENTS_DEDUP
+  ON MSP_FAILED_INTENTS (IDEMPOTENCY_KEY, PATH, STATUS);
 COMMIT;
 
 INSERT INTO MSP_MIGRATIONS (ID, NAME, APPLIED_AT)

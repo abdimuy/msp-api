@@ -32,6 +32,16 @@ type fakeStore struct {
 	saved       []failedintent.Intent
 	saveErr     error
 	saveOutcome failedintent.SaveOutcome
+
+	// marcados registra cada llamada a MarkResolvedByKeys.
+	marcados  []marcaResuelta
+	marcadas  int64
+	marcarErr error
+}
+
+type marcaResuelta struct {
+	path string
+	keys []string
 }
 
 func (f *fakeStore) Save(_ context.Context, i failedintent.Intent) (failedintent.SaveOutcome, error) {
@@ -42,6 +52,18 @@ func (f *fakeStore) Save(_ context.Context, i failedintent.Intent) (failedintent
 	}
 	f.saved = append(f.saved, i)
 	return f.saveOutcome, nil
+}
+
+func (f *fakeStore) MarkResolvedByKeys(
+	_ context.Context, path string, keys []string, _ time.Time,
+) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.marcados = append(f.marcados, marcaResuelta{path: path, keys: keys})
+	if f.marcarErr != nil {
+		return 0, f.marcarErr
+	}
+	return f.marcadas, nil
 }
 
 func (f *fakeStore) Get(_ context.Context, _ uuid.UUID) (*failedintent.Intent, error) {

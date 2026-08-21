@@ -50,6 +50,14 @@ func (m *memStore) has(id uuid.UUID) bool {
 	return ok
 }
 
+// MarkResolvedByKeys no hace nada en este doble: las pruebas que lo ejercitan
+// usan el store de Firebird o el fake de failedintent_test.go.
+func (m *memStore) MarkResolvedByKeys(
+	_ context.Context, _ string, _ []string, _ time.Time,
+) (int64, error) {
+	return 0, nil
+}
+
 func (m *memStore) Save(_ context.Context, i failedintent.Intent) (failedintent.SaveOutcome, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

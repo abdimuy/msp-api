@@ -225,7 +225,11 @@ type SaveOutcome struct {
 
 // Store persists and retrieves Intent records.
 //
-//nolint:interfacebloat // 8 methods, at the 8-method cap.
+// MarkResolvedByKeys. La alternativa era un segundo puerto con una sola
+// operación sobre la misma tabla, que reparte la custodia de la evidencia
+// entre dos interfaces sin ganar nada.
+//
+//nolint:interfacebloat // 9 métodos: el cap de 8 se subió una vez, por
 type Store interface {
 	// Save persists an intent.
 	//
@@ -291,6 +295,21 @@ type Store interface {
 	// failed_intents. Used by the boot-time orphan sweep to detect blob
 	// files on disk that no longer have a database referent.
 	ReferencedPaths(ctx context.Context) ([]string, error)
+
+	// MarkResolvedByKeys cierra como StatusResolvedManual los intentos
+	// PENDIENTES de `path` cuya IDEMPOTENCY_KEY esté en keys, sellando
+	// RESOLVED_AT con `now`. Devuelve cuántas filas cambiaron.
+	//
+	// Es el único camino por el que un intento se cierra sin que una persona
+	// lo toque, y por eso el criterio es estrecho: misma ruta, misma clave,
+	// y sólo filas pendientes. Una fila ya cerrada no se reabre ni se
+	// re-sella; la decisión que tomó alguien se queda.
+	//
+	// Lo usan dos llamadores con la misma pregunta: el middleware cuando ve
+	// llegar un 2xx con una clave que ya tenía intento fallido, y el janitor
+	// cuando la fuente confirma que el trabajo aterrizó por otro camino.
+	// keys vacío es un no-op sin ir a la base.
+	MarkResolvedByKeys(ctx context.Context, path string, keys []string, now time.Time) (int64, error)
 }
 
 // ReplayDispatcher dispatches a reconstructed *http.Request through the
@@ -408,6 +427,7 @@ func handleJSON(cfg Config, next http.Handler, w http.ResponseWriter, r *http.Re
 	next.ServeHTTP(cw, r)
 
 	if cw.status < http.StatusBadRequest {
+		cerrarPorExito(r, cfg, cw)
 		cw.flushDeferred("")
 		return
 	}
@@ -482,6 +502,7 @@ func handleMultipart(cfg Config, next http.Handler, w http.ResponseWriter, r *ht
 			//nolint:contextcheck // detached so a client disconnect does not abort cleanup.
 			_ = cfg.Blob.Delete(saveCtx, saveResult.path)
 		}
+		cerrarPorExito(r, cfg, cw)
 		cw.flushDeferred("")
 		return
 	}
@@ -625,6 +646,53 @@ func saveIntent(parentCtx context.Context, cfg Config, intent Intent) bool {
 	}
 	emitCapturedLog(parentCtx, intent)
 	return true
+}
+
+// cerrarPorExito cierra el intento pendiente que esta misma petición acaba de
+// dejar obsoleto.
+//
+// El caso: el teléfono reintenta una venta que falló, esta vez entra, y la
+// fila de MSP_FAILED_INTENTS se queda ahí como pendiente para siempre. Quien
+// abre la consola ve trabajo que ya no existe, y el rezago de esas filas es
+// lo que hace que la pantalla deje de mirarse.
+//
+// La clave de idempotencia es lo que las liga: **el mismo trabajo acabó bien**.
+// La plataforma no aprende que existen las ventas —no sabe qué se creó, ni
+// mira ninguna tabla de negocio—; sólo sabe que una clave que había fallado
+// terminó en 2xx.
+//
+// Best-effort de principio a fin: si esto falla, el intento se queda
+// pendiente y el reconciliador del janitor lo alcanza después. Nunca puede
+// tumbar una petición que YA salió bien.
+func cerrarPorExito(r *http.Request, cfg Config, cw *captureWriter) {
+	if isIdempotentReplay(cw) {
+		// La respuesta la sirvió el caché de idempotencia: el 2xx es de la
+		// llamada original, no de ésta. Aquella ya cerró lo que tocaba.
+		return
+	}
+	key := strings.TrimSpace(r.Header.Get(idempotency.HeaderKey))
+	if key == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+	defer cancel()
+
+	n, err := cfg.Store.MarkResolvedByKeys(ctx, r.URL.Path, []string{key}, cfg.Clock())
+	if err != nil {
+		slog.WarnContext(
+			r.Context(),
+			"failedintent: no se pudo cerrar el intento tras el éxito",
+			"error", err, "path", r.URL.Path,
+		)
+		return
+	}
+	if n > 0 {
+		slog.InfoContext(
+			r.Context(),
+			"failedintent: intento cerrado porque el mismo trabajo entró",
+			"path", r.URL.Path, "rows", n,
+		)
+	}
 }
 
 // isMultipart reports whether the request's Content-Type is multipart/form-data.

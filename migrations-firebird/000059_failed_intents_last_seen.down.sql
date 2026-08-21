@@ -11,6 +11,9 @@
 -- exactamente el fallo que el módulo existe para evitar. **Primero se
 -- revierte el binario, después la columna.**
 
+DROP INDEX IDX_MSP_FAILED_INTENTS_DEDUP;
+COMMIT;
+
 ALTER TABLE MSP_FAILED_INTENTS DROP LAST_SEEN_AT;
 COMMIT;
 

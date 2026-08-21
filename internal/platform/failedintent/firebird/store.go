@@ -21,6 +21,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"iter"
 	"strings"
 	"time"
 
@@ -538,6 +539,68 @@ func (s *Store) PurgeOlderThan(
 		return failedintent.PurgeResult{}, err
 	}
 	return result, nil
+}
+
+// MarkResolvedByKeys cierra los intentos pendientes de `path` cuya clave esté
+// en keys. Ver el contrato en la interfaz failedintent.Store.
+//
+// Las claves van trozeadas: MSP_FAILED_INTENTS puede crecer y Firebird tiene
+// un tope de parámetros por sentencia. El troceo NO es una optimización, es lo
+// que evita que un lote grande falle entero — y que falle entero significa
+// que un intento ya resuelto siga apareciendo como pendiente.
+//
+// RESOLVED_BY se queda en NULL a propósito: nadie lo resolvió. La columna
+// nombra a la persona que tomó la decisión, y aquí no hubo persona; llenarla
+// con un uuid inventado convertiría la bitácora en ficción.
+func (s *Store) MarkResolvedByKeys(
+	ctx context.Context, path string, keys []string, now time.Time,
+) (int64, error) {
+	if len(keys) == 0 {
+		return 0, nil
+	}
+	var total int64
+	nowWC := firebird.ToWallClock(now)
+
+	for lote := range chunks(keys, maxKeysPorLote) {
+		marcadores := make([]string, len(lote))
+		args := []any{string(failedintent.StatusResolvedManual), nowWC, path, string(failedintent.StatusNew)}
+		for i, k := range lote {
+			marcadores[i] = "?"
+			args = append(args, k)
+		}
+		//nolint:gosec // los marcadores son "?" generados aquí; los valores van por parámetro.
+		q := `UPDATE MSP_FAILED_INTENTS
+		         SET STATUS = ?, RESOLVED_AT = ?
+		       WHERE PATH = ? AND STATUS = ?
+		         AND IDEMPOTENCY_KEY IN (` + strings.Join(marcadores, ",") + `)`
+
+		q2 := firebird.GetQuerier(ctx, s.pool.DB)
+		res, err := q2.ExecContext(ctx, q, args...)
+		if err != nil {
+			return total, fmt.Errorf(
+				"failedintent.firebird: marcar resueltos en %s: %w", path, firebird.MapError(err))
+		}
+		n, _ := res.RowsAffected()
+		total += n
+	}
+	return total, nil
+}
+
+// maxKeysPorLote acota cuántas claves entran en un IN (...). Firebird admite
+// bastantes más; el número está elegido para que el troceo se ejercite de
+// verdad en producción y no sea una rama que sólo corre en las pruebas.
+const maxKeysPorLote = 200
+
+// chunks parte s en lotes de a lo más n.
+func chunks[T any](s []T, n int) iter.Seq[[]T] {
+	return func(yield func([]T) bool) {
+		for i := 0; i < len(s); i += n {
+			fin := min(i+n, len(s))
+			if !yield(s[i:fin]) {
+				return
+			}
+		}
+	}
 }
 
 // ReferencedPaths returns every non-NULL BODY_BLOB_PATH currently in the table.
