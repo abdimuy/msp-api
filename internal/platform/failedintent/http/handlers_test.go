@@ -223,7 +223,9 @@ func (m *memoryStore) IncrementRetry(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
-func (m *memoryStore) PurgeOlderThan(_ context.Context, _ time.Time) (failedintent.PurgeResult, error) {
+func (m *memoryStore) PurgeOlderThan(
+	_ context.Context, _ time.Time, _ ...failedintent.Status,
+) (failedintent.PurgeResult, error) {
 	return failedintent.PurgeResult{}, nil
 }
 

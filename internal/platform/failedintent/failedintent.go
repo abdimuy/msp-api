@@ -289,7 +289,12 @@ type Store interface {
 	// `before`. Returns the deletion count plus every non-empty
 	// body_blob_path of the deleted rows so the caller can clean the
 	// matching on-disk blobs.
-	PurgeOlderThan(ctx context.Context, before time.Time) (PurgeResult, error)
+	//
+	// `estados` acota el borrado a esos STATUS; vacío significa todos. Es
+	// variádico y no un parámetro más porque el corte por estado llegó
+	// después: sin él, los intentos ya resueltos —cuyo cuerpo ya no le sirve
+	// a nadie— ocupaban disco los mismos 90 días que los pendientes.
+	PurgeOlderThan(ctx context.Context, before time.Time, estados ...Status) (PurgeResult, error)
 
 	// ReferencedPaths returns every non-empty body_blob_path currently in
 	// failed_intents. Used by the boot-time orphan sweep to detect blob

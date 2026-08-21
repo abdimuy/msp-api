@@ -491,18 +491,26 @@ func (s *Store) IncrementRetry(ctx context.Context, id uuid.UUID) error {
 // single transaction: first SELECT the paths, then DELETE the rows. The
 // transaction prevents new rows from slipping between the two statements.
 func (s *Store) PurgeOlderThan(
-	ctx context.Context, before time.Time,
+	ctx context.Context, before time.Time, estados ...failedintent.Status,
 ) (failedintent.PurgeResult, error) {
 	var result failedintent.PurgeResult
 	err := firebird.RunInTx(ctx, s.pool.DB, func(ctx context.Context) error {
 		q2 := firebird.GetQuerier(ctx, s.pool.DB)
 		beforeWC := firebird.ToWallClock(before)
 
+		// El filtro por estado se arma una vez y se usa en las DOS sentencias.
+		// Si divergieran, la primera reuniría rutas de blobs que la segunda no
+		// borra: se eliminarían archivos de filas vivas y el detalle de un
+		// intento pendiente se quedaría sin sus fotos.
+		filtroEstado, estadoArgs := filtroPorEstado(estados)
+
 		// Step 1: collect blob paths of rows about to be deleted.
+		//nolint:gosec // filtroEstado se arma con marcadores "?"; los valores van por parámetro.
 		pathRows, err := q2.QueryContext(
 			ctx,
-			`SELECT BODY_BLOB_PATH FROM MSP_FAILED_INTENTS WHERE RECEIVED_AT < ? AND BODY_BLOB_PATH IS NOT NULL`,
-			beforeWC,
+			`SELECT BODY_BLOB_PATH FROM MSP_FAILED_INTENTS
+			  WHERE RECEIVED_AT < ? AND BODY_BLOB_PATH IS NOT NULL`+filtroEstado,
+			append([]any{beforeWC}, estadoArgs...)...,
 		)
 		if err != nil {
 			return fmt.Errorf("failedintent.firebird: purge select paths: %w", firebird.MapError(err))
@@ -523,10 +531,11 @@ func (s *Store) PurgeOlderThan(
 		}
 
 		// Step 2: delete all matching rows.
+		//nolint:gosec // idem: mismo filtro, mismos marcadores.
 		res, err := q2.ExecContext(
 			ctx,
-			`DELETE FROM MSP_FAILED_INTENTS WHERE RECEIVED_AT < ?`,
-			beforeWC,
+			`DELETE FROM MSP_FAILED_INTENTS WHERE RECEIVED_AT < ?`+filtroEstado,
+			append([]any{beforeWC}, estadoArgs...)...,
 		)
 		if err != nil {
 			return fmt.Errorf("failedintent.firebird: purge delete: %w", firebird.MapError(err))
@@ -601,6 +610,21 @@ func chunks[T any](s []T, n int) iter.Seq[[]T] {
 			}
 		}
 	}
+}
+
+// filtroPorEstado arma el fragmento `AND STATUS IN (...)` y sus binds.
+// Sin estados devuelve cadena vacía: "todos".
+func filtroPorEstado(estados []failedintent.Status) (string, []any) {
+	if len(estados) == 0 {
+		return "", nil
+	}
+	marcadores := make([]string, len(estados))
+	args := make([]any, len(estados))
+	for i, e := range estados {
+		marcadores[i] = "?"
+		args[i] = string(e)
+	}
+	return " AND STATUS IN (" + strings.Join(marcadores, ",") + ")", args
 }
 
 // ReferencedPaths returns every non-NULL BODY_BLOB_PATH currently in the table.

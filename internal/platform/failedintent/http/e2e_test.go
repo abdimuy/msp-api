@@ -675,7 +675,9 @@ func (s *e2eIntentStore) IncrementRetry(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
-func (s *e2eIntentStore) PurgeOlderThan(context.Context, time.Time) (failedintent.PurgeResult, error) {
+func (s *e2eIntentStore) PurgeOlderThan(
+	context.Context, time.Time, ...failedintent.Status,
+) (failedintent.PurgeResult, error) {
 	return failedintent.PurgeResult{}, nil
 }
 
