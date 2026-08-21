@@ -185,6 +185,7 @@ func (s *Service) buildWriterInput(ctx context.Context, v *domain.Venta) (outbou
 		CajaID:               cc.CajaID,
 		CajeroID:             cc.CajeroID,
 		VendedorID:           cc.VendedorID,
+		CobradorID:           cc.CobradorID,
 		VendedorListaIDs:     vendedorListaIDs,
 		SucursalID:           defs.SucursalID,
 		FormaCobroID:         formaCobroID,
