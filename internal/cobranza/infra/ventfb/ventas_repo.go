@@ -154,9 +154,24 @@ const ventaStatusFilterConVentana = `(s.SALDO > 0
 			)
 		)))`
 
+// ventaFromClause enriquece la fila del caché. TODAS las tablas del FROM van
+// por LEFT JOIN, incluida CLIENTES, y la razón es la lápida: una venta que
+// oficina BORRÓ viaja sólo para que el teléfono la elimine, y su entrega no
+// puede depender de que sus enriquecimientos sigan existiendo. El precedente
+// está resuelto en pagos_repo.go: "Con INNER JOIN un DELETE FROM DOCTOS_CC
+// dejaba huérfana la fila del cache… el cliente móvil nunca recibe la señal
+// de borrado."
+//
+// Hoy CLIENTES por INNER JOIN no descartaría ninguna fila que el resto del
+// WHERE deje pasar: ventaClienteFilter ya exige por EXISTS que el cliente
+// exista y esté en 'A', que es una condición estrictamente más fuerte. O sea
+// que este LEFT JOIN es defensa en profundidad, no un cambio de conjunto —
+// lo que evita es que el día que ese filtro se relaje (o que llegue una fila
+// de caché con CLIENTE_ID que ya no resuelve) el tombstone se pierda en
+// silencio. Lo fija TestVentaFromClause_TodoEnriquecimientoEsLeftJoin.
 const ventaFromClause = `
 FROM MSP_SALDOS_VENTAS s
-JOIN CLIENTES c                ON c.CLIENTE_ID       = s.CLIENTE_ID
+LEFT JOIN CLIENTES c           ON c.CLIENTE_ID       = s.CLIENTE_ID
 LEFT JOIN ZONAS_CLIENTES z     ON z.ZONA_CLIENTE_ID  = s.ZONA_CLIENTE_ID
 LEFT JOIN COBRADORES cob       ON cob.COBRADOR_ID    = c.COBRADOR_ID
 LEFT JOIN DIRS_CLIENTES d      ON d.CLIENTE_ID       = s.CLIENTE_ID AND d.ES_DIR_PPAL = 'S'
