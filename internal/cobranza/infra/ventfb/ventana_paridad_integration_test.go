@@ -490,3 +490,75 @@ func TestE2E_ParidadCanales_Ventas(t *testing.T) {
 	assert.Equal(t, esperado, desdeInventario, "el inventario de saldos no coincide con el sync")
 	assert.Equal(t, esperado, desdeByIDs, "by-ids de saldos no coincide con el sync")
 }
+
+// TestE2E_ParidadCanales_Ventas_ConLapidaHuerfana extiende el invariante del
+// §4 al caso que la migración 000020 introdujo y nadie cruzó con el sync: la
+// venta que oficina BORRÓ de Microsip.
+//
+// El invariante compara "el sync SIN tombstones" contra el inventario, y la
+// lápida es precisamente un tombstone: tiene que salir por el sync y por
+// by-ids —son los dos canales por los que el teléfono se entera de borrarla—
+// y NO tiene que aparecer en el inventario, que es la lista de lo que el
+// teléfono debe conservar. Si entrara ahí, el reconciliador la reclamaría
+// para siempre; si faltara en los otros dos, la venta fantasma se queda.
+//
+//nolint:paralleltest // serial: fixtures committed en la BD compartida.
+func TestE2E_ParidadCanales_Ventas_ConLapidaHuerfana(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	f := buildFixtureVentana(t, pool)
+	ctx := context.Background()
+
+	clienteID, _ := seedZonedClienteFromPool(t, pool)
+	lapida := insertCargoVentana(t, pool, clienteID, decimal.RequireFromString("1000.00"))
+
+	// Oficina elimina la venta: el trigger MSP_SALDOS_DOCTOS_CC_AD deja la
+	// lápida en el caché y no queda fila en DOCTOS_CC.
+	_, err := pool.ExecContext(ctx, `DELETE FROM IMPORTES_DOCTOS_CC WHERE DOCTO_CC_ID = ?`, lapida)
+	require.NoError(t, err, "DELETE IMPORTES_DOCTOS_CC de la lápida")
+	_, err = pool.ExecContext(ctx, `DELETE FROM DOCTOS_CC WHERE DOCTO_CC_ID = ?`, lapida)
+	require.NoError(t, err, "DELETE DOCTOS_CC de la lápida")
+
+	var cancelado string
+	require.NoError(t, pool.QueryRowContext(ctx,
+		`SELECT CARGO_CANCELADO FROM MSP_SALDOS_VENTAS WHERE DOCTO_CC_ID = ?`, lapida).Scan(&cancelado))
+	require.Equal(t, "S", cancelado, "prerrequisito: el borrado físico deja CARGO_CANCELADO='S'")
+
+	// El trigger acaba de mover UPDATED_AT a CURRENT_TIMESTAMP; el sync
+	// recorta en `now - syncClockSkewSeconds`.
+	time.Sleep(2 * time.Second)
+
+	ventas := cobranzaventfb.NewVentasRepo(pool)
+	saldos := cobranzaventfb.NewSaldosRepo(pool)
+	conocidos := append(f.cargosDelFixture(), lapida)
+	after := minimo(conocidos) - 1
+
+	page, err := ventas.SyncPorZona(ctx, f.zonaID, time.Time{}, after, 5000, f.desde)
+	require.NoError(t, err)
+	desdeSync := idsDeVentas(page.Items, conocidos)
+
+	ids, _, err := saldos.ListIDs(ctx, f.zonaID, after, 5000, f.desde)
+	require.NoError(t, err)
+	desdeInventario := idsDeLista(ids, conocidos)
+
+	filas, err := ventas.ByIDs(ctx, f.zonaID, conocidos, f.desde)
+	require.NoError(t, err)
+	desdeByIDs := idsDeVentas(filas, conocidos)
+
+	assert.True(t, desdeSync[lapida],
+		"el sync tiene que entregar la lápida: es la única señal con la que el teléfono "+
+			"borra una venta que oficina eliminó")
+	assert.True(t, desdeByIDs[lapida],
+		"by-ids tiene que entregar la lápida o el rescate puntual no termina nunca")
+	assert.False(t, desdeInventario[lapida],
+		"el inventario NO lista tombstones (filtra CARGO_CANCELADO='N'): es la lista de "+
+			"lo que el teléfono debe conservar, no de lo que debe borrar")
+
+	// El invariante del §4, ya sin tombstones en ninguno de los tres.
+	delete(desdeSync, lapida)
+	delete(desdeByIDs, lapida)
+	esperado := f.cargosEsperados()
+	assert.Equal(t, esperado, desdeSync, "sync sin tombstones")
+	assert.Equal(t, esperado, desdeInventario, "el inventario no coincide con el sync")
+	assert.Equal(t, esperado, desdeByIDs, "by-ids no coincide con el sync")
+}
