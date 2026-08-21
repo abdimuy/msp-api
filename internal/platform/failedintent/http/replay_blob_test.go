@@ -91,7 +91,7 @@ func TestReplay_FromBlob_StreamsBodyAndPreservesContentType(t *testing.T) {
 		HTTPStatus:      http.StatusUnprocessableEntity,
 		Status:          failedintent.StatusNew,
 	}
-	require.NoError(t, store.Save(context.Background(), intent))
+	require.NoError(t, saveOK(store.Save(context.Background(), intent)))
 
 	dispatcher := &fakeDispatcher{respondStatus: http.StatusCreated}
 	lookup := &stubUsuarioLookup{user: auth.CurrentUser{ID: usuarioID}}
@@ -134,7 +134,7 @@ func TestReplayWith_BlobIntent_Rejected(t *testing.T) {
 		HTTPStatus:      http.StatusUnprocessableEntity,
 		Status:          failedintent.StatusNew,
 	}
-	require.NoError(t, store.Save(context.Background(), intent))
+	require.NoError(t, saveOK(store.Save(context.Background(), intent)))
 
 	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, newFakeBlobs(), nil, nil)
 	router := newRouter(t, svc, &auth.CurrentUser{ID: uuid.New()})
@@ -170,7 +170,7 @@ func TestReplay_BlobOpenFailure_ReturnsApperror(t *testing.T) {
 		HTTPStatus:      http.StatusUnprocessableEntity,
 		Status:          failedintent.StatusNew,
 	}
-	require.NoError(t, store.Save(context.Background(), intent))
+	require.NoError(t, saveOK(store.Save(context.Background(), intent)))
 
 	dispatcher := &fakeDispatcher{}
 	lookup := &stubUsuarioLookup{user: auth.CurrentUser{ID: usuarioID}}

@@ -44,18 +44,18 @@ func newMemoryStore() *memoryStore {
 	return &memoryStore{intents: make(map[uuid.UUID]failedintent.Intent)}
 }
 
-func (m *memoryStore) Save(_ context.Context, i failedintent.Intent) error {
+func (m *memoryStore) Save(_ context.Context, i failedintent.Intent) (failedintent.SaveOutcome, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.saveErr != nil {
-		return m.saveErr
+		return failedintent.SaveOutcome{}, m.saveErr
 	}
 	// No overwrite on duplicate id.
 	if _, exists := m.intents[i.ID]; exists {
-		return nil
+		return failedintent.SaveOutcome{}, nil
 	}
 	m.intents[i.ID] = i
-	return nil
+	return failedintent.SaveOutcome{}, nil
 }
 
 func (m *memoryStore) Get(_ context.Context, id uuid.UUID) (*failedintent.Intent, error) {
@@ -373,7 +373,7 @@ func defaultCU() auth.CurrentUser {
 // seedIntent inserts a ready-made intent into the store.
 func seedIntent(t *testing.T, store *memoryStore, i failedintent.Intent) failedintent.Intent {
 	t.Helper()
-	require.NoError(t, store.Save(context.Background(), i))
+	require.NoError(t, saveOK(store.Save(context.Background(), i)))
 	return i
 }
 
@@ -511,7 +511,7 @@ func TestListar_PageSizeClamped(t *testing.T) {
 	for i := range 110 {
 		id := uuid.New()
 		intent := makeIntent(id, baseTime.Add(-time.Duration(i)*time.Second))
-		require.NoError(t, store.Save(context.Background(), intent))
+		require.NoError(t, saveOK(store.Save(context.Background(), intent)))
 	}
 
 	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
@@ -1162,7 +1162,7 @@ func TestListar_ValidCursor_DecodesAndPaginates(t *testing.T) {
 	}
 	for i, id := range ids {
 		intent := makeIntent(id, baseTime.Add(-time.Duration(i)*time.Second))
-		require.NoError(t, store.Save(context.Background(), intent))
+		require.NoError(t, saveOK(store.Save(context.Background(), intent)))
 	}
 
 	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, nil, nil, nil)
@@ -2244,7 +2244,7 @@ func FuzzReplayWith_BodyParsing(f *testing.F) {
 		store := newMemoryStore()
 		id := uuid.New()
 		intent := makeIntent(id, time.Now().UTC())
-		_ = store.Save(context.Background(), intent)
+		_, _ = store.Save(context.Background(), intent)
 
 		lookup := &stubUsuarioLookup{user: auth.CurrentUser{ID: *intent.UsuarioID}}
 		dispatcher := &fakeDispatcher{respondStatus: http.StatusOK}
@@ -2559,21 +2559,21 @@ func TestMemoryStore_UsuarioFilter_IsolatesByID(t *testing.T) {
 		id := uuid.New()
 		intent := makeIntent(id, now.Add(-time.Duration(i)*time.Second))
 		intent.UsuarioID = &userA
-		require.NoError(t, ms.Save(context.Background(), intent))
+		require.NoError(t, saveOK(ms.Save(context.Background(), intent)))
 	}
 	// 1 for user B.
 	{
 		id := uuid.New()
 		intent := makeIntent(id, now.Add(-5*time.Second))
 		intent.UsuarioID = &userB
-		require.NoError(t, ms.Save(context.Background(), intent))
+		require.NoError(t, saveOK(ms.Save(context.Background(), intent)))
 	}
 	// 1 with nil UsuarioID.
 	{
 		id := uuid.New()
 		intent := makeIntent(id, now.Add(-10*time.Second))
 		intent.UsuarioID = nil
-		require.NoError(t, ms.Save(context.Background(), intent))
+		require.NoError(t, saveOK(ms.Save(context.Background(), intent)))
 	}
 
 	// Filter by user A — must return exactly 2.
@@ -2633,7 +2633,7 @@ func TestProperty_MemoryStoreUsuarioFilter(t *testing.T) {
 			} else {
 				intent.UsuarioID = nil
 			}
-			require.NoError(rt, ms.Save(context.Background(), intent))
+			require.NoError(rt, saveOK(ms.Save(context.Background(), intent)))
 		}
 
 		// Pick a random candidate and verify the filter.
@@ -2887,3 +2887,8 @@ func TestExecuteReplay_BuildRequestError_ReturnsRetriedFail(t *testing.T) {
 	// Dispatcher must NOT have been called.
 	assert.Equal(t, 0, dispatcher.callCount())
 }
+
+// saveOK descarta el SaveOutcome y deja pasar el error. Ver la nota del
+// gemelo en internal/platform/failedintent/firebird/integration_test.go: Go
+// sólo deja encadenar una llamada multi-valor cuando es el único argumento.
+func saveOK(_ failedintent.SaveOutcome, err error) error { return err }

@@ -50,11 +50,11 @@ func (m *memStore) has(id uuid.UUID) bool {
 	return ok
 }
 
-func (m *memStore) Save(_ context.Context, i failedintent.Intent) error {
+func (m *memStore) Save(_ context.Context, i failedintent.Intent) (failedintent.SaveOutcome, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.intents[i.ID] = i
-	return nil
+	return failedintent.SaveOutcome{}, nil
 }
 
 func (m *memStore) Get(_ context.Context, _ uuid.UUID) (*failedintent.Intent, error) {

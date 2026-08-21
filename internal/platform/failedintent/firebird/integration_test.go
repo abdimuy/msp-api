@@ -99,7 +99,7 @@ func TestSave_InsertsRow(t *testing.T) {
 			Notes:           "resuelto manualmente por admin",
 		}
 
-		require.NoError(t, s.Save(ctx, intent))
+		require.NoError(t, saveOK(s.Save(ctx, intent)))
 
 		got, err := s.Get(ctx, intent.ID)
 		require.NoError(t, err)
@@ -140,13 +140,13 @@ func TestSave_DuplicatePK_IsNoOp(t *testing.T) {
 		s := failedintentfb.New(pool)
 
 		first := newIntent(uuid.New(), time.Now().UTC(), failedintent.StatusNew)
-		require.NoError(t, s.Save(ctx, first))
+		require.NoError(t, saveOK(s.Save(ctx, first)))
 
 		second := first
 		second.Body = json.RawMessage(`{"overwrite":true}`)
 		second.ErrorCode = "should_not_appear"
 		second.Status = failedintent.StatusIgnored
-		require.NoError(t, s.Save(ctx, second), "duplicate save must not return an error")
+		require.NoError(t, saveOK(s.Save(ctx, second)), "duplicate save must not return an error")
 
 		got, err := s.Get(ctx, first.ID)
 		require.NoError(t, err)
@@ -171,7 +171,7 @@ func TestSave_JSONRoundTrip_UTF8(t *testing.T) {
 		intent.Body = json.RawMessage(`{"emoji":"🎉","msg":"¡Felicidades!"}`)
 		intent.Notes = "notas con acentos: árbol, niño, señor"
 
-		require.NoError(t, s.Save(ctx, intent))
+		require.NoError(t, saveOK(s.Save(ctx, intent)))
 
 		got, err := s.Get(ctx, intent.ID)
 		require.NoError(t, err)
@@ -196,7 +196,7 @@ func TestSave_MultipartPath_HasBlobPath_NoBody(t *testing.T) {
 		intent.BodyBlobPath = "/var/lib/msp/failed-intents/abc123.bin"
 		intent.BodyContentType = "multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxk"
 
-		require.NoError(t, s.Save(ctx, intent))
+		require.NoError(t, saveOK(s.Save(ctx, intent)))
 
 		got, err := s.Get(ctx, intent.ID)
 		require.NoError(t, err)
@@ -235,7 +235,7 @@ func TestList_OrdersByReceivedAtDESC_IDDesc(t *testing.T) {
 		var ids []uuid.UUID
 		for i := range 3 {
 			intent := newIntent(uuid.New(), base.Add(time.Duration(i)*time.Second), failedintent.StatusNew)
-			require.NoError(t, s.Save(ctx, intent))
+			require.NoError(t, saveOK(s.Save(ctx, intent)))
 			ids = append(ids, intent.ID)
 		}
 
@@ -280,7 +280,7 @@ func TestList_PaginatesViaCursor(t *testing.T) {
 		for i := range 5 {
 			intent := newIntent(uuid.New(), base.Add(time.Duration(i)*time.Second), failedintent.StatusNew)
 			intent.UsuarioID = &userID
-			require.NoError(t, s.Save(ctx, intent))
+			require.NoError(t, saveOK(s.Save(ctx, intent)))
 			allIDs = append(allIDs, intent.ID)
 		}
 
@@ -342,13 +342,13 @@ func TestList_FiltersByStatus(t *testing.T) {
 		for i := range 3 {
 			intent := newIntent(uuid.New(), time.Now().UTC().Add(time.Duration(i)*time.Second), failedintent.StatusIgnored)
 			intent.UsuarioID = &userID
-			require.NoError(t, s.Save(ctx, intent))
+			require.NoError(t, saveOK(s.Save(ctx, intent)))
 			ignoredIDs = append(ignoredIDs, intent.ID)
 		}
 		for i := range 2 {
 			intent := newIntent(uuid.New(), time.Now().UTC().Add(time.Duration(i+10)*time.Second), failedintent.StatusNew)
 			intent.UsuarioID = &userID
-			require.NoError(t, s.Save(ctx, intent))
+			require.NoError(t, saveOK(s.Save(ctx, intent)))
 		}
 
 		page, err := s.List(ctx, failedintent.ListParams{
@@ -385,12 +385,12 @@ func TestList_FiltersByUsuarioID(t *testing.T) {
 		for i := range 4 {
 			intent := newIntent(uuid.New(), time.Now().UTC().Add(time.Duration(i)*time.Second), failedintent.StatusNew)
 			intent.UsuarioID = &userA
-			require.NoError(t, s.Save(ctx, intent))
+			require.NoError(t, saveOK(s.Save(ctx, intent)))
 		}
 		for i := range 2 {
 			intent := newIntent(uuid.New(), time.Now().UTC().Add(time.Duration(i+10)*time.Second), failedintent.StatusNew)
 			intent.UsuarioID = &userB
-			require.NoError(t, s.Save(ctx, intent))
+			require.NoError(t, saveOK(s.Save(ctx, intent)))
 		}
 
 		pageA, err := s.List(ctx, failedintent.ListParams{
@@ -438,7 +438,7 @@ func TestUpdateStatus_Success(t *testing.T) {
 		intent.ResolvedAt = nil
 		intent.ResolvedBy = nil
 		intent.Notes = ""
-		require.NoError(t, s.Save(ctx, intent))
+		require.NoError(t, saveOK(s.Save(ctx, intent)))
 
 		resolverID := uuid.New()
 		now := time.Now().UTC().Truncate(time.Millisecond)
@@ -469,7 +469,7 @@ func TestUpdateStatus_Conflict_WhenExpectedDoesntMatch(t *testing.T) {
 		s := failedintentfb.New(pool)
 
 		intent := newIntent(uuid.New(), time.Now().UTC(), failedintent.StatusNew)
-		require.NoError(t, s.Save(ctx, intent))
+		require.NoError(t, saveOK(s.Save(ctx, intent)))
 
 		resolverID := uuid.New()
 		now := time.Now().UTC()
@@ -536,7 +536,7 @@ func TestTransitionAfterReplay_OnlyTouchesStatus(t *testing.T) {
 		intent.ResolvedAt = nil
 		intent.ResolvedBy = nil
 		intent.Notes = ""
-		require.NoError(t, s.Save(ctx, intent))
+		require.NoError(t, saveOK(s.Save(ctx, intent)))
 
 		require.NoError(t, s.TransitionAfterReplay(
 			ctx, intent.ID,
@@ -573,7 +573,7 @@ func TestTransitionAfterReplay_PreservesPrePopulatedResolverFields(t *testing.T)
 		intent.ResolvedAt = &originalResolvedAt
 		intent.ResolvedBy = &originalResolver
 		intent.Notes = "nota del operador original"
-		require.NoError(t, s.Save(ctx, intent))
+		require.NoError(t, saveOK(s.Save(ctx, intent)))
 
 		require.NoError(t, s.TransitionAfterReplay(
 			ctx, intent.ID,
@@ -607,7 +607,7 @@ func TestTransitionAfterReplay_Conflict_WhenExpectedDoesntMatch(t *testing.T) {
 		s := failedintentfb.New(pool)
 
 		intent := newIntent(uuid.New(), time.Now().UTC(), failedintent.StatusNew)
-		require.NoError(t, s.Save(ctx, intent))
+		require.NoError(t, saveOK(s.Save(ctx, intent)))
 
 		// Expected says retried_fail but actual is new — must conflict.
 		err := s.TransitionAfterReplay(
@@ -634,7 +634,7 @@ func TestIncrementRetry_BumpsCount(t *testing.T) {
 
 		intent := newIntent(uuid.New(), time.Now().UTC(), failedintent.StatusNew)
 		intent.RetryCount = 0
-		require.NoError(t, s.Save(ctx, intent))
+		require.NoError(t, saveOK(s.Save(ctx, intent)))
 
 		require.NoError(t, s.IncrementRetry(ctx, intent.ID))
 		require.NoError(t, s.IncrementRetry(ctx, intent.ID))
@@ -686,18 +686,18 @@ func TestPurgeOlderThan_RemovesAndReturnsCount_PlusBlobPaths(t *testing.T) {
 
 		oldest := newIntent(uuid.New(), now.Add(-3*time.Hour), failedintent.StatusNew)
 		oldest.BodyBlobPath = fmt.Sprintf("/tmp/fi-%s.bin", uuid.New())
-		require.NoError(t, s.Save(ctx, oldest))
+		require.NoError(t, saveOK(s.Save(ctx, oldest)))
 
 		middle := newIntent(uuid.New(), now.Add(-2*time.Hour), failedintent.StatusNew)
 		middle.BodyBlobPath = fmt.Sprintf("/tmp/fi-%s.bin", uuid.New())
-		require.NoError(t, s.Save(ctx, middle))
+		require.NoError(t, saveOK(s.Save(ctx, middle)))
 
 		noBlob := newIntent(uuid.New(), now.Add(-90*time.Minute), failedintent.StatusNew)
 		noBlob.BodyBlobPath = "" // no blob path
-		require.NoError(t, s.Save(ctx, noBlob))
+		require.NoError(t, saveOK(s.Save(ctx, noBlob)))
 
 		newer := newIntent(uuid.New(), now, failedintent.StatusNew)
-		require.NoError(t, s.Save(ctx, newer))
+		require.NoError(t, saveOK(s.Save(ctx, newer)))
 
 		result, err := s.PurgeOlderThan(ctx, cutoff)
 		require.NoError(t, err)
@@ -751,15 +751,15 @@ func TestReferencedPaths_ReturnsOnlyNonEmpty(t *testing.T) {
 
 		withBlob1 := newIntent(uuid.New(), time.Now().UTC().Add(-1*time.Second), failedintent.StatusNew)
 		withBlob1.BodyBlobPath = blob1Path
-		require.NoError(t, s.Save(ctx, withBlob1))
+		require.NoError(t, saveOK(s.Save(ctx, withBlob1)))
 
 		withBlob2 := newIntent(uuid.New(), time.Now().UTC().Add(-2*time.Second), failedintent.StatusNew)
 		withBlob2.BodyBlobPath = blob2Path
-		require.NoError(t, s.Save(ctx, withBlob2))
+		require.NoError(t, saveOK(s.Save(ctx, withBlob2)))
 
 		withoutBlob := newIntent(uuid.New(), time.Now().UTC().Add(-3*time.Second), failedintent.StatusNew)
 		withoutBlob.BodyBlobPath = ""
-		require.NoError(t, s.Save(ctx, withoutBlob))
+		require.NoError(t, saveOK(s.Save(ctx, withoutBlob)))
 
 		paths, err := s.ReferencedPaths(ctx)
 		require.NoError(t, err)
@@ -774,3 +774,12 @@ func TestReferencedPaths_ReturnsOnlyNonEmpty(t *testing.T) {
 		assert.False(t, pathSet[""], "empty path must not appear")
 	})
 }
+
+// saveOK descarta el SaveOutcome y deja pasar el error, para las pruebas que
+// sólo quieren afirmar "guardó sin problema".
+//
+// Existe porque Save devuelve dos valores —el segundo dice qué blob quedó sin
+// dueño tras la dedup— y Go sólo deja encadenar una llamada multi-valor
+// cuando es el ÚNICO argumento. Las pruebas que SÍ miran el outcome llaman a
+// Save directo y lo asignan.
+func saveOK(_ failedintent.SaveOutcome, err error) error { return err }

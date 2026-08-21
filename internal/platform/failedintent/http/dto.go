@@ -21,8 +21,13 @@ var errCursorFormat = errors.New("decodeCursor: unexpected format")
 
 // IntentDTO is the JSON projection of a failedintent.Intent.
 type IntentDTO struct {
-	ID              string  `json:"id"`
-	ReceivedAt      string  `json:"received_at"`
+	ID         string `json:"id"`
+	ReceivedAt string `json:"received_at"`
+	// LastSeenAt es el último intento con la misma clave. Se omite cuando la
+	// fila se ha visto una sola vez — el consumidor lee esa ausencia como
+	// "el último intento ES received_at". Rellenarlo con received_at
+	// afirmaría un segundo intento que no ocurrió.
+	LastSeenAt      *string `json:"last_seen_at,omitempty"`
 	Method          string  `json:"method"`
 	Path            string  `json:"path"`
 	FirebaseUID     string  `json:"firebase_uid,omitempty"`
@@ -121,6 +126,10 @@ func intentToDTO(i failedintent.Intent) IntentDTO {
 	if i.UsuarioID != nil {
 		s := i.UsuarioID.String()
 		dto.UsuarioID = &s
+	}
+	if i.LastSeenAt != nil {
+		s := i.LastSeenAt.UTC().Format(time.RFC3339Nano)
+		dto.LastSeenAt = &s
 	}
 	if i.ResolvedAt != nil {
 		s := i.ResolvedAt.UTC().Format(time.RFC3339Nano)

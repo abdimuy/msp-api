@@ -48,19 +48,232 @@ const (
 	maxPageSize     = 100
 )
 
-// Save inserts an intent. A primary-key conflict (duplicate ID) is treated as a
-// no-op — mirroring the Postgres ON CONFLICT DO NOTHING semantics — so retries
-// of a capture cannot corrupt an existing audit row.
-func (s *Store) Save(ctx context.Context, i failedintent.Intent) error {
+// Save persiste un intento, deduplicando los reintentos del mismo trabajo.
+//
+// El problema que resuelve: `Save` era un INSERT puro, así que cada reintento
+// del teléfono escribía fila nueva Y copia nueva del cuerpo con sus fotos.
+// Medido en producción sobre 7 días: **609 filas para 130 ventas distintas**,
+// 685 archivos y 896 MB; una sola venta dejó 13 copias de 2.8 MB. La pantalla
+// que los muestra era ilegible por lo mismo.
+//
+// La dedup es por (PATH, IDEMPOTENCY_KEY) y sólo contra filas PENDIENTES:
+//
+//   - **La clave identifica el trabajo**, no la petición. Dos capturas con la
+//     misma clave son la misma venta.
+//   - **El PATH acompaña a la clave** porque la clave la elige el cliente y
+//     nada garantiza que sea única entre recursos. Fundir el intento de un
+//     pago con el de una venta que casualmente comparten cadena sería mucho
+//     peor que dos filas.
+//   - **Sólo contra StatusNew**: una fila ya resuelta o ignorada es historia
+//     cerrada. Reabrirla con un reintento tardío borraría la decisión que una
+//     persona ya tomó.
+//   - **Sin clave no se deduplica.** No hay nada que pruebe que dos capturas
+//     sin clave son el mismo trabajo, y juntarlas perdería evidencia.
+//
+// Un conflicto de llave primaria (mismo id) sigue siendo no-op.
+func (s *Store) Save(ctx context.Context, i failedintent.Intent) (failedintent.SaveOutcome, error) {
+	if strings.TrimSpace(i.IdempotencyKey) == "" {
+		return failedintent.SaveOutcome{}, s.insert(ctx, i)
+	}
+
+	var out failedintent.SaveOutcome
+	err := firebird.RunInTx(ctx, s.pool.DB, func(ctx context.Context) error {
+		prev, err := s.findPendienteConClave(ctx, i.Path, i.IdempotencyKey)
+		if err != nil {
+			return err
+		}
+		if prev == nil {
+			return s.insert(ctx, i)
+		}
+		out, err = s.fundirEn(ctx, *prev, i)
+		return err
+	})
+	if err != nil {
+		return failedintent.SaveOutcome{}, err
+	}
+	return out, nil
+}
+
+// intentoPendiente es lo mínimo que hace falta del intento ya guardado para
+// decidir si el cuerpo nuevo lo mejora. Se lee dentro de la transacción del
+// Save para que nadie lo cambie entre la lectura y el UPDATE.
+type intentoPendiente struct {
+	id        string
+	blobPath  string
+	truncated bool
+	bodyBytes int
+}
+
+// findPendienteConClave busca el intento pendiente que representa el mismo
+// trabajo. Devuelve (nil, nil) cuando no hay ninguno.
+//
+// FIRST 1 con orden explícito y no un SELECT suelto: si por una carrera
+// quedaran dos filas pendientes con la misma clave, hay que fundir siempre en
+// la MISMA —la más vieja, que es la que conserva el RECEIVED_AT correcto— o
+// dos capturas concurrentes se repartirían los reintentos entre las dos.
+func (s *Store) findPendienteConClave(
+	ctx context.Context, path, key string,
+) (*intentoPendiente, error) {
+	const q = `
+		SELECT FIRST 1
+			ID,
+			COALESCE(BODY_BLOB_PATH, ''),
+			BODY_TRUNCATED,
+			COALESCE(OCTET_LENGTH(BODY), 0)
+		FROM MSP_FAILED_INTENTS
+		WHERE PATH = ? AND IDEMPOTENCY_KEY = ? AND STATUS = ?
+		ORDER BY RECEIVED_AT, ID`
+	q2 := firebird.GetQuerier(ctx, s.pool.DB)
+
+	var (
+		prev      intentoPendiente
+		truncated string
+	)
+	err := q2.QueryRowContext(ctx, q, path, key, string(failedintent.StatusNew)).
+		Scan(&prev.id, &prev.blobPath, &truncated, &prev.bodyBytes)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil //nolint:nilnil // contract: (nil, nil) = no hay pendiente
+	}
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failedintent.firebird: buscar pendiente %s/%s: %w", path, key, firebird.MapError(err))
+	}
+	prev.truncated = charToTruncated(truncated)
+	prev.id = strings.TrimSpace(prev.id)
+	return &prev, nil
+}
+
+// fundirEn suma el intento nuevo al pendiente que ya existe.
+//
+// Qué se conserva y qué se refresca:
+//
+//   - RECEIVED_AT **no se toca**: pasa a significar "el primer intento", que
+//     es lo que la consola necesita para decir "desde las 13:20".
+//   - LAST_SEEN_AT, HTTP_STATUS, ERROR_CODE y ERROR_MESSAGE se refrescan: la
+//     causa vigente es la del último intento, no la del primero. Una venta que
+//     empezó fallando por red y ahora falla por inventario necesita a una
+//     persona, y con el error viejo se leería como que se cura sola.
+//   - RETRY_COUNT + 1.
+//
+// El cuerpo sigue la regla de **nunca sustituir uno bueno por uno peor** (ver
+// mejoraElCuerpo).
+func (s *Store) fundirEn(
+	ctx context.Context, prev intentoPendiente, i failedintent.Intent,
+) (failedintent.SaveOutcome, error) {
+	sustituir := mejoraElCuerpo(prev, i)
+
+	sets := []string{
+		"RETRY_COUNT = RETRY_COUNT + 1",
+		"LAST_SEEN_AT = ?",
+		"HTTP_STATUS = ?",
+		"ERROR_CODE = ?",
+		"ERROR_MESSAGE = ?",
+	}
+	// El último intento se fecha con el ReceivedAt del intento nuevo, que es
+	// el reloj de Go de esta captura. No CURRENT_TIMESTAMP: CLAUDE.md §1.
+	args := []any{
+		firebird.ToWallClock(i.ReceivedAt),
+		i.HTTPStatus,
+		i.ErrorCode,
+		i.ErrorMessage,
+	}
+	if sustituir {
+		sets = append(sets,
+			"BODY = ?", "BODY_TRUNCATED = ?", "BODY_BLOB_PATH = ?", "BODY_CONTENT_TYPE = ?")
+		args = append(args,
+			[]byte(i.Body),
+			truncatedToChar(i.BodyTruncated),
+			nullableString(i.BodyBlobPath),
+			nullableString(i.BodyContentType))
+	}
+	args = append(args, prev.id, string(failedintent.StatusNew))
+
+	//nolint:gosec // sets viene de literales de este archivo; los valores van por parámetro.
+	q := `UPDATE MSP_FAILED_INTENTS SET ` + strings.Join(sets, ", ") +
+		` WHERE ID = ? AND STATUS = ?`
+
+	q2 := firebird.GetQuerier(ctx, s.pool.DB)
+	res, err := q2.ExecContext(ctx, q, args...)
+	if err != nil {
+		return failedintent.SaveOutcome{}, fmt.Errorf(
+			"failedintent.firebird: fundir en %s: %w", prev.id, firebird.MapError(err))
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		// La fila dejó de estar pendiente entre la lectura y el UPDATE —
+		// alguien la resolvió. La captura no se pierde: se inserta como fila
+		// propia, que es el comportamiento anterior a la dedup.
+		return failedintent.SaveOutcome{}, s.insert(ctx, i)
+	}
+
+	out := failedintent.SaveOutcome{Deduped: true}
+	switch {
+	case sustituir:
+		// El cuerpo nuevo desplazó al guardado: sobra el viejo.
+		out.OrphanedBlobPath = prev.blobPath
+	default:
+		// Se conservó el guardado: sobra el que acaba de llegar.
+		out.OrphanedBlobPath = i.BodyBlobPath
+	}
+	if out.OrphanedBlobPath == prev.blobPath && prev.blobPath == i.BodyBlobPath {
+		// Mismo archivo en los dos lados: no sobra nada que borrar.
+		out.OrphanedBlobPath = ""
+	}
+	return out, nil
+}
+
+// mejoraElCuerpo decide si el cuerpo del intento nuevo sustituye al guardado.
+//
+// La regla es **nunca sustituir uno bueno por uno peor**: se sustituye sólo si
+// el nuevo NO viene truncado y además no es más chico que el guardado (o el
+// guardado está truncado o ausente).
+//
+// Se conserva **el último bueno**, no el primero: cuando la app tenga edición
+// de ventas, el cuerpo que sirve para un reenvío manual es el corregido.
+//
+// Hace falta también la comparación de tamaño porque BodyTruncated **sólo
+// marca fallo de guardado**, no una subida cortada a media transmisión: una
+// captura que se cortó a los 200 KB llega con BodyTruncated=false y sería
+// aceptada como buena si sólo se mirara esa bandera.
+func mejoraElCuerpo(prev intentoPendiente, i failedintent.Intent) bool {
+	if i.BodyTruncated {
+		return false
+	}
+	if prev.truncated {
+		return true
+	}
+	if prev.blobPath == "" && i.BodyBlobPath != "" {
+		// El guardado es JSON inline y el nuevo trae el multipart completo:
+		// más evidencia, no menos.
+		return true
+	}
+	if prev.blobPath != "" && i.BodyBlobPath == "" {
+		// A la inversa: no se cambia un multipart con fotos por un JSON.
+		return false
+	}
+	return tamano(i) >= prev.bodyBytes
+}
+
+// tamano es el tamaño comparable del cuerpo entrante. Para el camino
+// multipart el cuerpo inline es `null` y lo que pesa es el blob, cuyo tamaño
+// no viaja en el Intent — por eso se compara sólo entre cuerpos del MISMO
+// tipo (lo garantizan las dos ramas de blobPath en mejoraElCuerpo).
+func tamano(i failedintent.Intent) int {
+	return len(i.Body)
+}
+
+// insert es el INSERT de siempre, sin dedup. Un conflicto de llave primaria
+// (mismo id) es no-op: un reintento de la captura no puede corromper la
+// evidencia ya guardada.
+func (s *Store) insert(ctx context.Context, i failedintent.Intent) error {
 	const q = `
 		INSERT INTO MSP_FAILED_INTENTS (
-			ID, RECEIVED_AT, METHOD, PATH, FIREBASE_UID, USUARIO_ID,
+			ID, RECEIVED_AT, LAST_SEEN_AT, METHOD, PATH, FIREBASE_UID, USUARIO_ID,
 			IDEMPOTENCY_KEY, REQUEST_ID, BODY, BODY_TRUNCATED,
 			BODY_BLOB_PATH, BODY_CONTENT_TYPE,
 			HTTP_STATUS, ERROR_CODE, ERROR_MESSAGE,
 			RETRY_COUNT, STATUS, RESOLVED_AT, RESOLVED_BY, NOTES
 		) VALUES (
-			?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?,
 			?, ?, ?,
@@ -71,6 +284,7 @@ func (s *Store) Save(ctx context.Context, i failedintent.Intent) error {
 		ctx, q,
 		i.ID.String(),
 		firebird.ToWallClock(i.ReceivedAt),
+		nullableTime(i.LastSeenAt),
 		i.Method,
 		i.Path,
 		nullableString(i.FirebaseUID),
@@ -104,7 +318,7 @@ func (s *Store) Save(ctx context.Context, i failedintent.Intent) error {
 func (s *Store) Get(ctx context.Context, id uuid.UUID) (*failedintent.Intent, error) {
 	const q = `
 		SELECT
-			ID, RECEIVED_AT, METHOD, PATH,
+			ID, RECEIVED_AT, LAST_SEEN_AT, METHOD, PATH,
 			COALESCE(FIREBASE_UID, ''), USUARIO_ID,
 			COALESCE(IDEMPOTENCY_KEY, ''), REQUEST_ID,
 			BODY, BODY_TRUNCATED, HTTP_STATUS,
@@ -167,7 +381,7 @@ func (s *Store) List(
 func buildListQuery(where []string) string {
 	base := `
 		SELECT FIRST ?
-			ID, RECEIVED_AT, METHOD, PATH,
+			ID, RECEIVED_AT, LAST_SEEN_AT, METHOD, PATH,
 			COALESCE(FIREBASE_UID, ''), USUARIO_ID,
 			COALESCE(IDEMPOTENCY_KEY, ''), REQUEST_ID,
 			BODY, BODY_TRUNCATED, HTTP_STATUS,
@@ -413,6 +627,7 @@ func nullableTime(t *time.Time) any {
 type rawIntentRow struct {
 	id            string
 	receivedAt    any
+	lastSeenAt    any
 	usuarioID     sql.NullString
 	requestID     string
 	resolvedAt    any
@@ -433,6 +648,7 @@ func scanIntent(row interface {
 	err := row.Scan(
 		&r.id,
 		&r.receivedAt,
+		&r.lastSeenAt,
 		&r.partial.Method,
 		&r.partial.Path,
 		&r.partial.FirebaseUID,
@@ -484,6 +700,17 @@ func normalizeIntentRow(r rawIntentRow) (failedintent.Intent, error) {
 			return failedintent.Intent{}, fmt.Errorf("failedintent.firebird: scan received_at: %w", scanErr)
 		}
 		i.ReceivedAt = t
+	}
+
+	// LAST_SEEN_AT — nullable TIMESTAMP. NULL significa "vista una sola vez";
+	// no se rellena con RECEIVED_AT porque eso afirmaría un segundo intento
+	// que no ocurrió. Quien lo muestre decide cómo leer el nil.
+	if r.lastSeenAt != nil {
+		t, scanErr := firebird.ScanUTCTime(r.lastSeenAt)
+		if scanErr != nil {
+			return failedintent.Intent{}, fmt.Errorf("failedintent.firebird: scan last_seen_at: %w", scanErr)
+		}
+		i.LastSeenAt = &t
 	}
 
 	// USUARIO_ID — nullable CHAR(36).

@@ -142,8 +142,17 @@ func (s Status) String() string { return string(s) }
 //
 // The schema does NOT enforce this invariant — it lives here, per CLAUDE.md.
 type Intent struct {
-	ID              uuid.UUID
-	ReceivedAt      time.Time
+	ID         uuid.UUID
+	ReceivedAt time.Time
+	// LastSeenAt es el ÚLTIMO intento con esta clave. Nil cuando la fila se
+	// ha visto una sola vez.
+	//
+	// Con la dedup, ReceivedAt dejó de significar "cuándo pasó esto" para
+	// significar "el PRIMER intento". Los dos juntos son lo que permite
+	// escribir "13 intentos · desde 13:20 · el último hace 4 minutos"; sólo
+	// con el primero, una venta cuyo último reintento fue hace cuatro minutos
+	// se leería como de hace seis horas.
+	LastSeenAt      *time.Time
 	Method          string
 	Path            string
 	FirebaseUID     string
@@ -196,13 +205,40 @@ type PurgeResult struct {
 	BlobPaths   []string
 }
 
+// SaveOutcome reports what Save actually did, so the caller can keep the
+// on-disk blobs in step with the rows.
+//
+// Sin esto la dedup arreglaría la mitad del problema: la tabla dejaría de
+// crecer y el disco no. Medido en producción sobre 7 días: 609 filas para 130
+// ventas, **685 archivos y 896 MB**; una sola venta dejó 13 copias de 2.8 MB.
+// El cuerpo que la dedup descarta es un archivo ya escrito, y el único que
+// sabe borrarlo es quien tiene el BlobStorage — el middleware, no el Store.
+type SaveOutcome struct {
+	// Deduped reports that the intent was folded into an existing pending
+	// row instead of inserting a new one.
+	Deduped bool
+	// OrphanedBlobPath is the blob that no row references anymore after this
+	// Save: el nuevo cuando se conservó el guardado, el viejo cuando el nuevo
+	// lo reemplazó. Vacío cuando no sobra ninguno.
+	OrphanedBlobPath string
+}
+
 // Store persists and retrieves Intent records.
 //
 //nolint:interfacebloat // 8 methods, at the 8-method cap.
 type Store interface {
-	// Save inserts an intent. Implementations should treat (id) as a
-	// uniqueness constraint and silently no-op on duplicate primary key.
-	Save(ctx context.Context, i Intent) error
+	// Save persists an intent.
+	//
+	// Cuando el intento trae IDEMPOTENCY_KEY y ya existe una fila PENDIENTE
+	// con la misma (PATH, IDEMPOTENCY_KEY), la implementación debe FUNDIRLO
+	// en ella —subir RETRY_COUNT, refrescar el error y LAST_SEEN_AT, y
+	// CONSERVAR RECEIVED_AT— en vez de insertar una fila nueva. Sin clave no
+	// hay nada que deduplicar y se inserta.
+	//
+	// Un conflicto de llave primaria (mismo id) se trata como no-op, igual
+	// que antes: un reintento de la captura no puede corromper la evidencia
+	// que ya está guardada.
+	Save(ctx context.Context, i Intent) (SaveOutcome, error)
 
 	// Get loads an intent by id. Returns (nil, nil) when not found.
 	Get(ctx context.Context, id uuid.UUID) (*Intent, error)
@@ -561,7 +597,8 @@ func buildMultipartIntent(
 func saveIntent(parentCtx context.Context, cfg Config, intent Intent) bool {
 	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(parentCtx), 5*time.Second)
 	defer cancel()
-	if saveErr := cfg.Store.Save(saveCtx, intent); saveErr != nil {
+	outcome, saveErr := cfg.Store.Save(saveCtx, intent)
+	if saveErr != nil {
 		slog.ErrorContext(
 			parentCtx,
 			"failedintent: store save failed",
@@ -571,6 +608,20 @@ func saveIntent(parentCtx context.Context, cfg Config, intent Intent) bool {
 			"http_status", intent.HTTPStatus,
 		)
 		return false
+	}
+	// El cuerpo que la dedup descartó ya está escrito en disco y ninguna fila
+	// lo referencia. Se borra aquí porque el Store no conoce el BlobStorage —
+	// ni debe: su trabajo es la fila. Best-effort: el barrido de huérfanos del
+	// arranque es la red de abajo, pero esperar a un reinicio para recuperar
+	// disco es exactamente el problema que esta parte arregla.
+	if outcome.OrphanedBlobPath != "" && cfg.Blob != nil {
+		if delErr := cfg.Blob.Delete(saveCtx, outcome.OrphanedBlobPath); delErr != nil {
+			slog.WarnContext(
+				parentCtx,
+				"failedintent: no se pudo borrar el blob descartado por la dedup",
+				"error", delErr, "path", outcome.OrphanedBlobPath,
+			)
+		}
 	}
 	emitCapturedLog(parentCtx, intent)
 	return true
