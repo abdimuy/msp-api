@@ -166,8 +166,28 @@ durante meses.
 -- ventas: + la rama de cancelados, que NO es un filtro de saldo
 (s.SALDO > 0
    OR s.FECHA_ULT_PAGO >= ?
-   OR (s.CARGO_CANCELADO = 'S' AND EXISTS (... FECHA_HORA_CANCELACION >= ?)))
+   OR (s.CARGO_CANCELADO = 'S' AND (
+         EXISTS (... FECHA_HORA_CANCELACION >= ?)      -- cancelada: con ventana
+         OR NOT EXISTS (... DOCTOS_CC))))              -- borrada: SIN ventana
 ```
+
+### La rama de cancelados tiene DOS mitades y no son simétricas
+
+| Caso | Estado en Microsip | Ventana |
+|---|---|---|
+| **Cancelación** | el cargo sigue en `DOCTOS_CC` con `CANCELADO='S'` | **sí**, por `FECHA_HORA_CANCELACION` |
+| **Borrado físico** | no queda fila en `DOCTOS_CC`; el trigger de la mig `000020` dejó lápida | **no**, y es deliberado |
+
+La de borrado no lleva ventana porque **no hay fecha que consultar**: la fila
+se borró, y `s.UPDATED_AT` es exactamente el campo del que la otra mitad
+aprendió a desconfiar (un backfill lo mueve y resucita lápidas de 2018-2025).
+La vida del tombstone —30 días en el reconciliador— ya es la ventana.
+
+**Incidente:** la mitad de cancelación entró el 31/05 (`83f7d68`) y el
+tombstone por borrado físico dos días después (`4b8c233`, mig `000020`), sin
+que nadie cruzara que el primero impedía entregar el segundo. Latente desde el
+2026-06-02; medido el 2026-08-20: **29 lápidas huérfanas en 11 zonas**, 22 el
+día del cutover. Ninguna venta borrada por oficina desaparecía del teléfono.
 
 ### Por qué
 
@@ -183,6 +203,15 @@ El Node legacy no hacía esto: filtraba las **ventas** y derivaba los pagos.
 - **La rama de cancelados** no es un filtro de saldo: es la señal con la que el
   teléfono **borra** un cargo que Microsip canceló. Sin ella el cobrador
   arrastra ventas fantasma para siempre.
+- **No "simetrice" las dos mitades de esa rama.** Ponerle ventana a la del
+  borrado físico reintroduce el defecto entero; quitársela a la de cancelación
+  deshace el arreglo medido de `83f7d68`. Lo fijan
+  `TestVentaStatusFilter_CubreLaLapidaHuerfana` (forma del predicado) y las
+  dos pruebas de tombstone (comportamiento).
+- **Ninguna tabla de enriquecimiento puede ser INNER JOIN.** La entrega de una
+  lápida no puede depender de que su cliente, su zona o su contrato existan.
+  Ya costó el mismo defecto en pagos; `ventaFromClause` lo repite y
+  `TestVentaFromClause_TodoEnriquecimientoEsLeftJoin` lo guarda.
 - **`desde` no es opcional.** Tiene default de servidor (7 días,
   `app.ResolveSyncDesde`). Sin él, el predicado colapsa a `SALDO > 0` estricto
   y el pago que salda desaparece.
@@ -422,6 +451,7 @@ teléfono**, no leer código. Vale la pena repetirlo.
 | 1b | Idem, un tick después | página vacía → `afterId = 0` | `paginaVaciaNoReiniciaElAfterIdPersistido` |
 | 2 | El pago que salda desaparece | filtro propio del pago | `TestE2E_SyncPagos_LaVentanaEsDeLaVenta_NoDelPago` |
 | 2b | La venta saldada desaparece | ventas sin rama `FECHA_ULT_PAGO` | `TestE2E_ParidadCanales_Ventas` |
+| 2c | La venta BORRADA nunca desaparece del teléfono | la rama de cancelados exigía fila en `DOCTOS_CC` | `TestE2E_VentasRepo_SyncPorZona_TombstonePorBorradoFisico` |
 | 3 | Duplicados por `by-ids` | canal sin filtro | `TestE2E_ByIDs_AplicaLaVentana` |
 | 4 | Duplicado visible | candado invertido | `mergePagosColapsaGemeloUuidAunSi…` |
 | 4b | Duplicado por minutos | colapso fuera de la transacción | `byIdsColapsaElGemeloUuidDentroDelMismoReconcileNow` |

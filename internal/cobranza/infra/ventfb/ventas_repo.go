@@ -109,18 +109,69 @@ func ventaClienteFilterFor(alias string) string {
 //
 // Toma DOS binds, ambos el mismo `desde`, en este orden: FECHA_ULT_PAGO,
 // FECHA_HORA_CANCELACION. Ver queryVentaSyncPage para el porqué de cada rama.
+//
+// La rama de cancelados tiene DOS caminos, y la diferencia entre ellos no es
+// cosmética:
+//
+//   - CANCELACIÓN (EXISTS): el cargo sigue en DOCTOS_CC con CANCELADO='S'.
+//     Se acota por FECHA_HORA_CANCELACION porque el UPDATED_AT del caché lo
+//     mueve cualquier backfill, y sin ese corte cada recompute resucitaba
+//     cancelaciones de 2018-2025.
+//
+//   - BORRADO FÍSICO (NOT EXISTS): oficina eliminó la venta y el trigger
+//     MSP_SALDOS_DOCTOS_CC_AD (migración 000020) dejó lápida — SALDO=0,
+//     FECHA_ULT_PAGO=NULL, CARGO_CANCELADO='S' — sin fila en DOCTOS_CC.
+//
+// Esta segunda rama NO lleva ventana de fecha, y es deliberado:
+//
+//  1. No hay fecha confiable que usar. FECHA_HORA_CANCELACION no existe (la
+//     fila se borró) y s.UPDATED_AT es exactamente el campo del que la rama
+//     de arriba aprendió a desconfiar: un backfill que recompute el caché lo
+//     mueve y resucitaría lápidas históricas.
+//
+//  2. La vida del tombstone YA es la ventana. El reconciliador las borra a
+//     los 30 días (reconcile.go, TombstoneRetentionDays), "suficiente para
+//     que cualquier cliente que estuvo offline haya resincronizado o visto
+//     el tombstone". El defecto era que vivían 30 días y sólo eran
+//     entregables 7.
+//
+//  3. La asimetría de costos no está cerca. Una lápida de más es un borrado
+//     en vacío, silencioso — lo midió el propio 83f7d68. Una de menos es una
+//     venta fantasma para siempre en la ruta del cobrador. El volumen medido
+//     en producción son 29 filas.
 const ventaStatusFilterConVentana = `(s.SALDO > 0
 		OR s.FECHA_ULT_PAGO >= ?
-		OR (s.CARGO_CANCELADO = 'S' AND EXISTS (
-			SELECT 1 FROM DOCTOS_CC dcan
-			WHERE dcan.DOCTO_CC_ID = s.DOCTO_CC_ID
-			  AND (dcan.FECHA_HORA_CANCELACION IS NULL
-			       OR dcan.FECHA_HORA_CANCELACION >= ?)
+		OR (s.CARGO_CANCELADO = 'S' AND (
+			EXISTS (
+				SELECT 1 FROM DOCTOS_CC dcan
+				WHERE dcan.DOCTO_CC_ID = s.DOCTO_CC_ID
+				  AND (dcan.FECHA_HORA_CANCELACION IS NULL
+				       OR dcan.FECHA_HORA_CANCELACION >= ?)
+			)
+			OR NOT EXISTS (
+				SELECT 1 FROM DOCTOS_CC d2
+				WHERE d2.DOCTO_CC_ID = s.DOCTO_CC_ID
+			)
 		)))`
 
+// ventaFromClause enriquece la fila del caché. TODAS las tablas del FROM van
+// por LEFT JOIN, incluida CLIENTES, y la razón es la lápida: una venta que
+// oficina BORRÓ viaja sólo para que el teléfono la elimine, y su entrega no
+// puede depender de que sus enriquecimientos sigan existiendo. El precedente
+// está resuelto en pagos_repo.go: "Con INNER JOIN un DELETE FROM DOCTOS_CC
+// dejaba huérfana la fila del cache… el cliente móvil nunca recibe la señal
+// de borrado."
+//
+// Hoy CLIENTES por INNER JOIN no descartaría ninguna fila que el resto del
+// WHERE deje pasar: ventaClienteFilter ya exige por EXISTS que el cliente
+// exista y esté en 'A', que es una condición estrictamente más fuerte. O sea
+// que este LEFT JOIN es defensa en profundidad, no un cambio de conjunto —
+// lo que evita es que el día que ese filtro se relaje (o que llegue una fila
+// de caché con CLIENTE_ID que ya no resuelve) el tombstone se pierda en
+// silencio. Lo fija TestVentaFromClause_TodoEnriquecimientoEsLeftJoin.
 const ventaFromClause = `
 FROM MSP_SALDOS_VENTAS s
-JOIN CLIENTES c                ON c.CLIENTE_ID       = s.CLIENTE_ID
+LEFT JOIN CLIENTES c           ON c.CLIENTE_ID       = s.CLIENTE_ID
 LEFT JOIN ZONAS_CLIENTES z     ON z.ZONA_CLIENTE_ID  = s.ZONA_CLIENTE_ID
 LEFT JOIN COBRADORES cob       ON cob.COBRADOR_ID    = c.COBRADOR_ID
 LEFT JOIN DIRS_CLIENTES d      ON d.CLIENTE_ID       = s.CLIENTE_ID AND d.ES_DIR_PPAL = 'S'
