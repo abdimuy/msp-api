@@ -249,17 +249,37 @@ const updateFoliosConceptos = `UPDATE FOLIOS_CONCEPTOS SET CONSECUTIVO = CONSECU
 //nolint:gosec // SQL constant, not user input.
 const insertDoctoCC = `INSERT INTO DOCTOS_CC
   (DOCTO_CC_ID, CONCEPTO_CC_ID, FOLIO, NATURALEZA_CONCEPTO,
-   SUCURSAL_ID, FECHA, CLIENTE_ID, CLAVE_CLIENTE,
+   SUCURSAL_ID, FECHA, CLIENTE_ID, CLAVE_CLIENTE, COBRADOR_ID,
    TIPO_CAMBIO, DESCRIPCION,
    SISTEMA_ORIGEN, APLICADO, ESTATUS, ESTATUS_ANT,
    CONTABILIZADO_GYP, ES_CFD, TIENE_ANTICIPO, CFDI_CERTIFICADO, ENVIADO,
    INTEG_BA, CONTABILIZADO_BA)
 VALUES (?, 24533, ?, 'R',
-        ?, ?, ?, ?,
+        ?, ?, ?, ?, ?,
         1, 'Enganche',
         'CC', 'N', 'N', 'N',
         'N', 'N', 'N', 'N', 'N',
         'N', 'N')`
+
+// nullableCobrador traduce "no hay cobrador" a SQL NULL.
+//
+// El umbral es **estrictamente positivo**, no `>= 0` como en cliente_writer, y
+// la diferencia importa: los ids de Microsip siempre son positivos, así que el
+// único valor que `>= 0` deja pasar de más es el CERO — que es justamente el
+// valor por defecto de un `int` en Go. Con `>= 0`, un llamador que olvide
+// poblar el campo escribe COBRADOR_ID = 0, y eso no falla silenciosamente:
+// revienta la FK COBRADOR_A_DOCTOS_CC y **tumba la venta entera**. Lo
+// descubrió una prueba que no pasaba el campo.
+//
+// Con `> 0`, olvidarlo degrada a lo que había antes (enganche sin dueño) en
+// vez de impedir la venta. El centinela -1 de las zonas sin cobrador
+// (MAYOREO) sigue funcionando igual.
+func nullableCobrador(cobradorID int) any {
+	if cobradorID <= 0 {
+		return nil
+	}
+	return cobradorID
+}
 
 // insertImportesDoctoCC inserts the IMPORTES_DOCTOS_CC link row.
 //
@@ -695,7 +715,8 @@ func (w *VentaWriter) insertDatosCredito(
 
 	// 7c — enganche document (only when enganche > 0).
 	if plan.Enganche().Sign() > 0 {
-		if err := w.insertEnganche(ctx, q, cargoCCID, clienteID, claveCliente, sucursalID, plan.Enganche(), fechaVenta); err != nil {
+		if err := w.insertEnganche(ctx, q, cargoCCID, clienteID, claveCliente, sucursalID,
+			in.CobradorID, plan.Enganche(), fechaVenta); err != nil {
 			return fmt.Errorf("insert enganche: %w", err)
 		}
 	}
@@ -713,6 +734,7 @@ func (w *VentaWriter) insertEnganche(
 	clienteID int,
 	claveCliente string,
 	sucursalID int,
+	cobradorID int,
 	enganche decimal.Decimal,
 	fechaVenta time.Time,
 ) error {
@@ -745,7 +767,7 @@ func (w *VentaWriter) insertEnganche(
 	// INSERT DOCTOS_CC (enganche, APLICADO='N').
 	if _, err := q.ExecContext(ctx, insertDoctoCC,
 		engancheDoctoID, engancheFolio,
-		sucursalID, wc, clienteID, claveCliente,
+		sucursalID, wc, clienteID, claveCliente, nullableCobrador(cobradorID),
 	); err != nil {
 		return fmt.Errorf("insert doctos_cc enganche: %w", firebird.MapError(err))
 	}

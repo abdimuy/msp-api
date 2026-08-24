@@ -11,17 +11,31 @@ import (
 	"github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
 )
 
-// parseDesde accepts either an RFC3339 timestamp or a YYYY-MM-DD date string
-// and returns the parsed time in UTC. Empty input returns (zero, nil) — the
-// caller treats that as "not supplied".
+// parseDesde exige un instante RFC3339 y lo normaliza a UTC. Vacío devuelve
+// (zero, nil) — el llamador lo lee como "no lo mandaron" y resuelve su ventana
+// por defecto.
+//
+// Antes también aceptaba `YYYY-MM-DD`, y lo interpretaba como medianoche
+// **UTC**: en la zona del negocio, las 18:00 del día anterior. Medio turno
+// corrido, y en desacuerdo con el propio estándar del proyecto
+// (docs/module-standards/DATETIME_HANDLING.md), que fija que el día 13 anclado
+// a CDMX empieza en `13T06:00:00Z`.
+//
+// Se quitó en vez de redefinirse. Un día de calendario no es un instante hasta
+// que alguien dice en qué zona, y el único que lo sabe sin adivinar es el
+// cliente: si quiere el día 20 de negocio, manda `2026-08-20T06:00:00Z` —o
+// `2026-08-20T00:00:00-06:00`, que es el mismo instante—. Es la misma regla
+// que ya aplicaban los endpoints de reconcile (parseReconcileDesde) "porque la
+// ventana debe ser determinista entre llamadas", y la que aplica ventas
+// (parseDesdeFilter).
 func parseDesde(raw string) (time.Time, error) {
 	if raw == "" {
 		return time.Time{}, nil
 	}
-	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+	if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
 		return t.UTC(), nil
 	}
-	if t, err := time.Parse("2006-01-02", raw); err == nil {
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
 		return t.UTC(), nil
 	}
 	return time.Time{}, domain.ErrDesdeInvalido
@@ -65,7 +79,7 @@ func (h *Handlers) PorCliente(ctx context.Context, in *PorClienteInput) (*Saldos
 
 // PorZona handles GET /cobranza/saldos/zona/{zona_id}.
 //
-// Accepts ?desde=YYYY-MM-DD (or RFC3339) for a deterministic cutoff, or
+// Accepts ?desde= como instante RFC3339 para un corte determinista, o
 // ?ventana_dias=N for a relative window. Defaults to ventana_dias=7 when
 // neither is supplied. Returns 422 cobranza_parametros_excluyentes when both
 // are present.

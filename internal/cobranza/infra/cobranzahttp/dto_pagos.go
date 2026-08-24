@@ -75,7 +75,7 @@ type PagosPorClienteInput struct {
 // excluyentes; ambos ausentes → ventana_dias=7.
 type PagosPorZonaInput struct {
 	ZonaID      int    `path:"zona_id"                                              doc:"ID de la zona"`
-	Desde       string `query:"desde"                                               doc:"Fecha absoluta (YYYY-MM-DD o RFC3339). Excluyente con ventana_dias"`
+	Desde       string `query:"desde"                                               doc:"Instante absoluto en RFC3339 (p. ej. 2026-08-20T06:00:00Z = medianoche en CDMX). Excluyente con ventana_dias"`
 	VentanaDias int    `query:"ventana_dias" minimum:"-1" maximum:"90" default:"-1" doc:"Días hacia atrás desde hoy. -1 = no supplied (usa default 7). Excluyente con desde"`
 }
 
@@ -93,7 +93,7 @@ type SyncPagosInput struct {
 	Cursor  string `query:"cursor"                              doc:"Cursor server_ts (RFC3339 UTC). Vacío para sync inicial"`
 	AfterID int    `query:"after_id" minimum:"0"                doc:"PK de la última fila recibida para paginar dentro del mismo cursor"`
 	Limit   int    `query:"limit"    minimum:"0" maximum:"5000" doc:"Tamaño máximo de página. Default 1000, máximo 5000"`
-	Desde   string `query:"desde"                               doc:"Ventana absoluta (YYYY-MM-DD o RFC3339 UTC). Incluye los pagos de ventas cuyo FECHA_ULT_PAGO >= desde, aunque ya estén saldadas. Si se omite, el servidor aplica su ventana por defecto (7 días); no existe la opción sin ventana"`
+	Desde   string `query:"desde"                               doc:"Ventana absoluta en RFC3339 (instante; p. ej. 2026-08-20T06:00:00Z = medianoche en CDMX). Incluye los pagos de ventas cuyo FECHA_ULT_PAGO >= desde, aunque ya estén saldadas. Si se omite, el servidor aplica su ventana por defecto (7 días); no existe la opción sin ventana"`
 }
 
 // ─── Output DTOs ──────────────────────────────────────────────────────────────

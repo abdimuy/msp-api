@@ -41,7 +41,7 @@ func newByIDsHandlers(
 }
 
 // desdeDeLaRequest resuelve la ventana de estos endpoints. Acepta el mismo
-// ?desde= que el sync (RFC3339 o YYYY-MM-DD) y, cuando falta, cae en el
+// ?desde= que el sync (instante RFC3339) y, cuando falta, cae en el
 // default de servidor — el MISMO que resuelven el sync y el inventario, para
 // que los tres canales respondan lo mismo aunque el cliente no mande nada.
 func (h *byIDsHandlers) desdeDeLaRequest(r *http.Request) (time.Time, error) {
@@ -58,7 +58,7 @@ func (h *byIDsHandlers) desdeDeLaRequest(r *http.Request) (time.Time, error) {
 //   - zona_id (int, required) — must match the user's zona access scope.
 //   - ids     (string, required) — comma-separated integer list.
 //   - desde   (string, optional) — misma ventana que /sync (RFC3339 o
-//     YYYY-MM-DD). Omitirlo aplica el default de servidor, no "sin ventana".
+//     instante RFC3339). Omitirlo aplica el default de servidor, no "sin ventana".
 //
 // Returns 200 with []PagoDTO, or an apperror-shaped JSON error on failure.
 // No watermark filtering is applied — the caller obtained these PKs from the

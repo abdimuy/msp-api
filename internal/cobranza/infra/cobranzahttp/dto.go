@@ -83,7 +83,7 @@ type PorClienteInput struct {
 // The time component is truncated to DATE precision by the cache schema.
 type PorZonaInput struct {
 	ZonaID      int    `path:"zona_id"                                doc:"ID de la zona de cobranza"`
-	Desde       string `query:"desde"                                 doc:"Fecha absoluta (YYYY-MM-DD o RFC3339). Excluyente con ventana_dias"`
+	Desde       string `query:"desde"                                 doc:"Instante absoluto en RFC3339 (p. ej. 2026-08-20T06:00:00Z = medianoche en CDMX). Excluyente con ventana_dias"`
 	VentanaDias int    `query:"ventana_dias" minimum:"-1" maximum:"90" default:"-1" doc:"Días hacia atrás desde hoy. -1 = no supplied (usa default 7). Excluyente con desde"`
 }
 

@@ -30,6 +30,12 @@ type MicrosipVentaInput struct {
 	// 19985/19986/19987 (see MSP_CFG_VENDEDOR_MICROSIP); a slot with no seller
 	// or no mapping is the sentinel -1.
 	VendedorListaIDs [3]int
+	// CobradorID es el cobrador de la zona, y se escribe en el documento de
+	// enganche (DOCTOS_CC.COBRADOR_ID). Sin él el enganche no pertenece a
+	// ninguna ruta y no aparece en su liquidación. Centinela -1 cuando la zona
+	// no tiene cobrador (MAYOREO): se guarda como NULL, igual que en
+	// MicrosipClienteInput.
+	CobradorID int
 	// SucursalID is the Microsip sucursal for the sale (usually 225490 Matriz).
 	SucursalID int
 

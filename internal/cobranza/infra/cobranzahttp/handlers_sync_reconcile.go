@@ -133,8 +133,9 @@ func (h *Handlers) SyncSaldosIDs(ctx context.Context, in *SyncListIDsInput) (*Li
 
 // parseReconcileDesde parses the optional ?desde= query parameter for the
 // digest/ids reconcile endpoints. Unlike parseOptionalDesde (which also
-// accepts YYYY-MM-DD), these endpoints require a full RFC3339 UTC timestamp
-// because the window must be deterministic across calls.
+// aceptaba YYYY-MM-DD hasta que se unificó el criterio), estos endpoints
+// siempre exigieron un RFC3339 completo porque la ventana debe ser
+// determinista entre llamadas. Hoy parseDesde exige lo mismo.
 //
 // Empty/missing input devuelve el zero time, que NO significa "sin ventana":
 // el servicio lo pasa por app.ResolveSyncDesde y resuelve el default de
