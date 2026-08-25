@@ -12,6 +12,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -19,16 +20,45 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// bufferSincronizado es un bytes.Buffer con candado.
+//
+// Hace falta porque `slog.SetDefault` es GLOBAL del proceso y estos tests
+// corren con `t.Parallel()`: mientras un test lee su buffer, el logger global
+// puede ser el de otro test que está escribiendo, y el detector de carreras lo
+// caza. Se veía como un fallo intermitente —una de cada ocho corridas de
+// `go test -race ./...`, nunca al correr el paquete solo— y la pila apuntaba a
+// `bytes.Buffer.grow`, no al código bajo prueba.
+//
+// El candado quita la carrera sin cambiar lo que el test afirma: las
+// aserciones ya toleran líneas de más ("extras from cleanups or interleaving
+// subtests are ignored").
+type bufferSincronizado struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *bufferSincronizado) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *bufferSincronizado) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 // captureLogs swaps slog's default for a JSON handler writing to a bytes
 // buffer for the duration of the test. The returned func returns the
 // accumulated log output as a single string.
 func captureLogs(t *testing.T) func() string {
 	t.Helper()
-	var buf bytes.Buffer
+	buf := &bufferSincronizado{}
 	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	slog.SetDefault(slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(prev) })
-	return func() string { return buf.String() }
+	return buf.String
 }
 
 // TestService_DrainEvents_FailingEnqueuer_LogsAndContinues verifies the
