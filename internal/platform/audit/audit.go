@@ -27,9 +27,22 @@ func HydrateAuditable(createdAt, updatedAt time.Time, createdBy, updatedBy uuid.
 	return Auditable{createdAt: createdAt, updatedAt: updatedAt, createdBy: createdBy, updatedBy: updatedBy}
 }
 
-// MarkUpdated stamps the audit with a new updatedAt and updatedBy.
+// MarkUpdated stamps the audit with a new updatedAt and updatedBy, taking the
+// time from the wall clock.
+//
+// Prefer MarkUpdatedAt when the caller already has the operation's timestamp:
+// an entity whose updatedAt comes from the wall clock cannot be asserted in a
+// test, and two entities mutated in the same operation get different stamps.
 func (a *Auditable) MarkUpdated(userID uuid.UUID) {
-	a.updatedAt = time.Now()
+	a.MarkUpdatedAt(time.Now(), userID)
+}
+
+// MarkUpdatedAt stamps the audit with the given time and updatedBy.
+//
+// This is the form domain methods should use: they receive now as a parameter
+// so the whole operation shares one instant and the result is deterministic.
+func (a *Auditable) MarkUpdatedAt(now time.Time, userID uuid.UUID) {
+	a.updatedAt = now
 	a.updatedBy = userID
 }
 
@@ -62,8 +75,19 @@ func HydrateTimestamped(createdAt, updatedAt time.Time) Timestamped {
 	return Timestamped{createdAt: createdAt, updatedAt: updatedAt}
 }
 
-// MarkUpdated bumps updatedAt to the current time.
-func (t *Timestamped) MarkUpdated() { t.updatedAt = time.Now() }
+// MarkUpdated bumps updatedAt to the wall clock time.
+//
+// Prefer MarkUpdatedAt when the caller already has the operation's timestamp.
+// See the note on Auditable.MarkUpdated for why.
+func (t *Timestamped) MarkUpdated() { t.MarkUpdatedAt(time.Now()) }
+
+// MarkUpdatedAt bumps updatedAt to the given time.
+//
+// This is the form domain methods should use: a state-machine entity that
+// receives now as a parameter can only honour it if the audit embed accepts
+// it too — otherwise the parameter travels all the way down and is dropped
+// here, which reads as deterministic and is not.
+func (t *Timestamped) MarkUpdatedAt(now time.Time) { t.updatedAt = now }
 
 // CreatedAt returns the original creation time.
 func (t *Timestamped) CreatedAt() time.Time { return t.createdAt }
