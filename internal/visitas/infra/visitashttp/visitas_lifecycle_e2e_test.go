@@ -189,7 +189,13 @@ func visitasE2EAssembleRouter(ctx context.Context, t *testing.T, pool *firebird.
 
 	dispatcher := &visitasSettableDispatcher{}
 	fiSvc := failedintenthttp.NewService(
-		fiStore, dispatcher, &visitasUsuarioLookup{cu: cu}, nil, nil, nil,
+		fiStore,
+		dispatcher,
+		&visitasUsuarioLookup{cu: cu},
+		nil,
+		nil,
+		nil,
+		nil,
 	)
 
 	root := chi.NewRouter()

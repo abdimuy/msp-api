@@ -17,6 +17,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -477,6 +479,108 @@ func TestE2E_Admin_BlobIntent_DTORevealsHasBlob(t *testing.T) {
 	assert.Equal(t, expectedContentType, detail.BodyContentType)
 }
 
+// TestE2E_AplicarFallido_SeCapturaAunqueNoSeListe protege el invariante de
+// que el corte por etapa sólo cambia lo que se LISTA, nunca lo que se
+// GUARDA. La captura de un /aplicar fallido es el único rastro de que una
+// venta no llegó a Microsip: si alguien "optimizara" el capturador para no
+// guardar lo que no se lista, se perdería esa evidencia sin que nada
+// avisara. Esta prueba debe romperse si eso pasa.
+func TestE2E_AplicarFallido_SeCapturaAunqueNoSeListe(t *testing.T) {
+	t.Parallel()
+
+	stub := newStubVentasHandler()
+	usuarioID := uuid.MustParse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
+	const fbUID = "e2e-aplicar-fallido-uid"
+	fakeFB := httptesting.NewFakeFirebase(fbUID)
+	fakeUsuarios := httptesting.NewFakeUsuarioRepo()
+	fakeUsuarios.AddUsuario(httptesting.AddUsuarioParams{
+		ID:          usuarioID,
+		FirebaseUID: fbUID,
+		Email:       "aplicar-fallido@example.invalid",
+		Nombre:      "Aplicar Fallido Tester",
+		Activo:      true,
+		Permissions: []authdomain.Permission{authdomain.PermFailedIntentsVer},
+	})
+
+	router := buildE2ERouter(t, e2eRouterDeps{
+		firebase:    fakeFB,
+		usuarios:    fakeUsuarios,
+		intentStore: newE2EIntentStore(),
+		idemStore:   httptesting.NewInMemoryIdempotencyStore(),
+		ventasStub:  stub,
+		usuarioID:   usuarioID,
+		rutasRaiz:   []string{"/v2/ventas", "/v2/cobranza/pagos", "/v2/visitas"},
+	})
+
+	// ── Creación fallida: cae bajo la ruta raíz del módulo ───────────────
+	reqCreacion := httptesting.NewE2ERequest(http.MethodPost, "/v2/ventas",
+		`{"venta_id":"v-aplicar-fallido","cliente":"z"}`,
+		httptesting.WithIdempotencyKey("aplicar-fallido-creacion"))
+	recCreacion := httptest.NewRecorder()
+	router.ServeHTTP(recCreacion, reqCreacion)
+	require.Equal(t, http.StatusUnprocessableEntity, recCreacion.Code,
+		"el stub debe rechazar la creación; body=%s", recCreacion.Body.String())
+
+	// ── /aplicar fallido: lleva un id en la ruta, no es una ruta raíz ────
+	ventaID := uuid.New().String()
+	reqAplicar := httptesting.NewE2ERequest(http.MethodPost, "/v2/ventas/"+ventaID+"/aplicar",
+		`{"venta_id":"v-aplicar-fallido"}`,
+		httptesting.WithIdempotencyKey("aplicar-fallido-aplicar"))
+	recAplicar := httptest.NewRecorder()
+	router.ServeHTTP(recAplicar, reqAplicar)
+	require.Equal(t, http.StatusUnprocessableEntity, recAplicar.Code,
+		"el stub también debe rechazar el /aplicar; body=%s", recAplicar.Body.String())
+
+	// ── Aserción 1: se guardó — etapa=todas debe traer el /aplicar ───────
+	reqTodas := httptesting.NewE2ERequest(http.MethodGet,
+		"/v2/_admin/failed-intents?etapa=todas&page_size=50", "")
+	recTodas := httptest.NewRecorder()
+	router.ServeHTTP(recTodas, reqTodas)
+	require.Equal(t, http.StatusOK, recTodas.Code,
+		"el listado con etapa=todas debe responder 200; body=%s", recTodas.Body.String())
+
+	var listaTodas listResponseDTO
+	require.NoError(t, json.Unmarshal(recTodas.Body.Bytes(), &listaTodas))
+	var encontroAplicar bool
+	for _, item := range listaTodas.Items {
+		if strings.HasSuffix(item.Path, "/aplicar") {
+			encontroAplicar = true
+			break
+		}
+	}
+	assert.True(t, encontroAplicar,
+		"el /aplicar fallido no quedó guardado: se perdió el único rastro de que "+
+			"esa venta no llegó a Microsip — el capturador no debe dejar de guardar "+
+			"lo que el listado por defecto ya no muestra")
+
+	// ── Aserción 2: no se lista por defecto (sin ?etapa) ─────────────────
+	reqDefault := httptesting.NewE2ERequest(http.MethodGet,
+		"/v2/_admin/failed-intents?page_size=50", "")
+	recDefault := httptest.NewRecorder()
+	router.ServeHTTP(recDefault, reqDefault)
+	require.Equal(t, http.StatusOK, recDefault.Code,
+		"el listado por defecto debe responder 200; body=%s", recDefault.Body.String())
+
+	var listaDefault listResponseDTO
+	require.NoError(t, json.Unmarshal(recDefault.Body.Bytes(), &listaDefault))
+
+	var incluyeVentas, incluyeAplicar bool
+	for _, item := range listaDefault.Items {
+		if item.Path == "/v2/ventas" {
+			incluyeVentas = true
+		}
+		if strings.Contains(item.Path, "/aplicar") {
+			incluyeAplicar = true
+		}
+	}
+	assert.True(t, incluyeVentas,
+		"el listado por defecto (etapa de captura) dejó fuera la creación /v2/ventas, "+
+			"que sí es una ruta raíz y debería listarse")
+	assert.False(t, incluyeAplicar,
+		"el /aplicar fallido apareció en el listado por defecto: el corte por etapa "+
+			"dejó de acotar y ahora expone filas posteriores a la captura")
+}
+
 // ─── helpers below ─────────────────────────────────────────────────────────────
 
 type e2eRouterDeps struct {
@@ -486,6 +590,9 @@ type e2eRouterDeps struct {
 	idemStore   idempotency.Store
 	ventasStub  *stubVentasHandler
 	usuarioID   uuid.UUID
+	// rutasRaiz se pasa tal cual a failedintenthttp.NewService; vacía (el
+	// default de las pruebas existentes) deja el listado sin acotar por etapa.
+	rutasRaiz []string
 }
 
 // buildE2ERouter assembles a chi router that mirrors the production
@@ -497,7 +604,7 @@ func buildE2ERouter(t *testing.T, d e2eRouterDeps) *chi.Mux {
 
 	dispatcher := &settableDispatcher{}
 	usuarioLookup := &e2eUsuarioLookup{repo: d.usuarios}
-	fiSvc := failedintenthttp.NewService(d.intentStore, dispatcher, usuarioLookup, nil, nil, nil)
+	fiSvc := failedintenthttp.NewService(d.intentStore, dispatcher, usuarioLookup, nil, nil, nil, d.rutasRaiz)
 
 	// nil provisioner: this suite drives the dispatcher path (CurrentUser is
 	// planted directly) and never exercises lazy enrollment.
@@ -517,6 +624,7 @@ func buildE2ERouter(t *testing.T, d e2eRouterDeps) *chi.Mux {
 		r.Group(func(r chi.Router) {
 			r.Use(authn.Handler, captureMW, idemMW)
 			r.Post("/ventas", d.ventasStub.ServeHTTP)
+			r.Post("/ventas/{id}/aplicar", d.ventasStub.ServeHTTP)
 		})
 
 		r.Route("/_admin/failed-intents", func(r chi.Router) {
@@ -625,6 +733,11 @@ func (s *e2eIntentStore) List(_ context.Context, p failedintent.ListParams) (fai
 				continue
 			}
 		}
+		// El corte por etapa: igualdad exacta de ruta, igual que el IN de SQL
+		// que arma el store real.
+		if len(p.RutasRaiz) > 0 && !slices.Contains(p.RutasRaiz, intent.Path) {
+			continue
+		}
 		items = append(items, intent)
 	}
 	return failedintent.Page[failedintent.Intent]{Items: items}, nil
@@ -718,7 +831,8 @@ func (l *e2eUsuarioLookup) BuildCurrentUserByID(ctx context.Context, id uuid.UUI
 
 type listResponseDTO struct {
 	Items []struct {
-		ID string `json:"id"`
+		ID   string `json:"id"`
+		Path string `json:"path"`
 	} `json:"items"`
 }
 

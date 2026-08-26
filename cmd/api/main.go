@@ -212,7 +212,7 @@ func appOptions() []fx.Option {
 			provideFailedIntentBlobStorage,
 			provideFailedIntentBlobStorageInterface,
 			provideFailedIntentResumenExtractor,
-			provideFailedIntentCaptureConfig,
+			provideFailedIntentCapturas,
 			provideSettableReplayDispatcher,
 			provideReplayDispatcher,
 			provideFailedIntentUsuarioLookup,

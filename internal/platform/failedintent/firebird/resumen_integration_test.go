@@ -367,3 +367,136 @@ func TestSave_Dedup_ElResumenNuevoRefrescaAlViejo(t *testing.T) {
 		assert.Equal(t, "1800", got.Resumen.Monto.String())
 	})
 }
+
+// ─── El corte por etapa ───────────────────────────────────────────────────────
+//
+// Esta pantalla existe para la etapa 1: la creación que NO llegó a la base.
+// Un `POST /v2/ventas` fallido no dejó venta en ninguna parte, y su fila aquí
+// es el único rastro. Todo lo que lleva un id en la ruta —`PATCH
+// /v2/ventas/{id}`, `POST /v2/ventas/{id}/aplicar`— es posterior: la venta ya
+// existe, y el renglón jamás podrá decir de quién es porque el cuerpo de esa
+// petición nunca llevó un nombre.
+//
+// La discriminación es estructural, no una heurística sobre mensajes de error:
+// si la ruta trae id, la fila ya existe.
+
+// rutasRaizDePrueba es la unión que en producción arma la raíz de composición
+// a partir de los prefijos de captura de cada módulo.
+var rutasRaizDePrueba = []string{"/v2/ventas", "/v2/cobranza/pagos", "/v2/visitas"}
+
+// sembrarEtapas guarda seis filas del mismo usuario cubriendo las tres etapas
+// de dos módulos. Las DOS creaciones son las más viejas a propósito: es lo que
+// vuelve detectable un filtro aplicado sobre la página ya recortada.
+func sembrarEtapas(
+	ctx context.Context, t *testing.T, s *failedintentfb.Store, usuario uuid.UUID,
+) map[string]failedintent.Intent {
+	t.Helper()
+
+	base := time.Now().UTC().Truncate(time.Millisecond)
+	rutas := []struct {
+		clave string
+		path  string
+		edad  time.Duration
+	}{
+		{"venta_creacion", "/v2/ventas", -5 * time.Hour},
+		{"pago_creacion", "/v2/cobranza/pagos", -4 * time.Hour},
+		{"venta_detalle", "/v2/ventas/" + uuid.New().String(), -3 * time.Hour},
+		{"venta_aplicar", "/v2/ventas/" + uuid.New().String() + "/aplicar", -2 * time.Hour},
+		{"pago_aplicar", "/v2/cobranza/pagos/" + uuid.New().String() + "/aplicar", -time.Hour},
+		{"venta_search", "/v2/ventas/_search/refresh", 0},
+	}
+
+	sembradas := make(map[string]failedintent.Intent, len(rutas))
+	for _, r := range rutas {
+		i := intentoConResumen("ventas", "Ana", "1000", "a")
+		i.Path = r.path
+		i.ReceivedAt = base.Add(r.edad)
+		i.UsuarioID = &usuario
+		require.NoError(t, saveOK(s.Save(ctx, i)))
+		sembradas[r.clave] = i
+	}
+	return sembradas
+}
+
+func TestList_AcotaALasRutasRaiz(t *testing.T) {
+	t.Parallel()
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	requireFailedIntentsTable(t, pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		s := failedintentfb.New(pool)
+		usuario := uuid.New()
+		sembradas := sembrarEtapas(ctx, t, s, usuario)
+
+		// Control positivo. La MISMA consulta sin el corte devuelve las seis:
+		// sin esto, un resultado "bien filtrado" abajo no se distingue de una
+		// consulta rota que no devuelve nada.
+		todas, err := s.List(ctx, failedintent.ListParams{
+			UsuarioID: &usuario, PageSize: 50,
+		})
+		require.NoError(t, err)
+		require.Len(t, todas.Items, len(sembradas), "el control positivo debe ver las seis")
+
+		acotada, err := s.List(ctx, failedintent.ListParams{
+			UsuarioID: &usuario, RutasRaiz: rutasRaizDePrueba, PageSize: 50,
+		})
+		require.NoError(t, err)
+
+		vistas := make(map[uuid.UUID]bool, len(acotada.Items))
+		for _, i := range acotada.Items {
+			vistas[i.ID] = true
+		}
+		assert.True(t, vistas[sembradas["venta_creacion"].ID], "POST /v2/ventas es una creación")
+		assert.True(t, vistas[sembradas["pago_creacion"].ID], "POST /v2/cobranza/pagos es una creación")
+		assert.False(t, vistas[sembradas["venta_detalle"].ID], "la ruta trae id: la venta ya existe")
+		assert.False(t, vistas[sembradas["venta_aplicar"].ID], "/aplicar es el empujón a Microsip")
+		assert.False(t, vistas[sembradas["pago_aplicar"].ID], "/aplicar es el empujón a Microsip")
+		assert.False(t, vistas[sembradas["venta_search"].ID], "no es la ruta exacta del recurso")
+		assert.Len(t, acotada.Items, 2)
+	})
+}
+
+// El corte va en SQL, no sobre la página ya recibida. La prueba pide UNA fila
+// sobre un conjunto donde las dos creaciones son las MÁS VIEJAS: si se filtrara
+// en memoria, la página de uno traería la más nueva —`/_search/refresh`— y el
+// filtro la descartaría, devolviendo cero.
+func TestList_ElCorteDeEtapaVaEnSQL(t *testing.T) {
+	t.Parallel()
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	requireFailedIntentsTable(t, pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		s := failedintentfb.New(pool)
+		usuario := uuid.New()
+		sembradas := sembrarEtapas(ctx, t, s, usuario)
+
+		page, err := s.List(ctx, failedintent.ListParams{
+			UsuarioID: &usuario, RutasRaiz: rutasRaizDePrueba, PageSize: 1,
+		})
+		require.NoError(t, err)
+		require.Len(t, page.Items, 1, "el corte debe correr en SQL, no sobre la página")
+		assert.Equal(t, sembradas["pago_creacion"].ID, page.Items[0].ID,
+			"la creación más nueva, no la fila más nueva")
+		assert.True(t, page.HasMore, "queda la otra creación por paginar")
+	})
+}
+
+// Una lista vacía no acota. Es lo que ve quien no tiene esa lista —el janitor,
+// las pruebas— y debe seguir viendo la tabla entera.
+func TestList_SinRutasRaizNoAcota(t *testing.T) {
+	t.Parallel()
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	requireFailedIntentsTable(t, pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		s := failedintentfb.New(pool)
+		usuario := uuid.New()
+		sembradas := sembrarEtapas(ctx, t, s, usuario)
+
+		page, err := s.List(ctx, failedintent.ListParams{
+			UsuarioID: &usuario, RutasRaiz: nil, PageSize: 50,
+		})
+		require.NoError(t, err)
+		assert.Len(t, page.Items, len(sembradas))
+	})
+}

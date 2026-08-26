@@ -158,7 +158,7 @@ func a2AssembleRouter(ctx context.Context, t *testing.T, pool *firebird.Pool, cu
 
 	dispatcher := &a2SettableDispatcher{}
 	fiSvc := failedintenthttp.NewService(
-		fiStore, dispatcher, &a2UsuarioLookup{cu: cu}, fiBlobs, nil, nil,
+		fiStore, dispatcher, &a2UsuarioLookup{cu: cu}, fiBlobs, nil, nil, nil,
 	)
 
 	root := chi.NewRouter()

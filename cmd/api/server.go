@@ -148,7 +148,7 @@ func provideRootHandler(
 	authUsuarios outbound.UsuarioRepo,
 	idemStore idempotency.Store,
 	ventasSvc *ventasapp.Service,
-	fiCaptureCfg failedintent.Config,
+	fiCapturas failedIntentCapturas,
 	fiSvc *failedintenthttp.Service,
 	cobranzaSvc *cobranzaapp.Service,
 	cobranzaReconciler *cobranzaapp.Reconciler,
@@ -203,40 +203,12 @@ func provideRootHandler(
 		Methods:    []string{http.MethodPost, http.MethodPatch},
 		RequireKey: false,
 	})
-	capture := failedintent.CaptureMiddleware(fiCaptureCfg)
-
-	// cobranzaCapture is a second capture instance scoped to the cobranza pago
-	// WRITE path. Pagos are real money: a POST /v2/cobranza/pagos that the
-	// server rejects (422 pago_cargo_no_encontrado / pago_fecha_muy_antigua /
-	// importe_excede_saldo, etc.) must leave a durable audit row a human can
-	// inspect, correct via /replay-with-multipart, and re-dispatch — never a
-	// silently-lost payment. The default fiCaptureCfg is pinned to /v2/ventas,
-	// so cobranza needs its own path/method filter. Reuses the same Store, Blob
-	// and size cap; only POST is captured (GET reads and the streaming imagen
-	// downloads never match). Idempotency stays at the repo layer (body.id), so
-	// no idem middleware is added here.
-	cobranzaCapture := failedintent.CaptureMiddleware(failedintent.Config{
-		Store:             fiCaptureCfg.Store,
-		Blob:              fiCaptureCfg.Blob,
-		Resumen:           fiCaptureCfg.Resumen,
-		MaxMultipartBytes: fiCaptureCfg.MaxMultipartBytes,
-		PathPrefixes:      []string{"/v2/cobranza/pagos"},
-		Methods:           []string{http.MethodPost},
-	})
-
-	// visitasCapture is a third capture instance scoped to the visitas
-	// write path. JSON-only (no multipart, no Blob/MaxMultipartBytes) — a
-	// visita has no comprobante attachments, unlike a pago.
-	visitasCapture := failedintent.CaptureMiddleware(failedintent.Config{
-		Store:   fiCaptureCfg.Store,
-		Resumen: fiCaptureCfg.Resumen,
-		// El registro no tiene extractor para /v2/visitas, así que estas filas
-		// quedan sin módulo y sin resumen. Se pasa igual para que el día que
-		// visitas quiera un renglón legible baste registrar su extractor —
-		// nada más en esta línea puede olvidarse.
-		PathPrefixes: []string{"/v2/visitas"},
-		Methods:      []string{http.MethodPost},
-	})
+	// Las tres configuraciones de captura (ventas/cobranza/visitas) se
+	// declaran una sola vez en failedIntentCapturas (cmd/api/failedintent_wiring.go);
+	// aquí sólo se instancian los middlewares.
+	capture := failedintent.CaptureMiddleware(fiCapturas.Ventas)
+	cobranzaCapture := failedintent.CaptureMiddleware(fiCapturas.Cobranza)
+	visitasCapture := failedintent.CaptureMiddleware(fiCapturas.Visitas)
 
 	// API surface. Module routers mount under /v2.
 	r.Route("/v2", func(r chi.Router) {

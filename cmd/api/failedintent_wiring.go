@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sync/atomic"
 
 	"github.com/google/uuid"
@@ -146,20 +147,104 @@ func provideFailedIntentResumenExtractor() failedintent.ResumenExtractor {
 		Registrar("/v2/cobranza/pagos", "pagos", cobranzafailedintents.NewResumenExtractor())
 }
 
-// provideFailedIntentCaptureConfig assembles the CaptureMiddleware config
-// wiring the configured MaxMultipartBytes plus the blob storage so
-// multipart /v2/ventas bodies opt into capture.
-func provideFailedIntentCaptureConfig(
+// failedIntentCapturas es el único sitio donde se declara qué prefijo captura
+// cada módulo. La ruta raíz de un módulo ES exactamente su prefijo de
+// captura, así que la lista que alimenta el listado (RutasRaiz) se deriva de
+// aquí en vez de escribirse aparte: no hay una segunda lista con la que
+// desincronizarse: registrar un capturador nuevo y olvidar el listado deja de
+// ser posible.
+//
+// Lo que sí puede pasar es registrar uno sin pensar en la pantalla. Contra eso
+// está TestFailedIntentRutasRaiz_SonLasTresConocidas, que ancla el conjunto:
+// añadir un cuarto módulo rompe la prueba y obliga a decidir a propósito si su
+// ruta raíz entra al listado.
+type failedIntentCapturas struct {
+	Ventas   failedintent.Config
+	Cobranza failedintent.Config
+	Visitas  failedintent.Config
+}
+
+// todas devuelve los tres capturadores en orden fijo. El orden importa para
+// que RutasRaiz produzca una salida estable.
+func (c failedIntentCapturas) todas() []failedintent.Config {
+	return []failedintent.Config{c.Ventas, c.Cobranza, c.Visitas}
+}
+
+// RutasRaiz devuelve la unión de los PathPrefixes de los tres capturadores,
+// deduplicada y en el orden estable de todas() — sin mapas, para que el
+// orden no dependa de la iteración no determinista de Go sobre mapas.
+func (c failedIntentCapturas) RutasRaiz() []string {
+	var rutas []string
+	for _, cfg := range c.todas() {
+		for _, p := range cfg.PathPrefixes {
+			if !slices.Contains(rutas, p) {
+				rutas = append(rutas, p)
+			}
+		}
+	}
+	return rutas
+}
+
+// provideFailedIntentCapturas assembles the CaptureMiddleware config for each
+// captured module. It replaces provideFailedIntentCaptureConfig: only the
+// ventas config lived here, while cobranza's and visitas' were built inline
+// inside provideRootHandler — their prefixes were declared nowhere a caller
+// could read them, which is why the listing could not derive its own list.
+func provideFailedIntentCapturas(
 	store failedintent.Store,
 	blob failedintent.BlobStorage,
 	resumen failedintent.ResumenExtractor,
 	cfg *config.Config,
-) failedintent.Config {
-	return failedintent.Config{
+) failedIntentCapturas {
+	ventas := failedintent.Config{
 		Store:             store,
 		Blob:              blob,
 		Resumen:           resumen,
 		MaxMultipartBytes: cfg.FailedIntent.MaxMultipartBytes,
+		// Explícito porque hoy es el default implícito de Config.defaults();
+		// un prefijo implícito no aparece en PathPrefixes hasta que
+		// defaults() corre dentro del middleware, y para entonces ya es
+		// tarde para la unión que arma RutasRaiz — declararlo aquí es la
+		// única forma de que la ruta de ventas entre al listado.
+		PathPrefixes: []string{"/v2/ventas"},
+	}
+
+	// cobranza is a second capture instance scoped to the cobranza pago
+	// WRITE path. Pagos are real money: a POST /v2/cobranza/pagos that the
+	// server rejects (422 pago_cargo_no_encontrado / pago_fecha_muy_antigua /
+	// importe_excede_saldo, etc.) must leave a durable audit row a human can
+	// inspect, correct via /replay-with-multipart, and re-dispatch — never a
+	// silently-lost payment. Reuses the same Store, Blob and size cap; only
+	// POST is captured (GET reads and the streaming imagen downloads never
+	// match). Idempotency stays at the repo layer (body.id), so no idem
+	// middleware is added here.
+	cobranza := failedintent.Config{
+		Store:             store,
+		Blob:              blob,
+		Resumen:           resumen,
+		MaxMultipartBytes: cfg.FailedIntent.MaxMultipartBytes,
+		PathPrefixes:      []string{"/v2/cobranza/pagos"},
+		Methods:           []string{http.MethodPost},
+	}
+
+	// visitas is a third capture instance scoped to the visitas write path.
+	// JSON-only (no multipart, no Blob/MaxMultipartBytes) — a visita has no
+	// comprobante attachments, unlike a pago.
+	visitas := failedintent.Config{
+		Store:   store,
+		Resumen: resumen,
+		// El registro no tiene extractor para /v2/visitas, así que estas
+		// filas quedan sin módulo y sin resumen. Se pasa igual para que el
+		// día que visitas quiera un renglón legible baste registrar su
+		// extractor — nada más en esta línea puede olvidarse.
+		PathPrefixes: []string{"/v2/visitas"},
+		Methods:      []string{http.MethodPost},
+	}
+
+	return failedIntentCapturas{
+		Ventas:   ventas,
+		Cobranza: cobranza,
+		Visitas:  visitas,
 	}
 }
 
@@ -182,13 +267,20 @@ func provideFailedIntentUsuarioLookup(repo authoutbound.UsuarioRepo) failedinten
 // provideFailedIntentHTTPService wires the admin handlers. The blob storage
 // is required so /replay can stream multipart bodies from disk back through
 // the dispatcher byte-exact.
+//
+// capturas.RutasRaiz() acota el listado por defecto a la etapa 1: la
+// pantalla existe para las creaciones que no llegaron a quedar en ninguna
+// tabla — un intento con id ya tiene fila, así que no pertenece aquí por
+// default. Esas rutas son exactamente los prefijos que cada capturador
+// declara, por eso se derivan de capturas en vez de escribirse aparte.
 func provideFailedIntentHTTPService(
 	store failedintent.Store,
 	dispatcher failedintent.ReplayDispatcher,
 	usuarios failedintenthttp.UsuarioLookup,
 	blobs failedintent.BlobStorage,
+	capturas failedIntentCapturas,
 ) *failedintenthttp.Service {
-	return failedintenthttp.NewService(store, dispatcher, usuarios, blobs, nil, nil)
+	return failedintenthttp.NewService(store, dispatcher, usuarios, blobs, nil, nil, capturas.RutasRaiz())
 }
 
 // provideFailedIntentResolutionChecker conecta el puerto invertido de

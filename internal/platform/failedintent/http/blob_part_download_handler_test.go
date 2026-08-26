@@ -32,7 +32,7 @@ func TestBlobPartDownload_HappyPath_StreamsBytesAndSetsHeaders(t *testing.T) {
 	seedIntent(t, store, intent)
 	blobs.put("/blob/dl", body)
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -65,7 +65,7 @@ func TestBlobPartDownload_StreamsJSONFieldAsWell(t *testing.T) {
 	seedIntent(t, store, intent)
 	blobs.put("/blob/fld", body)
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -110,7 +110,7 @@ func TestBlobPartDownload_ForcesAttachmentAndAllowlistsContentType(t *testing.T)
 	seedIntent(t, store, intent)
 	blobs.put("/blob/xss", bodyBytes)
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -149,7 +149,7 @@ func TestBlobPartDownload_NegativeIndex_Returns422(t *testing.T) {
 
 	store := newMemoryStore()
 	blobs := newMemoryBlobs()
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -168,7 +168,7 @@ func TestBlobPartDownload_NonIntegerIndex_Returns422(t *testing.T) {
 
 	store := newMemoryStore()
 	blobs := newMemoryBlobs()
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -194,7 +194,7 @@ func TestBlobPartDownload_OutOfRange_Returns422(t *testing.T) {
 	seedIntent(t, store, intent)
 	blobs.put("/blob/oor", body)
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -216,7 +216,7 @@ func TestBlobPartDownload_NoBlob_Returns422(t *testing.T) {
 	id := uuid.New()
 	seedIntent(t, store, makeIntent(id, time.Now().UTC()))
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -234,7 +234,7 @@ func TestBlobPartDownload_NotFound_Returns404(t *testing.T) {
 
 	store := newMemoryStore()
 	blobs := newMemoryBlobs()
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -264,7 +264,7 @@ func TestBlobPartDownload_LargeIndexFormat(t *testing.T) {
 	seedIntent(t, store, intent)
 	blobs.put("/blob/big", body)
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 

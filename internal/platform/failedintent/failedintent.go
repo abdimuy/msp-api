@@ -213,6 +213,25 @@ type ListParams struct {
 	// Lo usa el relleno del janitor; el listado del escritorio nunca lo
 	// enciende.
 	SinExtraer bool
+	// RutasRaiz, cuando no está vacía, acota el resultado a las filas cuyo
+	// PATH es EXACTAMENTE una de esas rutas.
+	//
+	// Es el corte por etapa. Una petición a la ruta raíz de un módulo
+	// —`POST /v2/ventas`— es una creación: si falló, la venta no quedó en
+	// ninguna parte y esta pantalla es su único rastro. Una petición con id
+	// en la ruta —`/v2/ventas/{id}/aplicar`, `PATCH /v2/ventas/{id}`— es
+	// posterior: la fila YA existe, y el renglón nunca podrá decir de quién
+	// es porque el cuerpo de esa petición jamás llevó un nombre.
+	//
+	// La lista NO se arma aquí. Esta plataforma no sabe —ni debe saber— qué
+	// ruta de qué módulo es una creación: eso lo sabe la raíz de composición,
+	// que es donde se declaran los prefijos de captura de cada módulo. Se
+	// pasa desde ahí para que no exista una segunda lista capaz de
+	// desincronizarse de la primera.
+	//
+	// Vacía significa "sin acotar", que es la respuesta correcta para quien
+	// no tiene esa lista (las pruebas, el janitor).
+	RutasRaiz []string
 	// PageSize is clamped to [1, 100] by implementations.
 	PageSize int
 }

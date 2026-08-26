@@ -108,7 +108,7 @@ func TestBlobParts_NotFound_Returns404(t *testing.T) {
 
 	store := newMemoryStore()
 	blobs := newMemoryBlobs()
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -131,7 +131,7 @@ func TestBlobParts_NoBlob_Returns422(t *testing.T) {
 	// JSON intent — no blob.
 	seedIntent(t, store, makeIntent(id, time.Now().UTC()))
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -155,7 +155,7 @@ func TestBlobParts_BlobMissingFromDisk_Returns500BlobUnavailable(t *testing.T) {
 	intent.BodyContentType = "multipart/form-data; boundary=---x"
 	seedIntent(t, store, intent)
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -180,7 +180,7 @@ func TestBlobParts_NonMultipartContentType_Returns422(t *testing.T) {
 	seedIntent(t, store, intent)
 	blobs.put("/blob/x", []byte("{}"))
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -207,7 +207,7 @@ func TestBlobParts_HappyPath_ReturnsStructuredParts(t *testing.T) {
 	seedIntent(t, store, intent)
 	blobs.put("/blob/ok", body)
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 

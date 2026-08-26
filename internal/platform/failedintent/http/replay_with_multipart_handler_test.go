@@ -84,7 +84,7 @@ func TestReplayWithMultipart_HappyPath_DispatchesReassembledBody(t *testing.T) {
 
 	dispatcher := &fakeDispatcher{respondStatus: http.StatusCreated, respondBody: []byte(`{"ok":true}`)}
 	lookup := &stubUsuarioLookup{user: auth.CurrentUser{ID: userID}}
-	svc := failedintenthttp.NewService(store, dispatcher, lookup, blobs, nil, nil)
+	svc := failedintenthttp.NewService(store, dispatcher, lookup, blobs, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -224,7 +224,7 @@ func TestReplayWithMultipart_MissingManifest_Returns422(t *testing.T) {
 	seedIntent(t, store, intent)
 	blobs.put("/blob/m", body)
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -255,7 +255,7 @@ func TestReplayWithMultipart_MalformedManifestJSON_Returns422(t *testing.T) {
 	seedIntent(t, store, intent)
 	blobs.put("/blob/m2", body)
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -284,7 +284,7 @@ func TestReplayWithMultipart_JSONIntent_Returns422(t *testing.T) {
 	// JSON intent — no blob.
 	seedIntent(t, store, makeIntent(id, time.Now().UTC()))
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -320,8 +320,15 @@ func TestReplayWithMultipart_UploadFieldReferencedButMissing_Returns422(t *testi
 	seedIntent(t, store, intent)
 	blobs.put("/blob/upload-missing", body)
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{},
-		&stubUsuarioLookup{user: auth.CurrentUser{ID: userID}}, blobs, nil, nil)
+	svc := failedintenthttp.NewService(
+		store,
+		&fakeDispatcher{},
+		&stubUsuarioLookup{user: auth.CurrentUser{ID: userID}},
+		blobs,
+		nil,
+		nil,
+		nil,
+	)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -363,8 +370,15 @@ func TestReplayWithMultipart_KeepIndexOutOfRange_Returns422(t *testing.T) {
 	seedIntent(t, store, intent)
 	blobs.put("/blob/oor", body)
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{},
-		&stubUsuarioLookup{user: auth.CurrentUser{ID: userID}}, blobs, nil, nil)
+	svc := failedintenthttp.NewService(
+		store,
+		&fakeDispatcher{},
+		&stubUsuarioLookup{user: auth.CurrentUser{ID: userID}},
+		blobs,
+		nil,
+		nil,
+		nil,
+	)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -397,7 +411,7 @@ func TestReplayWithMultipart_IntentNotFound_Returns404(t *testing.T) {
 
 	store := newMemoryStore()
 	blobs := newMemoryBlobs()
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -433,7 +447,7 @@ func TestReplayWithMultipart_IntentMissingUsuario_Returns422(t *testing.T) {
 	seedIntent(t, store, intent)
 	blobs.put("/blob/no-usr", body)
 
-	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil)
+	svc := failedintenthttp.NewService(store, &fakeDispatcher{}, &stubUsuarioLookup{}, blobs, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 
@@ -475,7 +489,7 @@ func TestReplayWithMultipart_FreshIdempotencyKey(t *testing.T) {
 
 	dispatcher := &fakeDispatcher{respondStatus: http.StatusOK}
 	lookup := &stubUsuarioLookup{user: auth.CurrentUser{ID: userID}}
-	svc := failedintenthttp.NewService(store, dispatcher, lookup, blobs, nil, nil)
+	svc := failedintenthttp.NewService(store, dispatcher, lookup, blobs, nil, nil, nil)
 	cu := defaultCU()
 	r := newRouter(t, svc, &cu)
 

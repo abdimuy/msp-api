@@ -47,6 +47,13 @@ type Service struct {
 	partsInspector *failedintent.BlobPartsInspector
 	clock          func() time.Time
 	newID          func() uuid.UUID
+	// rutasRaiz son las rutas de creación de los módulos que capturan: la
+	// unión de sus prefijos de captura, armada en la raíz de composición.
+	//
+	// Vive aquí y no en el transporte porque este paquete no sabe —ni debe
+	// saber— qué ruta de qué módulo es una creación. Vacía significa "sin
+	// acotar": el listado se comporta como antes de este corte.
+	rutasRaiz []string
 }
 
 // NewService constructs a Service. Nil clock and newID are replaced with
@@ -54,6 +61,10 @@ type Service struct {
 // blobs is optional: pass nil when the deployment does not opt into
 // multipart capture; in that case Replay falls back to the inline body and
 // any intent that does carry a BodyBlobPath surfaces a clear error.
+//
+// rutasRaiz también es opcional: nil deja el listado sin acotar por etapa.
+// En producción llega desde la raíz de composición con la unión de los
+// prefijos de captura de cada módulo.
 func NewService(
 	store failedintent.Store,
 	dispatcher failedintent.ReplayDispatcher,
@@ -61,6 +72,7 @@ func NewService(
 	blobs failedintent.BlobStorage,
 	clock func() time.Time,
 	newID func() uuid.UUID,
+	rutasRaiz []string,
 ) *Service {
 	if clock == nil {
 		clock = time.Now
@@ -80,13 +92,35 @@ func NewService(
 		partsInspector: inspector,
 		clock:          clock,
 		newID:          newID,
+		rutasRaiz:      rutasRaiz,
 	}
 }
 
-// parseListQuery parses the cursor, page_size, and status query parameters
-// shared by Listar and MeListar. The returned ListParams has UsuarioID unset;
-// callers that need per-user scoping must set it themselves.
-func parseListQuery(r *http.Request) (failedintent.ListParams, error) {
+// Valores del parámetro `etapa` del listado.
+//
+// Aquí SÍ hay lista cerrada, al revés que en `modulo`: son dos valores del
+// propio transporte, no nombres que otro módulo pueda registrar. Un valor
+// desconocido es un 422 y no un filtro silencioso.
+const (
+	// etapaCaptura —el valor por defecto— acota a las creaciones: las
+	// peticiones que no dejaron fila en ninguna parte y para las que existe
+	// esta pantalla.
+	etapaCaptura = "captura"
+	// etapaTodas devuelve también las etapas posteriores. Es el escape que
+	// deja que la evidencia siga siendo alcanzable: un `/aplicar` fallido es
+	// el único rastro de que un pago o una venta no llegó a Microsip, y ese
+	// rastro ya ha hecho falta antes.
+	etapaTodas = "todas"
+)
+
+// parseListQuery parses the cursor, page_size, status, modulo and etapa query
+// parameters shared by Listar and MeListar. The returned ListParams has
+// UsuarioID unset; callers that need per-user scoping must set it themselves.
+//
+// rutasRaiz son las rutas de creación conocidas por la raíz de composición.
+// Vacía deja el listado sin acotar aunque se pida la etapa de captura — no hay
+// forma de saber aquí qué ruta es una creación.
+func parseListQuery(r *http.Request, rutasRaiz []string) (failedintent.ListParams, error) {
 	q := r.URL.Query()
 
 	cursorStr := q.Get("cursor")
@@ -105,10 +139,27 @@ func parseListQuery(r *http.Request) (failedintent.ListParams, error) {
 		}
 	}
 
+	etapa := strings.TrimSpace(q.Get("etapa"))
+	if etapa == "" {
+		etapa = etapaCaptura
+	}
+	var acotarA []string
+	switch etapa {
+	case etapaCaptura:
+		acotarA = rutasRaiz
+	case etapaTodas:
+		acotarA = nil
+	default:
+		return failedintent.ListParams{}, apperror.NewValidation(
+			"invalid_etapa", "la etapa debe ser captura o todas",
+		)
+	}
+
 	return failedintent.ListParams{
 		CursorReceivedAt: cursorAt,
 		CursorID:         cursorID,
 		Status:           statusFilter,
+		RutasRaiz:        acotarA,
 		// El filtro de los chips (Todo / Ventas / Pagos). No se valida contra
 		// una lista cerrada a propósito: los módulos se registran en cmd/api y
 		// uno nuevo debe poder filtrarse sin tocar este archivo. Un módulo que
@@ -139,7 +190,7 @@ func buildListResponse(page failedintent.Page[failedintent.Intent]) ListResponse
 
 // Listar handles GET / — cursor-paginated list of intents.
 func (s *Service) Listar(w http.ResponseWriter, r *http.Request) {
-	params, err := parseListQuery(r)
+	params, err := parseListQuery(r, s.rutasRaiz)
 	if err != nil {
 		response.Error(w, r, err)
 		return
@@ -164,7 +215,7 @@ func (s *Service) MeListar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	params, err := parseListQuery(r)
+	params, err := parseListQuery(r, s.rutasRaiz)
 	if err != nil {
 		response.Error(w, r, err)
 		return

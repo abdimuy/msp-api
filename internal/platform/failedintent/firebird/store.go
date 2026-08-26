@@ -418,6 +418,20 @@ func (s *Store) List(
 	if p.SinExtraer {
 		where = append(where, "MODULO IS NULL AND RESUMEN IS NULL")
 	}
+	if len(p.RutasRaiz) > 0 {
+		// El corte por etapa. Va en SQL por lo mismo que el de los chips:
+		// recortar la página ya recibida mostraría "las creaciones que
+		// cupieron en los primeros veinte renglones" y nada advertiría del
+		// resto. Igualdad exacta y no STARTING WITH — `/v2/ventas` y
+		// `/v2/ventas/{id}/aplicar` son etapas distintas y un prefijo las
+		// metería a las dos en el mismo saco.
+		marcadores := make([]string, 0, len(p.RutasRaiz))
+		for _, ruta := range p.RutasRaiz {
+			marcadores = append(marcadores, "?")
+			args = append(args, ruta)
+		}
+		where = append(where, "PATH IN ("+strings.Join(marcadores, ", ")+")")
+	}
 
 	q := buildListQuery(where)
 	q2 := firebird.GetQuerier(ctx, s.pool.DB)
