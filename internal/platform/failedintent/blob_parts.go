@@ -102,6 +102,21 @@ func NewBlobPartsInspector(storage BlobStorage) *BlobPartsInspector {
 // boundary parsed out of contentType, and returns the structural summary.
 // File bytes are NOT read into memory — only metadata. Field bytes up to
 // MaxInlineFieldBytes are inlined; oversize fields degrade to file kind.
+//
+// **Devuelve las partes que alcanzó a leer JUNTO CON el error.** No es un
+// detalle de estilo: medido en producción el 2026-08-25, de 71 ventas
+// pendientes con cuerpo en disco, 54 tenían el blob TRUNCADO —la subida del
+// teléfono se cortó, o el handler dejó de leer al rechazar— y el parseo moría
+// en la parte 1, 2 o 5. Nunca en la 0. La parte 0 es el campo `datos`, con el
+// nombre del cliente y el monto: devolver `nil` al primer fallo tiraba el dato
+// que sí estaba ahí, y la pantalla mostraba "Sin nombre capturado" en 54 filas
+// que se podían leer perfectamente.
+//
+// Quien necesite el manifiesto COMPLETO —el reensamblador, el editor de
+// partes— debe seguir comprobando el error antes de usar el resultado: un
+// manifiesto a medias serviría para leer, no para reconstruir el cuerpo.
+// Quien sólo quiera lo que haya —la extracción del resumen— puede usar las
+// partes aunque venga error.
 func (i *BlobPartsInspector) ListParts(
 	ctx context.Context, blobPath, contentType string,
 ) ([]BlobPart, error) {
@@ -124,12 +139,12 @@ func (i *BlobPartsInspector) ListParts(
 			break
 		}
 		if perr != nil {
-			return nil, fmt.Errorf("failedintent: parse part %d: %w", index, perr)
+			return parts, fmt.Errorf("failedintent: parse part %d: %w", index, perr)
 		}
 		bp, parseErr := readPart(part, index)
 		_ = part.Close()
 		if parseErr != nil {
-			return nil, fmt.Errorf("failedintent: read part %d: %w", index, parseErr)
+			return parts, fmt.Errorf("failedintent: read part %d: %w", index, parseErr)
 		}
 		parts = append(parts, bp)
 	}

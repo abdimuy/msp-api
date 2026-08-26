@@ -214,12 +214,23 @@ func ResumenDeIntento(
 		// cuerpo vacío.
 		return conModuloSolo(ex, i.Path)
 	}
+	// ListParts devuelve lo que alcanzó a leer JUNTO CON el error. Aquí eso
+	// es la diferencia entre un renglón legible y uno que dice "Sin nombre
+	// capturado": un blob truncado —la subida se cortó, o el handler dejó de
+	// leer al rechazar— revienta en una parte intermedia, pero la parte 0 es
+	// el campo `datos`, con el nombre y el monto, y esa ya se leyó.
+	//
+	// Medido en producción el 2026-08-25: 54 de 71 ventas pendientes tenían el
+	// blob truncado y las 54 traían su parte 0 intacta.
 	partes, err := NewBlobPartsInspector(blob).ListParts(ctx, i.BodyBlobPath, i.BodyContentType)
 	if err != nil {
 		slog.WarnContext(
-			ctx, "failedintent: no se pudo leer el cuerpo en disco para el resumen",
-			"error", err, "intent_id", i.ID.String(), "path", i.Path,
+			ctx, "failedintent: el cuerpo en disco está incompleto; se usa lo que se pudo leer",
+			"error", err, "partes_leidas", len(partes),
+			"intent_id", i.ID.String(), "path", i.Path,
 		)
+	}
+	if len(partes) == 0 {
 		return conModuloSolo(ex, i.Path)
 	}
 	return ResumenDePartes(ex, i.Path, partes)

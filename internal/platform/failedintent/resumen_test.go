@@ -483,6 +483,90 @@ func TestResumenDePartesNoOfreceLosArchivosAunqueTraiganBytes(t *testing.T) {
 	}
 }
 
+// El caso que se midió en PRODUCCIÓN y que costaba 54 renglones ilegibles.
+//
+// Un blob truncado —la subida del teléfono se cortó, o el handler dejó de leer
+// al rechazar la venta— revienta el parseo en una parte intermedia. Pero la
+// parte 0 es el campo `datos`, con el nombre del cliente, y ésa ya se leyó
+// entera. Devolver nil al primer fallo tiraba el dato que sí estaba ahí.
+//
+// Medido el 2026-08-25 sobre MSP_FAILED_INTENTS: de 71 ventas pendientes con
+// cuerpo en disco, 54 tenían el blob truncado, y en las 54 el error era en la
+// parte 1 o posterior. En ninguna en la 0.
+func TestResumenDeIntentoUsaLoQueSePudoLeerDeUnBlobTruncado(t *testing.T) {
+	t.Parallel()
+
+	// Se arma un multipart bien formado y se le corta la cola a la mitad de la
+	// segunda parte, que es exactamente lo que hay en disco.
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	_ = w.WriteField("datos", `{"cliente":{"nombre":"Carmen López Zavaleta"}}`)
+	fw, err := w.CreateFormFile("imagen", "ine.jpg")
+	if err != nil {
+		t.Fatalf("CreateFormFile: %v", err)
+	}
+	if _, err := fw.Write(bytes.Repeat([]byte{0xAB}, 4096)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_ = w.Close()
+
+	completo := buf.Bytes()
+	truncado := completo[:len(completo)-2048] // se corta dentro de la foto
+
+	blob := nuevoBlobEnMemoria()
+	blob.datos["cortado.bin"] = truncado
+
+	reg := failedintent.NewRegistroExtractores().
+		Registrar("/v2/ventas", "ventas", extractorFn(
+			func(_ string, body []byte, _ string) *failedintent.Resumen {
+				if !bytes.Contains(body, []byte(`"cliente"`)) {
+					return nil
+				}
+				return &failedintent.Resumen{Titulo: "Carmen López Zavaleta"}
+			},
+		))
+
+	intento := failedintent.Intent{
+		Path: "/v2/ventas", BodyBlobPath: "cortado.bin",
+		BodyContentType: w.FormDataContentType(),
+	}
+	got := failedintent.ResumenDeIntento(context.Background(), reg, blob, intento)
+	if got == nil {
+		t.Fatal("un blob truncado con la parte 0 intacta SÍ tiene nombre")
+	}
+	if got.Titulo != "Carmen López Zavaleta" {
+		t.Fatalf("Titulo = %q, quiero el nombre que sí estaba en el blob", got.Titulo)
+	}
+	if got.Modulo != "ventas" {
+		t.Fatalf("Modulo = %q", got.Modulo)
+	}
+}
+
+// Y el control por el otro lado: un blob tan roto que ni la parte 0 sale deja
+// sólo el módulo. No se inventa nada.
+func TestResumenDeIntentoBlobRotoDesdeElPrincipio(t *testing.T) {
+	t.Parallel()
+
+	blob := nuevoBlobEnMemoria()
+	blob.datos["basura.bin"] = []byte("esto no es un multipart")
+
+	reg := failedintent.NewRegistroExtractores().
+		Registrar("/v2/ventas", "ventas", extractorFn(
+			func(_ string, _ []byte, _ string) *failedintent.Resumen {
+				return &failedintent.Resumen{Titulo: "no debería salir"}
+			},
+		))
+
+	intento := failedintent.Intent{
+		Path: "/v2/ventas", BodyBlobPath: "basura.bin",
+		BodyContentType: "multipart/form-data; boundary=----X",
+	}
+	got := failedintent.ResumenDeIntento(context.Background(), reg, blob, intento)
+	if got == nil || got.Modulo != "ventas" || !got.Vacio() {
+		t.Fatalf("got %+v, quiero sólo el módulo", got)
+	}
+}
+
 // El módulo se conoce por la ruta aunque ninguna parte se reconozca. Ese
 // resumen vacío-con-módulo es lo que mantiene la fila dentro del chip.
 func TestResumenDeIntentoConservaElModuloCuandoNingunCampoSirve(t *testing.T) {

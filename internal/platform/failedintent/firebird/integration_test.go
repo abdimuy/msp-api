@@ -679,7 +679,8 @@ func TestPurgeOlderThan_RemovesAndReturnsCount_PlusBlobPaths(t *testing.T) {
 		// rollback tx and assert our 3 seeded rows *on top of* that baseline,
 		// and that our seeded blob paths are a SUBSET of the purged paths.
 		var baselineOld int64
-		require.NoError(t, q.QueryRowContext(ctx,
+		require.NoError(t, q.QueryRowContext(
+			ctx,
 			`SELECT COUNT(*) FROM MSP_FAILED_INTENTS WHERE RECEIVED_AT < ?`,
 			firebird.ToWallClock(cutoff),
 		).Scan(&baselineOld))
