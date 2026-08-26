@@ -137,7 +137,8 @@ func (s *Store) findPendienteConClave(
 	}
 	if err != nil {
 		return nil, fmt.Errorf(
-			"failedintent.firebird: buscar pendiente %s/%s: %w", path, key, firebird.MapError(err))
+			"failedintent.firebird: buscar pendiente %s/%s: %w", path, key, firebird.MapError(err),
+		)
 	}
 	prev.truncated = charToTruncated(truncated)
 	prev.id = strings.TrimSpace(prev.id)
@@ -187,6 +188,7 @@ func (s *Store) fundirEn(
 			nullableString(i.BodyBlobPath),
 			nullableString(i.BodyContentType))
 	}
+	sets, args = fundirResumen(sets, args, i)
 	args = append(args, prev.id, string(failedintent.StatusNew))
 
 	//nolint:gosec // sets viene de literales de este archivo; los valores van por parámetro.
@@ -197,7 +199,8 @@ func (s *Store) fundirEn(
 	res, err := q2.ExecContext(ctx, q, args...)
 	if err != nil {
 		return failedintent.SaveOutcome{}, fmt.Errorf(
-			"failedintent.firebird: fundir en %s: %w", prev.id, firebird.MapError(err))
+			"failedintent.firebird: fundir en %s: %w", prev.id, firebird.MapError(err),
+		)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		// La fila dejó de estar pendiente entre la lectura y el UPDATE —
@@ -220,6 +223,33 @@ func (s *Store) fundirEn(
 		out.OrphanedBlobPath = ""
 	}
 	return out, nil
+}
+
+// fundirResumen añade MODULO/RESUMEN al UPDATE de la fusión, y sólo cuando el
+// intento nuevo los trae.
+//
+// Es la misma regla que gobierna el cuerpo —**nunca sustituir uno bueno por
+// uno peor**— aplicada al resumen. Un reintento cuyo blob no se pudo guardar
+// llega sin resumen; escribirlo encima borraría el nombre y el monto que el
+// intento anterior sí alcanzó a extraer, y el renglón se apagaría solo.
+func fundirResumen(sets []string, args []any, i failedintent.Intent) ([]string, []any) {
+	if i.Modulo != "" {
+		sets = append(sets, "MODULO = ?")
+		args = append(args, i.Modulo)
+	}
+	// Una sola guarda, no dos. `codificarResumen` ya devuelve nil para un
+	// resumen nil o vacío, así que un `if i.Resumen == nil` encima sería
+	// redundante — y la redundancia tiene un costo real: neutraliza la prueba.
+	// Medido con mutación dirigida, quitar esa guarda de más no rompía ninguna
+	// prueba, porque la otra la tapaba. Una guarda que ninguna prueba puede
+	// distinguir de su ausencia no protege nada; sólo hace creer que sí.
+	resumen, err := codificarResumen(i.Resumen)
+	if err != nil || resumen == nil {
+		return sets, args
+	}
+	sets = append(sets, "RESUMEN = ?")
+	args = append(args, resumen)
+	return sets, args
 }
 
 // mejoraElCuerpo decide si el cuerpo del intento nuevo sustituye al guardado.
@@ -272,16 +302,24 @@ func (s *Store) insert(ctx context.Context, i failedintent.Intent) error {
 			IDEMPOTENCY_KEY, REQUEST_ID, BODY, BODY_TRUNCATED,
 			BODY_BLOB_PATH, BODY_CONTENT_TYPE,
 			HTTP_STATUS, ERROR_CODE, ERROR_MESSAGE,
-			RETRY_COUNT, STATUS, RESOLVED_AT, RESOLVED_BY, NOTES
+			RETRY_COUNT, STATUS, RESOLVED_AT, RESOLVED_BY, NOTES,
+			MODULO, RESUMEN
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?,
 			?, ?, ?,
-			?, ?, ?, ?, ?
+			?, ?, ?, ?, ?,
+			?, ?
 		)`
+	resumen, err := codificarResumen(i.Resumen)
+	if err != nil {
+		// Un resumen que no serializa no puede costar la evidencia: se guarda
+		// la fila sin él y se sigue.
+		resumen = nil
+	}
 	q2 := firebird.GetQuerier(ctx, s.pool.DB)
-	_, err := q2.ExecContext(
+	_, err = q2.ExecContext(
 		ctx, q,
 		i.ID.String(),
 		firebird.ToWallClock(i.ReceivedAt),
@@ -304,6 +342,8 @@ func (s *Store) insert(ctx context.Context, i failedintent.Intent) error {
 		nullableTime(i.ResolvedAt),
 		nullableUUID(i.ResolvedBy),
 		nullableString(i.Notes),
+		nullableString(i.Modulo),
+		resumen,
 	)
 	if err != nil {
 		mapped := firebird.MapError(err)
@@ -325,7 +365,8 @@ func (s *Store) Get(ctx context.Context, id uuid.UUID) (*failedintent.Intent, er
 			BODY, BODY_TRUNCATED, HTTP_STATUS,
 			ERROR_CODE, ERROR_MESSAGE, RETRY_COUNT, STATUS,
 			RESOLVED_AT, RESOLVED_BY, COALESCE(NOTES, ''),
-			COALESCE(BODY_BLOB_PATH, ''), COALESCE(BODY_CONTENT_TYPE, '')
+			COALESCE(BODY_BLOB_PATH, ''), COALESCE(BODY_CONTENT_TYPE, ''),
+			COALESCE(MODULO, ''), RESUMEN
 		FROM MSP_FAILED_INTENTS
 		WHERE ID = ?`
 	q2 := firebird.GetQuerier(ctx, s.pool.DB)
@@ -366,6 +407,17 @@ func (s *Store) List(
 		where = append(where, "USUARIO_ID = ?")
 		args = append(args, p.UsuarioID.String())
 	}
+	if p.Modulo != "" {
+		// El filtro de los chips va en SQL, apoyado en
+		// IDX_MSP_FAILED_INTENTS_MODULO. Filtrar en memoria sobre la página
+		// ya recortada mostraría "las ventas que cupieron en los primeros
+		// veinte renglones" y nada advertiría del resto.
+		where = append(where, "MODULO = ?")
+		args = append(args, p.Modulo)
+	}
+	if p.SinExtraer {
+		where = append(where, "MODULO IS NULL AND RESUMEN IS NULL")
+	}
 
 	q := buildListQuery(where)
 	q2 := firebird.GetQuerier(ctx, s.pool.DB)
@@ -388,7 +440,8 @@ func buildListQuery(where []string) string {
 			BODY, BODY_TRUNCATED, HTTP_STATUS,
 			ERROR_CODE, ERROR_MESSAGE, RETRY_COUNT, STATUS,
 			RESOLVED_AT, RESOLVED_BY, COALESCE(NOTES, ''),
-			COALESCE(BODY_BLOB_PATH, ''), COALESCE(BODY_CONTENT_TYPE, '')
+			COALESCE(BODY_BLOB_PATH, ''), COALESCE(BODY_CONTENT_TYPE, ''),
+			COALESCE(MODULO, ''), RESUMEN
 		FROM MSP_FAILED_INTENTS`
 	if len(where) > 0 {
 		base += "\n\t\tWHERE " + strings.Join(where, " AND ")
@@ -482,6 +535,37 @@ func (s *Store) IncrementRetry(ctx context.Context, id uuid.UUID) error {
 	q2 := firebird.GetQuerier(ctx, s.pool.DB)
 	if _, err := q2.ExecContext(ctx, q, id.String()); err != nil {
 		return fmt.Errorf("failedintent.firebird: increment retry %s: %w", id, firebird.MapError(err))
+	}
+	return nil
+}
+
+// GuardarResumen escribe MODULO y RESUMEN de una fila ya capturada.
+//
+// Sólo lo llama el relleno del janitor. No toca ninguna otra columna —ni
+// UPDATED_AT, que esta tabla no tiene, ni RETRY_COUNT— porque la fila ya es
+// evidencia y el resumen es un adorno encima: rellenarlo no puede parecerse a
+// un intento nuevo.
+//
+// El WHERE incluye `MODULO IS NULL AND RESUMEN IS NULL` a propósito: si entre
+// la lectura del janitor y este UPDATE llegó un reintento que YA trajo su
+// propio resumen —extraído del cuerpo más nuevo—, el del janitor viene del
+// cuerpo viejo y no debe pisarlo. Cero filas afectadas no es un error.
+func (s *Store) GuardarResumen(
+	ctx context.Context, id uuid.UUID, modulo string, r *failedintent.Resumen,
+) error {
+	resumen, err := codificarResumen(r)
+	if err != nil {
+		return err
+	}
+	const q = `
+		UPDATE MSP_FAILED_INTENTS
+		SET MODULO = ?, RESUMEN = ?
+		WHERE ID = ? AND MODULO IS NULL AND RESUMEN IS NULL`
+	q2 := firebird.GetQuerier(ctx, s.pool.DB)
+	if _, err := q2.ExecContext(ctx, q, nullableString(modulo), resumen, id.String()); err != nil {
+		return fmt.Errorf(
+			"failedintent.firebird: guardar resumen %s: %w", id, firebird.MapError(err),
+		)
 	}
 	return nil
 }
@@ -587,7 +671,8 @@ func (s *Store) MarkResolvedByKeys(
 		res, err := q2.ExecContext(ctx, q, args...)
 		if err != nil {
 			return total, fmt.Errorf(
-				"failedintent.firebird: marcar resueltos en %s: %w", path, firebird.MapError(err))
+				"failedintent.firebird: marcar resueltos en %s: %w", path, firebird.MapError(err),
+			)
 		}
 		n, _ := res.RowsAffected()
 		total += n
@@ -722,6 +807,8 @@ type rawIntentRow struct {
 	body          []byte
 	truncatedChar string
 	statusStr     string
+	modulo        string
+	resumen       []byte
 	partial       failedintent.Intent // fields that scan directly into domain types
 }
 
@@ -754,6 +841,8 @@ func scanIntent(row interface {
 		&r.partial.Notes,
 		&r.partial.BodyBlobPath,
 		&r.partial.BodyContentType,
+		&r.modulo,
+		&r.resumen,
 	)
 	if err != nil {
 		return failedintent.Intent{}, err
@@ -830,6 +919,13 @@ func normalizeIntentRow(r rawIntentRow) (failedintent.Intent, error) {
 	i.Body = r.body
 	i.BodyTruncated = charToTruncated(r.truncatedChar)
 	i.Status = failedintent.Status(r.statusStr)
+
+	// MODULO — VARCHAR(40), viene ya con COALESCE a ''.
+	i.Modulo = strings.TrimSpace(r.modulo)
+	// RESUMEN — BLOB TEXT con el JSON. Un JSON corrupto degrada a "sin
+	// resumen" en vez de tumbar la lectura: la fila es evidencia y el resumen
+	// es un adorno encima de ella.
+	i.Resumen = decodificarResumen(r.resumen, i.Modulo)
 
 	return i, nil
 }

@@ -218,6 +218,7 @@ func provideRootHandler(
 	cobranzaCapture := failedintent.CaptureMiddleware(failedintent.Config{
 		Store:             fiCaptureCfg.Store,
 		Blob:              fiCaptureCfg.Blob,
+		Resumen:           fiCaptureCfg.Resumen,
 		MaxMultipartBytes: fiCaptureCfg.MaxMultipartBytes,
 		PathPrefixes:      []string{"/v2/cobranza/pagos"},
 		Methods:           []string{http.MethodPost},
@@ -227,7 +228,12 @@ func provideRootHandler(
 	// write path. JSON-only (no multipart, no Blob/MaxMultipartBytes) — a
 	// visita has no comprobante attachments, unlike a pago.
 	visitasCapture := failedintent.CaptureMiddleware(failedintent.Config{
-		Store:        fiCaptureCfg.Store,
+		Store:   fiCaptureCfg.Store,
+		Resumen: fiCaptureCfg.Resumen,
+		// El registro no tiene extractor para /v2/visitas, así que estas filas
+		// quedan sin módulo y sin resumen. Se pasa igual para que el día que
+		// visitas quiera un renglón legible baste registrar su extractor —
+		// nada más en esta línea puede olvidarse.
 		PathPrefixes: []string{"/v2/visitas"},
 		Methods:      []string{http.MethodPost},
 	})

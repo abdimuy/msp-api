@@ -11,6 +11,7 @@ import (
 
 	"github.com/abdimuy/msp-api/internal/auth"
 	authoutbound "github.com/abdimuy/msp-api/internal/auth/ports/outbound"
+	cobranzafailedintents "github.com/abdimuy/msp-api/internal/cobranza/infra/failedintents"
 	apperror "github.com/abdimuy/msp-api/internal/platform/apperror"
 	"github.com/abdimuy/msp-api/internal/platform/config"
 	"github.com/abdimuy/msp-api/internal/platform/failedintent"
@@ -122,17 +123,42 @@ func provideFailedIntentBlobStorageInterface(s *failedintentblobfs.Store) failed
 	return s
 }
 
+// provideFailedIntentResumenExtractor arma el registro de extractores de
+// resumen: el ÚNICO sitio donde la plataforma de captura se entera de que
+// existen módulos con forma propia.
+//
+// Cada línea asocia un prefijo de ruta con el nombre del módulo y su
+// implementación del puerto. Añadir un módulo a la pantalla de intentos
+// fallidos es exactamente eso: una implementación y una línea aquí. Ni la
+// migración, ni el DTO, ni el escritorio se tocan — el escritorio lee el
+// módulo que le manda el servidor en vez de deducirlo de la ruta.
+//
+// Los nombres de módulo son los que el escritorio usa en sus chips ('ventas',
+// 'pagos'), no los de los paquetes Go. Es un valor de presentación que viaja
+// por el DTO; renombrarlo aquí renombra el chip.
+//
+// `visitas` NO tiene extractor a propósito: se captura, pero su cuerpo no
+// tiene ni cliente ni monto que valga un renglón. Sus filas quedan con MODULO
+// nulo y el escritorio las degrada a "otro", que es lo honesto.
+func provideFailedIntentResumenExtractor() failedintent.ResumenExtractor {
+	return failedintent.NewRegistroExtractores().
+		Registrar("/v2/ventas", "ventas", ventasfailedintents.NewResumenExtractor()).
+		Registrar("/v2/cobranza/pagos", "pagos", cobranzafailedintents.NewResumenExtractor())
+}
+
 // provideFailedIntentCaptureConfig assembles the CaptureMiddleware config
 // wiring the configured MaxMultipartBytes plus the blob storage so
 // multipart /v2/ventas bodies opt into capture.
 func provideFailedIntentCaptureConfig(
 	store failedintent.Store,
 	blob failedintent.BlobStorage,
+	resumen failedintent.ResumenExtractor,
 	cfg *config.Config,
 ) failedintent.Config {
 	return failedintent.Config{
 		Store:             store,
 		Blob:              blob,
+		Resumen:           resumen,
 		MaxMultipartBytes: cfg.FailedIntent.MaxMultipartBytes,
 	}
 }
@@ -183,11 +209,13 @@ func provideFailedIntentJanitor(
 	store failedintent.Store,
 	blobs failedintent.BlobStorage,
 	resolution failedintent.ResolutionChecker,
+	resumen failedintent.ResumenExtractor,
 ) *failedintent.Janitor {
 	return failedintent.NewJanitor(failedintent.JanitorConfig{
 		Store:      store,
 		Blob:       blobs,
 		Resolution: resolution,
+		Resumen:    resumen,
 	})
 }
 

@@ -93,6 +93,12 @@ func (m *memoryStore) List(_ context.Context, p failedintent.ListParams) (failed
 		if p.Status != "" && i.Status != p.Status {
 			continue
 		}
+		if p.Modulo != "" && i.Modulo != p.Modulo {
+			continue
+		}
+		if p.SinExtraer && (i.Modulo != "" || i.Resumen != nil) {
+			continue
+		}
 		// Cursor filtering: skip rows that are "before" the cursor
 		// (received_at DESC, id DESC means we keep rows strictly earlier).
 		if !p.CursorReceivedAt.IsZero() {
@@ -219,6 +225,21 @@ func (m *memoryStore) IncrementRetry(_ context.Context, id uuid.UUID) error {
 		return nil
 	}
 	i.RetryCount++
+	m.intents[id] = i
+	return nil
+}
+
+func (m *memoryStore) GuardarResumen(
+	_ context.Context, id uuid.UUID, modulo string, r *failedintent.Resumen,
+) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	i, ok := m.intents[id]
+	if !ok {
+		return nil
+	}
+	i.Modulo = modulo
+	i.Resumen = r
 	m.intents[id] = i
 	return nil
 }

@@ -665,6 +665,19 @@ func (s *e2eIntentStore) TransitionAfterReplay(
 	return nil
 }
 
+func (s *e2eIntentStore) GuardarResumen(
+	_ context.Context, id uuid.UUID, modulo string, r *failedintent.Resumen,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if intent, ok := s.intents[id]; ok {
+		intent.Modulo = modulo
+		intent.Resumen = r
+		s.intents[id] = intent
+	}
+	return nil
+}
+
 func (s *e2eIntentStore) IncrementRetry(_ context.Context, id uuid.UUID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

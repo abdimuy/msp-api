@@ -129,6 +129,17 @@ linters:
         - Clientes
         - transito
         - Transito
+        # Vocabulario español de los extractores de resumen y el janitor.
+        # `nto` sale de partir "cuánto" por el acento — no es una palabra que
+        # nadie escriba a propósito, y la alternativa era apagar misspell en
+        # archivos enteros de prosa española.
+        - anual
+        - Anual
+        - columnas
+        - corrupto
+        - dependencias
+        - nto
+        - recorre
 
     # ── revive ───────────────────────────────────────────────────────
     revive:
@@ -230,6 +241,8 @@ linters:
           alias: ventasdomain
         - pkg: github.com/abdimuy/msp-api/internal/ventas/ports/outbound
           alias: ventasoutbound
+        - pkg: github.com/abdimuy/msp-api/internal/cobranza/infra/failedintents
+          alias: cobranzafailedintents
         - pkg: github.com/abdimuy/msp-api/internal/cobranza/app
           alias: cobranzaapp
         - pkg: github.com/abdimuy/msp-api/internal/cobranza/infra/ventfb
@@ -439,6 +452,34 @@ linters:
             - github.com/shopspring/decimal
             - github.com/abdimuy/msp-api/internal/platform
             - github.com/abdimuy/msp-api/internal/garantias
+
+        # ── La plataforma de captura no sabe de módulos ──────────────
+        # Es la regla que sostiene la inversión del puerto ResumenExtractor.
+        # `internal/platform/failedintent` declara el puerto; ventas y cobranza
+        # lo implementan; el único sitio donde ambos se conocen es cmd/api.
+        # El día que este paquete importe `internal/ventas` para leer un nombre
+        # de cliente, la captura deja de servir para pagos y para visitas — y
+        # el arreglo se vería inocente en la revisión.
+        #
+        # `internal/auth` está permitido: la captura necesita el CurrentUser
+        # plantado por el middleware de autenticación para saber DE QUIÉN es el
+        # intento, y ese contrato es transversal, no de un módulo de negocio.
+        #
+        # Contraparte en Go: TestPlataformaNoImportaModulos, que mide lo mismo
+        # sobre el árbol de sintaxis y no depende de que el linter corra.
+        failedintent-no-modules:
+          list-mode: lax
+          files:
+            - "**/internal/platform/failedintent/**/*.go"
+          deny:
+            - pkg: "github.com/abdimuy/msp-api/internal"
+              desc: "la plataforma de captura no puede importar un módulo de negocio: declare un puerto y regístrelo en cmd/api (ver failedintent.ResumenExtractor)"
+          allow:
+            - $gostd
+            - github.com/google/uuid
+            - github.com/shopspring/decimal
+            - github.com/abdimuy/msp-api/internal/platform
+            - github.com/abdimuy/msp-api/internal/auth
 
         no-cross-module-internals:
           list-mode: lax

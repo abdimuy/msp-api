@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -108,7 +109,12 @@ func parseListQuery(r *http.Request) (failedintent.ListParams, error) {
 		CursorReceivedAt: cursorAt,
 		CursorID:         cursorID,
 		Status:           statusFilter,
-		PageSize:         pageSize,
+		// El filtro de los chips (Todo / Ventas / Pagos). No se valida contra
+		// una lista cerrada a propósito: los módulos se registran en cmd/api y
+		// uno nuevo debe poder filtrarse sin tocar este archivo. Un módulo que
+		// no existe devuelve cero filas, que es la respuesta correcta.
+		Modulo:   strings.TrimSpace(q.Get("modulo")),
+		PageSize: pageSize,
 	}, nil
 }
 

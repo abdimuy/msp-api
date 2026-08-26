@@ -61,6 +61,14 @@ type JanitorConfig struct {
 	// cierra. Dependencia OPCIONAL, igual que Blob: sin ella el janitor
 	// purga como siempre.
 	Resolution ResolutionChecker
+	// Resumen, cuando no es nil, rellena MODULO/RESUMEN de las filas
+	// anteriores al despliegue del extractor. Dependencia OPCIONAL.
+	//
+	// Va en el janitor y no en el listado porque el listado es la ruta más
+	// caliente de la pantalla: abrir un blob por renglón para adornarlo sería
+	// exactamente el N+1 que este diseño existe para evitar. El janitor ya
+	// recorre filas fuera de esa ruta, una vez por hora, sin nadie esperando.
+	Resumen ResumenExtractor
 	// Clock supplies the current time. Defaults to time.Now.
 	Clock func() time.Time
 }
@@ -169,6 +177,121 @@ func (j *Janitor) run(ctx context.Context) {
 func (j *Janitor) tick(ctx context.Context) {
 	j.conciliarOnce(ctx)
 	j.purgeOnce(ctx)
+	// El relleno va al final: no tiene sentido abrir el blob de una fila que
+	// la purga acaba de borrar.
+	j.rellenarResumenesOnce(ctx)
+}
+
+// maxBlobsPorCiclo acota cuántos cuerpos en disco abre un solo ciclo de
+// relleno. El primer ciclo tras el despliegue es el único con trabajo real
+// —hoy son unas decenas de filas— pero el tope existe para que un rezago
+// inesperado no convierta un tick del janitor en un barrido del disco.
+// Lo que no alcance se rellena en el siguiente ciclo.
+const maxBlobsPorCiclo = 500
+
+// rellenarResumenesOnce ilumina las filas a las que nunca se les corrió el
+// extractor: las capturadas ANTES de que el binario supiera extraer.
+//
+// Es la mitad del arreglo que no se ve. La otra —que los intentos nuevos
+// traigan resumen— sólo sirve de aquí en adelante; sin esto, las filas que
+// ya están en la tabla seguirían diciendo "Sin nombre capturado" para siempre,
+// y son justo las que alguien está mirando hoy.
+//
+// El blob se abre UNA vez por fila, y sólo una vez en la vida de la fila: al
+// escribir MODULO (aunque el resumen salga vacío) la fila deja de casar con el
+// filtro y no se vuelve a tocar.
+//
+// Sin `Resumen` conectado es un no-op. Los errores se registran y no abortan
+// nada: el relleno es lo último y lo menos importante del ciclo.
+func (j *Janitor) rellenarResumenesOnce(ctx context.Context) {
+	if j.cfg.Resumen == nil {
+		return
+	}
+	const (
+		porPagina  = 100
+		maxPaginas = 50
+	)
+	var params ListParams
+	params.SinExtraer = true
+	params.PageSize = porPagina
+
+	rellenadas, blobsAbiertos := 0, 0
+	for range maxPaginas {
+		page, err := j.cfg.Store.List(ctx, params)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return
+			}
+			slog.ErrorContext(ctx, "failedintent.janitor: no se pudieron leer las filas sin resumen", "error", err)
+			return
+		}
+		for _, i := range page.Items {
+			if i.BodyBlobPath != "" {
+				if blobsAbiertos >= maxBlobsPorCiclo {
+					j.registrarRelleno(ctx, rellenadas, true)
+					return
+				}
+				blobsAbiertos++
+			}
+			if j.rellenarUna(ctx, i) {
+				rellenadas++
+			}
+		}
+		if !page.HasMore {
+			break
+		}
+		params.CursorReceivedAt = page.NextReceivedAt
+		params.CursorID = page.NextID
+	}
+	j.registrarRelleno(ctx, rellenadas, false)
+}
+
+// rellenarUna extrae y guarda el resumen de una fila. Reporta si escribió.
+//
+// Una fila cuya ruta no tiene extractor registrado (visitas, hoy) devuelve nil
+// y NO se escribe: no hay módulo que afirmar. Vuelve a mirarse en el siguiente
+// ciclo, y eso está bien —su cuerpo es JSON en la propia fila, así que
+// revisarla no toca el disco.
+func (j *Janitor) rellenarUna(ctx context.Context, i Intent) bool {
+	res := ResumenDeIntento(ctx, j.cfg.Resumen, j.cfg.Blob, i)
+	if res == nil {
+		return false
+	}
+	guardable := res
+	if res.Vacio() {
+		// Se reconoció la ruta pero no el cuerpo: se escribe el módulo y el
+		// resumen queda NULL. Es la combinación honesta, y además saca la
+		// fila del filtro para que no se relea cada hora.
+		guardable = nil
+	}
+	if err := j.cfg.Store.GuardarResumen(ctx, i.ID, res.Modulo, guardable); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return false
+		}
+		slog.WarnContext(
+			ctx, "failedintent.janitor: no se pudo guardar el resumen",
+			"error", err, "intent_id", i.ID.String(), "path", i.Path,
+		)
+		return false
+	}
+	return true
+}
+
+// registrarRelleno emite el resumen del ciclo. El tope alcanzado se dice en
+// voz alta: un relleno que se cortó y no lo cuenta se lee como uno que
+// terminó.
+func (j *Janitor) registrarRelleno(ctx context.Context, rellenadas int, topeAlcanzado bool) {
+	if rellenadas == 0 && !topeAlcanzado {
+		return
+	}
+	if topeAlcanzado {
+		slog.InfoContext(ctx,
+			"failedintent.janitor: relleno de resúmenes detenido en el tope de blobs; "+
+				"el resto se rellena en el siguiente ciclo",
+			"rellenadas", rellenadas, "tope", maxBlobsPorCiclo)
+		return
+	}
+	slog.InfoContext(ctx, "failedintent.janitor: resúmenes rellenados", "count", rellenadas)
 }
 
 // conciliarOnce le pregunta a la fuente cuáles de los intentos PENDIENTES

@@ -30,6 +30,7 @@ import (
 type fakeStore struct {
 	mu          sync.Mutex
 	saved       []failedintent.Intent
+	resumenes   []resumenGuardado
 	saveErr     error
 	saveOutcome failedintent.SaveOutcome
 
@@ -95,6 +96,23 @@ func (f *fakeStore) TransitionAfterReplay(
 
 func (f *fakeStore) IncrementRetry(_ context.Context, _ uuid.UUID) error {
 	return nil
+}
+
+func (f *fakeStore) GuardarResumen(
+	_ context.Context, id uuid.UUID, modulo string, r *failedintent.Resumen,
+) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resumenes = append(f.resumenes, resumenGuardado{id: id, modulo: modulo, resumen: r})
+	return nil
+}
+
+// resumenGuardado registra una llamada a GuardarResumen para que las pruebas
+// del janitor puedan afirmar QUÉ se rellenó, no sólo que se llamó.
+type resumenGuardado struct {
+	id      uuid.UUID
+	modulo  string
+	resumen *failedintent.Resumen
 }
 
 func (f *fakeStore) PurgeOlderThan(

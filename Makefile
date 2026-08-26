@@ -254,11 +254,13 @@ test-firebird: ## Run platform Firebird integration tests against the dev Micros
 test-firebird-all: ## Run ALL Firebird-backed tests including module repos (auth + ventas + cobranza)
 	@[ -n "$(FB_DATABASE)" ] || (echo "❌ FB_DATABASE not set — start mueblera-firebird and source .env first" && exit 1)
 	$(GO) test ./internal/platform/firebird/... ./internal/platform/fbtestutil/... \
+	          ./internal/platform/failedintent/... \
 	          ./internal/auth/infra/firebird/... \
 	          ./internal/ventas/infra/ventfb/... ./internal/ventas/infra/venthttp/... \
+	          ./internal/ventas/infra/failedintents/... \
 	          ./internal/cobranza/infra/ventfb/... ./internal/cobranza/infra/cobranzahttp/... \
 	          ./internal/visitas/infra/visitasfb/... ./internal/visitas/infra/visitashttp/... \
-	          -race -count=1 -timeout 240s
+	          -race -count=1 -timeout 300s
 
 test-firebird-ventas: ## Run Firebird-backed tests for the venta creation flow (platform + ventas)
 	@[ -n "$(FB_DATABASE)" ] || (echo "❌ FB_DATABASE not set — start mueblera-firebird and source .env first" && exit 1)

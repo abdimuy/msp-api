@@ -211,6 +211,7 @@ func appOptions() []fx.Option {
 			provideFailedIntentStoreInterface,
 			provideFailedIntentBlobStorage,
 			provideFailedIntentBlobStorageInterface,
+			provideFailedIntentResumenExtractor,
 			provideFailedIntentCaptureConfig,
 			provideSettableReplayDispatcher,
 			provideReplayDispatcher,

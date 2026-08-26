@@ -31,6 +31,9 @@ type memStore struct {
 	purges   atomic.Int64  // total calls to PurgeOlderThan
 	listErr  error
 	markErr  error
+
+	guardarResumenErr  error
+	resumenesGuardados atomic.Int64
 }
 
 func newMemStore() *memStore {
@@ -38,6 +41,19 @@ func newMemStore() *memStore {
 		intents: make(map[uuid.UUID]failedintent.Intent),
 		purgeCh: make(chan struct{}, 64),
 	}
+}
+
+// blobContador envuelve un BlobStorage para contar aperturas. Es lo que
+// convierte "el blob se abre una sola vez" de una intención escrita en un
+// comentario a un hecho medido.
+type blobContador struct {
+	failedintent.BlobStorage
+	abiertos atomic.Int64
+}
+
+func (b *blobContador) Open(ctx context.Context, path string) (io.ReadCloser, error) {
+	b.abiertos.Add(1)
+	return b.BlobStorage.Open(ctx, path)
 }
 
 func (m *memStore) add(i failedintent.Intent) {
@@ -131,6 +147,12 @@ func (m *memStore) List(
 		if !p.CursorReceivedAt.IsZero() && !i.ReceivedAt.After(p.CursorReceivedAt) {
 			continue
 		}
+		if p.Modulo != "" && i.Modulo != p.Modulo {
+			continue
+		}
+		if p.SinExtraer && (i.Modulo != "" || i.Resumen != nil) {
+			continue
+		}
 		candidatos = append(candidatos, i)
 	}
 	sort.Slice(candidatos, func(a, b int) bool {
@@ -176,6 +198,27 @@ func (m *memStore) TransitionAfterReplay(
 }
 
 func (m *memStore) IncrementRetry(_ context.Context, _ uuid.UUID) error {
+	return nil
+}
+
+// GuardarResumen imita al real: escribe MODULO/RESUMEN y NADA más, y sólo
+// sobre una fila que siga sin extraer.
+func (m *memStore) GuardarResumen(
+	_ context.Context, id uuid.UUID, modulo string, r *failedintent.Resumen,
+) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.guardarResumenErr != nil {
+		return m.guardarResumenErr
+	}
+	i, ok := m.intents[id]
+	if !ok || i.Modulo != "" || i.Resumen != nil {
+		return nil
+	}
+	i.Modulo = modulo
+	i.Resumen = r
+	m.intents[id] = i
+	m.resumenesGuardados.Add(1)
 	return nil
 }
 

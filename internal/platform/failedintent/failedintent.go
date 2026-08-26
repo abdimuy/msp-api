@@ -171,6 +171,18 @@ type Intent struct {
 	ResolvedAt      *time.Time
 	ResolvedBy      *uuid.UUID
 	Notes           string
+	// Modulo es el módulo dueño de la ruta ('ventas', 'pagos'). Vacío cuando
+	// ninguna ruta registrada casa con Path — el escritorio degrada entonces
+	// a deducirlo de la ruta, como hacía antes.
+	//
+	// Es columna real e indexada, no un derivado en memoria, porque los chips
+	// del listado filtran por él: filtrar en memoria sobre una página daría
+	// "las ventas que cupieron en los primeros veinte renglones".
+	Modulo string
+	// Resumen es quién y cuánto — el dato que hace legible un renglón. Nil
+	// cuando no se pudo extraer, que es honesto: la pantalla muestra un hueco
+	// en vez de un nombre inventado.
+	Resumen *Resumen
 }
 
 // ListParams is the cursor-paginated input for Store.List.
@@ -184,6 +196,23 @@ type ListParams struct {
 	// UsuarioID, when non-nil, restricts the result set to intents owned by
 	// the specified usuario. Used by GET /v2/me/failed-intents.
 	UsuarioID *uuid.UUID
+	// Modulo, cuando no está vacío, restringe el resultado a ese módulo. Es
+	// el filtro de los chips del escritorio y va en SQL a propósito: filtrar
+	// en memoria sobre una página ya paginada mostraría "las ventas que
+	// cupieron en los primeros veinte renglones" y nada advertiría del resto.
+	Modulo string
+	// SinExtraer, cuando es true, restringe el resultado a las filas a las
+	// que NUNCA se les corrió el extractor: MODULO y RESUMEN los dos nulos.
+	//
+	// Son las dos columnas y no sólo RESUMEN a propósito. Un cuerpo que el
+	// extractor no reconoce deja MODULO puesto y RESUMEN nulo — es un
+	// resultado, no un pendiente. Si el filtro mirara sólo RESUMEN, esas filas
+	// se reabrirían en cada ciclo del janitor para siempre, releyendo su blob
+	// cada hora para volver a no reconocerlo.
+	//
+	// Lo usa el relleno del janitor; el listado del escritorio nunca lo
+	// enciende.
+	SinExtraer bool
 	// PageSize is clamped to [1, 100] by implementations.
 	PageSize int
 }
@@ -285,6 +314,17 @@ type Store interface {
 	// each replay attempt START so the count reflects attempts, not outcomes.
 	IncrementRetry(ctx context.Context, id uuid.UUID) error
 
+	// GuardarResumen escribe MODULO y RESUMEN de una fila ya capturada.
+	//
+	// Sólo lo llama el relleno del janitor, que ilumina las filas anteriores
+	// al despliegue del extractor. No toca ninguna otra columna: la fila ya
+	// es evidencia y el resumen es un adorno encima de ella.
+	//
+	// Un resumen nil escribe RESUMEN NULL y deja MODULO en lo que se le pase
+	// — la combinación honesta de "sé de qué módulo es, no supe leer su
+	// cuerpo".
+	GuardarResumen(ctx context.Context, id uuid.UUID, modulo string, r *Resumen) error
+
 	// PurgeOlderThan deletes rows whose received_at is strictly less than
 	// `before`. Returns the deletion count plus every non-empty
 	// body_blob_path of the deleted rows so the caller can clean the
@@ -352,6 +392,15 @@ type Config struct {
 	// NewID supplies the captured Intent's primary key. Injected for tests;
 	// defaults to uuid.New when nil.
 	NewID func() uuid.UUID
+	// Resumen, cuando no es nil, extrae el dato de negocio del cuerpo
+	// capturado (quién, cuánto) y el módulo dueño de la ruta. Dependencia
+	// OPCIONAL: sin ella la captura funciona igual que antes y las filas
+	// quedan con MODULO/RESUMEN nulos.
+	//
+	// En producción es un RegistroExtractores armado en la raíz de
+	// composición — el único sitio donde la plataforma se entera de que
+	// existen módulos.
+	Resumen ResumenExtractor
 }
 
 func (c *Config) defaults() {
@@ -444,7 +493,29 @@ func handleJSON(cfg Config, next http.Handler, w http.ResponseWriter, r *http.Re
 		return
 	}
 	intent := buildIntent(cfg, r, body, truncated, cw)
+	aplicarResumen(r.Context(), cfg, &intent)
 	cw.flushDeferred(confirmationFor(r.Context(), cfg, intent))
+}
+
+// aplicarResumen rellena Modulo y Resumen del intento antes de guardarlo.
+//
+// Corre DESPUÉS de que el handler terminó y sólo en la rama que ya decidió
+// persistir —o sea, en un 4xx/5xx—. La ruta feliz, que es la común, no paga
+// nada por esto.
+//
+// Un resumen que sólo trae módulo se descarta como resumen y se conserva como
+// módulo: son dos hechos distintos y guardar el envoltorio vacío haría que la
+// fila se viera "ya rellenada" ante el janitor, que dejaría de intentarlo.
+func aplicarResumen(ctx context.Context, cfg Config, intent *Intent) {
+	res := ResumenDeIntento(ctx, cfg.Resumen, cfg.Blob, *intent)
+	if res == nil {
+		return
+	}
+	intent.Modulo = res.Modulo
+	if res.Vacio() {
+		return
+	}
+	intent.Resumen = res
 }
 
 // confirmationFor persists the intent and returns the value for
@@ -513,6 +584,15 @@ func handleMultipart(cfg Config, next http.Handler, w http.ResponseWriter, r *ht
 	}
 
 	intent := buildMultipartIntent(cfg, r, intentID, contentType, saveResult, cw)
+	// El cuerpo ya está en disco: se abre UNA vez para sacarle el resumen.
+	// No se parsea mientras se transmite —eso costaría en cada venta, incluidas
+	// las que entran bien— y no se abre por renglón en el listado, que es el
+	// N+1 que este diseño existe para evitar.
+	//
+	// saveCtx, no r.Context(): un teléfono que colgó a media subida no debe
+	// dejar la fila sin el dato que la hace legible.
+	//nolint:contextcheck // saveCtx ya está desacoplado de r.Context().
+	aplicarResumen(saveCtx, cfg, &intent)
 	cw.flushDeferred(confirmationFor(r.Context(), cfg, intent))
 }
 

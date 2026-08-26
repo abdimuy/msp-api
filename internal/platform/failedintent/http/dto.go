@@ -46,6 +46,37 @@ type IntentDTO struct {
 	ResolvedAt      *string `json:"resolved_at,omitempty"`
 	ResolvedBy      *string `json:"resolved_by,omitempty"`
 	Notes           string  `json:"notes,omitempty"`
+	// Modulo es el módulo dueño de la ruta ('ventas', 'pagos'). Se omite
+	// cuando el servidor no lo extrajo — el escritorio lo degrada entonces a
+	// deducirlo de la ruta, como hacía antes.
+	//
+	// Que venga del servidor es lo que permite añadir un módulo sin tocar el
+	// escritorio: basta registrar su extractor en cmd/api.
+	Modulo string `json:"modulo,omitempty"`
+	// Resumen es quién y cuánto. Se omite cuando no se pudo extraer, y esa
+	// ausencia es un dato: la tarjeta se degrada a mostrar la referencia en
+	// vez de inventar un nombre.
+	Resumen *ResumenDTO `json:"resumen,omitempty"`
+}
+
+// ResumenDTO es la proyección JSON del failedintent.Resumen: el dato de
+// negocio que hace legible un renglón de la pantalla.
+//
+// Viaja aquí, en el LISTADO, y no se pide por renglón. Existe
+// GET /{id}/blob-parts y sería tentador usarlo para sacar el nombre de cada
+// tarjeta, pero eso convierte la ruta más caliente de la pantalla en un N+1
+// sobre el disco. El resumen se extrae una vez, al capturar, y viaja en la
+// fila.
+type ResumenDTO struct {
+	// Titulo es el nombre del cliente en ventas; en pagos, el del cobrador —
+	// el cuerpo de un pago no trae el nombre del cliente.
+	Titulo string `json:"titulo,omitempty"`
+	// Monto es una CADENA decimal, igual que en el resto del contrato. Un
+	// número JSON pasaría el importe por un float64 de ida y de vuelta.
+	Monto string `json:"monto,omitempty"`
+	// Referencia es el ancla para encontrar el trabajo: el id de la venta, el
+	// del cliente en un pago.
+	Referencia string `json:"referencia,omitempty"`
 }
 
 // ListResponse is the cursor-paginated envelope returned by the list endpoint.
@@ -138,6 +169,22 @@ func intentToDTO(i failedintent.Intent) IntentDTO {
 	if i.ResolvedBy != nil {
 		s := i.ResolvedBy.String()
 		dto.ResolvedBy = &s
+	}
+	dto.Modulo = i.Modulo
+	dto.Resumen = resumenToDTO(i.Resumen)
+	return dto
+}
+
+// resumenToDTO proyecta el resumen. Devuelve nil cuando no hay nada que
+// mostrar, para que el campo se omita del JSON en vez de viajar como un objeto
+// vacío que el escritorio tendría que distinguir de "sí hay resumen".
+func resumenToDTO(r *failedintent.Resumen) *ResumenDTO {
+	if r.Vacio() {
+		return nil
+	}
+	dto := &ResumenDTO{Titulo: r.Titulo, Referencia: r.Referencia}
+	if r.Monto != nil {
+		dto.Monto = r.Monto.String()
 	}
 	return dto
 }
