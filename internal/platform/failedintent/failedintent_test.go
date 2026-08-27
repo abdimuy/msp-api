@@ -138,6 +138,14 @@ func (f *fakeStore) first() failedintent.Intent {
 }
 
 // handler422 is a test handler that always writes an RFC9457-shaped 422 body.
+//
+// OJO: esta constante es la forma PLANA (`code` de primer nivel), la que
+// escribe platform/response para auth y los middlewares. Los módulos servidos
+// por Huma NO emiten esta forma — meten el código en errors[].message. Usarla
+// como si fuera "el cuerpo de error del API" fue justo lo que escondió durante
+// meses que ERROR_CODE venía vacía para ventas. Los cuerpos reales de las dos
+// formas viven en error_code_test.go; aquí sólo sirve de relleno para las
+// pruebas de plomería de la captura.
 const problemBody422 = `{"code":"venta_precio_invalido","detail":"el precio es inválido","title":"Unprocessable Entity"}`
 
 func handler422() http.Handler {

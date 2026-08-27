@@ -1026,16 +1026,56 @@ func normaliseBody(body []byte, truncated *bool) json.RawMessage {
 	return wrapped
 }
 
+// humaCodePrefix is the marker the Huma-served modules put in front of the
+// apperror code inside errors[].message.
+//
+// Two writers produce our error bodies and they do NOT agree on where the
+// machine-readable code goes:
+//
+//   - response.Error (platform/response) — used by the middlewares and the
+//     chi-served auth module — writes a top-level "code" member.
+//   - mapAppError, duplicated in every Huma module (ventas, cobranza,
+//     clientes, inventario, analytics, rutas, config, visitas, reactivacion,
+//     microsip), calls huma.NewError(status, ae.Message, &huma.ErrorDetail{
+//     Message: "code=" + ae.Code}). huma.ErrorModel has no "code" member at
+//     all, so the code only survives inside errors[].message.
+//
+// Reading just the top-level member left ERROR_CODE empty for every Huma
+// module, which is worse than wrong: a filter by code returns an empty set,
+// and an empty set reads like "nothing to see here".
+const humaCodePrefix = "code="
+
+// errorCodeMaxLen is the width of MSP_FAILED_INTENTS.ERROR_CODE
+// (VARCHAR(80) CHARACTER SET ASCII, migration 000031). A longer value would
+// not "just get stored badly" — Firebird rejects the INSERT and the whole
+// capture is lost, which is the one thing this package must never do. The
+// longest code authored in the repo today is 37 chars, so the cap only ever
+// bites on a value that is not really a code.
+const errorCodeMaxLen = 80
+
+// problemErrorDetail is the subset of huma.ErrorDetail we read back. Huma
+// also emits `location` and `value`; we ignore them. It is deliberately
+// tolerant of platform/response's FieldError shape too (field/code/message):
+// the extra members are simply dropped by encoding/json.
+type problemErrorDetail struct {
+	Message string `json:"message"`
+}
+
 // problemBodyShape is the subset of RFC 9457 Problem fields we need to read
 // back to populate Intent.ErrorCode / ErrorMessage. Other fields are ignored.
 type problemBodyShape struct {
-	Code   string `json:"code"`
-	Detail string `json:"detail"`
-	Title  string `json:"title"`
+	Code   string               `json:"code"`
+	Detail string               `json:"detail"`
+	Title  string               `json:"title"`
+	Errors []problemErrorDetail `json:"errors"`
 }
 
 // parseProblemJSON tolerantly extracts the error code + user-facing message
 // from a captured response body. Non-Problem-shaped bodies yield ("", "").
+//
+// The top-level "code" wins when both shapes are present: it is the explicit
+// one, and the errors[] convention is a workaround for a model that has no
+// place to put it.
 func parseProblemJSON(body []byte) (string, string) {
 	if len(body) == 0 || !json.Valid(body) {
 		return "", ""
@@ -1048,7 +1088,67 @@ func parseProblemJSON(body []byte) (string, string) {
 	if msg == "" {
 		msg = p.Title
 	}
-	return p.Code, msg
+	code := p.Code
+	if code == "" {
+		code = codeFromHumaDetails(p.Errors)
+	}
+	return capErrorCode(code), msg
+}
+
+// codeFromHumaDetails scans errors[] for the "code=<something>" convention.
+//
+// errors[] is not ours to control: Huma's own request validation fills it
+// with one entry per offending field ({"message":"expected array length >= 1",
+// "location":"body.productos"}). Those carry no prefix and must not be
+// mistaken for a code, hence the exact-prefix requirement rather than a
+// substring search.
+//
+// When several entries carry the prefix the FIRST one wins. mapAppError only
+// ever attaches a single detail, so more than one can only come from a writer
+// that does not exist yet; taking the first keeps the result deterministic
+// instead of depending on map/slice ordering elsewhere.
+//
+// The candidate must also look like a code — printable ASCII, no spaces.
+// The 500 branch of every mapAppError passes a raw err.Error() as the detail
+// message; if some wrapped error text ever began with "code=" we would
+// otherwise store a sentence, and ERROR_CODE is an ASCII column that a
+// non-ASCII value can make the INSERT reject outright.
+func codeFromHumaDetails(details []problemErrorDetail) string {
+	for _, d := range details {
+		candidate, found := strings.CutPrefix(d.Message, humaCodePrefix)
+		if !found || candidate == "" {
+			continue
+		}
+		if !isCodeToken(candidate) {
+			continue
+		}
+		return candidate
+	}
+	return ""
+}
+
+// isCodeToken reports whether s is plausible as a machine-readable code:
+// printable ASCII with no spaces. Every apperror code in the repo (114 of
+// them, measured) is [a-z0-9_]+, so this is deliberately looser than the
+// convention — it rejects prose and non-ASCII, not future naming choices.
+func isCodeToken(s string) bool {
+	for _, r := range s {
+		if r <= ' ' || r > '~' {
+			return false
+		}
+	}
+	return true
+}
+
+// capErrorCode clips the code to the column width. Truncating beats
+// discarding: a clipped code still groups and filters, while an empty one is
+// indistinguishable from "no error code", which is the failure this whole
+// function exists to avoid.
+func capErrorCode(code string) string {
+	if len(code) > errorCodeMaxLen {
+		return code[:errorCodeMaxLen]
+	}
+	return code
 }
 
 // emitCapturedLog records the capture as a structured event. Never logs the
