@@ -53,6 +53,7 @@ func (s *stubVentaRepo) UpdateCliente(_ context.Context, _ *domain.Venta) error 
 func (s *stubVentaRepo) ReplaceProductos(_ context.Context, _ *domain.Venta) error  { return nil }
 func (s *stubVentaRepo) ReplaceCombos(_ context.Context, _ *domain.Venta) error     { return nil }
 func (s *stubVentaRepo) ReplaceVendedores(_ context.Context, _ *domain.Venta) error { return nil }
+func (s *stubVentaRepo) ReplaceLineas(_ context.Context, _ *domain.Venta) error     { return nil }
 func (s *stubVentaRepo) LockByID(_ context.Context, _ uuid.UUID) error              { return nil }
 func (s *stubVentaRepo) InsertImagen(_ context.Context, _ uuid.UUID, _ *domain.Imagen) error {
 	return nil

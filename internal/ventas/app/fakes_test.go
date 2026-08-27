@@ -262,6 +262,11 @@ type fakeVentaRepo struct {
 
 	// FindByIDsCalls records every FindByIDs invocation's ids slice.
 	FindByIDsCalls [][]uuid.UUID
+
+	// ReplaceLineasErr / ReplaceLineasCalls drive and record the combined
+	// combos+productos write used by ReemplazarLineas.
+	ReplaceLineasErr   error
+	ReplaceLineasCalls int
 }
 
 // newFakeVentaRepo builds an empty repo.
@@ -429,6 +434,21 @@ func (f *fakeVentaRepo) ReplaceCombos(_ context.Context, v *domain.Venta) error 
 
 // ReplaceVendedores rewrites the entry; reuses UpdateErr.
 func (f *fakeVentaRepo) ReplaceVendedores(_ context.Context, v *domain.Venta) error {
+	return f.UpdateHeader(context.Background(), v)
+}
+
+// ReplaceLineas rewrites the entry with both child collections at once.
+// Honors ReplaceLineasErr so tests can drive the "the write failed, nothing
+// must be persisted and no event must be emitted" path; otherwise reuses
+// UpdateErr like its siblings.
+func (f *fakeVentaRepo) ReplaceLineas(_ context.Context, v *domain.Venta) error {
+	f.mu.Lock()
+	f.ReplaceLineasCalls++
+	err := f.ReplaceLineasErr
+	f.mu.Unlock()
+	if err != nil {
+		return err
+	}
 	return f.UpdateHeader(context.Background(), v)
 }
 

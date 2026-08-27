@@ -413,6 +413,35 @@ func (r *VentaRepo) ReplaceCombos(ctx context.Context, v *domain.Venta) error {
 	return r.touchHeader(ctx, q, v)
 }
 
+// ReplaceLineas replaces BOTH line-item collections of v in a single call.
+//
+// Statement order is load-bearing, not cosmetic: MSP_VENTAS_PRODUCTOS.COMBO_ID
+// carries FK_MSP_VENTAS_PRODUCTOS_COMBO against MSP_VENTAS_COMBOS.ID, so the
+// productos rows must be gone before the combos rows can be deleted, and the
+// new combos rows must exist before the new productos rows can reference them.
+// That is exactly why the desktop's "delete the combo, create another one"
+// edit cannot be expressed as ReplaceCombos + ReplaceProductos in either
+// order.
+//
+// Intended to run inside a TxManager-managed transaction — between the two
+// DELETEs the venta has no line items at all.
+func (r *VentaRepo) ReplaceLineas(ctx context.Context, v *domain.Venta) error {
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	if _, err := q.ExecContext(ctx, deleteProductosByVenta, v.ID().String()); err != nil {
+		return firebird.MapError(err)
+	}
+	if _, err := q.ExecContext(ctx, deleteCombosByVenta, v.ID().String()); err != nil {
+		return firebird.MapError(err)
+	}
+	if err := r.insertCombos(ctx, q, v); err != nil {
+		return err
+	}
+	if err := r.insertProductos(ctx, q, v); err != nil {
+		return err
+	}
+	return r.touchHeader(ctx, q, v)
+}
+
 // ReplaceVendedores deletes existing vendedor rows for v and re-inserts the
 // current slice.
 func (r *VentaRepo) ReplaceVendedores(ctx context.Context, v *domain.Venta) error {

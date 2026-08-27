@@ -112,6 +112,38 @@ func (h *Handlers) ReemplazarCombos(ctx context.Context, in *ReemplazarCombosInp
 	return &ReemplazarCombosOutput{Body: toVentaDTO(v, nil, nil, nil)}, nil
 }
 
+// ReemplazarLineas handles PUT /v2/ventas/{id}/lineas — the atomic
+// replacement of both line-item collections. Requires PermVentasEditar, the
+// same permission the two single-collection endpoints require.
+func (h *Handlers) ReemplazarLineas(ctx context.Context, in *ReemplazarLineasInput) (*ReemplazarLineasOutput, error) {
+	cu, err := currentUserOrError(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := requirePerm(cu, auth.PermVentasEditar); err != nil {
+		return nil, err
+	}
+	id, err := parseUUIDField(in.ID, "id")
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+	combos, err := parseCombosDTO(in.Body.Combos)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+	productos, err := parseProductosDTO(in.Body.Productos)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+	v, err := h.svc.ReemplazarLineas(ctx, ventasapp.ReemplazarLineasInput{
+		VentaID: id, Combos: combos, Productos: productos,
+	}, cu.ID)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+	return &ReemplazarLineasOutput{Body: toVentaDTO(v, nil, nil, nil)}, nil
+}
+
 // ReemplazarVendedores handles PUT /v2/ventas/{id}/vendedores.
 func (h *Handlers) ReemplazarVendedores(ctx context.Context, in *ReemplazarVendedoresInput) (*ReemplazarVendedoresOutput, error) {
 	cu, err := currentUserOrError(ctx)

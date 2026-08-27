@@ -172,6 +172,10 @@ func (r *fakeRepo) ReplaceVendedores(ctx context.Context, v *ventasdomain.Venta)
 	return r.UpdateHeader(ctx, v)
 }
 
+func (r *fakeRepo) ReplaceLineas(ctx context.Context, v *ventasdomain.Venta) error {
+	return r.UpdateHeader(ctx, v)
+}
+
 // noopOutbox swallows every Enqueue call.
 type noopOutbox struct{}
 
@@ -1127,6 +1131,9 @@ func TestOpenAPI_PathsRegistered(t *testing.T) {
 		"/ventas",
 		"/ventas/{id}",
 		"/ventas/{id}/cancel",
+		"/ventas/{id}/lineas",
+		"/ventas/{id}/combos",
+		"/ventas/{id}/productos",
 		"/ventas/{id}/imagenes",
 		"/ventas/{id}/imagenes/{img_id}",
 		"bearerAuth",

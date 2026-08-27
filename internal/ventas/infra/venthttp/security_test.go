@@ -74,6 +74,14 @@ func jsonCombosEditBody(t *testing.T) (io.Reader, string) {
 	return bytes.NewReader(b), "application/json"
 }
 
+// jsonLineasEditBody is a valid ReemplazarLineas body (both collections).
+func jsonLineasEditBody(t *testing.T) (io.Reader, string) {
+	t.Helper()
+	b, err := json.Marshal(validLineasBody())
+	require.NoError(t, err)
+	return bytes.NewReader(b), "application/json"
+}
+
 // jsonVendedoresEditBody is a valid ReemplazarVendedores body.
 func jsonVendedoresEditBody(t *testing.T) (io.Reader, string) {
 	t.Helper()
@@ -118,6 +126,7 @@ var secProtectedRoutes = []secProtectedRoute{
 	{http.MethodPatch, "/ventas/00000000-0000-0000-0000-000000000001/cliente", authdomain.PermVentasEditar, jsonClienteEditBody},
 	{http.MethodPut, "/ventas/00000000-0000-0000-0000-000000000001/productos", authdomain.PermVentasEditar, jsonProductosEditBody},
 	{http.MethodPut, "/ventas/00000000-0000-0000-0000-000000000001/combos", authdomain.PermVentasEditar, jsonCombosEditBody},
+	{http.MethodPut, "/ventas/00000000-0000-0000-0000-000000000001/lineas", authdomain.PermVentasEditar, jsonLineasEditBody},
 	{http.MethodPut, "/ventas/00000000-0000-0000-0000-000000000001/vendedores", authdomain.PermVentasEditar, jsonVendedoresEditBody},
 	{http.MethodPost, "/ventas/00000000-0000-0000-0000-000000000001/imagenes", authdomain.PermVentasSubirImagenes, multipartImageBody},
 	{http.MethodDelete, "/ventas/00000000-0000-0000-0000-000000000001/imagenes/00000000-0000-0000-0000-000000000002", authdomain.PermVentasEliminarImagenes, nil},

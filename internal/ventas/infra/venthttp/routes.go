@@ -180,13 +180,32 @@ func registerOperations(api huma.API, h *Handlers) {
 	}, h.ActualizarCliente)
 
 	huma.Register(api, huma.Operation{
+		OperationID: "reemplazar-lineas-venta",
+		Method:      http.MethodPut,
+		Path:        "/ventas/{id}/lineas",
+		Summary:     "Reemplazar líneas de venta (combos + productos)",
+		Description: "Reemplaza las DOS colecciones de líneas de la venta —combos y productos— en una sola transacción, validando las referencias producto→combo contra el estado final. Es el único endpoint capaz de expresar la edición real del escritorio: borrar un combo y crear otro con id nuevo moviendo sus productos. Hacerlo con PUT /combos y PUT /productos falla en cualquiera de los dos órdenes con producto_combo_referencia_invalida. Requiere situación 'borrador' y el permiso ventas:editar. Al quitar un combo, sus productos deben venir fuera del cuerpo: un producto que apunte a un combo ausente sigue siendo rechazado.",
+		Tags:        tags,
+		Security:    security,
+		Errors: []int{
+			http.StatusUnauthorized,
+			http.StatusForbidden,
+			http.StatusNotFound,
+			http.StatusConflict,
+			http.StatusUnprocessableEntity,
+		},
+		DefaultStatus: http.StatusOK,
+	}, h.ReemplazarLineas)
+
+	huma.Register(api, huma.Operation{
 		OperationID:   "reemplazar-productos-venta",
 		Method:        http.MethodPut,
 		Path:          "/ventas/{id}/productos",
 		Summary:       "Reemplazar productos de venta",
-		Description:   "Reemplaza completamente la colección de productos de la venta. Requiere status 'borrador'.",
+		Description:   "Reemplaza completamente la colección de productos de la venta. Requiere status 'borrador'. DESACONSEJADO: use PUT /ventas/{id}/lineas, que reemplaza combos y productos en una sola transacción. Este endpoint sigue funcionando y no va a retirarse sin aviso.",
 		Tags:          tags,
 		Security:      security,
+		Deprecated:    true,
 		DefaultStatus: http.StatusOK,
 	}, h.ReemplazarProductos)
 
@@ -195,9 +214,10 @@ func registerOperations(api huma.API, h *Handlers) {
 		Method:        http.MethodPut,
 		Path:          "/ventas/{id}/combos",
 		Summary:       "Reemplazar combos de venta",
-		Description:   "Reemplaza completamente la colección de combos de la venta.",
+		Description:   "Reemplaza completamente la colección de combos de la venta. DESACONSEJADO: use PUT /ventas/{id}/lineas. Este endpoint no puede aceptar una edición que borre un combo y cree otro, porque los productos vigentes siguen apuntando al combo eliminado. Sigue funcionando y no va a retirarse sin aviso.",
 		Tags:          tags,
 		Security:      security,
+		Deprecated:    true,
 		DefaultStatus: http.StatusOK,
 	}, h.ReemplazarCombos)
 

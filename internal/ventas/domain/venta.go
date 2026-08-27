@@ -872,6 +872,65 @@ func (v *Venta) ReemplazarCombos(p ReemplazarCombosParams) error {
 	return nil
 }
 
+// ReemplazarLineasParams carries BOTH line-item collections of a venta so
+// they can be replaced as one unit.
+type ReemplazarLineasParams struct {
+	Combos    []CrearVentaComboInput
+	Productos []CrearVentaProductoInput
+	By        uuid.UUID
+	Now       time.Time
+}
+
+// ReemplazarLineas replaces the combos AND productos collections wholesale in
+// a single step, validating producto.combo_id references against the FINAL
+// state of both collections rather than against a half-applied mix.
+//
+// This is the only mutator that can express "drop this combo and create a new
+// one, moving its productos to the new id": ReemplazarCombos alone rejects it
+// because the still-current productos point at the dropped combo, and
+// ReemplazarProductos alone rejects it because the new combo does not exist
+// yet. Neither ordering of the two single-collection mutators can succeed —
+// the two collections have to move together.
+//
+// Both collections are replaced unconditionally: an empty Combos slice drops
+// every combo (and, since the caller must send the productos that survive,
+// their children go with them). An empty Productos slice is rejected with
+// ErrVentaProductosVacios — a venta always has at least one producto.
+//
+// Emits BOTH VentaCombosReemplazadosEvent and VentaProductosReemplazadosEvent
+// so the outbox timeline and the search reindex behave exactly as they do for
+// the two single-collection endpoints.
+func (v *Venta) ReemplazarLineas(p ReemplazarLineasParams) error {
+	if !v.puedeEditarse() {
+		return ErrVentaNoEditable
+	}
+	if len(p.Productos) == 0 {
+		return ErrVentaProductosVacios
+	}
+	combos, err := buildCombos(p.Combos, p.By, p.Now)
+	if err != nil {
+		return err
+	}
+	productos, err := buildProductos(p.Productos, p.By, p.Now)
+	if err != nil {
+		return err
+	}
+	// Validate against the final state of BOTH collections. This is the whole
+	// point of the combined mutator.
+	if err := validateProductoComboReferences(productos, combos); err != nil {
+		return err
+	}
+	v.combos = combos
+	v.productos = productos
+	v.recomputarMontos()
+	v.audit.MarkUpdated(p.By)
+	v.pendingEvents = append(v.pendingEvents,
+		NewVentaCombosReemplazadosEvent(v.id, len(combos), p.By, p.Now),
+		NewVentaProductosReemplazadosEvent(v.id, len(productos), p.By, p.Now),
+	)
+	return nil
+}
+
 // ReemplazarVendedoresParams carries the new vendedores collection.
 type ReemplazarVendedoresParams struct {
 	Vendedores []CrearVentaVendedorInput

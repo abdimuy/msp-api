@@ -143,6 +143,14 @@ type VentaRepo interface {
 	// for v and inserts the current vendedores slice.
 	ReplaceVendedores(ctx context.Context, v *domain.Venta) error
 
+	// ReplaceLineas atomically replaces BOTH line-item collections of v
+	// (combos and productos) in one call. Implementations MUST order the
+	// statements so the productos → combos foreign key never dangles:
+	// delete productos, delete combos, insert combos, insert productos.
+	// Calling ReplaceCombos followed by ReplaceProductos is NOT equivalent
+	// — the first would hit the FK on the combos delete.
+	ReplaceLineas(ctx context.Context, v *domain.Venta) error
+
 	// FindByID loads a venta with its full children collection populated.
 	// Returns ErrVentaNotFound on miss.
 	FindByID(ctx context.Context, id uuid.UUID) (*domain.Venta, error)

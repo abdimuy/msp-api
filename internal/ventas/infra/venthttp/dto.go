@@ -223,6 +223,17 @@ type ReemplazarCombosBody struct {
 	Combos []ComboDTO `json:"combos"`
 }
 
+// ReemplazarLineasBody is the JSON body for PUT /v2/ventas/{id}/lineas. It
+// carries BOTH line-item collections so they are replaced atomically and the
+// producto → combo references are validated against the final state.
+//
+// Combos may be empty (the venta ends up with no combos); Productos may not —
+// a venta always keeps at least one producto line.
+type ReemplazarLineasBody struct {
+	Combos    []ComboDTO    `json:"combos"`
+	Productos []ProductoDTO `json:"productos" minItems:"1"`
+}
+
 // ReemplazarVendedoresBody is the JSON body for PUT /v2/ventas/{id}/vendedores.
 type ReemplazarVendedoresBody struct {
 	Vendedores []VendedorDTO `json:"vendedores" minItems:"1"`
@@ -425,6 +436,15 @@ type ReemplazarCombosInput struct {
 
 // ReemplazarCombosOutput wraps the response.
 type ReemplazarCombosOutput struct{ Body VentaDTO }
+
+// ReemplazarLineasInput wraps the path param + body.
+type ReemplazarLineasInput struct {
+	ID   string `path:"id" format:"uuid"`
+	Body ReemplazarLineasBody
+}
+
+// ReemplazarLineasOutput wraps the response.
+type ReemplazarLineasOutput struct{ Body VentaDTO }
 
 // ReemplazarVendedoresInput wraps the path param + body.
 type ReemplazarVendedoresInput struct {
