@@ -4,6 +4,16 @@ Cómo está montado y cómo redesplegar el entorno **test** de `msp-api` (Go) en
 Windows Server legacy. Convive con la API de producción (Node, otra DB) sin
 tocarla. NO confundir con producción.
 
+> **Esto es el entorno de PRUEBAS.** Producción está en `C:\msp-api\`, no tiene
+> tarea programada y su procedimiento es
+> [`ops/despliegue-produccion.md`](ops/despliegue-produccion.md). El §10 de aquí
+> **no** aplica allá.
+>
+> **Y ojo con el host:** desde el cutover del 2026-08-13, `apidev.loclx.io` ya no
+> es el túnel de pruebas — **es producción**. Los `curl` de los §9, §10 y §12 de
+> este documento pegan contra la base viva. El entorno de pruebas remoto quedó
+> retirado (`ops/migracion-go-2026-08-13.md` §1).
+
 > **Regla de oro:** la DB de producción es `C:\Microsip datos\MUEBLERA_SNP.FDB` →
 > **NO TOCAR** (solo respaldo de lectura con gbak). El entorno test usa una copia:
 > `C:\Microsip datos\MUEBLERA_TEST.FDB`.
