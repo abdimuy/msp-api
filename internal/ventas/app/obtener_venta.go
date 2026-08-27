@@ -69,3 +69,36 @@ func (s *Service) EstatusMicrosipDeCliente(ctx context.Context, v *domain.Venta)
 	}
 	return &est
 }
+
+// NombreMicrosipDeCliente fetches the cliente's current NOMBRE from Microsip
+// as a best-effort, NON-blocking hint — the desktop uses it to show the
+// venta's cliente name as read-only when a cliente_id is linked, guarding
+// against the local snapshot drifting from the linked cliente (see the venta
+// applied to the wrong person after only the name was edited). It must NEVER
+// fail the venta detail read, so every adverse condition degrades to nil:
+//   - reader not wired → nil
+//   - venta has no cliente link → nil
+//   - ANY reader error (cliente not found in Microsip, transient I/O, …) →
+//     nil — degrade gracefully rather than failing the read
+//   - NOMBRE is an empty string → nil — no useful info
+//
+// This is a READ HINT for the UI, NOT a guard: unlike
+// validarEstatusClienteMicrosipPreExistente in aplicar_venta.go — which fails
+// AplicarVenta closed when the cliente's estatus blocks the venta — this
+// method never blocks anything. A Microsip outage or a not-found cliente
+// simply means the desktop falls back to showing the locally-captured name.
+func (s *Service) NombreMicrosipDeCliente(ctx context.Context, v *domain.Venta) *string {
+	if s.nombreReader == nil || v.ClienteID() == nil {
+		return nil
+	}
+	nombre, err := s.nombreReader.NombreDeCliente(ctx, *v.ClienteID())
+	if err != nil {
+		// Best-effort hint: degrade on ANY error (not-found, transient I/O, …)
+		// rather than failing the venta detail read.
+		return nil
+	}
+	if nombre == "" {
+		return nil
+	}
+	return &nombre
+}

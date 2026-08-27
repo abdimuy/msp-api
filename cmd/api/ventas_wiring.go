@@ -182,6 +182,7 @@ func provideVentasService(
 		WithJuegos(provideVentasMicrosipJuegoResolver(p), cfg.MicrosipVenta.JuegosEnabled, cfg.MicrosipVenta.JuegosLineaArticuloID).
 		WithZonaReader(ventfb.NewClienteRepo(p)).
 		WithEstatusReader(ventfb.NewClienteRepo(p)).
+		WithNombreReader(ventfb.NewClienteRepo(p)).
 		WithReactivarCliente(cfg.MicrosipVenta.ReactivarClienteEnabled).
 		WithZonaObligatoria(cfg.MicrosipVenta.ZonaObligatoria).
 		WithCiudadCatalogo(ventfb.NewCiudadCatalogoRepo(p), cfg.MicrosipVenta.CiudadCatalogo)

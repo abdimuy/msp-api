@@ -176,3 +176,35 @@ func TestClienteRepo_EstatusDeCliente_NotFound(t *testing.T) {
 		assert.Empty(t, got)
 	})
 }
+
+func TestClienteRepo_NombreDeCliente_HitsRealRow(t *testing.T) {
+	requireFBEnv(t)
+	t.Parallel()
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := ventfb.NewClienteRepo(pool)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		q := firebird.GetQuerier(ctx, pool.DB)
+		var id int
+		var nombre string
+		err := q.QueryRowContext(ctx, `SELECT FIRST 1 CLIENTE_ID, NOMBRE FROM CLIENTES WHERE NOMBRE IS NOT NULL`).Scan(&id, &nombre)
+		if errors.Is(err, sql.ErrNoRows) {
+			t.Skip("no cliente with NOMBRE in dev DB")
+		}
+		require.NoError(t, err)
+		got, err := repo.NombreDeCliente(ctx, id)
+		require.NoError(t, err)
+		assert.Equal(t, strings.TrimSpace(nombre), got)
+	})
+}
+
+func TestClienteRepo_NombreDeCliente_NotFound(t *testing.T) {
+	requireFBEnv(t)
+	t.Parallel()
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := ventfb.NewClienteRepo(pool)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		got, err := repo.NombreDeCliente(ctx, 999_999_999)
+		require.ErrorIs(t, err, domain.ErrClienteNotFoundInMicrosip)
+		assert.Empty(t, got)
+	})
+}

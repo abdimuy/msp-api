@@ -83,6 +83,18 @@ type ClienteEstatusReader interface {
 	EstatusDeCliente(ctx context.Context, clienteID int) (string, error)
 }
 
+// ClienteNombreReader reads the current NOMBRE of a Microsip cliente. Used by
+// the venta-detail read path to surface the cliente's real name as a
+// best-effort, non-blocking hint — the desktop uses it to render the venta's
+// cliente name as read-only when a cliente_id is linked, showing the actual
+// Microsip name instead of a locally-edited snapshot that can drift from the
+// linked cliente. Mirrors ClienteEstatusReader.
+type ClienteNombreReader interface {
+	// NombreDeCliente returns the raw NOMBRE string for the given clienteID.
+	// Returns domain.ErrClienteNotFoundInMicrosip when no row exists.
+	NombreDeCliente(ctx context.Context, clienteID int) (string, error)
+}
+
 // VendedorUsuarioExistenceChecker is consulted by the ventas service to
 // validate that every vendedor on a CrearVenta request has a corresponding
 // row in MSP_USUARIOS before any INSERT is attempted. Without this check,

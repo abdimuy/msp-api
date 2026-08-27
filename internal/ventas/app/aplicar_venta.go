@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -60,6 +61,9 @@ func (s *Service) AplicarVenta(ctx context.Context, ventaID, by uuid.UUID) (*dom
 		}
 
 		if err := s.validarZonaClienteMicrosipPreExistente(ctx, v, clienteIDPreExistente); err != nil {
+			return err
+		}
+		if err := s.validarEstatusClienteMicrosipPreExistente(ctx, clienteIDPreExistente); err != nil {
 			return err
 		}
 
@@ -334,6 +338,42 @@ func (s *Service) validarZonaClienteMicrosipPreExistente(ctx context.Context, v 
 		return nil
 	}
 	return v.ValidarZonaCoincideMicrosip(*zonaPtr)
+}
+
+// validarEstatusClienteMicrosipPreExistente checks that a pre-existing
+// Microsip cliente is not under suspensión de ventas ('V') or suspensión de
+// créditos ('C') before AplicarVenta materializes the venta into DOCTOS_PV.
+// clienteIDPreExistente is the ClienteID value captured BEFORE
+// autoCrearClienteSiNecesario runs: when nil, the auto-create branch ran and
+// the new cliente is created with ESTATUS='A' — so the check is skipped.
+// Returns nil when estatusReader is not wired.
+//
+// Unlike the read-only hint in EstatusMicrosipDeCliente (obtener_venta.go),
+// this is a guard: a reader error means we could not verify the cliente's
+// estatus, and treating "could not verify" as "everything is fine" is
+// exactly the silent failure this check exists to close. So a reader error
+// fails CLOSED — it is returned as-is, blocking the apply.
+//
+// Applies to every tipo de venta, contado included: a suspended cliente must
+// not receive a venta regardless of forma de pago. That is why — unlike its
+// zona sibling — this guard takes no *domain.Venta: there is no venta-level
+// exemption to consult, and a parameter it never reads would misstate what
+// the check depends on.
+func (s *Service) validarEstatusClienteMicrosipPreExistente(ctx context.Context, clienteIDPreExistente *int) error {
+	if clienteIDPreExistente == nil || s.estatusReader == nil {
+		return nil
+	}
+	est, err := s.estatusReader.EstatusDeCliente(ctx, *clienteIDPreExistente)
+	if err != nil {
+		return err
+	}
+	norm := strings.ToUpper(strings.TrimSpace(est))
+	if norm != "A" && norm != "B" {
+		// El valor normalizado, no el crudo: el relleno de CHAR(1) es un
+		// artefacto de almacenamiento y en pantalla sólo sería ruido.
+		return domain.ErrClienteEstatusNoPermiteVenta.WithField("estatus_cliente", norm)
+	}
+	return nil
 }
 
 // buildAutoCreateClienteInput materializes a MicrosipClienteInput from the venta's

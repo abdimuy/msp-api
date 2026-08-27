@@ -32,6 +32,9 @@ var _ outbound.ClienteZonaReader = (*ClienteRepo)(nil)
 // Compile-time: ClienteRepo also satisfies ClienteEstatusReader.
 var _ outbound.ClienteEstatusReader = (*ClienteRepo)(nil)
 
+// Compile-time: ClienteRepo also satisfies ClienteNombreReader.
+var _ outbound.ClienteNombreReader = (*ClienteRepo)(nil)
+
 // Exists reports whether a row with the supplied CLIENTE_ID exists in
 // CLIENTES. Non-positive ids short-circuit to (false, nil) — they cannot
 // match a real Microsip cliente identifier.
@@ -87,4 +90,22 @@ func (r *ClienteRepo) EstatusDeCliente(ctx context.Context, clienteID int) (stri
 		return "", firebird.MapError(err)
 	}
 	return strings.TrimSpace(estatus), nil
+}
+
+// NombreDeCliente reads the NOMBRE from CLIENTES for the given clienteID.
+// NOMBRE is a VARCHAR column (unlike ESTATUS's CHAR), so it does not come
+// space-padded in practice — the result is trimmed anyway as cheap defence
+// in depth. Returns ("", domain.ErrClienteNotFoundInMicrosip) when no row
+// exists.
+func (r *ClienteRepo) NombreDeCliente(ctx context.Context, clienteID int) (string, error) {
+	q := firebird.GetQuerier(ctx, r.pool.DB)
+	var nombre string
+	err := q.QueryRowContext(ctx, selectClienteNombre, clienteID).Scan(&nombre)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", domain.ErrClienteNotFoundInMicrosip
+	}
+	if err != nil {
+		return "", firebird.MapError(err)
+	}
+	return strings.TrimSpace(nombre), nil
 }

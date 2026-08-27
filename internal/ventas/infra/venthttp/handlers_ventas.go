@@ -137,6 +137,7 @@ func (h *Handlers) ObtenerVenta(ctx context.Context, in *ObtenerVentaInput) (*Ob
 	dto.ZonaMismatch = mismatch
 	dto.ZonaClienteMicrosipID = zm
 	dto.EstatusClienteMicrosip = h.svc.EstatusMicrosipDeCliente(ctx, v)
+	dto.NombreClienteMicrosip = h.svc.NombreMicrosipDeCliente(ctx, v)
 	return &ObtenerVentaOutput{Body: dto}, nil
 }
 

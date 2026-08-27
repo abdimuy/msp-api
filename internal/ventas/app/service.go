@@ -92,9 +92,19 @@ type Service struct {
 	// tests that do not exercise the pre-existing cliente branch.
 	zonaReader outbound.ClienteZonaReader
 	// estatusReader is optional. Tests omit it; production wires it via
-	// WithEstatusReader. When nil, EstatusMicrosipDeCliente returns nil — used
+	// WithEstatusReader. Dejarlo en nil NO sólo apaga la pista de la UI:
+	// también apaga el guard de AplicarVenta que impide aplicar una venta a un
+	// cliente en suspensión de ventas o de créditos. Es un guard que se
+	// desactiva por omisión, así que quitarlo del cableado en cmd/api abre
+	// otra vez el defecto que cerró. When nil, EstatusMicrosipDeCliente returns nil — used
 	// for tests that do not exercise the cliente estatus hint.
 	estatusReader outbound.ClienteEstatusReader
+	// nombreReader is optional. Tests omit it; production wires it via
+	// WithNombreReader. When nil, NombreMicrosipDeCliente returns nil — used
+	// for tests that do not exercise the cliente nombre hint. Unlike
+	// estatusReader, dropping this from the cableado does NOT reopen any
+	// guard — it is a pure UI read hint, never consulted by AplicarVenta.
+	nombreReader outbound.ClienteNombreReader
 	// searchIndex is optional. Tests omit it; production wires it via
 	// WithSearchIndex. When nil, BuscarVentas falls back to the Firebird
 	// keyset listing (ListarVentas) — the pre-Meilisearch behavior is
@@ -167,6 +177,13 @@ func (s *Service) WithZonaReader(r outbound.ClienteZonaReader) *Service {
 // can surface the cliente's current ESTATUS in Microsip.
 func (s *Service) WithEstatusReader(r outbound.ClienteEstatusReader) *Service {
 	s.estatusReader = r
+	return s
+}
+
+// WithNombreReader attaches a ClienteNombreReader so the venta detail read
+// can surface the cliente's current NOMBRE in Microsip.
+func (s *Service) WithNombreReader(r outbound.ClienteNombreReader) *Service {
+	s.nombreReader = r
 	return s
 }
 

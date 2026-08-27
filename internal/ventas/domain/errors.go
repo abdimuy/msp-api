@@ -508,6 +508,15 @@ var (
 		"el cliente no existe en microsip",
 	)
 
+	// ErrClienteEstatusNoPermiteVenta is returned when applying a venta whose
+	// pre-existing Microsip cliente has ESTATUS other than 'A' (activo) or 'B'
+	// (baja) — i.e. 'V' (suspensión de ventas) or 'C' (suspensión de créditos).
+	// Auto-created clientes are exempt — they are created with ESTATUS='A'.
+	ErrClienteEstatusNoPermiteVenta = apperror.NewValidation(
+		"cliente_estatus_no_permite_venta",
+		"el cliente no está activo en microsip; la oficina debe cambiar su estatus antes de aplicar la venta",
+	)
+
 	// ErrVentaEvidenciaRequerida is returned when CrearVentaConImagenes or
 	// AplicarVenta receives a venta without at least one comprobante. Every
 	// venta del showroom debe llevar firma o ID del cliente; no hay excepción.

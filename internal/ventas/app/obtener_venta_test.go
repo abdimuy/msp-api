@@ -259,3 +259,80 @@ func TestEstatusMicrosipDeCliente(t *testing.T) {
 		assert.Equal(t, "V", *got)
 	})
 }
+
+func TestNombreMicrosipDeCliente(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nombreReader_nil_returns_nil", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		// no WithNombreReader — reader is nil
+		v := seedVentaConCliente(t, h)
+
+		got := h.svc.NombreMicrosipDeCliente(t.Context(), v)
+		assert.Nil(t, got)
+	})
+
+	t.Run("cliente_nil_returns_nil_reader_not_consulted", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		r := newFakeClienteNombreReader("JAQUELINE SANCHEZ ROMERO")
+		h.svc = h.svc.WithNombreReader(r)
+		// Seed a venta WITHOUT a clienteID using standard seedVenta helper.
+		ventaID := h.seedVenta(t)
+		v, err := h.svc.ObtenerVenta(t.Context(), *ventaID)
+		require.NoError(t, err)
+
+		got := h.svc.NombreMicrosipDeCliente(t.Context(), v)
+		assert.Nil(t, got)
+		assert.Equal(t, 0, r.callsCount(), "reader must NOT be consulted when venta has no cliente_id")
+	})
+
+	t.Run("reader_error_degrades_to_nil", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		r := newFakeClienteNombreReader("")
+		r.Err = domain.ErrClienteNotFoundInMicrosip
+		h.svc = h.svc.WithNombreReader(r)
+		v := seedVentaConCliente(t, h)
+
+		got := h.svc.NombreMicrosipDeCliente(t.Context(), v)
+		assert.Nil(t, got, "ErrClienteNotFoundInMicrosip must degrade — no nombre info")
+	})
+
+	t.Run("reader_transient_error_degrades_to_nil", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		boom := errors.New("microsip unavailable")
+		r := newFakeClienteNombreReader("")
+		r.Err = boom
+		h.svc = h.svc.WithNombreReader(r)
+		v := seedVentaConCliente(t, h)
+
+		// A transient reader error must NEVER fail the venta detail read; it
+		// degrades to "no nombre info" (nil).
+		got := h.svc.NombreMicrosipDeCliente(t.Context(), v)
+		assert.Nil(t, got, "transient reader error must degrade, not propagate")
+	})
+
+	t.Run("empty_nombre_returns_nil", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		h.svc = h.svc.WithNombreReader(newFakeClienteNombreReader(""))
+		v := seedVentaConCliente(t, h)
+
+		got := h.svc.NombreMicrosipDeCliente(t.Context(), v)
+		assert.Nil(t, got, "empty NOMBRE must yield nil — no useful info")
+	})
+
+	t.Run("nombre_normal_returns_pointer_to_value", func(t *testing.T) {
+		t.Parallel()
+		h := newHarness(t)
+		h.svc = h.svc.WithNombreReader(newFakeClienteNombreReader("JAQUELINE SANCHEZ ROMERO"))
+		v := seedVentaConCliente(t, h)
+
+		got := h.svc.NombreMicrosipDeCliente(t.Context(), v)
+		require.NotNil(t, got)
+		assert.Equal(t, "JAQUELINE SANCHEZ ROMERO", *got)
+	})
+}

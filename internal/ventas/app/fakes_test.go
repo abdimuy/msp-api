@@ -533,6 +533,37 @@ func (f *fakeClienteEstatusReader) callsCount() int {
 	return f.calls
 }
 
+// fakeClienteNombreReader is an in-memory outbound.ClienteNombreReader.
+// Nombre is the raw NOMBRE string returned for any clienteID when Err is
+// nil. Err overrides the happy path with an error (e.g.
+// domain.ErrClienteNotFoundInMicrosip).
+type fakeClienteNombreReader struct {
+	mu     sync.Mutex
+	calls  int
+	Nombre string
+	Err    error
+}
+
+func newFakeClienteNombreReader(nombre string) *fakeClienteNombreReader {
+	return &fakeClienteNombreReader{Nombre: nombre}
+}
+
+func (f *fakeClienteNombreReader) NombreDeCliente(_ context.Context, _ int) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.Err != nil {
+		return "", f.Err
+	}
+	return f.Nombre, nil
+}
+
+func (f *fakeClienteNombreReader) callsCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
 // fakeUsuarioChecker is an in-memory outbound.VendedorUsuarioExistenceChecker.
 // The known set decides which uuids are present in MSP_USUARIOS; anything
 // outside it is returned as missing. Calls counts invocations so tests can

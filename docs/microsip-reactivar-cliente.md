@@ -35,17 +35,47 @@ CHECK (ESTATUS IN ('A','C','V','B'))
 `microsip-crear-cliente-paso-a-paso.md` y en el diccionario de datos. Valores
 reales, verificados contra la base dev:
 
-| `ESTATUS` | Significado | % de la base |
+| `ESTATUS` | Significado (nombre en Microsip) | % de la base |
 |---|---|---|
-| `A` | Activo (con saldo vigente) | 22.6% |
-| `B` | **Baja/bloqueado** — lo pone la oficina | 63.0% |
-| `V` | Cliente real sin saldo vigente (liquidado/inactivo, con historial de ventas) | 14.3% |
-| `C` | Cancelado | 0.2% |
+| `A` | Activo | 22.6% |
+| `B` | **Baja** — el estado administrativo del grueso del padrón | 63.0% |
+| `V` | **Suspensión de ventas** | 14.3% |
+| `C` | **Suspensión de créditos** | 0.2% |
 
-La reactivación que documenta este archivo es **`B` → `A`** — el caso
-operativo real (un cliente al que la oficina le puso baja y luego se le
-vuelve a otorgar crédito). No hay evidencia de reactivación `V` → `A` ni
-`C` → `A` en los datos.
+> **Corregido el 2026-08-26.** Esta tabla decía antes que `V` era "cliente real
+> sin saldo vigente (liquidado/inactivo)" y `C` "cancelado". Eran **conclusiones
+> deducidas de los datos**, no los nombres que Microsip usa en pantalla, y
+> desviaron el diseño de esta función. Los nombres correctos los dio el dueño
+> del sistema leyendo la interfaz de Microsip.
+>
+> Los datos no contradicen los nombres — los explican. Que un `V` casi nunca
+> tenga saldo (6 de 6,457) no es porque haya "liquidado": es porque **está
+> suspendido de ventas** y no se le puede generar deuda nueva. Y que no hubiera
+> reactivaciones `V → A` en el histórico no probaba que no debieran existir;
+> probaba que nadie las estaba haciendo.
+
+La reactivación que documenta este archivo es **`B` → `A`**, y eso es
+deliberado: `B` es inercia administrativa, mientras que `V` y `C` son
+**decisiones de una persona** sobre a quién se le vende y a quién se le fía. El
+API revierte la primera y no toca las otras dos — pisar una suspensión sería
+tomar una decisión de crédito que no le corresponde.
+
+Desde el 2026-08-26 esa asimetría es explícita: `AplicarVenta` **bloquea** con
+`cliente_estatus_no_permite_venta` cuando el cliente preexistente no está en
+`A` ni en `B`, y la oficina debe cambiar el estatus en Microsip antes de que la
+venta pueda aplicarse.
+
+### El defecto que destapó todo esto
+
+Un cliente en `V` recibió una venta aplicada y **siguió en `V`**. La causa: el
+guard del `UPDATE` es `WHERE ESTATUS = 'B'`, así que con un cliente en `V`
+afecta 0 filas, `ReactivarSiEnBaja` devuelve `false`, y el llamador lo
+interpreta como "no hacía falta" y escribe un `slog.Debug` que nadie mira.
+**Falla en silencio.**
+
+Pasó meses sin detectarse porque `B` es el 63% del padrón y prácticamente todas
+las ventas van a clientes en `B`, donde la reactivación sí funciona. El caso
+roto era la minoría.
 
 ## Evidencia: 5,407 casos de reactivación detectados
 
