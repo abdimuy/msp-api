@@ -73,10 +73,17 @@ func (f *fakeFirebase) EnableUser(_ context.Context, _ string) error  { return n
 // ─── fakeUsuarioRepo ────────────────────────────────────────────────────────
 
 type fakeUsuarioRepo struct {
-	mu        sync.Mutex
-	ByID      map[uuid.UUID]*domain.Usuario
-	ByFUID    map[string]*domain.Usuario
-	ByEmail   map[string]*domain.Usuario
+	mu      sync.Mutex
+	ByID    map[uuid.UUID]*domain.Usuario
+	ByFUID  map[string]*domain.Usuario
+	ByEmail map[string]*domain.Usuario
+	// indexed records, per row id, the keys the row is CURRENTLY indexed
+	// under. Needed because this fake stores (and returns) the entity
+	// POINTER: by the time Update runs, the caller already mutated the object
+	// the map holds, so the "old" email/uid are unrecoverable from it. Without
+	// this snapshot a soft delete leaves the row reachable by its original
+	// email and firebase_uid, while Firebird frees both UNIQUE slots.
+	indexed   map[uuid.UUID]usuarioKeys
 	RoleLinks map[uuid.UUID]map[uuid.UUID]struct{}
 	Permisos  map[uuid.UUID][]domain.Permission
 	// Roles resolves rol IDs (as tracked in RoleLinks) into full *domain.Rol
@@ -91,6 +98,7 @@ func newFakeUsuarioRepo() *fakeUsuarioRepo {
 		ByID:      map[uuid.UUID]*domain.Usuario{},
 		ByFUID:    map[string]*domain.Usuario{},
 		ByEmail:   map[string]*domain.Usuario{},
+		indexed:   map[uuid.UUID]usuarioKeys{},
 		RoleLinks: map[uuid.UUID]map[uuid.UUID]struct{}{},
 		Permisos:  map[uuid.UUID][]domain.Permission{},
 	}
@@ -108,29 +116,53 @@ func (f *fakeUsuarioRepo) Save(_ context.Context, u *domain.Usuario) error {
 		return domain.ErrUsuarioYaExiste
 	}
 	f.ByID[u.ID()] = u
-	if !u.FirebaseUID().IsZero() {
-		f.ByFUID[u.FirebaseUID().Value()] = u
-	}
-	f.ByEmail[u.Email().Value()] = u
+	f.reindex(u)
 	return nil
 }
 
+// usuarioKeys is the pair of UNIQUE keys a row is indexed under.
+type usuarioKeys struct {
+	email string
+	fuid  string
+}
+
+// reindex drops whatever keys u was last indexed under and installs its
+// current ones. Callers hold f.mu.
+func (f *fakeUsuarioRepo) reindex(u *domain.Usuario) {
+	if prev, ok := f.indexed[u.ID()]; ok {
+		delete(f.ByEmail, prev.email)
+		if prev.fuid != "" {
+			delete(f.ByFUID, prev.fuid)
+		}
+	}
+	keys := usuarioKeys{email: u.Email().Value()}
+	f.ByEmail[keys.email] = u
+	if !u.FirebaseUID().IsZero() {
+		keys.fuid = u.FirebaseUID().Value()
+		f.ByFUID[keys.fuid] = u
+	}
+	f.indexed[u.ID()] = keys
+}
+
+// Update mirrors Firebird's UPDATE semantics, UNIQUE indexes included: a
+// key already owned by a DIFFERENT row is rejected with
+// domain.ErrUsuarioYaExiste (409) instead of being silently stolen.
 func (f *fakeUsuarioRepo) Update(_ context.Context, u *domain.Usuario) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	existing, ok := f.ByID[u.ID()]
-	if !ok {
+	if _, ok := f.ByID[u.ID()]; !ok {
 		return domain.ErrUsuarioNotFound
 	}
-	if !existing.FirebaseUID().IsZero() {
-		delete(f.ByFUID, existing.FirebaseUID().Value())
-	}
-	delete(f.ByEmail, existing.Email().Value())
-	f.ByID[u.ID()] = u
 	if !u.FirebaseUID().IsZero() {
-		f.ByFUID[u.FirebaseUID().Value()] = u
+		if owner, taken := f.ByFUID[u.FirebaseUID().Value()]; taken && owner.ID() != u.ID() {
+			return domain.ErrUsuarioYaExiste
+		}
 	}
-	f.ByEmail[u.Email().Value()] = u
+	if owner, taken := f.ByEmail[u.Email().Value()]; taken && owner.ID() != u.ID() {
+		return domain.ErrUsuarioYaExiste
+	}
+	f.ByID[u.ID()] = u
+	f.reindex(u)
 	return nil
 }
 

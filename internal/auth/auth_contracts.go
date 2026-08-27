@@ -51,6 +51,8 @@ const (
 	PermUsuariosListar = domain.PermUsuariosListar
 	// PermUsuariosVer — see domain.PermUsuariosVer.
 	PermUsuariosVer = domain.PermUsuariosVer
+	// PermUsuariosCrear — see domain.PermUsuariosCrear.
+	PermUsuariosCrear = domain.PermUsuariosCrear
 	// PermUsuariosActualizar — see domain.PermUsuariosActualizar.
 	PermUsuariosActualizar = domain.PermUsuariosActualizar
 	// PermUsuariosDesactivar — see domain.PermUsuariosDesactivar.

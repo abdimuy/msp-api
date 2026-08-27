@@ -103,10 +103,19 @@ func (f *FakeFirebaseClient) EnableUser(_ context.Context, uid string) error {
 // All maps are keyed by their natural identifier; the repo never mutates the
 // supplied entities except through the Save/Update entry points.
 type FakeUsuarioRepo struct {
-	mu         sync.Mutex
-	ByID       map[uuid.UUID]*domain.Usuario
-	ByFUID     map[string]*domain.Usuario
-	ByEmail    map[string]*domain.Usuario
+	mu      sync.Mutex
+	ByID    map[uuid.UUID]*domain.Usuario
+	ByFUID  map[string]*domain.Usuario
+	ByEmail map[string]*domain.Usuario
+	// indexed records, per row id, the keys the row is CURRENTLY indexed
+	// under. It exists because this fake stores (and hands back) the entity
+	// POINTER: by the time Update runs, the caller has already mutated the
+	// very object the map holds, so ByID[u.ID()].Email() is the NEW email and
+	// cannot be used to remove the stale key. Without this snapshot a soft
+	// delete leaves the row reachable by its original email and firebase_uid
+	// forever — the exact opposite of what RenameForSoftDelete buys in
+	// Firebird, where the UNIQUE slots are freed.
+	indexed    map[uuid.UUID]usuarioKeys
 	RoleLinks  map[uuid.UUID]map[uuid.UUID]struct{} // usuarioID → set of rolID
 	Permisos   map[uuid.UUID][]domain.Permission
 	SaveErr    error
@@ -129,6 +138,7 @@ func NewFakeUsuarioRepo() *FakeUsuarioRepo {
 		ByID:      map[uuid.UUID]*domain.Usuario{},
 		ByFUID:    map[string]*domain.Usuario{},
 		ByEmail:   map[string]*domain.Usuario{},
+		indexed:   map[uuid.UUID]usuarioKeys{},
 		RoleLinks: map[uuid.UUID]map[uuid.UUID]struct{}{},
 		Permisos:  map[uuid.UUID][]domain.Permission{},
 	}
@@ -150,33 +160,59 @@ func (f *FakeUsuarioRepo) Save(_ context.Context, u *domain.Usuario) error {
 		return domain.ErrUsuarioYaExiste
 	}
 	f.ByID[u.ID()] = u
-	if !u.FirebaseUID().IsZero() {
-		f.ByFUID[u.FirebaseUID().Value()] = u
-	}
-	f.ByEmail[u.Email().Value()] = u
+	f.reindex(u)
 	return nil
 }
 
-// Update rewrites the indexes to reflect any FUID/email change.
+// usuarioKeys is the pair of UNIQUE keys a row is indexed under.
+type usuarioKeys struct {
+	email string
+	fuid  string
+}
+
+// reindex drops whatever keys u was last indexed under and installs its
+// current ones. Callers hold f.mu.
+func (f *FakeUsuarioRepo) reindex(u *domain.Usuario) {
+	if prev, ok := f.indexed[u.ID()]; ok {
+		delete(f.ByEmail, prev.email)
+		if prev.fuid != "" {
+			delete(f.ByFUID, prev.fuid)
+		}
+	}
+	keys := usuarioKeys{email: u.Email().Value()}
+	f.ByEmail[keys.email] = u
+	if !u.FirebaseUID().IsZero() {
+		keys.fuid = u.FirebaseUID().Value()
+		f.ByFUID[keys.fuid] = u
+	}
+	f.indexed[u.ID()] = keys
+}
+
+// Update rewrites the indexes to reflect any FUID/email change. The UNIQUE
+// indexes UQ_MSP_USUARIOS_EMAIL / UQ_MSP_USUARIOS_FIREBASE_UID are enforced
+// here exactly as Firebird enforces them on UPDATE: a key already owned by a
+// DIFFERENT row is rejected with domain.ErrUsuarioYaExiste. Without this the
+// fake would silently let a promotion steal another usuario's uid and the
+// test would pass while production returned a 409.
 func (f *FakeUsuarioRepo) Update(_ context.Context, u *domain.Usuario) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.UpdateErr != nil {
 		return f.UpdateErr
 	}
-	existing, ok := f.ByID[u.ID()]
-	if !ok {
+	if _, ok := f.ByID[u.ID()]; !ok {
 		return domain.ErrUsuarioNotFound
 	}
-	if !existing.FirebaseUID().IsZero() {
-		delete(f.ByFUID, existing.FirebaseUID().Value())
-	}
-	delete(f.ByEmail, existing.Email().Value())
-	f.ByID[u.ID()] = u
 	if !u.FirebaseUID().IsZero() {
-		f.ByFUID[u.FirebaseUID().Value()] = u
+		if owner, taken := f.ByFUID[u.FirebaseUID().Value()]; taken && owner.ID() != u.ID() {
+			return domain.ErrUsuarioYaExiste
+		}
 	}
-	f.ByEmail[u.Email().Value()] = u
+	if owner, taken := f.ByEmail[u.Email().Value()]; taken && owner.ID() != u.ID() {
+		return domain.ErrUsuarioYaExiste
+	}
+	f.ByID[u.ID()] = u
+	f.reindex(u)
 	return nil
 }
 

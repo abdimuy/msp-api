@@ -11,6 +11,20 @@ type LoginRequest struct {
 	IDToken string `json:"id_token" validate:"required"`
 }
 
+// CrearUsuarioRequest is the body accepted by POST /usuarios. The office
+// desktop creates the account in Firebase Auth first and passes the resulting
+// firebase_uid here, so the row carries the identity from birth and the
+// person's first login matches an existing usuario instead of creating one.
+// The max= bounds mirror the Firebird column widths in
+// migrations-firebird/000001_create_auth_tables.up.sql: FIREBASE_UID
+// VARCHAR(128), EMAIL VARCHAR(255), NOMBRE VARCHAR(200), TELEFONO VARCHAR(30).
+type CrearUsuarioRequest struct {
+	FirebaseUID string  `json:"firebase_uid"         validate:"required,max=128"`
+	Email       string  `json:"email"                validate:"required,email,max=255"`
+	Nombre      string  `json:"nombre"               validate:"required,min=1,max=200"`
+	Telefono    *string `json:"telefono,omitempty"   validate:"omitempty,max=30"`
+}
+
 // ActualizarUsuarioRequest is the body accepted by PATCH /usuarios/{id}.
 type ActualizarUsuarioRequest struct {
 	Email     string  `json:"email"                validate:"required,email"`

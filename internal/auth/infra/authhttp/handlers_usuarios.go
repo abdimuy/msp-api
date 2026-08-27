@@ -50,6 +50,47 @@ func (h *Handlers) ObtenerUsuario(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, r, http.StatusOK, toUsuarioResponse(u))
 }
 
+// CrearUsuario handles POST /v2/usuarios. The caller supplies the
+// firebase_uid of an account it already created in Firebase Auth; the row
+// ends up as ESTATUS = FIREBASE_USER with that uid bound.
+//
+// Two outcomes share the 201: a brand-new row, or an existing active
+// VENDEDOR_ONLY row (minted from the phone when a cobrador named the person
+// as vendedor) promoted in place — same id, real nombre. The office cannot
+// tell them apart and does not need to. See app.Service.Crear.
+//
+// Every collision the endpoint refuses to resolve — the email held by a
+// FIREBASE_USER row or by a deactivated one, or the firebase_uid already
+// bound elsewhere — surfaces as one 409 with code "usuario_ya_existe".
+func (h *Handlers) CrearUsuario(w http.ResponseWriter, r *http.Request) {
+	var req CrearUsuarioRequest
+	if err := decodeJSON(r, &req); err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	if fe := validator.Default().Struct(req); fe != nil {
+		response.ValidationError(w, r, fe)
+		return
+	}
+	by, ok := currentUserID(r)
+	if !ok {
+		response.Error(w, r, apperror.NewUnauthorized("unauthenticated", "no autenticado"))
+		return
+	}
+
+	u, err := h.svc.Crear(r.Context(), app.CrearParams{
+		FirebaseUID: req.FirebaseUID,
+		Email:       req.Email,
+		Nombre:      req.Nombre,
+		Telefono:    req.Telefono,
+	}, by)
+	if err != nil {
+		response.Error(w, r, err)
+		return
+	}
+	response.JSON(w, r, http.StatusCreated, toUsuarioResponse(u))
+}
+
 // ActualizarUsuario handles PATCH /v2/usuarios/{id}.
 func (h *Handlers) ActualizarUsuario(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUIDParam(r, "id")

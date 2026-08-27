@@ -245,6 +245,105 @@ func TestContract_ListarUsuarios_Forbidden(t *testing.T) {
 	contractValidateExchange(t, c, router, req, http.StatusForbidden)
 }
 
+// TestContract_CrearUsuario_Created validates POST /v2/usuarios/ 201.
+func TestContract_CrearUsuario_Created(t *testing.T) {
+	t.Parallel()
+	router := newContractRouter(t)
+	c := newContractRig(t)
+	c.seedAuthedUser(t, "fbuid-cu", "cu@example.com", "Crear Usuario", domain.PermUsuariosCrear)
+
+	tel := "4491234567"
+	body := CrearUsuarioRequest{
+		FirebaseUID: "fbuid-cu-nuevo",
+		Email:       "cu-nuevo@example.com",
+		Nombre:      "Usuario Nuevo",
+		Telefono:    &tel,
+	}
+	req := contractRequest(t, http.MethodPost, "/v2/usuarios/", body)
+	req.Header.Set("Authorization", "Bearer t")
+	contractValidateExchange(t, c, router, req, http.StatusCreated)
+}
+
+// TestContract_CrearUsuario_Promocion validates that the promotion path — the
+// alta landing on an email already held by a VENDEDOR_ONLY row — answers a
+// 201 whose body still conforms to the Usuario schema. The office desktop
+// cannot tell the two paths apart, and the spec must not either.
+func TestContract_CrearUsuario_Promocion(t *testing.T) {
+	t.Parallel()
+	router := newContractRouter(t)
+	c := newContractRig(t)
+	c.seedAuthedUser(t, "fbuid-cu-p", "cu-p@example.com", "Crear Usuario Promo", domain.PermUsuariosCrear)
+
+	email, err := domain.NewEmail("humberto.quintana@example.com")
+	require.NoError(t, err)
+	nombre, err := domain.NewNombre("humberto.quintana")
+	require.NoError(t, err)
+	vendedor := domain.NewVendedorUsuario(uuid.New(), email, nombre, uuid.New(), c.rig.clockTime)
+	require.NoError(t, c.rig.usuarios.Save(context.Background(), vendedor))
+
+	body := CrearUsuarioRequest{
+		FirebaseUID: "fbuid-humberto",
+		Email:       "humberto.quintana@example.com",
+		Nombre:      "Humberto Quintana",
+	}
+	req := contractRequest(t, http.MethodPost, "/v2/usuarios/", body)
+	req.Header.Set("Authorization", "Bearer t")
+	rec := contractValidateExchange(t, c, router, req, http.StatusCreated)
+
+	var resp UsuarioResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	require.Equal(t, vendedor.ID().String(), resp.ID, "the promoted row keeps its id")
+	require.Equal(t, "Humberto Quintana", resp.Nombre)
+}
+
+// TestContract_CrearUsuario_Validation validates POST /v2/usuarios/ 422.
+func TestContract_CrearUsuario_Validation(t *testing.T) {
+	t.Parallel()
+	router := newContractRouter(t)
+	c := newContractRig(t)
+	c.seedAuthedUser(t, "fbuid-cu-v", "cu-v@example.com", "Crear Usuario Bad", domain.PermUsuariosCrear)
+
+	body := CrearUsuarioRequest{FirebaseUID: "", Email: "no-es-correo", Nombre: ""}
+	req := contractRequest(t, http.MethodPost, "/v2/usuarios/", body)
+	req.Header.Set("Authorization", "Bearer t")
+	contractValidateExchange(t, c, router, req, http.StatusUnprocessableEntity)
+}
+
+// TestContract_CrearUsuario_Conflict validates POST /v2/usuarios/ 409 when the
+// firebase_uid is already taken.
+func TestContract_CrearUsuario_Conflict(t *testing.T) {
+	t.Parallel()
+	router := newContractRouter(t)
+	c := newContractRig(t)
+	existing := c.seedAuthedUser(t, "fbuid-cu-c", "cu-c@example.com", "Crear Usuario Dup", domain.PermUsuariosCrear)
+
+	body := CrearUsuarioRequest{
+		FirebaseUID: existing.FirebaseUID().Value(),
+		Email:       "cu-c-otro@example.com",
+		Nombre:      "Usuario Duplicado",
+	}
+	req := contractRequest(t, http.MethodPost, "/v2/usuarios/", body)
+	req.Header.Set("Authorization", "Bearer t")
+	contractValidateExchange(t, c, router, req, http.StatusConflict)
+}
+
+// TestContract_CrearUsuario_Forbidden validates POST /v2/usuarios/ 403.
+func TestContract_CrearUsuario_Forbidden(t *testing.T) {
+	t.Parallel()
+	router := newContractRouter(t)
+	c := newContractRig(t)
+	c.seedAuthedUser(t, "fbuid-cu-f", "cu-f@example.com", "Crear Usuario No Perm")
+
+	body := CrearUsuarioRequest{
+		FirebaseUID: "fbuid-cu-f-nuevo",
+		Email:       "cu-f-nuevo@example.com",
+		Nombre:      "Usuario Nuevo",
+	}
+	req := contractRequest(t, http.MethodPost, "/v2/usuarios/", body)
+	req.Header.Set("Authorization", "Bearer t")
+	contractValidateExchange(t, c, router, req, http.StatusForbidden)
+}
+
 // TestContract_ObtenerUsuario_OK validates GET /v2/usuarios/{id} happy path.
 func TestContract_ObtenerUsuario_OK(t *testing.T) {
 	t.Parallel()

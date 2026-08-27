@@ -37,6 +37,7 @@ type secProtectedRoute struct {
 var secProtectedRoutes = []secProtectedRoute{
 	{http.MethodGet, "/me", ""},
 	{http.MethodGet, "/usuarios/", domain.PermUsuariosListar},
+	{http.MethodPost, "/usuarios/", domain.PermUsuariosCrear},
 	{http.MethodGet, "/usuarios/00000000-0000-0000-0000-000000000001", domain.PermUsuariosVer},
 	{http.MethodPatch, "/usuarios/00000000-0000-0000-0000-000000000001", domain.PermUsuariosActualizar},
 	{http.MethodDelete, "/usuarios/00000000-0000-0000-0000-000000000001", domain.PermUsuariosDesactivar},
@@ -147,6 +148,7 @@ func secMountWithLimitedPerms(rig *testRig, held ...domain.Permission) chi.Route
 	r.Get("/me", h.Me)
 	r.Route("/usuarios", func(r chi.Router) {
 		r.With(RequirePermission(domain.PermUsuariosListar)).Get("/", h.ListarUsuarios)
+		r.With(RequirePermission(domain.PermUsuariosCrear)).Post("/", h.CrearUsuario)
 		r.With(RequirePermission(domain.PermUsuariosVer)).Get("/{id}", h.ObtenerUsuario)
 		r.With(RequirePermission(domain.PermUsuariosActualizar)).Patch("/{id}", h.ActualizarUsuario)
 		r.With(RequirePermission(domain.PermUsuariosDesactivar)).Delete("/{id}", h.DesactivarUsuario)

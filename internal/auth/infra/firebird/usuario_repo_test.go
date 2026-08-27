@@ -893,3 +893,101 @@ func countAllUsuarios(ctx context.Context, t *testing.T, pool *firebird.Pool) in
 	)
 	return n
 }
+
+// TestUsuarioRepo_PromoteVendedorOnly_InPlace proves against the real
+// database that promoting a VENDEDOR_ONLY row is an UPDATE, not an INSERT:
+// the ID survives, FIREBASE_UID goes from NULL to the alta's uid, ESTATUS
+// moves to FIREBASE_USER and the placeholder nombre is overwritten. This is
+// what the office alta (Service.Crear) does when the email is already taken
+// by a row the phone created.
+func TestUsuarioRepo_PromoteVendedorOnly_InPlace(t *testing.T) {
+	t.Parallel()
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := authfb.NewUsuarioRepo(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		root := seedRootUsuario(ctx, t, pool)
+		suffix := uuid.NewString()
+
+		email, err := domain.NewEmail("humberto.quintana-" + suffix + "@example.invalid")
+		require.NoError(t, err)
+		placeholder, err := domain.NewNombre("humberto.quintana")
+		require.NoError(t, err)
+		vendedor := domain.NewVendedorUsuario(uuid.New(), email, placeholder, root, testNow())
+		require.NoError(t, repo.Save(ctx, vendedor))
+		before := countAllUsuarios(ctx, t, pool)
+
+		nombreReal, err := domain.NewNombre("Humberto Quintana")
+		require.NoError(t, err)
+		tel, err := platform.NewTelefono("4499876543")
+		require.NoError(t, err)
+		fuid, err := domain.NewFirebaseUID("fb-promo-" + suffix)
+		require.NoError(t, err)
+
+		vendedor.Update(domain.UsuarioUpdate{
+			Email:    vendedor.Email(),
+			Nombre:   nombreReal,
+			Telefono: &tel,
+		}, root, testNow())
+		vendedor.PromoteToFirebaseUser(fuid, root, testNow())
+		require.NoError(t, repo.Update(ctx, vendedor))
+
+		got, err := repo.FindByID(ctx, vendedor.ID())
+		require.NoError(t, err)
+		assert.Equal(t, vendedor.ID(), got.ID(), "la promoción conserva el mismo ID")
+		assert.Equal(t, domain.EstatusFirebaseUser, got.Estatus())
+		assert.Equal(t, fuid.Value(), got.FirebaseUID().Value())
+		assert.Equal(t, "Humberto Quintana", got.Nombre().Value())
+		require.NotNil(t, got.Telefono())
+		assert.Equal(t, "4499876543", got.Telefono().Value())
+		assert.Equal(t, root, got.UpdatedBy())
+
+		// The uid is now a live lookup key, and no second row appeared.
+		byFUID, err := repo.FindByFirebaseUID(ctx, fuid.Value())
+		require.NoError(t, err)
+		assert.Equal(t, vendedor.ID(), byFUID.ID())
+		assert.Equal(t, before, countAllUsuarios(ctx, t, pool), "no debe nacer una segunda fila")
+	})
+}
+
+// TestUsuarioRepo_Update_DuplicateFirebaseUID pins the trap of the promotion
+// path: attaching a uid that another row already owns violates
+// UQ_MSP_USUARIOS_FIREBASE_UID. The repository must translate it into
+// domain.ErrUsuarioYaExiste — a 409 conflict — and never let it escape as an
+// untyped driver error (500). The in-memory fakes cannot prove this; only the
+// real index can.
+func TestUsuarioRepo_Update_DuplicateFirebaseUID(t *testing.T) {
+	t.Parallel()
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := authfb.NewUsuarioRepo(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		root := seedRootUsuario(ctx, t, pool)
+		suffix := uuid.NewString()
+
+		// A usuario that already owns the uid.
+		owner := newUsuario(t, root, "uidowner-"+suffix)
+		require.NoError(t, repo.Save(ctx, owner))
+
+		// A vendedor-only row the office is about to promote onto that uid.
+		email, err := domain.NewEmail("vendedor-uiddup-" + suffix + "@example.invalid")
+		require.NoError(t, err)
+		nombre, err := domain.NewNombre("vendedor.uiddup")
+		require.NoError(t, err)
+		vendedor := domain.NewVendedorUsuario(uuid.New(), email, nombre, root, testNow())
+		require.NoError(t, repo.Save(ctx, vendedor))
+
+		vendedor.PromoteToFirebaseUser(owner.FirebaseUID(), root, testNow())
+		err = repo.Update(ctx, vendedor)
+		require.Error(t, err)
+		require.ErrorIs(t, err, domain.ErrUsuarioYaExiste)
+		appErr, ok := apperror.As(err)
+		require.True(t, ok, "expected apperror.Error, got %T", err)
+		assert.Equal(t, apperror.KindConflict, appErr.Kind, "debe ser 409, no 500")
+
+		// The uid stayed with its original owner.
+		still, err := repo.FindByFirebaseUID(ctx, owner.FirebaseUID().Value())
+		require.NoError(t, err)
+		assert.Equal(t, owner.ID(), still.ID())
+	})
+}

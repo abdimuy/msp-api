@@ -55,6 +55,7 @@ func MountRouter(
 
 		r.Route("/usuarios", func(r chi.Router) {
 			r.With(RequirePermission(domain.PermUsuariosListar)).Get("/", h.ListarUsuarios)
+			r.With(idem, RequirePermission(domain.PermUsuariosCrear)).Post("/", h.CrearUsuario)
 			r.With(RequirePermission(domain.PermUsuariosVer)).Get("/{id}", h.ObtenerUsuario)
 			r.With(idem, RequirePermission(domain.PermUsuariosActualizar)).Patch("/{id}", h.ActualizarUsuario)
 			r.With(RequirePermission(domain.PermUsuariosDesactivar)).Delete("/{id}", h.DesactivarUsuario)

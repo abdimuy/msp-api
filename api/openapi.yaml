@@ -86,6 +86,57 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
+    post:
+      tags: [usuarios]
+      summary: Register a usuario with its Firebase uid bound from birth.
+      description: >-
+        Registers the person from the office. If the email is free a new row is
+        inserted. If the email already belongs to an ACTIVE vendedor-only row
+        (one created on the fly when a cobrador named the person as vendedor of
+        a venta, with no firebase_uid and a nombre derived from the email's
+        local-part), that row is promoted in place instead: it keeps its id, the
+        supplied firebase_uid is attached, and the supplied nombre replaces the
+        derived one. Both outcomes answer 201 with the resulting usuario, so the
+        caller does not need to distinguish them; the id in the response may
+        therefore be one that already existed.
+      operationId: crearUsuario
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CrearUsuarioRequest"
+      responses:
+        "201":
+          description: >-
+            Usuario registered: either created, or an existing vendedor-only row
+            promoted in place (same id).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Usuario"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: >-
+            The identity collides with an existing row and the endpoint will not
+            resolve it silently (code `usuario_ya_existe`): the email belongs to
+            a FIREBASE_USER row, or to a deactivated row that still holds it
+            (never reactivated implicitly), or the firebase_uid is already bound
+            to a different usuario.
+
+            Note that DELETE /usuarios/{id} renames the email and firebase_uid
+            of the row it deactivates, freeing both UNIQUE slots — so a usuario
+            deactivated through this API does NOT collide here: re-registering
+            that email succeeds and creates a NEW row with a new id.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
 
   /usuarios/{id}:
     parameters:
@@ -491,6 +542,30 @@ components:
           type: string
           minLength: 1
           description: Firebase ID token issued by the client SDK.
+
+    CrearUsuarioRequest:
+      type: object
+      additionalProperties: false
+      required: [firebase_uid, email, nombre]
+      properties:
+        firebase_uid:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Uid of the account already created in Firebase Auth.
+        email:
+          type: string
+          format: email
+          maxLength: 255
+        nombre:
+          type: string
+          minLength: 1
+          maxLength: 200
+        telefono:
+          type:
+            - string
+            - "null"
+          maxLength: 30
 
     ActualizarUsuarioRequest:
       type: object

@@ -305,6 +305,50 @@ func TestPromoteToFirebaseUser_TransitionsState(t *testing.T) {
 		"UpdatedAt should be >= CreatedAt after promotion")
 }
 
+// TestUpdate_DoesNotMoveEstatusOrFirebaseUID pins the invariant that lets the
+// office alta (app.Service.promoteVendedorForAlta) call Update BEFORE
+// PromoteToFirebaseUser on the same entity: Update owns email/nombre/telefono/
+// almacenID and nothing else. If it ever started touching ESTATUS, the
+// promotion would reach PromoteToFirebaseUser with a non-VENDEDOR_ONLY row and
+// PANIC — a 500 on an endpoint whose whole job is not to corrupt an existing
+// identity row.
+func TestUpdate_DoesNotMoveEstatusOrFirebaseUID(t *testing.T) {
+	t.Parallel()
+	u := domain.NewVendedorUsuario(
+		uuid.New(),
+		mustEmail(t, "vendedor.raw@muebleriamsp.mx"),
+		mustNombre(t, "vendedor.raw"),
+		uuid.New(),
+		time.Date(2026, 6, 4, 10, 0, 0, 0, time.UTC),
+	)
+	require.Equal(t, domain.EstatusVendedorOnly, u.Estatus())
+	require.True(t, u.FirebaseUID().IsZero())
+
+	tel, err := platform.NewTelefono("4491112233")
+	require.NoError(t, err)
+	almacen := 19
+	u.Update(domain.UsuarioUpdate{
+		Email:     mustEmail(t, "vendedor.raw@muebleriamsp.mx"),
+		Nombre:    mustNombre(t, "Vendedor Real"),
+		Telefono:  &tel,
+		AlmacenID: &almacen,
+	}, uuid.New(), time.Now().UTC())
+
+	assert.Equal(t, domain.EstatusVendedorOnly, u.Estatus(),
+		"Update must not move ESTATUS — the promotion runs after it")
+	assert.True(t, u.FirebaseUID().IsZero(),
+		"Update must not attach a firebase uid")
+
+	// Positive control: the entity really is still promotable afterwards.
+	assert.NotPanics(t, func() {
+		u.PromoteToFirebaseUser(mustFirebaseUID(t, "fb-after-update"), uuid.New(), time.Now().UTC())
+	})
+	assert.Equal(t, domain.EstatusFirebaseUser, u.Estatus())
+	assert.Equal(t, "Vendedor Real", u.Nombre().Value(), "the promotion must not undo the Update")
+	require.NotNil(t, u.AlmacenID())
+	assert.Equal(t, 19, *u.AlmacenID(), "the promotion must not undo the Update")
+}
+
 func TestPromoteToFirebaseUser_PanicsOnNonVendedor(t *testing.T) {
 	t.Parallel()
 	u := domain.NewUsuario(

@@ -30,6 +30,9 @@ const (
 	PermUsuariosListar Permission = "usuarios:listar"
 	// PermUsuariosVer grants reading a single usuario.
 	PermUsuariosVer Permission = "usuarios:ver"
+	// PermUsuariosCrear grants registering a new usuario from the office,
+	// binding the Firebase uid at creation time.
+	PermUsuariosCrear Permission = "usuarios:crear"
 	// PermUsuariosActualizar grants editing a usuario's mutable fields.
 	PermUsuariosActualizar Permission = "usuarios:actualizar"
 	// PermUsuariosDesactivar grants soft-deleting a usuario.
@@ -163,6 +166,7 @@ func AllPermissions() []PermissionMeta {
 	perms := []PermissionMeta{
 		{PermUsuariosListar, "listar usuarios", categoriaUsuarios},
 		{PermUsuariosVer, "ver un usuario", categoriaUsuarios},
+		{PermUsuariosCrear, "crear usuarios", categoriaUsuarios},
 		{PermUsuariosActualizar, "actualizar un usuario", categoriaUsuarios},
 		{PermUsuariosDesactivar, "desactivar un usuario", categoriaUsuarios},
 		{PermUsuariosAsignarRol, "asignar o revocar roles a un usuario", categoriaUsuarios},
