@@ -134,7 +134,7 @@ No hay comparación byte a byte contra un archivo dorado: un cambio de una fuent
 - Un comprobante de pago con saldo restante en cero se renderiza igual: es el caso del cliente que acaba de liquidar, y es el que más ilusión le hace ver.
 - El error de `fpdf` se propaga: si `pdf.Error()` no es nil al final, `Venta`/`Pago` devuelven error y no bytes a medias.
 
-**Y una verificación que no es una prueba automática, pero es obligatoria:** genera los dos PDF, ábrelos, y **mándamelos** en el punto de control del miércoles. Un documento que pasa todas las pruebas y se ve mal sigue estando mal, y eso sólo se ve mirándolo.
+**Y una verificación que no es una prueba automática, pero es obligatoria:** genera los dos PDF y **ábrelos**. Un documento que pasa todas las pruebas y se ve mal sigue estando mal, y eso sólo se ve mirándolo. Los dos archivos van **adjuntos al PR** junto con la entrega: sin ellos, revisar el renderizador obliga a compilarlo y correrlo, y eso ya lo hiciste tú.
 
 ---
 
@@ -186,19 +186,23 @@ Lleva la salida literal de las siete compuertas sobre el commit final, la cobert
 
 ---
 
-## Calendario y puntos de control
+## Calendario
 
 | Cuándo | Qué |
 |---|---|
 | **Viernes 28 (hoy)** | Leer: este brief, las dos secciones del `task-3-brief`, `ventas/infra/storage/filesystem.go` y el §6 del spec. |
 | **Lunes 31** | Los dos entregables de adaptación: `FilesystemProvider` y `LocalSender`, con sus pruebas. |
-| **Lunes 31, fin de jornada** | **Punto de control: storage y sender en verde.** Mándame la salida de `go test -race -cover` de los dos paquetes. |
+| **Lunes 31, fin de jornada** | Empuja la rama con lo que lleves. No me mandes nada ni esperes respuesta: la entrega es una sola, el jueves. |
 | **Martes 1 de septiembre** | El PDF de venta. |
 | **Miércoles 2** | El PDF de pago. |
-| **Miércoles 2, fin de jornada** | **Punto de control: los dos PDF generados.** Mándame los dos archivos, no una captura. |
+| **Miércoles 2, fin de jornada** | Empuja la rama otra vez, con los dos PDF ya generados. Igual: sin mandar nada. |
 | **Jueves 3** | La cobertura de los tres paquetes al 85%, el reporte y el PR. |
 | **Jueves 3, fin de jornada** | **Entrega.** |
 
+**La entrega es una sola, el jueves 3, con los cuatro entregables y el reporte.** No entregues por partes: revisar en pedazos cuesta más tiempo del que ahorra.
+
+Los dos empujones de rama del lunes y el miércoles no son entregas y no llevan mensaje: nadie los va a revisar ni te va a contestar. Están para que el trabajo exista fuera de tu máquina, que es lo único que lo salva el día que la máquina falle.
+
 Los dos entregables del lunes son adaptación de código que ya existe en el repositorio y que hace exactamente lo mismo; el trabajo de diseño de la semana está en los dos documentos.
 
-De esto dependen tres tareas que arrancan en cuanto entre: el encolado desde `venta.aplicada` necesita el renderizador y el almacenamiento, y el worker de envío necesita el canal. Si algo se atora más de dos horas, avisa el mismo día — no el jueves.
+De esto dependen tres tareas que arrancan en cuanto entre: el encolado desde `venta.aplicada` necesita el renderizador y el almacenamiento, y el worker de envío necesita el canal. Y sigue en pie la única regla que sí interrumpe: **si algo se atora más de dos horas, avisa el mismo día** — no el jueves.
