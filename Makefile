@@ -12,7 +12,7 @@ LDFLAGS       := -s -w -X main.version=$(shell git rev-parse --short HEAD 2>/dev
 # internal/platform — not even another module's contracts. Verified by
 # `make check-sealed`; also enforced statically by depguard in .golangci.yml.
 # Adding a module here without its matching depguard rule leaves half the gate.
-SEALED_MODULES := asistencia garantias
+SEALED_MODULES := asistencia garantias flota
 
 # Load .env if present (FB_* and other vars consumed by Go binaries + targets).
 ifneq (,$(wildcard .env))

@@ -71,6 +71,29 @@ type Config struct {
 	FailedIntent   FailedIntent
 	Inventario     Inventario
 	Reactivacion   Reactivacion
+	Flota          Flota
+}
+
+// Flota holds the knobs of the roster snapshot worker — the process that
+// photographs the Firestore `users` collection and records who changed
+// camioneta.
+type Flota struct {
+	// SnapshotInterval is how often the roster is photographed, and it is the
+	// module's whole precision/cost trade-off in one value: a detected change
+	// can only ever be bounded to this window, and the pass costs one
+	// Firestore document read per person in `users` (62 in the dev project).
+	//
+	// At the 15m default that is 96 passes and ~5,950 document reads a day —
+	// about 12% of Firestore's 50,000/day free tier. Five minutes would cost
+	// 36% of it, which is not a trade worth making on a project that has
+	// already been taken offline once by an unpaid invoice. See
+	// flotaapp.intervaloPorDefecto for the full arithmetic.
+	SnapshotInterval time.Duration `env:"FLOTA_SNAPSHOT_INTERVAL" envDefault:"15m"`
+	// SnapshotEnabled is the kill switch. It defaults to true, but the worker
+	// additionally refuses to start whenever Firebase is unconfigured or in
+	// dev mode — there is no roster to photograph then. Set false to stop
+	// spending Firestore reads without redeploying.
+	SnapshotEnabled bool `env:"FLOTA_SNAPSHOT_ENABLED" envDefault:"true"`
 }
 
 // Inventario holds the Microsip configuration knobs used by the inventario

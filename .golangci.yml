@@ -140,6 +140,11 @@ linters:
         - dependencias
         - nto
         - recorre
+        # Vocabulario del módulo flota (bitácora de asignaciones de camioneta).
+        # `Observacion` es el nombre del VO en español, no un "Observation"
+        # mal escrito: el resto del dominio del módulo también va en español.
+        - observacion
+        - Observacion
 
     # ── revive ───────────────────────────────────────────────────────
     revive:
@@ -289,6 +294,14 @@ linters:
           alias: clienteshttp
         - pkg: github.com/abdimuy/msp-api/internal/clientes/infra/search
           alias: clientessearch
+        - pkg: github.com/abdimuy/msp-api/internal/flota/app
+          alias: flotaapp
+        - pkg: github.com/abdimuy/msp-api/internal/flota/domain
+          alias: flotadomain
+        - pkg: github.com/abdimuy/msp-api/internal/flota/infra/flotafb
+          alias: flotafb
+        - pkg: github.com/abdimuy/msp-api/internal/flota/ports/outbound
+          alias: flotaoutbound
         - pkg: github.com/abdimuy/msp-api/internal/rutas/app
           alias: rutasapp
         - pkg: github.com/abdimuy/msp-api/internal/rutas/domain
@@ -409,6 +422,7 @@ linters:
             - github.com/abdimuy/msp-api/internal/asistencia/domain
             - github.com/abdimuy/msp-api/internal/garantias/domain
             - github.com/abdimuy/msp-api/internal/visitas/domain
+            - github.com/abdimuy/msp-api/internal/flota/domain
 
         app-no-infra:
           list-mode: lax
@@ -452,6 +466,20 @@ linters:
             - github.com/shopspring/decimal
             - github.com/abdimuy/msp-api/internal/platform
             - github.com/abdimuy/msp-api/internal/garantias
+
+        flota-sealed:
+          list-mode: lax
+          files:
+            - "**/internal/flota/**/*.go"
+          deny:
+            - pkg: "github.com/abdimuy/msp-api/internal"
+              desc: "flota is sealed (ADR 0009): only internal/flota and internal/platform are allowed — not even another module's contracts"
+          allow:
+            - $gostd
+            - github.com/google/uuid
+            - github.com/shopspring/decimal
+            - github.com/abdimuy/msp-api/internal/platform
+            - github.com/abdimuy/msp-api/internal/flota
 
         # ── La plataforma de captura no sabe de módulos ──────────────
         # Es la regla que sostiene la inversión del puerto ResumenExtractor.
