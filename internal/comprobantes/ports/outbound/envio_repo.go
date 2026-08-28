@@ -29,9 +29,17 @@ type FiltroEnvios struct {
 type EnvioRepo interface {
 	// Guardar inserts or updates a delivery unconditionally. Used for the
 	// transitions that do not race.
+	//
+	// A write that hits UNIQUE(TIPO, REFERENCIA) returns domain.
+	// ErrEnvioDuplicado: the receipt for that fact already exists. Discarding
+	// it is the NORMAL path when the cursor reprocesses a stretch of the
+	// changelog (spec §12). The implementation must NOT read-before-write to
+	// preempt the clash — the idempotency comes from the database, never from
+	// the worker's memory.
 	Guardar(ctx context.Context, e *domain.Envio) error
 
-	// Obtener reads one delivery by id.
+	// Obtener reads one delivery by id. Returns domain.ErrEnvioNoEncontrado
+	// when the delivery does not exist.
 	Obtener(ctx context.Context, id uuid.UUID) (*domain.Envio, error)
 
 	// Listar returns the deliveries matching the filter.

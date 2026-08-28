@@ -137,4 +137,17 @@ var (
 		"receipt_envio_cliente_id_invalido",
 		"el cliente id debe ser un número positivo",
 	)
+	// ErrEnvioDuplicado is returned by a persistence write that hits the
+	// UNIQUE(TIPO, REFERENCIA) constraint: the receipt for that fact already
+	// exists. This is a NORMAL outcome when the cursor reprocesses a stretch
+	// of the changelog (spec §12) — the application discards, not fails.
+	ErrEnvioDuplicado = apperror.NewConflict(
+		"receipt_delivery_duplicate",
+		"ya existe un envío para ese comprobante",
+	)
+	// ErrEnvioNoEncontrado is returned when a delivery does not exist.
+	ErrEnvioNoEncontrado = apperror.NewNotFound(
+		"receipt_delivery_not_found",
+		"el envío solicitado no existe",
+	)
 )
