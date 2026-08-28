@@ -313,6 +313,21 @@ func TestReclamar(t *testing.T) {
 	}
 }
 
+// TestReclamar_FijaUpdatedAt verifica que transitionTo honra el instante
+// recibido: tras Reclamar(fecha fija), UpdatedAt() es esa fecha exacta, no la
+// del reloj de pared.
+func TestReclamar_FijaUpdatedAt(t *testing.T) {
+	t.Parallel()
+	e := crearEnvioEnEspera(t)
+	fecha := now.Add(3 * time.Hour)
+	if err := e.Reclamar(fecha); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !e.UpdatedAt().Equal(fecha) {
+		t.Fatalf("UpdatedAt() = %v, want %v", e.UpdatedAt(), fecha)
+	}
+}
+
 func TestMarcarEnviado(t *testing.T) {
 	t.Parallel()
 

@@ -139,7 +139,7 @@ func (e *Envio) Reclamar(now time.Time) error {
 	if !e.estado.CanTransitionTo(EstadoEnvioEnviando) {
 		return ErrEnvioTransicionInvalido
 	}
-	e.transitionTo(EstadoEnvioEnviando)
+	e.transitionTo(EstadoEnvioEnviando, now)
 	return nil
 }
 
@@ -151,7 +151,7 @@ func (e *Envio) MarcarEnviado(mensajeExternoID string, now time.Time) error {
 	if !e.estado.CanTransitionTo(EstadoEnvioEnviado) {
 		return ErrEnvioTransicionInvalido
 	}
-	e.transitionTo(EstadoEnvioEnviado)
+	e.transitionTo(EstadoEnvioEnviado, now)
 	e.mensajeExternoID = &mensajeExternoID
 	e.enviadoEn = &now
 	return nil
@@ -164,7 +164,7 @@ func (e *Envio) MarcarFallido(motivo string, now time.Time) error {
 	if !e.estado.CanTransitionTo(EstadoEnvioFallido) {
 		return ErrEnvioTransicionInvalido
 	}
-	e.transitionTo(EstadoEnvioFallido)
+	e.transitionTo(EstadoEnvioFallido, now)
 	e.ultimoError = &motivo
 	return nil
 }
@@ -177,7 +177,7 @@ func (e *Envio) Reenviar(now time.Time) error {
 	if e.estado != EstadoEnvioFallido {
 		return ErrEnvioTransicionInvalido
 	}
-	e.transitionTo(EstadoEnvioEnEspera)
+	e.transitionTo(EstadoEnvioEnEspera, now)
 	e.intentos++
 	e.ultimoError = nil
 	return nil
@@ -191,16 +191,20 @@ func (e *Envio) Detener(por string, now time.Time) error {
 	if !e.estado.CanTransitionTo(EstadoEnvioDetenido) {
 		return ErrEnvioTransicionInvalido
 	}
-	e.transitionTo(EstadoEnvioDetenido)
+	e.transitionTo(EstadoEnvioDetenido, now)
 	e.detenidoPor = &por
 	return nil
 }
 
-// transitionTo actualiza el estado y registra la marca de tiempo.
-// Solo debe llamarse después de validar la transición.
-func (e *Envio) transitionTo(nuevo EstadoEnvio) {
+// transitionTo actualiza el estado y fija UpdatedAt en el instante de la
+// operación. Solo debe llamarse después de validar la transición.
+//
+// Recibe now porque las transiciones ya lo traen: usar el reloj de pared aquí
+// lo tiraría, y dos entidades mutadas en la misma operación deben cargar el
+// mismo UpdatedAt para que quien lea las filas sepa que cambiaron juntas.
+func (e *Envio) transitionTo(nuevo EstadoEnvio, now time.Time) {
 	e.estado = nuevo
-	e.MarkUpdated()
+	e.MarkUpdatedAt(now)
 }
 
 // --- Getters ---
