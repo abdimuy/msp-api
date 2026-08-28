@@ -123,8 +123,13 @@ func (r *VentaRepo) insertProductos(ctx context.Context, q firebird.Querier, v *
 }
 
 func (r *VentaRepo) insertVendedores(ctx context.Context, q firebird.Querier, v *domain.Venta) error {
-	// POSICION (1-based) is stamped from the slice index — preserves the order
-	// the client sent. See queries.go::selectVendedoresByVenta.
+	// POSICION (1-based) is stamped from the slice index. Since the server
+	// resolves a venta's vendedores from the fleet roster, that order is no
+	// longer "the order the client sent": it is the order the app layer
+	// decided (see app.construirVendedores, which keeps the phone's positions
+	// for the people it named and appends the roster's extras). It matters
+	// downstream — AplicarVenta maps position k to Microsip's
+	// LIBRES_CARGOS_CC.VENDEDOR_1/2/3. See queries.go::selectVendedoresByVenta.
 	for i, vd := range v.VendedoresForRepo() {
 		a := vd.Audit()
 		_, err := q.ExecContext(ctx, insertVendedor,

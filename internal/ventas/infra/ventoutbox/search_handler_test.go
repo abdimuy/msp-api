@@ -141,7 +141,7 @@ func TestNewVentaReindexHandlers_OneHandlerPerEventType_NoDuplicatePanic(t *test
 	svc := newTestService(t, newStubVentaRepo(), &stubSearchIndex{})
 	handlers := ventoutbox.NewVentaReindexHandlers(svc)
 
-	require.Len(t, handlers, 13, "plan+ref-notes: 13 venta event types")
+	require.Len(t, handlers, 14, "plan+ref-notes: 14 venta event types")
 
 	reg := outboxfb.NewHandlerRegistry()
 	seen := map[string]struct{}{}
@@ -166,6 +166,7 @@ func TestNewVentaReindexHandlers_OneHandlerPerEventType_NoDuplicatePanic(t *test
 		domain.EventTypeVentaAprobada,
 		domain.EventTypeVentaRegresadaABorrador,
 		domain.EventTypeVentaAplicada,
+		domain.EventTypeVentaVendedoresResueltos,
 	}, reg.KnownTypes())
 }
 

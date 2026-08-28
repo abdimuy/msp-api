@@ -135,6 +135,10 @@ func (s *Service) CrearVenta(ctx context.Context, in CrearVentaInput, by uuid.UU
 	if err := s.validateClienteID(ctx, in.ClienteID); err != nil {
 		return nil, err
 	}
+	// The server, not the phone, decides who sold this. Degrades to the
+	// client's list on any failure — see resolverVendedores.
+	vendedores, resolucion := s.resolverVendedores(ctx, in)
+	in.Vendedores = vendedores
 	if err := s.validateVendedorUsuarios(ctx, in.Vendedores); err != nil {
 		return nil, err
 	}
@@ -160,6 +164,7 @@ func (s *Service) CrearVenta(ctx context.Context, in CrearVentaInput, by uuid.UU
 		return nil, err
 	}
 	s.drainEvents(ctx, venta)
+	s.emitirEvidenciaVendedores(ctx, venta.ID(), by, resolucion)
 	return venta, nil
 }
 
@@ -456,13 +461,20 @@ func buildProductoInputs(in []CrearVentaProductoInput) ([]domain.CrearVentaProdu
 // buildVendedorInputs translates the request vendedor slice into the domain
 // shape. Per-line validation happens inside domain.CrearVenta via
 // NewVendedorSnapshot.
+//
+// The email is normalized here — the single choke point every write path
+// (create, create-with-images, replace) already goes through — so the address
+// stored on the venta's vendedor snapshot is always canonical, whatever case
+// the caller typed. That is the half of the fix that needs no new APK: an
+// address the phone sent capitalized still matches the roster, the usuario
+// row, and any later comparison, instead of quietly being a different string.
 func buildVendedorInputs(in []CrearVentaVendedorInput) []domain.CrearVentaVendedorInput {
 	out := make([]domain.CrearVentaVendedorInput, 0, len(in))
 	for _, v := range in {
 		out = append(out, domain.CrearVentaVendedorInput{
 			ID:        v.ID,
 			UsuarioID: v.UsuarioID,
-			Email:     v.Email,
+			Email:     domain.NormalizarEmail(v.Email),
 			Nombre:    v.Nombre,
 		})
 	}

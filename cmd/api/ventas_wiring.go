@@ -2,9 +2,12 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 
+	firebasesdk "firebase.google.com/go/v4"
 	"go.uber.org/fx"
+	"google.golang.org/api/option"
 
 	"github.com/abdimuy/msp-api/internal/platform/config"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
@@ -16,6 +19,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/ventas/infra/microsip"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/storage"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/ventfb"
+	"github.com/abdimuy/msp-api/internal/ventas/infra/ventfirestore"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/ventoutbox"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/ventsearch"
 	ventasoutbound "github.com/abdimuy/msp-api/internal/ventas/ports/outbound"
@@ -99,6 +103,45 @@ func provideVentasFaseResolver(p *firebird.Pool) ventasoutbound.FaseResolver {
 	return ventfb.NewFaseRepo(p)
 }
 
+// provideVentasVendedoresRoster builds the Firestore-backed fleet roster used
+// to decide a venta's vendedores on the SERVER instead of trusting the list
+// the phone computed.
+//
+// Returns the Noop implementation whenever Firestore is unavailable (dev
+// mode, unconfigured project, init failure). A boot failure here is logged,
+// never fatal: on 2026-08-14 an unpaid MX$23.49 invoice dropped the Firebase
+// project to the free plan without warning, and a deployment that refuses to
+// start — or a venta that refuses to be created — because a roster is
+// unreachable is strictly worse than one whose vendedor list came from the
+// phone. Mirrors provideCalendarioCobradorClient.
+func provideVentasVendedoresRoster(cfg *config.Config) ventasoutbound.VendedoresDeCamionetaResolver {
+	if cfg.Firebase.DevMode || cfg.Firebase.ProjectID == "" {
+		slog.Info("ventas.vendedores: firestore no configurado; usando noop")
+		return ventfirestore.NoopVendedoresClient{}
+	}
+	ctx := context.Background()
+	app, err := firebasesdk.NewApp(ctx,
+		&firebasesdk.Config{ProjectID: cfg.Firebase.ProjectID},
+		option.WithCredentialsFile(cfg.Firebase.ServiceAccountPath),
+	)
+	if err != nil {
+		slog.Error("ventas.vendedores: no se pudo inicializar firebase; usando noop", "error", err)
+		return ventfirestore.NoopVendedoresClient{}
+	}
+	fs, err := app.Firestore(ctx)
+	if err != nil {
+		slog.Error("ventas.vendedores: no se pudo obtener cliente firestore; usando noop", "error", err)
+		return ventfirestore.NoopVendedoresClient{}
+	}
+	return ventfirestore.NewVendedoresClient(fs)
+}
+
+// provideVentasUsuarioEmailResolver builds the MSP_USUARIOS lookup that turns
+// the roster's emails into the usuario ids a venta's vendedor rows reference.
+func provideVentasUsuarioEmailResolver(p *firebird.Pool) ventasoutbound.VendedorUsuarioEmailResolver {
+	return ventfb.NewUsuarioEmailRepo(p)
+}
+
 // provideVentasImageProcessor selects the image-processing implementation
 // for the ventas module. When IMAGEPROCESSOR_ENABLED=false the factory
 // returns the NoOp passthrough so uploads land verbatim on disk.
@@ -169,6 +212,8 @@ func provideVentasService(
 	zonaNombreResolver ventasoutbound.ZonaNombreResolver,
 	faseResolver ventasoutbound.FaseResolver,
 	searchIndex ventasoutbound.VentaSearchIndex,
+	vendedoresRoster ventasoutbound.VendedoresDeCamionetaResolver,
+	vendedoresUsuarios ventasoutbound.VendedorUsuarioEmailResolver,
 	p *firebird.Pool,
 	cfg *config.Config,
 ) *ventasapp.Service {
@@ -185,7 +230,8 @@ func provideVentasService(
 		WithNombreReader(ventfb.NewClienteRepo(p)).
 		WithReactivarCliente(cfg.MicrosipVenta.ReactivarClienteEnabled).
 		WithZonaObligatoria(cfg.MicrosipVenta.ZonaObligatoria).
-		WithCiudadCatalogo(ventfb.NewCiudadCatalogoRepo(p), cfg.MicrosipVenta.CiudadCatalogo)
+		WithCiudadCatalogo(ventfb.NewCiudadCatalogoRepo(p), cfg.MicrosipVenta.CiudadCatalogo).
+		WithVendedoresDeCamioneta(vendedoresRoster, vendedoresUsuarios)
 	if searchIndex != nil {
 		svc = svc.WithSearchIndex(searchIndex)
 	}

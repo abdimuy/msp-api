@@ -61,6 +61,10 @@ func (s *Service) CrearVentaConImagenes(
 	if err := s.validateClienteID(ctx, in.ClienteID); err != nil {
 		return nil, err
 	}
+	// The server, not the phone, decides who sold this. Degrades to the
+	// client's list on any failure — see resolverVendedores.
+	vendedores, resolucion := s.resolverVendedores(ctx, in)
+	in.Vendedores = vendedores
 	if err := s.validateVendedorUsuarios(ctx, in.Vendedores); err != nil {
 		return nil, err
 	}
@@ -99,6 +103,7 @@ func (s *Service) CrearVentaConImagenes(
 	}
 
 	s.drainEvents(ctx, venta)
+	s.emitirEvidenciaVendedores(ctx, venta.ID(), by, resolucion)
 	return venta, nil
 }
 

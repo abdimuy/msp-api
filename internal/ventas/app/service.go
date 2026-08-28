@@ -110,6 +110,15 @@ type Service struct {
 	// keyset listing (ListarVentas) — the pre-Meilisearch behavior is
 	// preserved exactly until the index is wired at the composition root.
 	searchIndex outbound.VentaSearchIndex
+	// vendedoresRoster / vendedoresUsuarios let the SERVER decide a venta's
+	// vendedores from the camioneta's roster instead of trusting the list the
+	// phone computed. Both are optional and BOTH are required for the feature
+	// to run — see WithVendedoresDeCamioneta. When either is nil, CrearVenta
+	// uses the client's list verbatim and emits no evidence event, which is
+	// exactly the behavior that predates the feature. Neither may ever be
+	// allowed to fail a venta: see vendedoresRosterTimeout.
+	vendedoresRoster   outbound.VendedoresDeCamionetaResolver
+	vendedoresUsuarios outbound.VendedorUsuarioEmailResolver
 	// reactivarClienteEnabled gates the cliente-reactivation step inside
 	// AplicarVenta (MICROSIP_REACTIVAR_CLIENTE_ENABLED, default false). When
 	// false, AplicarVenta never calls microsipCliente.ReactivarSiEnBaja —

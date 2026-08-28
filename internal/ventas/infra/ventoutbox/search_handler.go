@@ -31,10 +31,16 @@ var ventaEventTypes = []string{
 	domain.EventTypeVentaAprobada,
 	domain.EventTypeVentaRegresadaABorrador,
 	domain.EventTypeVentaAplicada,
+	// Pure evidence, not a mutation — but it MUST be listed anyway. The
+	// dispatcher claims rows with EVENT_TYPE IN (<registered types>), so an
+	// unregistered type is never claimed, never processed, and sits in `new`
+	// forever accumulating in MSP_OUTBOX_EVENTS with nobody the wiser. The
+	// reindex it triggers is idempotent and harmless.
+	domain.EventTypeVentaVendedoresResueltos,
 }
 
 // reindexHandler routes a single venta domain event type to
-// Service.ReindexVenta. One instance is registered per event type (13
+// Service.ReindexVenta. One instance is registered per event type (14
 // total, see ventaEventTypes) so the outbox dispatcher's
 // EVENT_TYPE IN (...) filter claims every venta mutation.
 type reindexHandler struct {
