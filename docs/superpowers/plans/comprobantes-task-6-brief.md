@@ -5,6 +5,12 @@
 > **Plan:** tarea `0.1` de la tanda 0
 > **Plazo:** entrega el **martes 1 de septiembre al final de tu jornada**. Ver el calendario al final.
 
+>  **Reasignada el 2026-08-28: esta tarea la toma el líder, no Kevin.** El esquema es
+> el artefacto del módulo que se escribe una sola vez y hay que aplicarlo en producción
+> a mano, así que se queda del lado de quien despliega. El brief se conserva tal cual —
+> las quince decisiones cerradas siguen siendo válidas para quien la escriba. Kevin
+> pasa a la tarea 7.
+
 > **Ojo con la numeración.** Éste es el brief de la tarea **6**, y corresponde a la tarea **0.1 del plan** — la primera de la tanda 0, la única que quedaba sin dueño. Los briefs se numeran por orden de envío y el plan por dependencias; no coinciden, y no tienen por qué. Si algún documento te dice otra cosa, gobierna éste.
 
 ## Dónde encaja
