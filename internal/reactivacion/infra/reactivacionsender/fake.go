@@ -1,7 +1,10 @@
 // Package reactivacionsender implements outbound.MessageSender for the
-// reactivación channel: FakeSender (simulated, always succeeds) is the only
-// live channel in Fase 2; WhatsmeowSender is a stub reserved for Fase 3 once
-// the piloto has a WhatsApp number to enchufar.
+// reactivación channel: FakeSender (simulated, always succeeds) is the safe
+// default; CloudAPISender is the real channel over Meta's WhatsApp Cloud
+// API (internal/platform/whatsapp), selected via REACTIVACION_SENDER=cloudapi
+// per docs/adr/0010-whatsapp-cloud-api-and-the-always-on-edge.md.
+// WhatsmeowSender is a stub kept from before that ADR — see its own doc
+// comment.
 //
 //nolint:misspell // reactivación vocabulary is Spanish per project convention.
 package reactivacionsender

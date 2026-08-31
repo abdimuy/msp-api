@@ -20,6 +20,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 	"github.com/abdimuy/msp-api/internal/platform/lifecycle"
 	platformllm "github.com/abdimuy/msp-api/internal/platform/llm"
+	platformwhatsapp "github.com/abdimuy/msp-api/internal/platform/whatsapp"
 
 	"go.uber.org/fx"
 )
@@ -60,11 +61,15 @@ func provideReactivacionTxRunner(m *firebird.TxManager) reactivacionapp.TxRunner
 
 // provideReactivacionSender selects the MessageSender implementation by
 // REACTIVACION_SENDER: "fake" (default) never touches a real number;
-// "whatsmeow" is a stub that fails until Fase 3 wires the real channel.
-// Any other value falls back to the fake sender — the safer default.
+// "cloudapi" is the real channel, Meta's WhatsApp Cloud API, built here
+// from config.WhatsApp via internal/platform/whatsapp — see
+// docs/adr/0010-whatsapp-cloud-api-and-the-always-on-edge.md. Any other
+// value, including an unrecognized one, falls back to the fake sender —
+// the safer default: a wrong value here must never send a real message.
 func provideReactivacionSender(cfg *config.Config, logger *slog.Logger) reactivacionoutbound.MessageSender {
-	if cfg.Reactivacion.Sender == "whatsmeow" {
-		return reactivacionsender.NewWhatsmeowSender()
+	if cfg.Reactivacion.Sender == "cloudapi" {
+		client := platformwhatsapp.NewClient(cfg.WhatsApp)
+		return reactivacionsender.NewCloudAPISender(client, logger)
 	}
 	return reactivacionsender.NewFakeSender(logger)
 }

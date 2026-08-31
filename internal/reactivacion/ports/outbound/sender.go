@@ -17,8 +17,10 @@ type Destino struct {
 
 // MessageSender delivers the body of one message to dest over a channel.
 // Implementations live in internal/reactivacion/infra/reactivacionsender —
-// a FakeSender that simulates success now, and a WhatsmeowSender that
-// enchufa the real channel once the piloto has a WhatsApp number (Fase 3).
+// a FakeSender that simulates success (the safe default), and a
+// CloudAPISender that delivers over Meta's WhatsApp Cloud API, the real
+// channel per docs/adr/0010-whatsapp-cloud-api-and-the-always-on-edge.md.
+// WhatsmeowSender is an earlier stub superseded by that ADR.
 type MessageSender interface {
 	// Enviar delivers cuerpo to dest. Returns an error if the channel rejects
 	// the message (never returns a partial success).

@@ -241,8 +241,10 @@ type Cobranza struct {
 // de envío — Fase 2. See docs/superpowers/specs/2026-07-20-reactivacion-r7-fase2-canal-design.md.
 type Reactivacion struct {
 	// Sender selects the MessageSender implementation: "fake" (default, always
-	// succeeds, never touches a real number) or "whatsmeow" (stub until Fase 3
-	// wires the real channel — Enviar always fails with a clear error).
+	// succeeds, never touches a real number) or "cloudapi" (the real channel,
+	// Meta's WhatsApp Cloud API via internal/platform/whatsapp — see
+	// docs/adr/0010-whatsapp-cloud-api-and-the-always-on-edge.md). Any other
+	// value falls back to "fake".
 	Sender string `env:"REACTIVACION_SENDER" envDefault:"fake"`
 	// PerfilEnvio selects the gobernador's pacing preset — see
 	// reactivacionapp.PerfilProduccion (real anti-baneo pacing) and
