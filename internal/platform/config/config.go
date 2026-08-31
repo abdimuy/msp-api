@@ -75,6 +75,7 @@ type Config struct {
 	Reactivacion   Reactivacion
 	Flota          Flota
 	WhatsApp       WhatsApp
+	Canal          Canal
 }
 
 // Flota holds the knobs of the roster snapshot worker — the process that
@@ -505,6 +506,45 @@ func (w WhatsApp) validate() error {
 		return errWhatsAppCredsRequired
 	}
 	return nil
+}
+
+// Canal holds settings for the canal module's HTTP surface
+// (internal/canal/infra/canalhttp): the webhook's own verify token — which
+// [WhatsApp]'s doc comment explicitly says does NOT belong in that
+// section — plus the shared secret and forwarding target used for internal
+// traffic between the VPS and the store's on-premise server. See
+// docs/adr/0010-whatsapp-cloud-api-and-the-always-on-edge.md.
+//
+// WebhookVerifyToken answers Meta's GET subscription challenge
+// (hub.verify_token). It is distinct from WhatsApp.AppSecret, which signs
+// the POST payload's X-Hub-Signature-256 header instead — two different
+// Meta credentials serving two different purposes.
+//
+// SharedToken authenticates internal HTTP traffic in both directions: it
+// protects POST /canal/v1/salientes on the VPS (checked via hmac.Equal),
+// and ForwarderClient sends it to the store's on-premise server when
+// pushing an entrante. One value for both legs, because they are the same
+// trust boundary (this VPS and this store's on-premise server, nothing
+// else).
+//
+// All fields are optional at this layer: canal's own module wiring (Task 7)
+// decides whether an empty value means "feature disabled" or "refuse to
+// boot" — this config section only carries the values through.
+type Canal struct {
+	// WebhookVerifyToken is compared (via hmac.Equal) against Meta's
+	// hub.verify_token query parameter on the webhook's GET challenge.
+	WebhookVerifyToken string `env:"WHATSAPP_WEBHOOK_VERIFY_TOKEN"`
+	// SharedToken is the pre-shared secret for VPS<->store internal traffic.
+	// See the type doc for why one value covers both directions.
+	SharedToken string `env:"CANAL_SHARED_TOKEN"`
+	// ForwarderURL is the store's on-premise server endpoint ForwarderClient
+	// POSTs each entrante to. A full URL, not a base to which a path is
+	// appended — Task 10 owns the store-side contract and may need to point
+	// this at whatever path the real endpoint uses.
+	ForwarderURL string `env:"CANAL_FORWARDER_URL"`
+	// ForwarderTimeout bounds each forwarding HTTP call. Zero (the env var
+	// unset) falls back to a sane default in canalhttp.NewForwarderClient.
+	ForwarderTimeout time.Duration `env:"CANAL_FORWARDER_TIMEOUT" envDefault:"15s"`
 }
 
 // validate enforces that the Meilisearch configuration is internally
