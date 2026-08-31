@@ -235,13 +235,14 @@ Solo configuración; nada de lógica.
   `canaloutbound`, `canalhttp`, `canalsqlite` para
   `internal/canal/{domain,app,ports/outbound,infra/canalhttp,infra/canalsqlite}`.
   (`platformwhatsapp` ya lo agregó Task 1; verifica que esté y no lo dupliques.)
-- **`.golangci.yml` · regla `domain-pure`** — **verificar, no editar.** La regla (línea
-  ~398) selecciona por glob `**/internal/*/domain/*.go`, así que `internal/canal/domain`
-  ya queda cubierta sola: no hay allowlist de módulos que tocar. Confirma con un
-  **control positivo** —que la regla efectivamente dispara sobre un import prohibido
-  metido a propósito en `internal/canal/domain`, y bórralo— antes de declarar que
-  aplica. Si al hacerlo descubres que no dispara, eso sí es un cambio a hacer, y dilo
-  en el reporte.
+- **`.golangci.yml` · regla `domain-pure`** — **ya está hecho: no la toques.** Task 2 ya
+  agregó `internal/canal/domain` a su `allow` (línea ~428), que es la convención del
+  repo: hay una entrada por módulo para que los tests caja-negra (`package domain_test`)
+  puedan importar su propio dominio. La lista `files` de la regla selecciona por glob
+  `**/internal/*/domain/*.go`, así que la cobertura del linter sobre canal es
+  automática. **Verifícalo con un control positivo** —mete a propósito un import
+  prohibido en `internal/canal/domain`, confirma que `golangci-lint` lo marca, y
+  bórralo— y reporta el resultado. No dupliques la entrada.
 - **`.golangci.yml` · regla `canal-sealed`** — copiar el bloque `flota-sealed`
   (está alrededor de la línea 470) cambiando `flota` por `canal`, con su `desc`
   explicando que canal es sellado por ADR-0009.
@@ -283,6 +284,14 @@ incluido.
   hazlo igual.
 - El error que se persiste vía el puerto debe ser **legible**: es lo que un humano leerá
   cuando un reenvío falle.
+- **`internal/canal/domain/transient.go`** — agrega un par `TransientError` + `IsTransient`
+  al dominio, copiando la forma que ya usa `internal/platform/whatsapp`. Hace falta
+  porque `outbound.Forwarder.Reenviar` devuelve un `error` pelón: nada en el puerto le
+  dice al worker qué vale la pena reintentar, y `app/` no puede importar infra para
+  preguntarlo. El adaptador HTTP de Task 6 envuelve en él sus fallas de transporte y 5xx;
+  el worker reintenta solo lo transitorio y manda lo permanente directo a `fallido` con
+  su motivo legible. **El gate de ≥99% de `internal/canal/domain` sigue vigente**, así
+  que este archivo lleva sus propios tests.
 
 ### Tests
 
@@ -352,7 +361,10 @@ idéntico en UTC.
   URL, el token y la forma del payload son configuración; Task 10 verifica el contrato
   contra el endpoint real de la tienda y ajusta este archivo si el DTO difiere.)*
   La URL base y el token salen de `config`, nunca hardcodeados. Nunca registrar el
-  token en logs.
+  token en logs. La clasificación usa **`canaldomain.TransientError` / `IsTransient`**,
+  que Task 4 agrega en `internal/canal/domain/transient.go`: envuelve ahí las fallas de
+  transporte (timeout, conexión rechazada) y las respuestas 5xx y 429; los 4xx restantes
+  son permanentes.
 
 ### Tests
 
