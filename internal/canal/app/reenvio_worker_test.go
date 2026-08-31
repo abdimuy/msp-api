@@ -22,7 +22,7 @@ func workerSobre(interval time.Duration, batch int) (*canalapp.ReenvioWorker, *b
 	repo := newBuzonRepoFake()
 	fwd := newForwarderFake()
 	clock := newFixedClock(time.Date(2026, 8, 31, 10, 0, 0, 0, time.UTC))
-	svc := canalapp.NewService(repo, fwd, clock, nil, canalapp.ReenvioConfig{}, nil)
+	svc := canalapp.NewService(repo, fwd, newSenderFake(), clock, nil, canalapp.ReenvioConfig{}, nil)
 	w := canalapp.NewReenvioWorker(svc, canalapp.ReenvioWorkerConfig{Interval: interval, Batch: batch}, nil)
 	return w, repo
 }
@@ -46,7 +46,7 @@ func TestReenvioWorker_TickDrenaLaCola(t *testing.T) {
 	repo := newBuzonRepoFake()
 	fwd := newForwarderFake(nil)
 	clock := newFixedClock(time.Date(2026, 8, 31, 10, 0, 0, 0, time.UTC))
-	svc := canalapp.NewService(repo, fwd, clock, nil, canalapp.ReenvioConfig{}, nil)
+	svc := canalapp.NewService(repo, fwd, newSenderFake(), clock, nil, canalapp.ReenvioConfig{}, nil)
 	_, err := svc.RecibirMensaje(context.Background(), mensajeParams("wamid-worker", clock.Now()))
 	require.NoError(t, err)
 
@@ -184,7 +184,7 @@ func TestNewReenvioWorker_ConfigCero_NoFallaAlConstruirNiArrancar(t *testing.T) 
 	repo := newBuzonRepoFake()
 	fwd := newForwarderFake()
 	clock := newFixedClock(time.Now().UTC())
-	svc := canalapp.NewService(repo, fwd, clock, nil, canalapp.ReenvioConfig{}, nil)
+	svc := canalapp.NewService(repo, fwd, newSenderFake(), clock, nil, canalapp.ReenvioConfig{}, nil)
 	w := canalapp.NewReenvioWorker(svc, canalapp.ReenvioWorkerConfig{}, nil)
 
 	require.NoError(t, w.Start(context.Background()))
@@ -200,7 +200,7 @@ func TestReenvioWorker_BatchPorDefecto(t *testing.T) {
 	repo := newBuzonRepoFake()
 	fwd := newForwarderFake()
 	clock := newFixedClock(time.Now().UTC())
-	svc := canalapp.NewService(repo, fwd, clock, nil, canalapp.ReenvioConfig{}, nil)
+	svc := canalapp.NewService(repo, fwd, newSenderFake(), clock, nil, canalapp.ReenvioConfig{}, nil)
 	// Batch left unset (0): must default to 50.
 	w := canalapp.NewReenvioWorker(svc, canalapp.ReenvioWorkerConfig{Interval: 5 * time.Millisecond}, nil)
 

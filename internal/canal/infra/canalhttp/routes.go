@@ -10,24 +10,21 @@ import (
 
 	canalapp "github.com/abdimuy/msp-api/internal/canal/app"
 	canaloutbound "github.com/abdimuy/msp-api/internal/canal/ports/outbound"
-	"github.com/abdimuy/msp-api/internal/platform/whatsapp"
 )
 
 // Deps groups every dependency canal's HTTP surface needs. Task 7
-// (internal/canal/module.go) builds one of these at composition root — see
-// the package doc for why it is wider than "just a Service".
+// (internal/canal/module.go) builds one of these at composition root.
+// Svc alone now covers both the internal Huma API and the webhook: the
+// mailbox backlog count and the outbound-send path both moved onto
+// canalapp.Service (see that package's saliente.go) so Handlers could go
+// back to the gold-standard "holds only svc" shape.
 type Deps struct {
-	// Svc is the inbound-mailbox service the webhook's POST hands every
-	// message to.
+	// Svc backs both the webhook's POST (RecibirMensaje) and the internal
+	// Huma API (EnviarSaliente, ContarPendientes).
 	Svc *canalapp.Service
 	// Clock timestamps when the VPS received each webhook — see
 	// domain.MensajeEntrante's doc comment on RecibidoEn vs TimestampMeta.
 	Clock canaloutbound.Clock
-	// Pendientes answers GET /canal/v1/salud's backlog count.
-	Pendientes PendienteCounter
-	// WA sends the outbound message POST /canal/v1/salientes proxies to
-	// Meta.
-	WA whatsapp.Client
 	// Cfg carries the webhook and internal-API secrets.
 	Cfg Config
 	// Logger receives the webhook's parse/persistence failure logs. Nil
@@ -57,7 +54,7 @@ func MountRouter(r chi.Router, deps Deps) huma.API {
 	config.DocsRenderer = huma.DocsRendererScalar
 	api := humachi.New(r, config)
 
-	h := NewHandlers(deps.Pendientes, deps.WA)
+	h := NewHandlers(deps.Svc)
 	registerSalud(api, h)
 	registerSalientes(api, h, deps.Cfg.SharedToken)
 

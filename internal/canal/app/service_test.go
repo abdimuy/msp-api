@@ -20,7 +20,7 @@ var errForwarderPermanente = errors.New("400: número inválido")
 // ── constructor helper ──────────────────────────────────────────────────
 
 func newServiceFor(repo *buzonRepoFake, fwd *forwarderFake, clock *fixedClock, cfg canalapp.ReenvioConfig) *canalapp.Service {
-	return canalapp.NewService(repo, fwd, clock, nil, cfg, nil)
+	return canalapp.NewService(repo, fwd, newSenderFake(), clock, nil, cfg, nil)
 }
 
 // ── RecibirMensaje ───────────────────────────────────────────────────────
@@ -338,7 +338,7 @@ func TestRecibirMensaje_UsaElTxRunnerInyectado(t *testing.T) {
 	fwd := newForwarderFake()
 	clock := newFixedClock(time.Now().UTC())
 	tx := &txFake{}
-	svc := canalapp.NewService(repo, fwd, clock, tx, canalapp.ReenvioConfig{}, nil)
+	svc := canalapp.NewService(repo, fwd, newSenderFake(), clock, tx, canalapp.ReenvioConfig{}, nil)
 
 	_, err := svc.RecibirMensaje(context.Background(), mensajeParams("wamid-tx", clock.Now()))
 	require.NoError(t, err)
@@ -352,7 +352,7 @@ func TestRecibirMensaje_TxRunnerFalla_PropagaErrorSinGuardar(t *testing.T) {
 	clock := newFixedClock(time.Now().UTC())
 	errTx := errors.New("no se pudo iniciar la transacción")
 	tx := &txFake{fallarCon: errTx}
-	svc := canalapp.NewService(repo, fwd, clock, tx, canalapp.ReenvioConfig{}, nil)
+	svc := canalapp.NewService(repo, fwd, newSenderFake(), clock, tx, canalapp.ReenvioConfig{}, nil)
 
 	_, err := svc.RecibirMensaje(context.Background(), mensajeParams("wamid-tx-falla", clock.Now()))
 	require.ErrorIs(t, err, errTx)
@@ -365,7 +365,7 @@ func TestDrenarCola_UsaElTxRunnerInyectadoAlPersistirElReenvio(t *testing.T) {
 	fwd := newForwarderFake(nil)
 	clock := newFixedClock(time.Date(2026, 8, 31, 10, 0, 0, 0, time.UTC))
 	tx := &txFake{}
-	svc := canalapp.NewService(repo, fwd, clock, tx, smallRetry(3), nil)
+	svc := canalapp.NewService(repo, fwd, newSenderFake(), clock, tx, smallRetry(3), nil)
 
 	_, err := svc.RecibirMensaje(context.Background(), mensajeParams("wamid-tx-reenvio", clock.Now()))
 	require.NoError(t, err)

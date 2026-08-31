@@ -1,15 +1,20 @@
-// Package app implements the canal module's two operations: receiving one
-// inbound WhatsApp message into the durable mailbox, and forwarding
-// mailboxed messages on to the store's on-premise server.
+// Package app implements the canal module's operations: receiving one
+// inbound WhatsApp message into the durable mailbox, forwarding mailboxed
+// messages on to the store's on-premise server, and sending one outbound
+// WhatsApp message on the store's behalf.
 //
 // canal is a sealed module (ADR-0009): this package imports only the
 // standard library, the failsafe-go retry/circuit-breaker packages that
 // internal/platform/reliability builds policies for, internal/canal/domain,
-// internal/canal/ports/outbound, and internal/platform/reliability itself —
+// internal/canal/ports/outbound, internal/platform/reliability, and
+// internal/platform/whatsapp (for EnviarSaliente's error classification
+// against the Sender port's underlying error taxonomy — see saliente.go) —
 // never another module's package. See docs/adr/0010 for why the module
 // exists: the VPS answers Meta's webhook with 200 before the store's
 // on-premise server has necessarily seen the message, so a durable mailbox
-// plus a retrying forwarder is the whole point.
+// plus a retrying forwarder is the whole point; ADR-0010 §5 additionally
+// frames the VPS as the edge for outbound traffic too, which is what
+// EnviarSaliente is for.
 package app
 
 import (
@@ -77,12 +82,15 @@ func (c *ReenvioConfig) applyDefaults() {
 type forwardOutcome struct{}
 
 // Service is the canal module's application surface: RecibirMensaje handles
-// the inbound webhook path, DrenarCola handles the forwarding worker's tick.
+// the inbound webhook path, DrenarCola handles the forwarding worker's
+// tick, EnviarSaliente (saliente.go) sends one outbound message, and
+// ContarPendientes answers the mailbox backlog for GET /canal/v1/salud.
 // Everything Service needs from the outside world goes through the outbound
 // ports plus the failsafe-go policies reliability builds.
 type Service struct {
 	repo      outbound.BuzonRepo
 	forwarder outbound.Forwarder
+	sender    outbound.Sender
 	clock     outbound.Clock
 	txMgr     TxRunner
 	logger    *slog.Logger
@@ -94,10 +102,12 @@ type Service struct {
 // NewService wires a Service against its ports. txMgr may be nil in tests
 // that use in-memory fakes — runInTx handles nil gracefully (calls fn
 // directly without a real transaction). logger may be nil; slog.Default()
-// is used instead.
+// is used instead. sender must not be nil if EnviarSaliente is ever called
+// — unlike txMgr, there is no nil-safe fallback for it.
 func NewService(
 	repo outbound.BuzonRepo,
 	forwarder outbound.Forwarder,
+	sender outbound.Sender,
 	clock outbound.Clock,
 	txMgr TxRunner,
 	cfg ReenvioConfig,
@@ -110,12 +120,19 @@ func NewService(
 	return &Service{
 		repo:      repo,
 		forwarder: forwarder,
+		sender:    sender,
 		clock:     clock,
 		txMgr:     txMgr,
 		logger:    logger,
 		retry:     reliability.NewRetry[forwardOutcome](cfg.Retry),
 		circuit:   reliability.NewCircuit[forwardOutcome](cfg.Circuit),
 	}
+}
+
+// ContarPendientes reports how many entrantes are waiting to be forwarded
+// to the store's on-premise server — feeds GET /canal/v1/salud (Task 6).
+func (s *Service) ContarPendientes(ctx context.Context) (int, error) {
+	return s.repo.ContarPendientes(ctx)
 }
 
 // runInTx executes fn inside a transaction. When txMgr is nil (e.g. in tests

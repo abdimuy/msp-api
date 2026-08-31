@@ -12,6 +12,7 @@ import (
 	canalapp "github.com/abdimuy/msp-api/internal/canal/app"
 	"github.com/abdimuy/msp-api/internal/canal/domain"
 	canaloutbound "github.com/abdimuy/msp-api/internal/canal/ports/outbound"
+	"github.com/abdimuy/msp-api/internal/platform/whatsapp"
 )
 
 // Compile-time assertions that the fakes satisfy the ports they stand in
@@ -21,6 +22,7 @@ var (
 	_ canaloutbound.BuzonRepo = (*buzonRepoFake)(nil)
 	_ canaloutbound.Forwarder = (*forwarderFake)(nil)
 	_ canaloutbound.Clock     = (*fixedClock)(nil)
+	_ canaloutbound.Sender    = (*senderFake)(nil)
 	_ canalapp.TxRunner       = (*txFake)(nil)
 )
 
@@ -328,6 +330,110 @@ func (f *forwarderFake) llamadasPara(wamid string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.llamadasPorWamid[wamid]
+}
+
+// ── Sender ───────────────────────────────────────────────────────────────
+
+// senderFake serves a scripted sequence of (wamid, err) outcomes per
+// SendText/SendTemplate call, in order. Once a script is exhausted, its
+// last outcome repeats — mirrors forwarderFake's own pattern above. An
+// unscripted call (the zero value, or after New*Fake() with no script)
+// always succeeds with a fixed wamid, so tests that build a Service only
+// to exercise RecibirMensaje/DrenarCola never need to script anything.
+type senderFake struct {
+	mu sync.Mutex
+
+	textOutcomes []senderOutcome
+	textIdx      int
+	textCalls    []senderCall
+
+	templateOutcomes []senderOutcome
+	templateIdx      int
+	templateCalls    []senderCall
+}
+
+// senderOutcome is one scripted (wamid, err) result.
+type senderOutcome struct {
+	wamid string
+	err   error
+}
+
+// senderCall records one SendText/SendTemplate invocation's arguments —
+// body is the free text for SendText, or the template name for
+// SendTemplate.
+type senderCall struct {
+	to   string
+	body string
+}
+
+func newSenderFake() *senderFake { return &senderFake{} }
+
+// scriptText replaces the outcome sequence future SendText calls draw from.
+func (f *senderFake) scriptText(outcomes ...senderOutcome) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.textOutcomes = outcomes
+	f.textIdx = 0
+}
+
+// scriptTemplate replaces the outcome sequence future SendTemplate calls
+// draw from.
+func (f *senderFake) scriptTemplate(outcomes ...senderOutcome) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.templateOutcomes = outcomes
+	f.templateIdx = 0
+}
+
+func (f *senderFake) SendText(_ context.Context, to, body string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.textCalls = append(f.textCalls, senderCall{to: to, body: body})
+	return nextSenderOutcome(f.textOutcomes, &f.textIdx)
+}
+
+func (f *senderFake) SendTemplate(_ context.Context, to string, tmpl whatsapp.Template) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.templateCalls = append(f.templateCalls, senderCall{to: to, body: tmpl.Name})
+	return nextSenderOutcome(f.templateOutcomes, &f.templateIdx)
+}
+
+// nextSenderOutcome draws the next scripted outcome from outcomes,
+// advancing idx, and repeating the last one once exhausted. An empty
+// outcomes list always succeeds with "wamid.default".
+func nextSenderOutcome(outcomes []senderOutcome, idx *int) (string, error) {
+	if len(outcomes) == 0 {
+		return "wamid.default", nil
+	}
+	i := min(*idx, len(outcomes)-1)
+	*idx++
+	o := outcomes[i]
+	return o.wamid, o.err
+}
+
+func (f *senderFake) textCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.textCalls)
+}
+
+func (f *senderFake) lastTextCall() senderCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.textCalls[len(f.textCalls)-1]
+}
+
+func (f *senderFake) templateCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.templateCalls)
+}
+
+func (f *senderFake) lastTemplateCall() senderCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.templateCalls[len(f.templateCalls)-1]
 }
 
 // ── TxRunner ─────────────────────────────────────────────────────────────

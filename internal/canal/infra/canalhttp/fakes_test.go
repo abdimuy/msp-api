@@ -23,7 +23,7 @@ var (
 	_ canaloutbound.BuzonRepo = (*buzonRepoFake)(nil)
 	_ canaloutbound.Forwarder = (*forwarderFake)(nil)
 	_ canaloutbound.Clock     = (*fixedClock)(nil)
-	_ whatsapp.Client         = (*waFake)(nil)
+	_ canaloutbound.Sender    = (*senderFake)(nil)
 )
 
 // ── Clock ────────────────────────────────────────────────────────────────
@@ -152,75 +152,69 @@ type forwarderFake struct{}
 
 func (forwarderFake) Reenviar(_ context.Context, _ *domain.MensajeEntrante) error { return nil }
 
-// ── whatsapp.Client ──────────────────────────────────────────────────────
+// ── Sender ───────────────────────────────────────────────────────────────
 
-// waFake is a scripted whatsapp.Client: each Send* call returns the next
-// scripted (wamid, err) pair, or the last one repeated once the script is
-// exhausted. Records every call's (to, body) for assertions.
-type waFake struct {
+// senderFake is a scripted canaloutbound.Sender: each SendText call returns
+// the next scripted (wamid, err) pair, or the last one repeated once the
+// script is exhausted. Records every call's (to, body) for assertions.
+// canalapp.Service.EnviarSaliente is the only caller — canalhttp itself
+// never touches a Sender directly any more (see handlers.go).
+type senderFake struct {
 	mu sync.Mutex
 
-	sendTextOutcomes []waOutcome
+	sendTextOutcomes []senderOutcome
 	idx              int
 
-	sendTextCalls     []waCall
-	sendTemplateCalls []waCall
+	sendTextCalls     []senderCall
+	sendTemplateCalls []senderCall
 }
 
-type waOutcome struct {
+type senderOutcome struct {
 	wamid string
 	err   error
 }
 
-type waCall struct {
+type senderCall struct {
 	to   string
 	body string
 }
 
-func newWAFake(outcomes ...waOutcome) *waFake {
-	return &waFake{sendTextOutcomes: outcomes}
+func newSenderFake(outcomes ...senderOutcome) *senderFake {
+	return &senderFake{sendTextOutcomes: outcomes}
 }
 
-func (w *waFake) next() waOutcome {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if len(w.sendTextOutcomes) == 0 {
-		return waOutcome{wamid: "wamid.default"}
+func (s *senderFake) next() senderOutcome {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.sendTextOutcomes) == 0 {
+		return senderOutcome{wamid: "wamid.default"}
 	}
-	i := w.idx
-	if i >= len(w.sendTextOutcomes) {
-		i = len(w.sendTextOutcomes) - 1
+	i := s.idx
+	if i >= len(s.sendTextOutcomes) {
+		i = len(s.sendTextOutcomes) - 1
 	}
-	w.idx++
-	return w.sendTextOutcomes[i]
+	s.idx++
+	return s.sendTextOutcomes[i]
 }
 
-func (w *waFake) SendText(_ context.Context, to, body string) (string, error) {
-	w.mu.Lock()
-	w.sendTextCalls = append(w.sendTextCalls, waCall{to: to, body: body})
-	w.mu.Unlock()
-	out := w.next()
+func (s *senderFake) SendText(_ context.Context, to, body string) (string, error) {
+	s.mu.Lock()
+	s.sendTextCalls = append(s.sendTextCalls, senderCall{to: to, body: body})
+	s.mu.Unlock()
+	out := s.next()
 	return out.wamid, out.err
 }
 
-func (w *waFake) SendTemplate(_ context.Context, to string, tmpl whatsapp.Template) (string, error) {
-	w.mu.Lock()
-	w.sendTemplateCalls = append(w.sendTemplateCalls, waCall{to: to, body: tmpl.Name})
-	w.mu.Unlock()
-	out := w.next()
+func (s *senderFake) SendTemplate(_ context.Context, to string, tmpl whatsapp.Template) (string, error) {
+	s.mu.Lock()
+	s.sendTemplateCalls = append(s.sendTemplateCalls, senderCall{to: to, body: tmpl.Name})
+	s.mu.Unlock()
+	out := s.next()
 	return out.wamid, out.err
 }
 
-func (w *waFake) SendDocumentByMediaID(_ context.Context, _, _, _, _ string) (string, error) {
-	return "", nil
-}
-
-func (w *waFake) UploadMedia(_ context.Context, _ whatsapp.Media) (string, error) {
-	return "", nil
-}
-
-func (w *waFake) sendTextCallCount() int {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return len(w.sendTextCalls)
+func (s *senderFake) sendTextCallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.sendTextCalls)
 }

@@ -26,6 +26,8 @@ func TestKind_HTTPStatus(t *testing.T) {
 		{"forbidden", apperror.KindForbidden, http.StatusForbidden},
 		{"internal", apperror.KindInternal, http.StatusInternalServerError},
 		{"unknown", apperror.KindUnknown, http.StatusInternalServerError},
+		{"service_unavailable", apperror.KindServiceUnavailable, http.StatusServiceUnavailable},
+		{"too_many_requests", apperror.KindTooManyRequests, http.StatusTooManyRequests},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -51,6 +53,8 @@ func TestConstructors_KindAndCodeAndMessage(t *testing.T) {
 		{"unauthorized", apperror.NewUnauthorized("c", "m"), apperror.KindUnauthorized, 401, "c", "m"},
 		{"forbidden", apperror.NewForbidden("c", "m"), apperror.KindForbidden, 403, "c", "m"},
 		{"internal", apperror.NewInternal("c", "m"), apperror.KindInternal, 500, "c", "m"},
+		{"service_unavailable", apperror.NewServiceUnavailable("c", "m"), apperror.KindServiceUnavailable, 503, "c", "m"},
+		{"too_many_requests", apperror.NewTooManyRequests("c", "m"), apperror.KindTooManyRequests, 429, "c", "m"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

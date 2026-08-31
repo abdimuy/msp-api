@@ -105,7 +105,7 @@ func TestSalientes_WrongToken_Forbidden(t *testing.T) {
 func TestSalientes_ValidToken_SendsTextAndReturnsWamid(t *testing.T) {
 	t.Parallel()
 	r, deps := newTestRouter(t)
-	deps.wa.sendTextOutcomes = []waOutcome{{wamid: "wamid.sent-1"}}
+	deps.sender.sendTextOutcomes = []senderOutcome{{wamid: "wamid.sent-1"}}
 
 	req := httptest.NewRequest(http.MethodPost, salientesPath, bytes.NewReader(salienteTextoBody("hola cliente")))
 	req.Header.Set("Content-Type", "application/json")
@@ -119,7 +119,7 @@ func TestSalientes_ValidToken_SendsTextAndReturnsWamid(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
 	assert.Equal(t, "wamid.sent-1", out.Wamid)
-	assert.Equal(t, 1, deps.wa.sendTextCallCount())
+	assert.Equal(t, 1, deps.sender.sendTextCallCount())
 }
 
 func TestSalientes_InvalidTipo_UnprocessableEntity(t *testing.T) {
@@ -139,7 +139,7 @@ func TestSalientes_InvalidTipo_UnprocessableEntity(t *testing.T) {
 func TestSalientes_WindowClosed_MapsToConflict(t *testing.T) {
 	t.Parallel()
 	r, deps := newTestRouter(t)
-	deps.wa.sendTextOutcomes = []waOutcome{{err: whatsapp.ErrWindowClosed}}
+	deps.sender.sendTextOutcomes = []senderOutcome{{err: whatsapp.ErrWindowClosed}}
 
 	req := httptest.NewRequest(http.MethodPost, salientesPath, bytes.NewReader(salienteTextoBody("hola")))
 	req.Header.Set("Content-Type", "application/json")
@@ -153,7 +153,7 @@ func TestSalientes_WindowClosed_MapsToConflict(t *testing.T) {
 func TestSalientes_RateLimited_MapsToTooManyRequests(t *testing.T) {
 	t.Parallel()
 	r, deps := newTestRouter(t)
-	deps.wa.sendTextOutcomes = []waOutcome{{err: whatsapp.ErrRateLimited}}
+	deps.sender.sendTextOutcomes = []senderOutcome{{err: whatsapp.ErrRateLimited}}
 
 	req := httptest.NewRequest(http.MethodPost, salientesPath, bytes.NewReader(salienteTextoBody("hola")))
 	req.Header.Set("Content-Type", "application/json")
@@ -221,7 +221,7 @@ func TestSalientes_TipoPlantillaMissingPlantilla_UnprocessableEntity(t *testing.
 func TestSalientes_InvalidNumber_MapsToUnprocessableEntity(t *testing.T) {
 	t.Parallel()
 	r, deps := newTestRouter(t)
-	deps.wa.sendTextOutcomes = []waOutcome{{err: whatsapp.ErrInvalidNumber}}
+	deps.sender.sendTextOutcomes = []senderOutcome{{err: whatsapp.ErrInvalidNumber}}
 
 	req := httptest.NewRequest(http.MethodPost, salientesPath, bytes.NewReader(salienteTextoBody("hola")))
 	req.Header.Set("Content-Type", "application/json")
@@ -235,7 +235,7 @@ func TestSalientes_InvalidNumber_MapsToUnprocessableEntity(t *testing.T) {
 func TestSalientes_Disabled_MapsToServiceUnavailable(t *testing.T) {
 	t.Parallel()
 	r, deps := newTestRouter(t)
-	deps.wa.sendTextOutcomes = []waOutcome{{err: whatsapp.ErrWhatsAppDisabled}}
+	deps.sender.sendTextOutcomes = []senderOutcome{{err: whatsapp.ErrWhatsAppDisabled}}
 
 	req := httptest.NewRequest(http.MethodPost, salientesPath, bytes.NewReader(salienteTextoBody("hola")))
 	req.Header.Set("Content-Type", "application/json")
@@ -249,7 +249,7 @@ func TestSalientes_Disabled_MapsToServiceUnavailable(t *testing.T) {
 func TestSalientes_TemplateType_SendsTemplate(t *testing.T) {
 	t.Parallel()
 	r, deps := newTestRouter(t)
-	deps.wa.sendTextOutcomes = []waOutcome{{wamid: "wamid.tmpl-1"}}
+	deps.sender.sendTextOutcomes = []senderOutcome{{wamid: "wamid.tmpl-1"}}
 
 	payload := map[string]any{
 		"destinatario": "5215500000000",
@@ -282,15 +282,13 @@ func TestOpenAPI_PathsRegistered(t *testing.T) {
 	t.Parallel()
 	repo := newBuzonRepoFake()
 	clock := newFixedClock(fixedNow)
-	wa := newWAFake()
-	svc := canalapp.NewService(repo, forwarderFake{}, clock, nil, canalapp.ReenvioConfig{}, nil)
+	sender := newSenderFake()
+	svc := canalapp.NewService(repo, forwarderFake{}, sender, clock, nil, canalapp.ReenvioConfig{}, nil)
 
 	r := chi.NewRouter()
 	api := canalhttp.MountRouter(r, canalhttp.Deps{
-		Svc:        svc,
-		Clock:      clock,
-		Pendientes: repo,
-		WA:         wa,
+		Svc:   svc,
+		Clock: clock,
 		Cfg: canalhttp.Config{
 			AppSecret:   testAppSecret,
 			VerifyToken: testVerifyToken,

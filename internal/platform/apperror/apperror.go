@@ -33,6 +33,10 @@ const (
 	// Used when a required downstream dependency (e.g. Meilisearch) is
 	// temporarily unavailable and there is no fallback.
 	KindServiceUnavailable
+	// KindTooManyRequests maps to 429 Too Many Requests. Used when a
+	// downstream dependency applied its own rate limit (e.g. WhatsApp's
+	// application-level 130429) and the caller should back off and retry.
+	KindTooManyRequests
 )
 
 // HTTPStatus returns the HTTP status code matching this kind.
@@ -50,6 +54,8 @@ func (k Kind) HTTPStatus() int {
 		return http.StatusForbidden
 	case KindServiceUnavailable:
 		return http.StatusServiceUnavailable
+	case KindTooManyRequests:
+		return http.StatusTooManyRequests
 	case KindInternal, KindUnknown:
 		return http.StatusInternalServerError
 	}
@@ -155,6 +161,13 @@ func NewInternal(code, message string) *Error {
 // there is no local fallback (e.g. Meilisearch not configured or transient).
 func NewServiceUnavailable(code, message string) *Error {
 	return &Error{Kind: KindServiceUnavailable, Code: code, Message: message}
+}
+
+// NewTooManyRequests creates a rate-limited error (429). Use when a
+// downstream dependency applied its own rate limit and the caller should
+// back off and retry.
+func NewTooManyRequests(code, message string) *Error {
+	return &Error{Kind: KindTooManyRequests, Code: code, Message: message}
 }
 
 // As extracts an *Error from any error in the chain.

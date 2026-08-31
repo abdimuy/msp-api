@@ -1,12 +1,6 @@
 //nolint:misspell // wire vocabulary is Spanish per project convention (Parametros, etc.).
 package canalhttp
 
-// Wire values for CrearSalienteBody.Tipo.
-const (
-	tipoSalienteTexto     = "texto"
-	tipoSalientePlantilla = "plantilla"
-)
-
 // ─── POST /canal/v1/salientes ───────────────────────────────────────────────
 
 // CrearSalienteInput carries the shared token (checked by
@@ -19,7 +13,9 @@ type CrearSalienteInput struct {
 
 // CrearSalienteBody is the outbound message the store wants sent through
 // canal's WhatsApp edge. Exactly one of Texto/Plantilla is read, selected by
-// Tipo.
+// Tipo ("texto" or "plantilla" — see canalapp.TipoSalienteTexto/
+// TipoSalientePlantilla, the app layer's own constants for these wire
+// values, which toEnviarSalienteParams passes Tipo straight through to).
 type CrearSalienteBody struct {
 	Destinatario string                `json:"destinatario"        doc:"Teléfono E.164 del destinatario."`
 	Tipo         string                `json:"tipo"                doc:"texto o plantilla."`
@@ -28,7 +24,9 @@ type CrearSalienteBody struct {
 }
 
 // PlantillaSalienteDTO is the wire shape of a template-message invocation,
-// mirroring internal/platform/whatsapp.Template.
+// mirroring canalapp.SalientePlantilla (itself a mirror of
+// internal/platform/whatsapp.Template — see that type's own doc comment
+// for why canalhttp does not import whatsapp directly to build one).
 type PlantillaSalienteDTO struct {
 	Nombre     string   `json:"nombre"               doc:"Nombre de la plantilla registrada en WhatsApp Manager."`
 	Idioma     string   `json:"idioma"               doc:"Código de idioma aprobado, p. ej. es_MX."`

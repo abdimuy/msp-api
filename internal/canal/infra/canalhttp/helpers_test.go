@@ -24,8 +24,8 @@ const (
 // testDeps groups everything newTestRouter built, for tests that need to
 // reach into a fake after making a request.
 type testDeps struct {
-	repo *buzonRepoFake
-	wa   *waFake
+	repo   *buzonRepoFake
+	sender *senderFake
 }
 
 // newTestRouter builds a chi.Router carrying canalhttp's full mounted
@@ -38,22 +38,20 @@ func newTestRouter(t *testing.T) (chi.Router, testDeps) {
 
 	repo := newBuzonRepoFake()
 	clock := newFixedClock(time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC))
-	wa := newWAFake()
-	svc := canalapp.NewService(repo, forwarderFake{}, clock, nil, canalapp.ReenvioConfig{}, nil)
+	sender := newSenderFake()
+	svc := canalapp.NewService(repo, forwarderFake{}, sender, clock, nil, canalapp.ReenvioConfig{}, nil)
 
 	r := chi.NewRouter()
 	canalhttp.MountRouter(r, canalhttp.Deps{
-		Svc:        svc,
-		Clock:      clock,
-		Pendientes: repo,
-		WA:         wa,
+		Svc:   svc,
+		Clock: clock,
 		Cfg: canalhttp.Config{
 			AppSecret:   testAppSecret,
 			VerifyToken: testVerifyToken,
 			SharedToken: testSharedToken,
 		},
 	})
-	return r, testDeps{repo: repo, wa: wa}
+	return r, testDeps{repo: repo, sender: sender}
 }
 
 // signBody computes Meta's own "sha256=<hex>" HMAC-SHA256 signature of body
