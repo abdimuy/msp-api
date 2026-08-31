@@ -93,6 +93,24 @@ func skipAuthForPublicDocs(authn func(http.Handler) http.Handler) func(http.Hand
 	}
 }
 
+// splitAllowedIPs parses config.Canal.TiendaAllowedIPs (a comma-separated
+// list) into the slice reactivacionhttp.TiendaConfig.AllowedIPs expects.
+// An empty or all-blank raw value yields a nil slice — TiendaIPMiddleware
+// treats that as "check disabled", the required default.
+func splitAllowedIPs(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	ips := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if trimmed := strings.TrimSpace(p); trimmed != "" {
+			ips = append(ips, trimmed)
+		}
+	}
+	return ips
+}
+
 // otelMiddleware wraps the chi-served handler chain in otelhttp, so every
 // incoming request gets a server span. Sits BEFORE RequestID so the span is
 // the outermost context and the request_id slot inside the span can later be
@@ -302,6 +320,21 @@ func provideRootHandler(
 		r.Group(func(r chi.Router) {
 			r.Use(skipAuthForPublicDocs(authn.Handler))
 			reactivacionhttp.MountRouter(r, reactivacionSvc)
+		})
+
+		// Reactivación — store-side machine-to-machine ingest (Task 10). The
+		// VPS's ForwarderClient (internal/canal, cmd/winback) has no Firebase
+		// user, so this is a Group with NO authn middleware at all — a
+		// deliberate SIBLING of the Group above, never nested inside it.
+		// Authentication is the shared token (config.Canal.SharedToken),
+		// checked as a per-operation Huma middleware inside
+		// MountTiendaRouter itself; see that function's doc comment. Final
+		// path: POST /v2/reactivacion/tienda/mensaje-entrante.
+		r.Group(func(r chi.Router) {
+			reactivacionhttp.MountTiendaRouter(r, reactivacionSvc, reactivacionhttp.TiendaConfig{
+				SharedToken: cfg.Canal.SharedToken,
+				AllowedIPs:  splitAllowedIPs(cfg.Canal.TiendaAllowedIPs),
+			})
 		})
 
 		// Visitas endpoint — write-only (POST). Capture runs INSIDE authn so

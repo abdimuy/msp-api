@@ -53,4 +53,33 @@ var (
 		"reactivacion_conversacion_no_encontrada",
 		"la conversación no existe",
 	)
+
+	// ErrTelefonoInvalido is returned by ResolverClienteIDPorTelefono when
+	// telefono has fewer than telefonoSuffixLen digits — too short to be a
+	// Mexican national number, so no lookup is even attempted.
+	ErrTelefonoInvalido = apperror.NewValidation(
+		"reactivacion_telefono_invalido",
+		"el teléfono no tiene dígitos suficientes para identificarlo",
+	)
+
+	// ErrTelefonoNoResuelto is returned by ResolverClienteIDPorTelefono when
+	// telefono matches no row in MSP_RX_COHORTE — either a number the
+	// piloto never contacted, or a real cliente who is simply not in the
+	// cohorte. The caller must not silently drop the inbound message on
+	// this error: it stays in the VPS's durable mailbox (EstadoReenvioFallido)
+	// for later investigation.
+	ErrTelefonoNoResuelto = apperror.NewNotFound(
+		"reactivacion_telefono_no_resuelto",
+		"no se encontró un cliente de la cohorte con este teléfono",
+	)
+
+	// ErrTelefonoAmbiguo is returned by ResolverClienteIDPorTelefono when
+	// telefono matches more than one MSP_RX_COHORTE row — e.g. a shared
+	// household landline in DIRS_CLIENTES. Routing to either cliente_id
+	// would silently misattribute the conversation, so this is treated the
+	// same as "not resolved" rather than guessed at.
+	ErrTelefonoAmbiguo = apperror.NewConflict(
+		"reactivacion_telefono_ambiguo",
+		"el teléfono coincide con más de un cliente de la cohorte",
+	)
 )

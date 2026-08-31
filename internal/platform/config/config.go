@@ -555,6 +555,17 @@ type Canal struct {
 	// ForwarderTimeout bounds each forwarding HTTP call. Zero (the env var
 	// unset) falls back to a sane default in canalhttp.NewForwarderClient.
 	ForwarderTimeout time.Duration `env:"CANAL_FORWARDER_TIMEOUT" envDefault:"15s"`
+	// TiendaAllowedIPs optionally restricts POST
+	// /v2/reactivacion/tienda/mensaje-entrante (cmd/api, the store's
+	// Windows box — NOT internal/canal, which is sealed and never reads
+	// this) to a comma-separated list of caller IPs, on top of SharedToken.
+	// Empty (the default) disables the check entirely — required so local
+	// development and the test suite need no configuration to reach the
+	// route. Best-effort only: see reactivacionhttp.tiendaIPMiddleware's
+	// doc comment for why this may not see the VPS's real address once
+	// traffic crosses the store's pinggy tunnel. The shared token remains
+	// the actual security boundary regardless of this setting.
+	TiendaAllowedIPs string `env:"CANAL_TIENDA_ALLOWED_IPS"`
 }
 
 // Winback holds settings for cmd/winback, the always-on binary that runs
