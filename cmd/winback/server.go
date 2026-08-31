@@ -13,6 +13,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/abdimuy/msp-api/internal/platform/config"
+	"github.com/abdimuy/msp-api/internal/platform/lifecycle"
 )
 
 // httpServer wraps *http.Server so it can implement the lifecycle.Hooks
@@ -74,12 +75,16 @@ func provideHTTPServer(cfg *config.Config, router chi.Router) *httpServer {
 }
 
 // registerHTTPLifecycle hooks the HTTP server into fx: OnStart binds the
-// port, OnStop drains it gracefully.
+// port, OnStop drains it gracefully. Goes through lifecycle.Append (not a
+// raw lc.Append(fx.Hook{...})) so the shutdown trace names this component
+// the same way canal.Module()'s own registrations name theirs
+// ("winback-http" alongside "canal-reenvio-worker" and "canal-buzon-sqlite"),
+// and so the HTTP listener's stopping/stopped lines actually appear in the
+// log — the brief names this helper explicitly for both the server and the
+// worker (task-8-brief.md), and an always-on edge with no shutdown trace on
+// its own listener is exactly the gap it exists to close.
 func registerHTTPLifecycle(lc fx.Lifecycle, s *httpServer) {
-	lc.Append(fx.Hook{
-		OnStart: s.Start,
-		OnStop:  s.Stop,
-	})
+	lifecycle.Append(lc, "winback-http", s)
 }
 
 // registerStartupLogLifecycle logs, at OnStart, exactly what an operator
