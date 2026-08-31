@@ -72,7 +72,7 @@ func TestSecurity_WebhookPost_InvalidSignature_Forbidden_NotPersisted_NoLeak(t *
 	comp.router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusForbidden, rec.Code)
-	_, _, found := rowState(t, comp.dbPath, "wamid.sec-invalid-sig")
+	_, _, found := rowState(t, comp.assertDB, "wamid.sec-invalid-sig")
 	assert.False(t, found, "an invalid signature must never reach persistence")
 	secretsMustNotAppearIn(t, rec.Body.String())
 }
@@ -90,7 +90,7 @@ func TestSecurity_WebhookPost_MissingSignatureHeader_Forbidden_NotPersisted_NoLe
 	comp.router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusForbidden, rec.Code)
-	_, _, found := rowState(t, comp.dbPath, "wamid.sec-no-sig")
+	_, _, found := rowState(t, comp.assertDB, "wamid.sec-no-sig")
 	assert.False(t, found, "a missing signature must never reach persistence")
 	secretsMustNotAppearIn(t, rec.Body.String())
 }
@@ -118,8 +118,8 @@ func TestSecurity_WebhookPost_BodyAlteredAfterSigning_Forbidden_NotPersisted(t *
 	comp.router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusForbidden, rec.Code)
-	_, _, foundAltered := rowState(t, comp.dbPath, "wamid.sec-altered")
-	_, _, foundOriginal := rowState(t, comp.dbPath, "wamid.sec-original")
+	_, _, foundAltered := rowState(t, comp.assertDB, "wamid.sec-altered")
+	_, _, foundOriginal := rowState(t, comp.assertDB, "wamid.sec-original")
 	assert.False(t, foundAltered, "the altered body must never reach persistence")
 	assert.False(t, foundOriginal, "the never-sent original body must not appear either")
 	secretsMustNotAppearIn(t, rec.Body.String())

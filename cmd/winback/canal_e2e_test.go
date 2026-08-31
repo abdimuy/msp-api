@@ -66,13 +66,15 @@ const (
 
 // winbackComposition groups what buildWinbackComposition assembles, so a
 // test can reach the router (for httptest requests), the service and repo
-// (for a hand-driven ReenvioWorker and direct assertions), and the SQLite
-// file path (for rowState).
+// (for a hand-driven ReenvioWorker and direct assertions), and assertDB
+// (for rowState — see that helper's doc comment for why this is a single,
+// shared, busy-timeout-armed connection rather than one opened per call).
 type winbackComposition struct {
-	router chi.Router
-	svc    *canalapp.Service
-	repo   *canalsqlite.Repo
-	dbPath string
+	router   chi.Router
+	svc      *canalapp.Service
+	repo     *canalsqlite.Repo
+	dbPath   string
+	assertDB *sql.DB
 }
 
 // buildWinbackComposition builds cmd/winback's real fx graph — provideRouter
@@ -125,7 +127,14 @@ func buildWinbackComposition(t *testing.T, forwarderURL string) winbackCompositi
 	require.NoError(t, app.Err(), "the real cmd/winback fx graph must resolve cleanly")
 	t.Cleanup(func() { assert.NoError(t, repo.Close()) })
 
-	return winbackComposition{router: router, svc: svc, repo: repo, dbPath: dbPath}
+	// One assertion connection for the whole test, armed with busy_timeout
+	// — see rowState's doc comment for why this replaced a fresh
+	// sql.Open per poll.
+	assertDB, err := sql.Open("sqlite", dbPath+"?_busy_timeout=5000")
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, assertDB.Close()) })
+
+	return winbackComposition{router: router, svc: svc, repo: repo, dbPath: dbPath, assertDB: assertDB}
 }
 
 // startDrainWorker builds and starts a *canalapp.ReenvioWorker against
@@ -247,20 +256,36 @@ func metaTextPayload(wamid, from, phoneNumberID, texto string, ts time.Time) []b
 }
 
 // rowState queries the mailbox's estado/motivo_fallo for wamid directly
-// against the SQLite file, over a connection separate from the one
-// buildWinbackComposition's repo holds — outbound.BuzonRepo exposes no
+// against db — comp.assertDB, a connection separate from the one
+// buildWinbackComposition's repo holds, since outbound.BuzonRepo exposes no
 // per-row getter (see internal/canal/app/service.go's doc comment on
-// RecibirMensaje for why that is deliberate), and the composition/
+// RecibirMensaje for why that is deliberate) and the composition/
 // durability tests need to assert the exact estado a row is in, not just
 // the pendiente count.
-func rowState(t *testing.T, dbPath, wamid string) (string, string, bool) {
+//
+// db is opened once per test (buildWinbackComposition), not once per call:
+// a fresh sql.Open on every poll of a require.Eventually loop — one test
+// used to do exactly that — opens a fresh connection racing the drain
+// worker's own write through the repo's own connection, and modernc.org/
+// sqlite's default busy behaviour is to fail SQLITE_BUSY immediately
+// rather than wait. That produced a genuine flake (a "database is locked"
+// error surfacing through require.NoError below, from inside
+// require.Eventually's polling goroutine, rendered as "condition never
+// satisfied" at the top): the durability logic itself was correct and
+// fast in every captured run, the harness was just racing its own
+// assertion against the code under test for a lock. assertDB's DSN also
+// carries "?_busy_timeout=5000" as defence in depth — a poll waits up to
+// 5s for the writer instead of erroring — but the single long-lived
+// connection is what actually removes the race (see
+// buildWinbackComposition). Never add busy_timeout to
+// internal/canal/infra/canalsqlite to chase this: production runs one
+// process with MaxOpenConns(1), so this contention is the test harness's
+// own creation, not something the production code needs to accommodate.
+func rowState(t *testing.T, db *sql.DB, wamid string) (string, string, bool) {
 	t.Helper()
-	db, err := sql.Open("sqlite", dbPath)
-	require.NoError(t, err)
-	defer func() { assert.NoError(t, db.Close()) }()
 
 	var estado, motivo string
-	err = db.QueryRow(
+	err := db.QueryRow(
 		`SELECT estado, motivo_fallo FROM mensajes_entrantes WHERE wamid = ?`, wamid,
 	).Scan(&estado, &motivo)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -305,7 +330,7 @@ func TestE2E_WebhookPost_SignedRequest_LandsInSQLite(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	estado, _, found := rowState(t, comp.dbPath, "wamid.e2e-lands")
+	estado, _, found := rowState(t, comp.assertDB, "wamid.e2e-lands")
 	require.True(t, found, "the signed POST must have persisted a row keyed by wamid")
 	assert.Equal(t, "pendiente", estado)
 }
@@ -330,10 +355,7 @@ func TestE2E_WebhookPost_SameWamidTwice_200TwiceOneRow(t *testing.T) {
 	assert.Equal(t, []int{http.StatusOK, http.StatusOK}, codes, "Meta's redelivery must see 200 both times")
 
 	var count int
-	db, err := sql.Open("sqlite", comp.dbPath)
-	require.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, db.Close()) })
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, comp.assertDB.QueryRow(
 		`SELECT COUNT(*) FROM mensajes_entrantes WHERE wamid = ?`, "wamid.e2e-redelivered",
 	).Scan(&count))
 	assert.Equal(t, 1, count, "a redelivered wamid must not create a second row")
@@ -356,7 +378,7 @@ func TestE2E_ReenvioWorker_ForwardsPendienteToStore(t *testing.T) {
 	startDrainWorker(t, comp, 15*time.Millisecond)
 
 	require.Eventually(t, func() bool {
-		estado, _, found := rowState(t, comp.dbPath, "wamid.e2e-forwarded")
+		estado, _, found := rowState(t, comp.assertDB, "wamid.e2e-forwarded")
 		return found && estado == "reenviado"
 	}, 2*time.Second, 10*time.Millisecond, "the worker must drain the pendiente to the store and mark it reenviado")
 
@@ -400,7 +422,7 @@ func TestE2E_Durability_StoreDown_MessageSurvives_ThenForwardedOnceStoreReturns(
 	comp.router.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	estado, _, found := rowState(t, comp.dbPath, "wamid.e2e-durable")
+	estado, _, found := rowState(t, comp.assertDB, "wamid.e2e-durable")
 	require.True(t, found)
 	require.Equal(t, "pendiente", estado, "the message must persist even though the store is unreachable at receipt time")
 
@@ -410,7 +432,7 @@ func TestE2E_Durability_StoreDown_MessageSurvives_ThenForwardedOnceStoreReturns(
 	// down receiver (observed ~450ms for MaxAttempts=3 with backoff+jitter;
 	// 1.5s leaves comfortable margin without the test itself waiting long).
 	time.Sleep(1500 * time.Millisecond)
-	estado, motivo, found := rowState(t, comp.dbPath, "wamid.e2e-durable")
+	estado, motivo, found := rowState(t, comp.assertDB, "wamid.e2e-durable")
 	require.True(t, found)
 	assert.Equal(t, "pendiente", estado,
 		"the mailbox must survive a sustained outage in pendiente, not fallido — motivo=%q", motivo)
@@ -418,7 +440,7 @@ func TestE2E_Durability_StoreDown_MessageSurvives_ThenForwardedOnceStoreReturns(
 	store.up.Store(true)
 
 	require.Eventually(t, func() bool {
-		estado, _, found := rowState(t, comp.dbPath, "wamid.e2e-durable")
+		estado, _, found := rowState(t, comp.assertDB, "wamid.e2e-durable")
 		return found && estado == "reenviado"
 	}, 2*time.Second, 10*time.Millisecond, "once the store returns, the pendiente must be forwarded and marked reenviado")
 }
