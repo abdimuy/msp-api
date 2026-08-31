@@ -508,8 +508,8 @@ func (w WhatsApp) validate() error {
 	return nil
 }
 
-// Canal holds settings for the canal module's HTTP surface
-// (internal/canal/infra/canalhttp): the webhook's own verify token — which
+// Canal holds settings for the canal module (internal/canal): where its
+// durable SQLite mailbox lives, the webhook's own verify token — which
 // [WhatsApp]'s doc comment explicitly says does NOT belong in that
 // section — plus the shared secret and forwarding target used for internal
 // traffic between the VPS and the store's on-premise server. See
@@ -531,6 +531,13 @@ func (w WhatsApp) validate() error {
 // decides whether an empty value means "feature disabled" or "refuse to
 // boot" — this config section only carries the values through.
 type Canal struct {
+	// SQLitePath is where the durable mailbox
+	// (internal/canal/infra/canalsqlite) opens its SQLite file. Read by
+	// internal/canal/module.go (Task 7); canalsqlite.Open creates the file
+	// and its schema if they do not yet exist. Matches the STORAGE_DIR
+	// convention (Storage.Dir above): a relative default under ./var so a
+	// bare checkout works without any operator setup.
+	SQLitePath string `env:"CANAL_SQLITE_PATH" envDefault:"./var/canal/buzon.db"`
 	// WebhookVerifyToken is compared (via hmac.Equal) against Meta's
 	// hub.verify_token query parameter on the webhook's GET challenge.
 	WebhookVerifyToken string `env:"WHATSAPP_WEBHOOK_VERIFY_TOKEN"`
