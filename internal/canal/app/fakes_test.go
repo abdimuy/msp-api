@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"errors"
+	"sort"
 	"sync"
 	"time"
 
@@ -126,6 +127,11 @@ func (r *buzonRepoFake) Guardar(_ context.Context, m *domain.MensajeEntrante) (b
 	return true, nil
 }
 
+// ListarPendientes returns pendientes ordered by RecibidoEn ascending, the
+// same order the real port's doc comment promises. A plain map-iteration
+// order would be non-deterministic and let a test pass by accident on
+// something the real (Task 5) repo does not actually guarantee; sorting
+// here keeps this fake faithful to the contract it stands in for.
 func (r *buzonRepoFake) ListarPendientes(_ context.Context, limite int) ([]*domain.MensajeEntrante, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -138,10 +144,13 @@ func (r *buzonRepoFake) ListarPendientes(_ context.Context, limite int) ([]*doma
 	for _, m := range r.byID {
 		if m.Estado() == domain.EstadoReenvioPendiente {
 			out = append(out, m)
-			if len(out) >= limite {
-				break
-			}
 		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].RecibidoEn().Before(out[j].RecibidoEn())
+	})
+	if len(out) > limite {
+		out = out[:limite]
 	}
 	return out, nil
 }
@@ -264,6 +273,18 @@ func (r *buzonRepoFake) countByWamid(wamid string) int {
 		return 1
 	}
 	return 0
+}
+
+// idPorWamid returns the persisted id for wamid, and whether a row exists.
+// Tests use this to reach a message's id for repo lookups (estado,
+// motivoFallo) now that RecibirMensaje no longer returns the entity —
+// production code has no equivalent need, since BuzonRepo deliberately has
+// no lookup-by-Wamid method (see RecibirMensaje's doc comment).
+func (r *buzonRepoFake) idPorWamid(wamid string) (uuid.UUID, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	id, ok := r.byWamid[wamid]
+	return id, ok
 }
 
 // ── Forwarder ────────────────────────────────────────────────────────────

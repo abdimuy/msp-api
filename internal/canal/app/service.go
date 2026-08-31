@@ -127,18 +127,37 @@ func (s *Service) runInTx(ctx context.Context, fn func(context.Context) error) e
 	return s.txMgr.RunInTx(ctx, fn)
 }
 
-// RecibirMensaje validates and persists one inbound WhatsApp message.
+// RecibirMensaje validates and persists one inbound WhatsApp message,
+// reporting only whether it was newly inserted — not the entity.
+//
+// That is a deliberate signature, not a shortcut: the caller (the webhook
+// handler) only needs to know whether to treat this as new, so it can
+// answer Meta 200 either way. Nothing on the VPS renders a mailbox row —
+// the bandeja lives on the store's on-premise server, this module is only
+// the durable relay to it. Returning the entity used to be a trap: on a
+// redelivered webhook the entity this method builds is a fresh,
+// never-persisted one — a random new ID, Estado always Pendiente,
+// MotivoFallo always empty — none of which describe the row that actually
+// exists. outbound.BuzonRepo has no lookup-by-Wamid method to fetch the
+// real one, deliberately: nothing in this module needs it, and adding one
+// would be speculative surface on a sealed module whose whole point is
+// staying small and extractable. Dropping the entity from the return type
+// closes the trap outright rather than requiring every future caller to
+// remember not to trust it on the duplicate path.
 //
 // Idempotent by Wamid: when repo.Guardar reports the row already existed
-// (Meta redelivered a webhook already in the mailbox), this is a no-op —
-// the freshly-built entity's buffered canal.mensaje_entrante_recibido event
-// is dropped rather than surfaced, and no error is returned. The caller
-// (the webhook handler) answers Meta 200 either way; that is what makes
-// Meta's at-least-once delivery safe to retry against.
-func (s *Service) RecibirMensaje(ctx context.Context, p domain.NewMensajeEntranteParams) (*domain.MensajeEntrante, error) {
+// (Meta redelivered a webhook already in the mailbox), inserted is false,
+// nothing new is persisted, and no error is returned — Meta's
+// at-least-once delivery is safe to retry against either way. The freshly
+// built (but never persisted) entity's buffered
+// canal.mensaje_entrante_recibido event goes nowhere on this path: it is
+// never returned and canal has no event sink to drain it into today. If a
+// future task adds one, draining it must still be gated on inserted —
+// only a message that is actually new should ever surface as an event.
+func (s *Service) RecibirMensaje(ctx context.Context, p domain.NewMensajeEntranteParams) (bool, error) {
 	m, err := domain.NewMensajeEntrante(p)
 	if err != nil {
-		return nil, err
+		return false, err
 	}
 
 	var inserted bool
@@ -147,14 +166,13 @@ func (s *Service) RecibirMensaje(ctx context.Context, p domain.NewMensajeEntrant
 		inserted, txErr = s.repo.Guardar(ctx, m)
 		return txErr
 	}); err != nil {
-		return nil, err
+		return false, err
 	}
 
 	if !inserted {
-		m.ClearPendingEvents()
 		s.logger.DebugContext(ctx, "canal.mensaje_duplicado", slog.String("wamid", m.Wamid()))
 	}
-	return m, nil
+	return inserted, nil
 }
 
 // DrenarResultado summarises one DrenarCola pass, for the worker's log line
@@ -287,7 +305,13 @@ func (s *Service) marcarFallido(
 //
 // A permanent forwarder error is reported to the retry policy as a success
 // (nil, nil) so it stops immediately without spending another attempt —
-// only the closure remembers that the underlying call actually failed.
+// only the closure remembers that the underlying call actually failed. The
+// same (nil, nil) also keeps it from counting as a circuit-breaker
+// failure: a permanent error (say, a business-level 400) says nothing
+// about whether the store is reachable, so it must not push the breaker
+// toward opening and blocking otherwise-healthy traffic. Only a transient
+// error — the kind that means the store itself is having trouble — is
+// ever reported to the circuit as a failure.
 func (s *Service) intentarReenvio(ctx context.Context, m *domain.MensajeEntrante) error {
 	if s.circuit.IsOpen() {
 		return errCircuitoAbierto
