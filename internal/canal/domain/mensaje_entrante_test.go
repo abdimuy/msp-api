@@ -380,6 +380,15 @@ func TestMensajeEntrante_MarcarFallido_RequiresMotivo(t *testing.T) {
 	if err := m.MarcarFallido(tooLong, fixedNow()); !errors.Is(err, domain.ErrMensajeEntranteMotivoFalloDemasiadoLargo) {
 		t.Fatalf("expected ErrMensajeEntranteMotivoFalloDemasiadoLargo, got %v", err)
 	}
+
+	// Boundary: exactly maxMotivoFalloLength codepoints is accepted.
+	atLimit := strings.Repeat("x", 500)
+	if err := m.MarcarFallido(atLimit, fixedNow()); err != nil {
+		t.Fatalf("unexpected error at boundary length: %v", err)
+	}
+	if m.MotivoFallo() != atLimit {
+		t.Errorf("MotivoFallo = %q, want the 500-char value", m.MotivoFallo())
+	}
 }
 
 func TestMensajeEntrante_MarcarFallido_InvalidTransition(t *testing.T) {
