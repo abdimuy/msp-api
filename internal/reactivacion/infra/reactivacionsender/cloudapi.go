@@ -43,7 +43,11 @@ var (
 
 	// ErrCloudAPILimiteExcedido maps Meta code 130429: Meta's own
 	// application-level rate limit. Transient — safe to retry later.
-	ErrCloudAPILimiteExcedido = apperror.NewInternal(
+	// apperror.NewTooManyRequests (429), not NewInternal (500): 130429 is
+	// the exact case apperror.Kind's own doc names KindTooManyRequests for
+	// — a caller that should back off and retry, not a server-side
+	// failure.
+	ErrCloudAPILimiteExcedido = apperror.NewTooManyRequests(
 		"reactivacion_cloudapi_limite_excedido",
 		"no se pudo enviar: se alcanzó el límite de envíos de whatsapp, reintentar más tarde (código de meta 130429)",
 	)

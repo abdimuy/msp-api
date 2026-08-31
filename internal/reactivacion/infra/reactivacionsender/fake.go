@@ -2,9 +2,10 @@
 // reactivación channel: FakeSender (simulated, always succeeds) is the safe
 // default; CloudAPISender is the real channel over Meta's WhatsApp Cloud
 // API (internal/platform/whatsapp), selected via REACTIVACION_SENDER=cloudapi
-// per docs/adr/0010-whatsapp-cloud-api-and-the-always-on-edge.md.
-// WhatsmeowSender is a stub kept from before that ADR — see its own doc
-// comment.
+// per docs/adr/0010-whatsapp-cloud-api-and-the-always-on-edge.md. There is
+// no whatsmeow-backed sender: ADR-0010 rejects whatsmeow outright for the
+// pilot, and the earlier stub for it was deleted rather than kept around
+// for a phase that will not use it.
 //
 //nolint:misspell // reactivación vocabulary is Spanish per project convention.
 package reactivacionsender

@@ -161,6 +161,10 @@ func TestCloudAPISender_Enviar_LimiteExcedido(t *testing.T) {
 	var ae *apperror.Error
 	require.ErrorAs(t, err, &ae)
 	assert.Equal(t, "reactivacion_cloudapi_limite_excedido", ae.Code)
+	// 429, not 500: apperror.Kind's own doc names 130429 as exactly the
+	// intended use of KindTooManyRequests — a caller that should back off
+	// and retry, not a server-side failure.
+	assert.Equal(t, apperror.KindTooManyRequests, ae.Kind)
 	assert.Contains(t, err.Error(), "130429")
 	require.ErrorIs(t, err, platformwhatsapp.ErrRateLimited)
 	assert.True(t, platformwhatsapp.IsTransient(err))

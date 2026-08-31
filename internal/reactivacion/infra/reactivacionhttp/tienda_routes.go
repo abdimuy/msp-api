@@ -41,6 +41,15 @@ type TiendaConfig struct {
 func MountTiendaRouter(r chi.Router, svc *reactivacionapp.Service, cfg TiendaConfig) huma.API {
 	config := huma.DefaultConfig("MSP API · Reactivación · Tienda", "v2")
 	config.DocsRenderer = huma.DocsRendererScalar
+	// This is the one no-authn route group on the internet-facing box
+	// (tiendaTokenMiddleware is the only gate, and IP allowlisting is
+	// best-effort at most — see its own doc comment). Not new exposure —
+	// Docs/OpenAPI carry no secrets — but there is no reason to publish
+	// them here either. Mirrors
+	// internal/microsip/infra/microsiphttp/routes.go's own DocsPath/
+	// OpenAPIPath disabling.
+	config.DocsPath = ""
+	config.OpenAPIPath = ""
 	api := humachi.New(r, config)
 
 	h := &tiendaHandlers{svc: svc}

@@ -19,8 +19,9 @@ type Destino struct {
 // Implementations live in internal/reactivacion/infra/reactivacionsender —
 // a FakeSender that simulates success (the safe default), and a
 // CloudAPISender that delivers over Meta's WhatsApp Cloud API, the real
-// channel per docs/adr/0010-whatsapp-cloud-api-and-the-always-on-edge.md.
-// WhatsmeowSender is an earlier stub superseded by that ADR.
+// channel per docs/adr/0010-whatsapp-cloud-api-and-the-always-on-edge.md,
+// which rejects whatsmeow outright — there is no whatsmeow-backed
+// implementation.
 type MessageSender interface {
 	// Enviar delivers cuerpo to dest. Returns an error if the channel rejects
 	// the message (never returns a partial success).

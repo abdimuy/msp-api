@@ -102,6 +102,23 @@ func TestTiendaMensajeEntrante_MissingToken_Forbidden(t *testing.T) {
 	assert.NotContains(t, rec.Body.String(), tiendaTestToken)
 }
 
+func TestTiendaRouter_DocsAndOpenAPI_Disabled(t *testing.T) {
+	t.Parallel()
+	svc := buildTiendaServiceWithCohorte(nil, &copilotofake.Generator{})
+	h := buildTiendaRouter(svc, reactivacionhttp.TiendaConfig{SharedToken: tiendaTestToken})
+
+	// tiendaTokenMiddleware is the only gate on this router — see
+	// buildTiendaRouter's doc comment — so Docs/OpenAPI must not be
+	// registered at all rather than merely be behind the token: a 404 here
+	// (not a 403) proves humachi never mounted the route.
+	for _, path := range []string{"/docs", "/openapi.json", "/openapi.yaml"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusNotFound, rec.Code, "path %q must not be registered on the tienda router", path)
+	}
+}
+
 func TestTiendaMensajeEntrante_WrongToken_Forbidden(t *testing.T) {
 	t.Parallel()
 	svc := buildTiendaServiceWithCohorte(nil, &copilotofake.Generator{})
