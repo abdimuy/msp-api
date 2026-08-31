@@ -32,6 +32,8 @@ var (
 		"opt out of Meilisearch-backed search)")
 	errLLMBaseURLRequired       = errors.New("config: LLM_BASE_URL is required when LLM_ENABLED=true")
 	errMicrosipVentaJuegosLinea = errors.New("config: invalid MICROSIP_VENTA_JUEGOS_* configuration")
+	errWhatsAppCredsRequired    = errors.New("config: WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID and " +
+		"WHATSAPP_BUSINESS_ACCOUNT_ID are all required when WHATSAPP_ENABLED=true")
 )
 
 // Environment is the runtime environment.
@@ -72,6 +74,7 @@ type Config struct {
 	Inventario     Inventario
 	Reactivacion   Reactivacion
 	Flota          Flota
+	WhatsApp       WhatsApp
 }
 
 // Flota holds the knobs of the roster snapshot worker — the process that
@@ -447,6 +450,63 @@ func (l LLM) validate() error {
 	return nil
 }
 
+// WhatsApp holds settings for Meta's WhatsApp Cloud API client used by the
+// internal/platform/whatsapp transport. See
+// docs/adr/0010-whatsapp-cloud-api-and-the-always-on-edge.md for why this is
+// Meta's official Cloud API and not whatsmeow.
+//
+// AppSecret is Meta's app secret. It is carried here even though the
+// transport itself never reads it: a later task validates the webhook's
+// X-Hub-Signature-256 HMAC with it, and splitting Meta's credentials across
+// two config sections would be worse. The webhook's own verify token
+// (WHATSAPP_WEBHOOK_VERIFY_TOKEN) is NOT part of this section — that is
+// added by the task that builds the webhook.
+//
+// Enabled defaults to false — the real client never attempts a network
+// connection unless explicitly turned on via WHATSAPP_ENABLED=true. When
+// Enabled is true, Token, PhoneNumberID and BusinessAccountID are required.
+type WhatsApp struct {
+	// Enabled gates the real client. Default false: NewClient returns the
+	// disabled client and no network connection is ever attempted.
+	Enabled bool `env:"WHATSAPP_ENABLED" envDefault:"false"`
+	// Token is the permanent (or long-lived) access token sent as the
+	// Bearer credential on every Graph API call.
+	Token string `env:"WHATSAPP_TOKEN"`
+	// PhoneNumberID is Meta's phone_number_id: the sending number's id in
+	// the Graph API, used to build the /{phone_number_id}/messages and
+	// /{phone_number_id}/media endpoints.
+	PhoneNumberID string `env:"WHATSAPP_PHONE_NUMBER_ID"`
+	// BusinessAccountID is Meta's WhatsApp Business Account id (WABA id).
+	// Not used by any Graph API call this transport makes today; carried
+	// for the webhook and future template-management calls.
+	BusinessAccountID string `env:"WHATSAPP_BUSINESS_ACCOUNT_ID"`
+	// AppSecret is Meta's app secret. See the type doc for why it lives
+	// here even though this transport does not read it yet.
+	AppSecret string `env:"WHATSAPP_APP_SECRET"`
+	// APIVersion is the Graph API version segment used to build every
+	// endpoint (e.g. "v21.0").
+	APIVersion string `env:"WHATSAPP_API_VERSION" envDefault:"v21.0"`
+	// Timeout is the per-request deadline applied to every Graph API call.
+	Timeout time.Duration `env:"WHATSAPP_TIMEOUT" envDefault:"15s"`
+	// BaseURL overrides the Graph API base URL. Empty defaults to
+	// https://graph.facebook.com in the real client; tests point this at
+	// an httptest.Server so no test ever touches the real network.
+	BaseURL string `env:"WHATSAPP_BASE_URL"`
+}
+
+// validate enforces that the WhatsApp configuration is internally
+// consistent. Token, PhoneNumberID and BusinessAccountID are only required
+// when Enabled is true.
+func (w WhatsApp) validate() error {
+	if !w.Enabled {
+		return nil
+	}
+	if w.Token == "" || w.PhoneNumberID == "" || w.BusinessAccountID == "" {
+		return errWhatsAppCredsRequired
+	}
+	return nil
+}
+
 // validate enforces that the Meilisearch configuration is internally
 // consistent. See the [Meilisearch] type doc for the conditional-URL matrix.
 func (m Meilisearch) validate(appEnv Environment) error {
@@ -526,28 +586,22 @@ func (c *Config) validate() error {
 		errs = append(errs, fmt.Errorf("%w: %d", errInvalidBodySize, c.HTTP.MaxBodySizeMB))
 	}
 
-	if err := c.Firebase.validate(c.App.Env); err != nil {
-		errs = append(errs, err)
-	}
-
-	if err := c.Meilisearch.validate(c.App.Env); err != nil {
-		errs = append(errs, err)
-	}
-
-	if err := c.LLM.validate(); err != nil {
-		errs = append(errs, err)
-	}
-
-	if err := c.Storage.validate(); err != nil {
-		errs = append(errs, err)
-	}
-
-	if err := c.ImageProcessor.validate(); err != nil {
-		errs = append(errs, err)
-	}
-
-	if err := c.MicrosipVenta.validate(); err != nil {
-		errs = append(errs, err)
+	// Each section owns its own conditional rules; collecting them behind a
+	// single loop (rather than one `if err := X.validate(); err != nil`
+	// block per section) keeps this function's cyclomatic complexity flat
+	// as sections are added.
+	for _, validate := range []func() error{
+		func() error { return c.Firebase.validate(c.App.Env) },
+		func() error { return c.Meilisearch.validate(c.App.Env) },
+		c.LLM.validate,
+		c.Storage.validate,
+		c.ImageProcessor.validate,
+		c.MicrosipVenta.validate,
+		c.WhatsApp.validate,
+	} {
+		if err := validate(); err != nil {
+			errs = append(errs, err)
+		}
 	}
 
 	return errors.Join(errs...)
