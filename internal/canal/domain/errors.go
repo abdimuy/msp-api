@@ -126,4 +126,14 @@ var (
 		"canal_inbound_message_failure_reason_too_long",
 		"el motivo del fallo es demasiado largo",
 	)
+
+	// ErrMensajeEntranteNoEncontrado is returned by a BuzonRepo
+	// implementation's MarcarReenviado/MarcarFallido when id does not name a
+	// row in the mailbox — in practice this only happens if a caller passes
+	// an id the repository never stored, since the mailbox's own worker
+	// always acts on ids ListarPendientes just returned.
+	ErrMensajeEntranteNoEncontrado = apperror.NewNotFound(
+		"canal_inbound_message_not_found",
+		"el mensaje entrante no existe",
+	)
 )

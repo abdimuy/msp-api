@@ -368,6 +368,10 @@ linters:
           alias: canalhttp
         - pkg: github.com/abdimuy/msp-api/internal/canal/infra/canalsqlite
           alias: canalsqlite
+        - pkg: modernc.org/sqlite
+          alias: sqlite
+        - pkg: modernc.org/sqlite/lib
+          alias: sqlite3
         - pkg: firebase.google.com/go/v4
           alias: firebasesdk
 
