@@ -308,7 +308,7 @@ func sembrarUniversoTehuacan(t *testing.T, q firebird.Querier) (int, int) {
 	total := decimal.NewFromInt(10000)
 	dir := microsipseed.OpcionesDireccion{CiudadID: tehuacanCiudadID, Telefono: "2381234567"}
 
-	liquidado := microsipseed.Cliente(t, q, "JOSEFINA ARELLANO MOTA")
+	liquidado := microsipseed.Cliente(t, q, "JOSEFINA ARELLANO MUÑOZ")
 	microsipseed.DireccionPrincipal(t, q, liquidado, dir)
 	ventaLiq := microsipseed.VentaCredito(t, q, liquidado, microsipseed.OpcionesVenta{Total: total})
 	microsipseed.AbonoAplicado(t, q, ventaLiq, microsipseed.OpcionesAbono{
@@ -316,7 +316,7 @@ func sembrarUniversoTehuacan(t *testing.T, q firebird.Querier) (int, int) {
 		Importe:      total, // salda por completo
 	})
 
-	hueco := microsipseed.Cliente(t, q, "RAFAEL ESPINOZA TREJO")
+	hueco := microsipseed.Cliente(t, q, "RAFAEL ESPINOZA PEÑA")
 	microsipseed.DireccionPrincipal(t, q, hueco, dir)
 	ventaHueco := microsipseed.VentaCredito(t, q, hueco, microsipseed.OpcionesVenta{Total: total})
 	microsipseed.AbonoAplicado(t, q, ventaHueco, microsipseed.OpcionesAbono{

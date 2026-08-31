@@ -11,6 +11,16 @@
 //     after a successful call.
 //   - Cleanup order: FORMAS_COBRO_DOCTOS → IMPORTES_DOCTOS_CC → DOCTOS_CC
 //     (children before parent to respect FK constraints).
+//   - MSP_SALDOS_VENTAS también, y NO es opcional. Es el caché espejo que un
+//     trigger de Microsip llena al insertar el cargo (ADR-0006); borrar el
+//     DOCTOS_CC no lo borra. Sin esa línea cada corrida deja una fila de caché
+//     sin padre, y cuando además se borró el cliente sintético queda HUÉRFANA:
+//     medido, 84 filas en un solo día y ~1,000 acumuladas desde el 15 de
+//     agosto. No es cosmético — esas huérfanas son justo las que reventaban
+//     rutas.VentasPorZona por el LEFT JOIN a CLIENTES
+//     (ver TestCobranzaRepo_VentasPorZona_ClienteHuerfano).
+//   - Ningún borrado descarta su error. Un DELETE que falla en silencio deja la
+//     fila para siempre y hace que la limpieza PAREZCA haber funcionado.
 //
 // POLLUTION RISK (accepted, bounded): unlike the rollback-only cobranzahttp
 // e2e tests (fbtestutil.WithTestTransaction), these tests COMMIT to the shared
@@ -94,7 +104,7 @@ func seedCliente(
 		// CLIENTES_AK1 es único sobre NOMBRE: el sufijo evita que dos tests del
 		// paquete —o una corrida cuya limpieza no alcanzó— choquen contra el
 		// índice en vez de contra el código.
-		clienteID = microsipseed.Cliente(t, q, "COBRANZA E2E PRUEBA "+uuid.NewString()[:8])
+		clienteID = microsipseed.Cliente(t, q, "COBRANZA E2E PRUEBA ÑÉ "+uuid.NewString()[:8])
 
 		var rolClaveID int
 		if serr := q.QueryRowContext(txCtx,
@@ -179,8 +189,16 @@ func seedCargo(
 		// subsequent statement that could fail.
 		t.Cleanup(func() {
 			cleanupQ := firebird.GetQuerier(context.Background(), pool.DB)
-			_, _ = cleanupQ.ExecContext(context.Background(),
-				`DELETE FROM DOCTOS_CC WHERE DOCTO_CC_ID = ?`, cargo.doctoCCID)
+			// MSP_SALDOS_VENTAS primero: es el caché que el trigger llenó a
+			// partir de este cargo, y el DELETE de DOCTOS_CC no lo toca.
+			for _, sentencia := range []string{
+				`DELETE FROM MSP_SALDOS_VENTAS WHERE DOCTO_CC_ID = ?`,
+				`DELETE FROM DOCTOS_CC WHERE DOCTO_CC_ID = ?`,
+			} {
+				if _, err := cleanupQ.ExecContext(context.Background(), sentencia, cargo.doctoCCID); err != nil {
+					t.Errorf("limpieza del cargo sembrado (%s): %v", sentencia, err)
+				}
+			}
 		})
 
 		// DOCTOS_CC.FOLIO is VARCHAR(9). Use "S-" + the last 7 digits of the
@@ -223,8 +241,10 @@ func seedCargo(
 		// Register cleanup for the IMPORTES_DOCTOS_CC row immediately.
 		t.Cleanup(func() {
 			cleanupQ := firebird.GetQuerier(context.Background(), pool.DB)
-			_, _ = cleanupQ.ExecContext(context.Background(),
-				`DELETE FROM IMPORTES_DOCTOS_CC WHERE IMPTE_DOCTO_CC_ID = ?`, cargo.importeRowID)
+			if _, err := cleanupQ.ExecContext(context.Background(),
+				`DELETE FROM IMPORTES_DOCTOS_CC WHERE IMPTE_DOCTO_CC_ID = ?`, cargo.importeRowID); err != nil {
+				t.Errorf("limpieza del importe del cargo: %v", err)
+			}
 		})
 
 		// APLICADO must be 'S' so SALDO_CARGO_CC can see this importe
@@ -284,21 +304,27 @@ func (h *e2eHarness) registerAplicarCleanup(
 	t.Helper()
 	t.Cleanup(func() {
 		q := firebird.GetQuerier(context.Background(), h.pool.DB)
-		// 1. FORMAS_COBRO_DOCTOS (child of DOCTOS_CC abono)
-		_, _ = q.ExecContext(context.Background(),
-			`DELETE FROM FORMAS_COBRO_DOCTOS WHERE DOCTO_ID = ? AND NOM_TABLA_DOCTOS = 'DOCTOS_CC'`,
-			result.DoctoCCID,
-		)
-		// 2. IMPORTES_DOCTOS_CC — the abono importe line (DOCTO_CC_ACR_ID = cargo)
-		_, _ = q.ExecContext(context.Background(),
-			`DELETE FROM IMPORTES_DOCTOS_CC WHERE IMPTE_DOCTO_CC_ID = ?`,
-			result.ImpteDoctoCCID,
-		)
-		// 3. DOCTOS_CC abono header
-		_, _ = q.ExecContext(context.Background(),
-			`DELETE FROM DOCTOS_CC WHERE DOCTO_CC_ID = ?`,
-			result.DoctoCCID,
-		)
+		borrados := []struct {
+			sentencia string
+			arg       any
+		}{
+			// 1. FORMAS_COBRO_DOCTOS (child of DOCTOS_CC abono)
+			{`DELETE FROM FORMAS_COBRO_DOCTOS WHERE DOCTO_ID = ? AND NOM_TABLA_DOCTOS = 'DOCTOS_CC'`, result.DoctoCCID},
+			// 2. IMPORTES_DOCTOS_CC — the abono importe line (DOCTO_CC_ACR_ID = cargo)
+			{`DELETE FROM IMPORTES_DOCTOS_CC WHERE IMPTE_DOCTO_CC_ID = ?`, result.ImpteDoctoCCID},
+			// 3. MSP_SALDOS_VENTAS / MSP_PAGOS_VENTAS — los cachés espejo que
+			//    los triggers de Microsip llenaron con este abono. Borrar el
+			//    DOCTOS_CC no los toca; sin esto la fila de caché sobrevive.
+			{`DELETE FROM MSP_PAGOS_VENTAS WHERE DOCTO_CC_ID = ?`, result.DoctoCCID},
+			{`DELETE FROM MSP_SALDOS_VENTAS WHERE DOCTO_CC_ID = ?`, result.DoctoCCID},
+			// 4. DOCTOS_CC abono header
+			{`DELETE FROM DOCTOS_CC WHERE DOCTO_CC_ID = ?`, result.DoctoCCID},
+		}
+		for _, b := range borrados {
+			if _, err := q.ExecContext(context.Background(), b.sentencia, b.arg); err != nil {
+				t.Errorf("limpieza del pago aplicado (%s): %v", b.sentencia, err)
+			}
+		}
 	})
 }
 

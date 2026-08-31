@@ -22,7 +22,7 @@ type Pago struct {
 	formaCobro     string
 	aplicaACargoID int // 0 when the target cargo DOCTO_CC_ID is unknown
 	conceptoCCID   int
-	concepto       string    // UTF-8/NFC display name decoded from Win1252
+	concepto       string    // UTF-8/NFC display name (CONCEPTOS_CC.NOMBRE)
 	categoria      Categoria // server-derived from conceptoCCID
 	cobrador       string    // UTF-8/NFC; COBRADORES.NOMBRE or DOCTOS_CC.DESCRIPCION fallback
 }

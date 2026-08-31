@@ -26,8 +26,8 @@ type VentaCliente struct {
 	saldoVenta     decimal.Decimal
 	numPagos       int
 	hora           string // "HH:MM:SS" wall-clock local time-of-day (not a UTC instant)
-	almacen        string // ALMACENES.NOMBRE (UTF-8/NFC decoded from Win1252)
-	primerArticulo string // ARTICULOS.NOMBRE of first J/N line (UTF-8/NFC decoded from Win1252)
+	almacen        string // ALMACENES.NOMBRE (UTF-8/NFC)
+	primerArticulo string // ARTICULOS.NOMBRE of first J/N line (UTF-8/NFC)
 	numArticulos   int    // count of J/N lines in DOCTOS_PV_DET
 }
 

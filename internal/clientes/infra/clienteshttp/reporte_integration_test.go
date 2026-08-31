@@ -62,7 +62,7 @@ func TestReporteIntegration_ReporteCliente(t *testing.T) {
 		q := firebird.GetQuerier(ctx, pool.DB)
 		microsipseed.RequiereConceptos(t, q, conceptoCobranza)
 
-		clienteID := microsipseed.Cliente(t, q, "REPORTE PDF PRUEBA")
+		clienteID := microsipseed.Cliente(t, q, "REPORTE PDF PRUEBA ÑÁ")
 
 		const (
 			ventasSembradas = 4

@@ -30,7 +30,7 @@ import (
 // mockRowScanner satisfies the unexported rowScanner interface. It returns
 // the configured values into the destination pointers in order, mimicking
 // what *sql.Row / *sql.Rows would do — including invoking sql.Scanner.Scan
-// for destinations that implement it (Win1252, sql.NullString, …).
+// for destinations that implement it (sql.NullString, …).
 type mockRowScanner struct {
 	values []any
 	err    error
@@ -54,7 +54,7 @@ func (m *mockRowScanner) Scan(dest ...any) error {
 // assignTo emulates database/sql's Scan dispatch enough for these tests:
 //   - direct same-type assignment short-circuits to a copy (avoids invoking
 //     sql.NullString.Scan with a sql.NullString src, which it rejects).
-//   - sql.Scanner implementations (Win1252) get their Scan called.
+//   - sql.Scanner implementations get their Scan called.
 //   - *any destinations receive src verbatim — same as the real driver does
 //     for raw timestamp / decimal columns.
 //   - other typed pointers use reflect to convert when assignable.
@@ -249,7 +249,7 @@ func comboRow(t *testing.T) []any {
 	now := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
 	return []any{
 		uuid.New().String(),                 // ID
-		utf8Bytes(t, "Combo Especial ñá"),   // NOMBRE_COMBO (Win1252 bytes)
+		utf8Text(t, "Combo Especial ñá"),    // NOMBRE_COMBO (UTF8 column)
 		decimal.RequireFromString("100.50"), // PRECIO_ANUAL
 		decimal.RequireFromString("90.25"),  // PRECIO_CORTO_PLAZO
 		decimal.RequireFromString("80.00"),  // PRECIO_CONTADO
@@ -263,10 +263,16 @@ func comboRow(t *testing.T) []any {
 	}
 }
 
-// utf8Bytes returns the raw UTF-8 bytes for s. Kept as a helper for tests that
-// want to assert byte-level identity through the rowmapper — post UTF8 column
-// migration the bytes are just plain UTF-8.
-func utf8Bytes(_ *testing.T, s string) string { return s }
+// utf8Text is the identity. It exists to mark, at each call site, a string
+// that deliberately carries accents.
+//
+// It replaces a helper called utf8Bytes that three tests used while claiming in
+// their NAMES to exercise firebird.Win1252 — they never did, because every
+// column these mappers read belongs to MSP_VENTAS and is CHARACTER SET UTF8.
+// The identity helper is right; the names were the lie, and they are fixed.
+// What these tests actually pin is worth pinning: accented UTF-8 text must
+// survive the scan/assemble path VERBATIM, with no re-encoding anywhere.
+func utf8Text(_ *testing.T, s string) string { return s }
 
 func TestScanCombo_Happy(t *testing.T) {
 	t.Parallel()
@@ -316,7 +322,7 @@ func productoRow(t *testing.T) []any {
 	return []any{
 		uuid.New().String(),                 // ID
 		100,                                 // ARTICULO_ID
-		utf8Bytes(t, "Mesa redonda café"),   // ARTICULO
+		utf8Text(t, "Mesa redonda café"),    // ARTICULO
 		decimal.RequireFromString("3.0000"), // CANTIDAD
 		decimal.RequireFromString("200.00"), // PRECIO_ANUAL
 		decimal.RequireFromString("180.00"), // PRECIO_CORTO_PLAZO
@@ -377,14 +383,18 @@ func TestScanProducto_ComboIDAndAlmacenesPopulated(t *testing.T) {
 
 // ─── scanVendedor ─────────────────────────────────────────────────────────
 
-func TestScanVendedor_Win1252Decoded(t *testing.T) {
+// TestScanVendedor_NombreAcentuadoVerbatim pins that an accented vendedor name
+// survives scanVendedor byte-for-byte. MSP_VENTAS_VENDEDOR.NOMBRE is CHARACTER
+// SET UTF8, so the correct behaviour is no conversion at all — introducing a
+// firebird.Win1252 target here would break this test, which is the point.
+func TestScanVendedor_NombreAcentuadoVerbatim(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
 	row := []any{
 		uuid.New().String(),
 		uuid.New().String(),
 		"vendedor@muebleriamsp.mx",
-		utf8Bytes(t, "Vendedor Núñez"),
+		utf8Text(t, "Vendedor Núñez"),
 		now, now,
 		uuid.New().String(), uuid.New().String(),
 	}
@@ -425,10 +435,13 @@ func TestScanImagen_NullDescripcion(t *testing.T) {
 	assert.Equal(t, int64(2048), img.SizeBytes())
 }
 
-func TestScanImagen_DescripcionWin1252Decoded(t *testing.T) {
+// TestScanImagen_DescripcionAcentuadaVerbatim pins that an accented image
+// description survives scanImagen byte-for-byte. The column is CHARACTER SET
+// UTF8 (MSP_VENTAS_IMAGEN.DESCRIPCION), so no decoding step belongs here.
+func TestScanImagen_DescripcionAcentuadaVerbatim(t *testing.T) {
 	t.Parallel()
 	row := imagenRow(t)
-	row[5] = sql.NullString{String: utf8Bytes(t, "Recibo de cobranza ñ"), Valid: true}
+	row[5] = sql.NullString{String: utf8Text(t, "Recibo de cobranza ñ"), Valid: true}
 	img, err := scanImagen(&mockRowScanner{values: row})
 	require.NoError(t, err)
 	require.NotNil(t, img.Descripcion())
@@ -518,13 +531,13 @@ func TestAssembleVenta_BadHeaderUUIDSurfacesAppError(t *testing.T) {
 	assert.Equal(t, "ID", ae.Fields["column"])
 }
 
-func TestAssembleVenta_NotaWin1252DecodedWhenValid(t *testing.T) {
+// TestAssembleVenta_NotaAcentuadaVerbatimWhenValid pins that an accented nota
+// survives assembleVenta byte-for-byte. MSP_VENTAS.NOTA is CHARACTER SET UTF8:
+// the driver hands over UTF-8 and assembleVenta must copy it, not decode it.
+func TestAssembleVenta_NotaAcentuadaVerbatimWhenValid(t *testing.T) {
 	t.Parallel()
 	r := completeVentaRowRaw(t)
-	// Feed Win1252 bytes (as string) to mimic what the driver hands to
-	// sql.NullString from an ISO8859_1 column — assembleVenta decodes through
-	// firebird.Win1252.Scan.
-	r.nota = sql.NullString{String: utf8Bytes(t, "Una nota con ñ y é"), Valid: true}
+	r.nota = sql.NullString{String: utf8Text(t, "Una nota con ñ y é"), Valid: true}
 	v, err := assembleVenta(r, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, v.Nota())
@@ -544,10 +557,10 @@ func TestAssembleVenta_OptionalClienteIDPropagates(t *testing.T) {
 func TestAssembleVenta_DireccionAndOptionalsPreserved(t *testing.T) {
 	t.Parallel()
 	r := completeVentaRowRaw(t)
-	r.numeroExterior = sql.NullString{String: utf8Bytes(t, "42-B"), Valid: true}
+	r.numeroExterior = sql.NullString{String: utf8Text(t, "42-B"), Valid: true}
 	r.zonaClienteID = sql.NullInt32{Int32: 7, Valid: true}
 	r.telefono = sql.NullString{String: "5551234567", Valid: true}
-	r.avalOResponsable = sql.NullString{String: utf8Bytes(t, "Avalista Pérez"), Valid: true}
+	r.avalOResponsable = sql.NullString{String: utf8Text(t, "Avalista Pérez"), Valid: true}
 	v, err := assembleVenta(r, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, v.Direccion().NumeroExterior())

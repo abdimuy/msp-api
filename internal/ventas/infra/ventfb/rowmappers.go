@@ -100,7 +100,8 @@ type ventaRowRaw struct {
 	diaCobranzaSemana sql.NullString
 	diaCobranzaMes    sql.NullInt32
 
-	// Nota — nullable; decoded through Win1252 when Valid.
+	// Nota — nullable. MSP_VENTAS.NOTA is CHARACTER SET UTF8: copied verbatim,
+	// never decoded.
 	nota sql.NullString
 
 	// Audit
@@ -110,7 +111,7 @@ type ventaRowRaw struct {
 	// Cancelación
 	canceledAtRaw any
 	canceledByRaw sql.NullString
-	cancelReason  sql.NullString // nullable; decoded through Win1252 when Valid
+	cancelReason  sql.NullString // nullable; CHARACTER SET UTF8 — copied verbatim
 
 	// Status
 	clienteID     sql.NullInt32

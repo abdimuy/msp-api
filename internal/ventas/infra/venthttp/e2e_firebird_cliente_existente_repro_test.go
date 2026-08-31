@@ -83,7 +83,7 @@ func TestRepro_CrearVentaConClienteExistente(t *testing.T) {
 // cliente disappears with it.
 func pickActiveClienteID(ctx context.Context, t *testing.T, pool *firebird.Pool) int {
 	t.Helper()
-	return seedClienteConClave(ctx, t, pool, "VENTAS E2E CLIENTE EXISTENTE")
+	return seedClienteConClave(ctx, t, pool, "VENTAS E2E CLIENTE EXISTENTE ÑÉ")
 }
 
 // seedClienteConClave inserts a synthetic cliente together with its

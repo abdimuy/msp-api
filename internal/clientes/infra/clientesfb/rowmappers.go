@@ -22,24 +22,28 @@ type scannable interface {
 // ─── clienteRowRaw ───────────────────────────────────────────────────────────
 
 // clienteRowRaw holds the raw Firebird scan targets for a CLIENTES row.
-// Win1252 targets decode Windows-1252 bytes to UTF-8 at scan time.
 // Ordering matches selectClienteCols exactly.
+//
+// Scan target per column charset (see the package doc in queries.go):
+//   - CHARACTER SET NONE → firebird.Win1252 (Firebird hands the bytes over raw).
+//   - CHARACTER SET ISO8859_1 → string / sql.NullString (Firebird already
+//     transliterated to UTF-8 for the charset=UTF8 connection).
 type clienteRowRaw struct {
 	clienteID     int
-	nombreRaw     firebird.Win1252
+	nombre        string // CLIENTES.NOMBRE — ISO8859_1
 	limiteCrRaw   any
-	notasRaw      firebird.Win1252 // BLOB Sub_Type 1 — Win1252 handles nil→"" at scan time
+	notasRaw      firebird.Win1252 // CLIENTES.NOTAS — NONE (BLOB Sub_Type 1); Win1252 maps nil→""
 	estatus       string
 	zonaClienteID sql.NullInt64
-	zonaNombreRaw firebird.Win1252
+	zonaNombreRaw firebird.Win1252 // ZONAS_CLIENTES.NOMBRE — NONE
 	cobradorID    sql.NullInt64
-	cobrNombreRaw firebird.Win1252
+	cobrNombre    sql.NullString // COBRADORES.NOMBRE — ISO8859_1; LEFT JOIN → nullable
 	// Direccion fields
-	calleRaw    firebird.Win1252
-	coloniaRaw  firebird.Win1252
-	poblRaw     firebird.Win1252
-	estadoRaw   firebird.Win1252
-	telefonoRaw firebird.Win1252
+	calleRaw    firebird.Win1252 // DIRS_CLIENTES.NOMBRE_CALLE — NONE
+	coloniaRaw  firebird.Win1252 // DIRS_CLIENTES.COLONIA — NONE
+	poblRaw     firebird.Win1252 // DIRS_CLIENTES.POBLACION — NONE
+	estado      sql.NullString   // ESTADOS.NOMBRE — ISO8859_1; LEFT JOIN → nullable
+	telefonoRaw firebird.Win1252 // DIRS_CLIENTES.TELEFONO1 — NONE
 	// GPS fields from LIBRES_CLIENTES (CHARACTER SET NONE, raw ASCII decimal text)
 	latRaw sql.NullString
 	lngRaw sql.NullString
@@ -48,18 +52,18 @@ type clienteRowRaw struct {
 func (r *clienteRowRaw) scanFrom(s scannable) error {
 	return s.Scan(
 		&r.clienteID,
-		&r.nombreRaw,
+		&r.nombre,
 		&r.limiteCrRaw,
 		&r.notasRaw,
 		&r.estatus,
 		&r.zonaClienteID,
 		&r.zonaNombreRaw,
 		&r.cobradorID,
-		&r.cobrNombreRaw,
+		&r.cobrNombre,
 		&r.calleRaw,
 		&r.coloniaRaw,
 		&r.poblRaw,
-		&r.estadoRaw,
+		&r.estado,
 		&r.telefonoRaw,
 		&r.latRaw,
 		&r.lngRaw,
@@ -73,19 +77,19 @@ func (r *clienteRowRaw) assemble() (*domain.Cliente, error) {
 	}
 	return domain.HydrateCliente(domain.HydrateClienteParams{
 		ClienteID:      r.clienteID,
-		Nombre:         string(r.nombreRaw),
+		Nombre:         r.nombre,
 		LimiteCredito:  lc,
 		Notas:          string(r.notasRaw),
 		Estatus:        r.estatus,
 		ZonaClienteID:  nullableIntVal(r.zonaClienteID),
 		ZonaNombre:     string(r.zonaNombreRaw),
 		CobradorID:     nullableIntVal(r.cobradorID),
-		CobradorNombre: string(r.cobrNombreRaw),
+		CobradorNombre: r.cobrNombre.String,
 		Direccion: domain.HydrateDireccion(domain.HydrateDireccionParams{
 			Calle:     string(r.calleRaw),
 			Colonia:   string(r.coloniaRaw),
 			Poblacion: string(r.poblRaw),
-			Estado:    string(r.estadoRaw),
+			Estado:    r.estado.String,
 		}),
 		Telefono:  string(r.telefonoRaw),
 		Ubicacion: parseUbicacion(r.latRaw, r.lngRaw),
@@ -123,18 +127,18 @@ type directorioRowRaw struct {
 func (r *directorioRowRaw) scanFrom(s scannable) error {
 	return s.Scan(
 		&r.clienteID,
-		&r.nombreRaw,
+		&r.nombre,
 		&r.limiteCrRaw,
 		&r.notasRaw,
 		&r.estatus,
 		&r.zonaClienteID,
 		&r.zonaNombreRaw,
 		&r.cobradorID,
-		&r.cobrNombreRaw,
+		&r.cobrNombre,
 		&r.calleRaw,
 		&r.coloniaRaw,
 		&r.poblRaw,
-		&r.estadoRaw,
+		&r.estado,
 		&r.telefonoRaw,
 		&r.latRaw,
 		&r.lngRaw,
@@ -166,18 +170,18 @@ func (r *directorioRowRaw) assemble() (outbound.DirectorioItem, error) {
 // BE-2: horaStr, almacenRaw, primerArticuloRaw, numArticulosRaw are the four
 // enrichment columns added in task BE-2.
 type ventaClienteRowRaw struct {
-	doctoPVID         int
-	clienteID         int
-	fechaRaw          any
-	folio             string
-	importeRaw        any
-	tipoStr           string
-	saldoRaw          any
-	numPagosRaw       any
-	horaStr           string           // "HH:MM:SS" from SUBSTRING(CAST(HORA AS VARCHAR(13)))
-	almacenRaw        firebird.Win1252 // ALMACENES.NOMBRE — CHARACTER SET NONE
-	primerArticuloRaw firebird.Win1252 // ARTICULOS.NOMBRE — CHARACTER SET NONE
-	numArticulosRaw   any              // COUNT(*) — scanIntFromAny
+	doctoPVID       int
+	clienteID       int
+	fechaRaw        any
+	folio           string
+	importeRaw      any
+	tipoStr         string
+	saldoRaw        any
+	numPagosRaw     any
+	horaStr         string         // "HH:MM:SS" from SUBSTRING(CAST(HORA AS VARCHAR(13)))
+	almacen         sql.NullString // ALMACENES.NOMBRE — ISO8859_1; LEFT JOIN → nullable
+	primerArticulo  sql.NullString // ARTICULOS.NOMBRE — ISO8859_1; scalar subquery → nullable
+	numArticulosRaw any            // COUNT(*) — scanIntFromAny
 }
 
 func (r *ventaClienteRowRaw) scanFrom(s scannable) error {
@@ -191,8 +195,8 @@ func (r *ventaClienteRowRaw) scanFrom(s scannable) error {
 		&r.saldoRaw,
 		&r.numPagosRaw,
 		&r.horaStr,
-		&r.almacenRaw,
-		&r.primerArticuloRaw,
+		&r.almacen,
+		&r.primerArticulo,
 		&r.numArticulosRaw,
 	)
 }
@@ -233,8 +237,8 @@ func (r *ventaClienteRowRaw) assemble() (*domain.VentaCliente, error) {
 		SaldoVenta:     saldo,
 		NumPagos:       numPagos,
 		Hora:           r.horaStr,
-		Almacen:        string(r.almacenRaw),
-		PrimerArticulo: string(r.primerArticuloRaw),
+		Almacen:        r.almacen.String,
+		PrimerArticulo: r.primerArticulo.String,
 		NumArticulos:   numArticulos,
 	}), nil
 }
@@ -254,7 +258,7 @@ func tipoVentaFromStr(s string) domain.TipoVenta {
 // Ordering matches queryProductos column list.
 type productoRowRaw struct {
 	articuloID     int
-	nombreRaw      firebird.Win1252
+	nombre         string // ARTICULOS.NOMBRE — ISO8859_1; INNER JOIN + NOT NULL
 	unidadesRaw    any
 	precioUnitRaw  any
 	precioTotalRaw any
@@ -264,7 +268,7 @@ type productoRowRaw struct {
 func (r *productoRowRaw) scanFrom(s scannable) error {
 	return s.Scan(
 		&r.articuloID,
-		&r.nombreRaw,
+		&r.nombre,
 		&r.unidadesRaw,
 		&r.precioUnitRaw,
 		&r.precioTotalRaw,
@@ -295,7 +299,7 @@ func (r *productoRowRaw) assemble() (*domain.ProductoVenta, error) {
 	}
 	return domain.HydrateProductoVenta(domain.HydrateProductoVentaParams{
 		ArticuloID:      r.articuloID,
-		Nombre:          string(r.nombreRaw),
+		Nombre:          r.nombre,
 		Unidades:        unidades,
 		PrecioUnitario:  precioUnit,
 		PrecioTotalNeto: precioTotal,
@@ -359,8 +363,9 @@ func (r *contratoRowRaw) assemble() (*outbound.ContratoCredito, error) {
 	if r.plazoMesesRaw.Valid {
 		plazoMeses = int(r.plazoMesesRaw.Int64)
 	}
-	// UPPER() previously applied in SQL is now done in Go to avoid Firebird
-	// transliteration errors on Win1252 NONE columns with a UTF-8 connection.
+	// UPPER() previously applied in SQL is now done in Go: LISTAS_ATRIBUTOS.
+	// VALOR_DESPLEGADO is CHARACTER SET NONE, and UPPER() over a NONE column on
+	// a UTF-8 connection forces a coercion that fails on its accented rows.
 	vendedores := collectVendedores(
 		strings.ToUpper(string(r.vendedor1Raw)),
 		strings.ToUpper(string(r.vendedor2Raw)),
@@ -403,11 +408,17 @@ type pagoRowRaw struct {
 	doctoCCID     int
 	fechaRaw      any
 	importeRaw    any
-	formaCobroRaw firebird.Win1252 // FORMAS_COBRO.NOMBRE — CHARACTER SET NONE
+	formaCobroRaw firebird.Win1252 // FORMAS_COBRO.NOMBRE — NONE
 	cargoIDRaw    int
 	conceptoCCID  int
-	conceptoRaw   firebird.Win1252 // CONCEPTOS_CC.NOMBRE — CHARACTER SET NONE
-	cobradorRaw   firebird.Win1252 // COBRADORES.NOMBRE or DOCTOS_CC.DESCRIPCION — CHARACTER SET NONE
+	conceptoRaw   firebird.Win1252 // CONCEPTOS_CC.NOMBRE — NONE
+	// cobrador is COALESCE(COBRADORES.NOMBRE, DOCTOS_CC.DESCRIPCION). Firebird
+	// resolves that expression to the non-NONE charset of the pair — ISO8859_1 —
+	// and transliterates BOTH branches to UTF-8 for the charset=UTF8 connection.
+	// Verified live: the ISO branch and the NONE branch both come back as valid
+	// UTF-8. So the scan target is sql.NullString, not firebird.Win1252, even
+	// though one of the two source columns is CHARACTER SET NONE.
+	cobrador sql.NullString
 }
 
 func (r *pagoRowRaw) scanFrom(s scannable) error {
@@ -419,7 +430,7 @@ func (r *pagoRowRaw) scanFrom(s scannable) error {
 		&r.cargoIDRaw,
 		&r.conceptoCCID,
 		&r.conceptoRaw,
-		&r.cobradorRaw,
+		&r.cobrador,
 	)
 }
 
@@ -441,7 +452,7 @@ func (r *pagoRowRaw) assemble() (*domain.Pago, error) {
 		ConceptoCCID:   r.conceptoCCID,
 		Concepto:       string(r.conceptoRaw),
 		Categoria:      domain.ClasificarConcepto(r.conceptoCCID),
-		Cobrador:       string(r.cobradorRaw),
+		Cobrador:       r.cobrador.String,
 	}), nil
 }
 
@@ -578,10 +589,10 @@ func (r *compradoVsAbonadoRowRaw) assemble() (compradoVsAbonadoFila, error) {
 // queryRitmoPagosBase. Ordering matches the SELECT column list exactly:
 // FECHA, IMPORTE, DOCTO_CC_ID, HORA, CONCEPTO_CC_ID, NOMBRE (concepto), DOCTO_PV_ID, FOLIO, ARTICULO.
 //
-// concetoRaw is Win1252 because CONCEPTOS_CC.NOMBRE is a legacy Microsip column
-// (CHARACTER SET NONE, raw Windows-1252 bytes).
-// articuloRaw is Win1252 because ARTICULOS.NOMBRE is also a legacy Microsip column
-// (CHARACTER SET NONE, raw Windows-1252 bytes).
+// conceptoRaw is Win1252 because CONCEPTOS_CC.NOMBRE is CHARACTER SET NONE —
+// Firebird hands those bytes over raw and Go must decode them.
+// articulo is a plain string because ARTICULOS.NOMBRE is CHARACTER SET ISO8859_1
+// — Firebird already transliterated it to UTF-8 on the wire.
 // horaStr and folio are plain ASCII strings decoded directly.
 type pagoCrudoRowRaw struct {
 	fechaRaw     any
@@ -589,10 +600,10 @@ type pagoCrudoRowRaw struct {
 	doctoCCID    int
 	horaStr      string // "HH:MM:SS" from SUBSTRING(CAST(HORA AS VARCHAR(13)))
 	conceptoCCID int
-	conceptoRaw  firebird.Win1252 // CONCEPTOS_CC.NOMBRE — CHARACTER SET NONE (Win1252)
+	conceptoRaw  firebird.Win1252 // CONCEPTOS_CC.NOMBRE — NONE
 	doctoPVID    int
 	folio        string
-	articuloRaw  firebird.Win1252 // ARTICULOS.NOMBRE — CHARACTER SET NONE (Win1252)
+	articulo     string // COALESCE(ARTICULOS.NOMBRE, '') — ISO8859_1
 }
 
 func (r *pagoCrudoRowRaw) scanFrom(s scannable) error {
@@ -605,7 +616,7 @@ func (r *pagoCrudoRowRaw) scanFrom(s scannable) error {
 		&r.conceptoRaw,
 		&r.doctoPVID,
 		&r.folio,
-		&r.articuloRaw,
+		&r.articulo,
 	)
 }
 
@@ -627,7 +638,7 @@ func (r *pagoCrudoRowRaw) assemble() (domain.PagoCrudo, error) {
 		Concepto:     string(r.conceptoRaw),
 		DoctoPVID:    r.doctoPVID,
 		Folio:        r.folio,
-		Articulo:     string(r.articuloRaw),
+		Articulo:     r.articulo,
 	}, nil
 }
 
@@ -728,12 +739,12 @@ type pagoDetalleRowRaw struct {
 	importeRaw     any
 	ivaRaw         any
 	cobradorID     int
-	conceptoRaw    firebird.Win1252 // CONCEPTOS_CC.NOMBRE — CHARACTER SET NONE
-	cobradorNomRaw firebird.Win1252 // COBRADORES.NOMBRE — CHARACTER SET NONE
-	descripcionRaw firebird.Win1252 // DOCTOS_CC.DESCRIPCION — CHARACTER SET NONE
+	conceptoRaw    firebird.Win1252 // CONCEPTOS_CC.NOMBRE — NONE
+	cobradorNom    sql.NullString   // COBRADORES.NOMBRE — ISO8859_1; LEFT JOIN → nullable
+	descripcionRaw firebird.Win1252 // DOCTOS_CC.DESCRIPCION — NONE
 	formaCobroID   int
-	formaCobroRaw  firebird.Win1252 // FORMAS_COBRO.NOMBRE — CHARACTER SET NONE
-	referenciaRaw  firebird.Win1252 // FORMAS_COBRO_DOCTOS.REFERENCIA — CHARACTER SET NONE
+	formaCobroRaw  firebird.Win1252 // FORMAS_COBRO.NOMBRE — NONE
+	referenciaRaw  firebird.Win1252 // FORMAS_COBRO_DOCTOS.REFERENCIA — NONE
 	aplicaACargoID int
 	saldoCargoRaw  any // nullable NUMERIC from MSP_SALDOS_VENTAS
 	doctoPVID      int
@@ -759,7 +770,7 @@ func (r *pagoDetalleRowRaw) scanFrom(s scannable) error {
 		&r.ivaRaw,
 		&r.cobradorID,
 		&r.conceptoRaw,
-		&r.cobradorNomRaw,
+		&r.cobradorNom,
 		&r.descripcionRaw,
 		&r.formaCobroID,
 		&r.formaCobroRaw,
@@ -875,7 +886,7 @@ func (r *pagoDetalleRowRaw) assemble() (outbound.PagoDetalle, error) {
 
 	enr := r.applyMSPEnrichment(
 		r.cobradorID,
-		coalesce1252(r.cobradorNomRaw, r.descripcionRaw),
+		primerNoVacio(r.cobradorNom.String, string(r.descripcionRaw)),
 		r.formaCobroID,
 	)
 
@@ -906,11 +917,14 @@ func (r *pagoDetalleRowRaw) assemble() (outbound.PagoDetalle, error) {
 	}, nil
 }
 
-// coalesce1252 returns the string of a when non-empty, else b.
-// Both are Win1252-decoded strings from CHARACTER SET NONE columns.
-func coalesce1252(a, b firebird.Win1252) string {
-	if s := string(a); s != "" {
-		return s
+// primerNoVacio returns a when non-empty, else b. The two arguments come from
+// columns with DIFFERENT charsets (COBRADORES.NOMBRE is ISO8859_1 and arrives
+// already transliterated; DOCTOS_CC.DESCRIPCION is CHARACTER SET NONE and was
+// Win1252-decoded in Go), so the fallback happens after each side was decoded
+// its own way — never by scanning both through one target.
+func primerNoVacio(a, b string) string {
+	if a != "" {
+		return a
 	}
-	return string(b)
+	return b
 }

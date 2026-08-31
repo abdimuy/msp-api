@@ -3,12 +3,25 @@
 //
 //   - outbound.WinbackRepo: reads/writes MSP_AN_WINBACK_CANDIDATOS and
 //     MSP_AN_REFRESH_STATE (CHARACTER SET UTF8 — no Win1252 decoding).
+//
 //   - outbound.MicrosipReader: read-only access to legacy Microsip tables
-//     (CLIENTES, DOCTOS_PV, DOCTOS_CC, DIRS_CLIENTES, ARTICULOS) whose text
-//     columns are CHARACTER SET NONE (raw Win1252 bytes in the DB). The
-//     connection uses charset=UTF8, so Firebird server-side transliterates
-//     those columns to UTF-8 on the wire. Scan targets are plain string /
-//     sql.NullString — NOT firebird.Win1252 (which would double-decode).
+//     (CLIENTES, DOCTOS_PV, DOCTOS_CC, DIRS_CLIENTES, ZONAS_CLIENTES,
+//     ARTICULOS). Their text columns do NOT share one charset:
+//
+//   - CHARACTER SET ISO8859_1 / UTF8 → Firebird transliterates on the wire for
+//     the charset=UTF8 connection. Scan as string / sql.NullString. Scanning
+//     through firebird.Win1252 double-decodes and turns "Ñ" into "Ã‘".
+//
+//   - CHARACTER SET NONE → Firebird transliterates NOTHING; the raw
+//     Windows-1252 bytes arrive as-is. Scan through firebird.Win1252 or the
+//     value is invalid UTF-8. A ” literal COALESCEd onto a NONE column also
+//     forces a coercion that fails with "Malformed string" — that restriction
+//     is real, and applies ONLY to NONE columns.
+//
+//     The charset is NOT derivable from the column name: CIUDADES.NOMBRE is
+//     ISO8859_1 while ZONAS_CLIENTES.NOMBRE is NONE. Look it up in RDB$FIELDS —
+//     internal/platform/fbcharset holds the classification this repo depends on and
+//     a test that fails when a column is read without one.
 //
 // All DB access goes through firebird.GetQuerier(ctx, r.pool.DB) so the
 // ambient transaction injected by fbtestutil.WithTestTransaction (or by the
@@ -526,7 +539,9 @@ const notaMaxRunes = 800
 // never a hard dependency.
 func (r *Repo) GetNotaCliente(ctx context.Context, clienteID int) (string, error) {
 	q := firebird.GetQuerier(ctx, r.pool.DB)
-	var notaRaw firebird.Win1252 // Win1252 handles nil→"" at scan time.
+	// CLIENTES.NOTAS — CHARACTER SET NONE, so the raw Windows-1252 bytes
+	// arrive verbatim and Go decodes them. Win1252 also maps nil→"".
+	var notaRaw firebird.Win1252
 	err := q.QueryRowContext(ctx, selectNotaCliente, clienteID).Scan(&notaRaw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
@@ -678,10 +693,10 @@ func (r *Repo) contarPagosChunk(ctx context.Context, q firebird.Querier, chunk [
 //     migration 000010). ONE row per cargo; no row explosion.
 //   - NBP: most-frequently-purchased ARTICULOS.NOMBRE per cliente, computed
 //     in a single pass using ROW_NUMBER() OVER PARTITION BY CLIENTE_ID.
-//   - Text columns (CLIENTES.NOMBRE, ZONAS_CLIENTES.NOMBRE, DIRS_CLIENTES.TELEFONO1,
-//     ARTICULOS.NOMBRE) are CHARACTER SET NONE. With charset=UTF8 on the connection
-//     Firebird transliterates them to UTF-8 server-side; scan targets are plain
-//     string / sql.NullString (no firebird.Win1252 — that would double-decode).
+//   - Text columns split by charset: CLIENTES.NOMBRE and ARTICULOS.NOMBRE are
+//     ISO8859_1 (transliterated by Firebird → plain string / sql.NullString),
+//     while ZONAS_CLIENTES.NOMBRE and DIRS_CLIENTES.TELEFONO1 are CHARACTER SET
+//     NONE (raw bytes → firebird.Win1252). See anclaRowRaw in rowmappers.go.
 func (r *Repo) LeerAnclasDesde(ctx context.Context, since *time.Time) ([]outbound.AnclaCliente, error) {
 	// Build query from CTE parts. When since != nil we inject an extra AND
 	// predicate into both the rfm CTE and the nbp_raw CTE before their GROUP BY.

@@ -3,13 +3,28 @@
 //
 //   - outbound.CohorteRepo: reads/writes MSP_RX_COHORTE (CHARACTER SET UTF8 —
 //     no Win1252 decoding).
+//
 //   - outbound.UniversoReader: read-only access to the Microsip read-model
-//     (MSP_SALDOS_VENTAS, DOCTOS_PV, CLIENTES, DIRS_CLIENTES). Microsip text
-//     columns are CHARACTER SET NONE (raw Win1252 bytes), but because the
-//     connection uses charset=UTF8 the server transliterates them to UTF-8 on
-//     the wire — scan targets are plain string / sql.NullString, NOT
-//     firebird.Win1252 (which would double-decode into mojibake). This mirrors
-//     internal/analytics/infra/analyticsfb/queries.go exactly.
+//     (MSP_SALDOS_VENTAS, DOCTOS_PV, CLIENTES, DIRS_CLIENTES). Its two text
+//     columns do NOT share a charset:
+//
+//     CLIENTES.NOMBRE          ISO8859_1 → string (Firebird transliterates it)
+//     DIRS_CLIENTES.TELEFONO1  NONE      → firebird.Win1252 (raw bytes)
+//
+//   - CHARACTER SET ISO8859_1 / UTF8 → Firebird transliterates on the wire for
+//     the charset=UTF8 connection. Scan as string / sql.NullString. Scanning
+//     through firebird.Win1252 double-decodes and turns "Ñ" into "Ã‘".
+//
+//   - CHARACTER SET NONE → Firebird transliterates NOTHING; the raw
+//     Windows-1252 bytes arrive as-is. Scan through firebird.Win1252 or the
+//     value is invalid UTF-8. A ” literal COALESCEd onto a NONE column also
+//     forces a coercion that fails with "Malformed string" — that restriction
+//     is real, and applies ONLY to NONE columns.
+//
+//     The charset is NOT derivable from the column name: CIUDADES.NOMBRE is
+//     ISO8859_1 while ZONAS_CLIENTES.NOMBRE is NONE. Look it up in RDB$FIELDS —
+//     internal/platform/fbcharset holds the classification this repo depends on and
+//     a test that fails when a column is read without one.
 //
 //nolint:misspell // Spanish domain vocabulary (cohorte, segmento, zona) by project convention.
 package reactivacionfb
@@ -51,9 +66,10 @@ const porLiquidarUmbral = "0.20"
 // with a ≥7-char phone), assigns the segmento, and keeps only tratable clientes.
 //
 // The phone filter uses `d.TELEFONO1 IS NOT NULL AND CHAR_LENGTH(TRIM(...)) >= 7`
-// rather than COALESCE(...,”) because a ” UTF-8 literal against a CHARACTER SET
-// NONE column can trigger a "Malformed string" coercion error (see analyticsfb);
-// NULL phones are excluded anyway since they can never satisfy the length test.
+// rather than COALESCE(...,”). DIRS_CLIENTES.TELEFONO1 IS genuinely CHARACTER
+// SET NONE, and a ” UTF-8 literal against a NONE column triggers a "Malformed
+// string" coercion error (measured, not folklore — see analyticsfb). NULL phones
+// are excluded anyway since they can never satisfy the length test.
 //
 // porLiquidarUmbral is interpolated (not a bound parameter) because it is a
 // compile-time constant, not user input — keeping it in the SQL literal avoids a

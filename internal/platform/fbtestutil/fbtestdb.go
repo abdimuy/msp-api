@@ -2,6 +2,7 @@ package fbtestutil
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"strconv"
@@ -166,4 +167,68 @@ func envBool(key string, fallback bool) bool {
 		return fallback
 	}
 	return b
+}
+
+// ─── Nombres verdaderos de los catálogos legados ────────────────────────────
+
+// NombresDeCatalogo lee `<colID>, <colNombre>` de una tabla legada de Microsip
+// y devuelve el nombre VERDADERO de cada fila, en UTF-8.
+//
+// Es el patrón de control positivo para los defectos de codificación: una
+// prueba compara lo que devuelve el repositorio contra este mapa, y cualquier
+// mojibake ("Ã‘" en vez de "Ñ") o byte crudo sin decodificar rompe la
+// comparación. Contra la base de desarrollo completa el barrido pasa por filas
+// acentuadas de verdad (CIUDADES trae "CAÑADA MORELOS", ARTICULOS 121 filas,
+// CLIENTES 1,615), así que no hace falta sembrar nada para ejercitarlo.
+//
+// El CAST a WIN1252 es lo que hace que funcione para las DOS familias de
+// charset a la vez. Una columna ISO8859_1 se podría leer verbatim y una
+// CHARACTER SET NONE no; el CAST convierte cualquiera de las dos a un charset
+// declarado y Firebird transliterar el resultado a UTF-8 en el cable. Lo que
+// vuelve es, por construcción, independiente de cómo el repositorio bajo prueba
+// haya decidido escanear la columna — que es justo lo que se quiere comparar.
+//
+//nolint:misspell // "defectos" es español, no una errata de "defects".
+func NombresDeCatalogo(ctx context.Context, tb testing.TB, q firebird.Querier, tabla, colID, colNombre string) map[int]string {
+	tb.Helper()
+	//nolint:gosec // tabla/columnas son literales de las pruebas, no entrada externa.
+	consulta := fmt.Sprintf(
+		"SELECT %s, CAST(%s AS VARCHAR(250) CHARACTER SET WIN1252) FROM %s",
+		colID, colNombre, tabla)
+	rows, err := q.QueryContext(ctx, consulta)
+	if err != nil {
+		tb.Fatalf("fbtestutil: leyendo %s.%s: %v", tabla, colNombre, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make(map[int]string)
+	for rows.Next() {
+		var (
+			id     int
+			nombre sql.NullString
+		)
+		if err := rows.Scan(&id, &nombre); err != nil {
+			tb.Fatalf("fbtestutil: escaneando %s.%s: %v", tabla, colNombre, err)
+		}
+		out[id] = nombre.String
+	}
+	if err := rows.Err(); err != nil {
+		tb.Fatalf("fbtestutil: iterando %s.%s: %v", tabla, colNombre, err)
+	}
+	if len(out) == 0 {
+		tb.Fatalf("fbtestutil: el catálogo %s vino vacío — la prueba no verificaría nada", tabla)
+	}
+	return out
+}
+
+// ContieneNoASCII indica si s trae al menos un byte fuera de ASCII. Las pruebas
+// lo usan para exigir que un barrido haya pasado por datos acentuados: sin eso,
+// una comparación de nombres ASCII pasa igual con el defecto y sin él.
+func ContieneNoASCII(s string) bool {
+	for i := range len(s) {
+		if s[i] > 127 {
+			return true
+		}
+	}
+	return false
 }

@@ -84,14 +84,18 @@ func (r *CiudadCatalogoRepo) load(ctx context.Context) error {
 	ambiguas := make(map[string]bool)
 	for rows.Next() {
 		var (
-			id       int
-			nombre   firebird.Win1252
+			id int
+			// CIUDADES.NOMBRE is CHARACTER SET ISO8859_1: Firebird already
+			// transliterated it to UTF-8 for the charset=UTF8 connection.
+			// Decoding it again through firebird.Win1252 folded "CAÑADA
+			// MORELOS" to a key nothing captured in the app could match.
+			nombre   string
 			estadoID sql.NullInt64
 		)
 		if err := rows.Scan(&id, &nombre, &estadoID); err != nil {
 			return firebird.MapError(err)
 		}
-		key := domain.NormalizeCiudad(string(nombre))
+		key := domain.NormalizeCiudad(nombre)
 		if key == "" {
 			continue
 		}

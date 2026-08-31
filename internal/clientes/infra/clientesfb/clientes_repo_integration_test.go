@@ -70,7 +70,7 @@ func TestClientesRepo_ObtenerCliente_Found(t *testing.T) {
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		q := firebird.GetQuerier(ctx, pool.DB)
-		const nombre = "GUADALUPE HERNANDEZ SOLIS"
+		const nombre = "GUADALUPE PEÑA SOLÍS"
 		zona := microsipseed.PrimeraZona(t, q)
 		clienteID := microsipseed.ClienteEnZona(t, q, nombre, zona)
 
@@ -116,8 +116,8 @@ func TestClientesRepo_ListarDirectorioCompleto_FilteredByZona(t *testing.T) {
 		zonaA, zonaB := dosZonas(t, q)
 
 		enZonaA := map[int]bool{
-			microsipseed.ClienteEnZona(t, q, "ROSA MARTINEZ AGUILAR", zonaA):  true,
-			microsipseed.ClienteEnZona(t, q, "IGNACIO VALDEZ CAMACHO", zonaA): true,
+			microsipseed.ClienteEnZona(t, q, "ROSA MARTÍNEZ AGUILAR", zonaA): true,
+			microsipseed.ClienteEnZona(t, q, "IGNACIO VALDEZ CAMAÑO", zonaA): true,
 		}
 		fueraDeZonaA := microsipseed.ClienteEnZona(t, q, "TERESA NUÑEZ RIVAS", zonaB)
 
@@ -180,9 +180,9 @@ func TestClientesRepo_ListarDirectorioCompleto_ConSaldo(t *testing.T) {
 		q := firebird.GetQuerier(ctx, pool.DB)
 		zona := microsipseed.PrimeraZona(t, q)
 
-		conSaldo := microsipseed.ClienteEnZona(t, q, "ARTURO BELTRAN OCHOA", zona)
+		conSaldo := microsipseed.ClienteEnZona(t, q, "ARTURO BELTRÁN OCHOA", zona)
 		microsipseed.VentaCredito(t, q, conSaldo, microsipseed.OpcionesVenta{})
-		sinSaldo := microsipseed.ClienteEnZona(t, q, "MARIA ELENA PONCE DIAZ", zona)
+		sinSaldo := microsipseed.ClienteEnZona(t, q, "MARÍA ELENA PONCE DÍAZ", zona)
 
 		items, err := repo.ListarDirectorioCompleto(ctx, outbound.FiltroDirectorio{
 			ZonaClienteID: &zona,
@@ -221,7 +221,7 @@ func TestClientesRepo_ListarDirectorioCompleto_Saldo(t *testing.T) {
 		q := firebird.GetQuerier(ctx, pool.DB)
 		microsipseed.RequiereConceptos(t, q, conceptoCobranza)
 
-		clienteID := microsipseed.Cliente(t, q, "HECTOR RAMIREZ QUEZADA")
+		clienteID := microsipseed.Cliente(t, q, "HÉCTOR RAMÍREZ QUEZADA")
 		venta := microsipseed.VentaCredito(t, q, clienteID, microsipseed.OpcionesVenta{
 			Total: decimal.NewFromInt(15000),
 		})
@@ -261,7 +261,7 @@ func TestClientesRepo_ObtenerResumenFicha(t *testing.T) {
 		q := firebird.GetQuerier(ctx, pool.DB)
 		microsipseed.RequiereConceptos(t, q, conceptoCobranza)
 
-		clienteID := microsipseed.Cliente(t, q, "RESUMEN FICHA PRUEBA")
+		clienteID := microsipseed.Cliente(t, q, "RESUMEN FICHA PRUEBA ÑÓ")
 		venta := microsipseed.VentaCredito(t, q, clienteID, microsipseed.OpcionesVenta{
 			Total: decimal.NewFromInt(10000),
 		})
@@ -305,7 +305,7 @@ func TestClientesRepo_ListarVentas(t *testing.T) {
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		q := firebird.GetQuerier(ctx, pool.DB)
-		clienteID := microsipseed.Cliente(t, q, "LISTAR VENTAS PRUEBA")
+		clienteID := microsipseed.Cliente(t, q, "LISTAR VENTAS PRUEBA ÑÍ")
 
 		const totalVentas = 12
 		for i := range totalVentas {
@@ -353,7 +353,7 @@ func TestClientesRepo_ObtenerVentaDetalle_Found(t *testing.T) {
 		q := firebird.GetQuerier(ctx, pool.DB)
 		microsipseed.RequiereConceptos(t, q, conceptoCobranza)
 
-		clienteID := microsipseed.Cliente(t, q, "VENTA DETALLE PRUEBA")
+		clienteID := microsipseed.Cliente(t, q, "VENTA DETALLE PRUEBA ÑÚ")
 		venta := microsipseed.VentaCredito(t, q, clienteID, microsipseed.OpcionesVenta{
 			Total:      decimal.NewFromInt(8800),
 			PlazoMeses: 12,
@@ -420,7 +420,7 @@ func TestClientesRepo_ObtenerVentaDetalle_PagosEnriquecidos(t *testing.T) {
 		q := firebird.GetQuerier(ctx, pool.DB)
 		microsipseed.RequiereConceptos(t, q, conceptosPorCategoria()...)
 
-		clienteID := microsipseed.Cliente(t, q, "PAGOS ENRIQUECIDOS PRUEBA")
+		clienteID := microsipseed.Cliente(t, q, "PAGOS ENRIQUECIDOS PRUEBA Ñ")
 		venta := microsipseed.VentaCredito(t, q, clienteID, microsipseed.OpcionesVenta{
 			Total: decimal.NewFromInt(20000),
 		})
@@ -512,7 +512,7 @@ func TestClientesRepo_ListarVentas_CamposEnriquecidos(t *testing.T) {
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		q := firebird.GetQuerier(ctx, pool.DB)
-		clienteID := microsipseed.Cliente(t, q, "CAMPOS ENRIQUECIDOS PRUEBA")
+		clienteID := microsipseed.Cliente(t, q, "CAMPOS ENRIQUECIDOS PRUEBA Ñ")
 		venta := microsipseed.VentaCredito(t, q, clienteID, microsipseed.OpcionesVenta{
 			Hora: "18:06:49",
 		})
@@ -554,7 +554,7 @@ func TestClientesRepo_ObtenerPagoDetalle_Found(t *testing.T) {
 		q := firebird.GetQuerier(ctx, pool.DB)
 		microsipseed.RequiereConceptos(t, q, conceptoEnganche)
 
-		clienteID := microsipseed.Cliente(t, q, "PAGO DETALLE PRUEBA")
+		clienteID := microsipseed.Cliente(t, q, "PAGO DETALLE PRUEBA Ñ")
 		venta := microsipseed.VentaCredito(t, q, clienteID, microsipseed.OpcionesVenta{})
 		fechaAbono := time.Date(2020, 7, 2, 0, 0, 0, 0, time.UTC)
 		abono := microsipseed.AbonoAplicado(t, q, venta, microsipseed.OpcionesAbono{
@@ -612,7 +612,7 @@ func TestClientesRepo_ObtenerPagoDetalle_Cobranza(t *testing.T) {
 		q := firebird.GetQuerier(ctx, pool.DB)
 		microsipseed.RequiereConceptos(t, q, conceptoCobranza)
 
-		clienteID := microsipseed.Cliente(t, q, "PAGO COBRANZA PRUEBA")
+		clienteID := microsipseed.Cliente(t, q, "PAGO COBRANZA PRUEBA Ñ")
 		venta := microsipseed.VentaCredito(t, q, clienteID, microsipseed.OpcionesVenta{})
 		abono := microsipseed.AbonoAplicado(t, q, venta, microsipseed.OpcionesAbono{
 			ConceptoCCID: conceptoCobranza,
@@ -662,7 +662,7 @@ func TestClientesRepo_CompradoVsAbonado_DesgloseCategorias(t *testing.T) {
 		q := firebird.GetQuerier(ctx, pool.DB)
 		microsipseed.RequiereConceptos(t, q, conceptosPorCategoria()...)
 
-		clienteID := microsipseed.Cliente(t, q, "COMPRADO VS ABONADO PRUEBA")
+		clienteID := microsipseed.Cliente(t, q, "COMPRADO VS ABONADO PRUEBA Ñ")
 		venta := microsipseed.VentaCredito(t, q, clienteID, microsipseed.OpcionesVenta{
 			Fecha: time.Date(2024, 5, 10, 0, 0, 0, 0, time.UTC),
 			Total: decimal.NewFromInt(20000),

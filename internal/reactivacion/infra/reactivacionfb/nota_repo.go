@@ -37,7 +37,9 @@ const notaMaxRunes = 800
 // never a hard dependency.
 func (r *Repo) GetNotaCliente(ctx context.Context, clienteID int) (string, error) {
 	q := firebird.GetQuerier(ctx, r.pool.DB)
-	var notaRaw firebird.Win1252 // Win1252 handles nil→"" at scan time.
+	// CLIENTES.NOTAS — CHARACTER SET NONE, so the raw Windows-1252 bytes
+	// arrive verbatim and Go decodes them. Win1252 also maps nil→"".
+	var notaRaw firebird.Win1252
 	err := q.QueryRowContext(ctx, selectNotaCliente, clienteID).Scan(&notaRaw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil

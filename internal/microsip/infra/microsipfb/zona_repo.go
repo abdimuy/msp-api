@@ -56,7 +56,10 @@ func (r *ZonaRepo) listarZonas(ctx context.Context) ([]domain.ZonaCliente, error
 	var out []domain.ZonaCliente
 	for rows.Next() {
 		var (
-			id     int
+			id int
+			// ZONAS_CLIENTES.NOMBRE is CHARACTER SET NONE: Firebird hands the
+			// bytes over raw, so Go decodes them. Do NOT change this to a plain
+			// string — that would sub-decode Windows-1252 bytes.
 			nombre firebird.Win1252
 		)
 		if err := rows.Scan(&id, &nombre); err != nil {
@@ -84,12 +87,14 @@ func (r *ZonaRepo) listarTopCobradoresPorZona(ctx context.Context) (map[int]stri
 	for rows.Next() {
 		var (
 			zonaID, cobradorID int
-			cobrador           firebird.Win1252
+			// COBRADORES.NOMBRE is CHARACTER SET ISO8859_1: Firebird already
+			// transliterated it to UTF-8 on the wire. INNER JOIN → never NULL.
+			cobrador string
 		)
 		if err := rows.Scan(&zonaID, &cobradorID, &cobrador); err != nil {
 			return nil, firebird.MapError(err)
 		}
-		out[zonaID] = string(cobrador)
+		out[zonaID] = cobrador
 	}
 	if err := rows.Err(); err != nil {
 		return nil, firebird.MapError(err)

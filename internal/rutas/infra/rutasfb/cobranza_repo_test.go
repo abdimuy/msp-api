@@ -38,7 +38,7 @@ func TestCobranzaRepo_VentasPorZona(t *testing.T) { //nolint:paralleltest // ser
 		repo := rutasfb.NewCobranzaRepo(pool)
 
 		zona := microsipseed.PrimeraZona(t, q)
-		clienteID := microsipseed.ClienteEnZona(t, q, "SILVIA CARRANZA MEZA", zona)
+		clienteID := microsipseed.ClienteEnZona(t, q, "SILVIA CARRANZA MEÑACA", zona)
 		// La venta se fecha hoy para caer dentro de la ventana consultada.
 		venta := microsipseed.VentaCredito(t, q, clienteID, microsipseed.OpcionesVenta{
 			Fecha: time.Now().UTC(),

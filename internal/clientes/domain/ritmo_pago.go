@@ -37,10 +37,10 @@ type PagoCrudo struct {
 	Importe      decimal.Decimal // positive amount
 	DoctoCCID    int             // DOCTOS_CC primary key of the abono document
 	ConceptoCCID int             // CONCEPTO_CC_ID of the abono
-	Concepto     string          // human-readable concepto name (Win1252-decoded)
+	Concepto     string          // human-readable concepto name (CONCEPTOS_CC.NOMBRE)
 	DoctoPVID    int             // linked sale's DOCTO_PV_ID (0 when not resolvable)
 	Folio        string          // linked sale's FOLIO (empty when not resolvable)
-	Articulo     string          // name of the first J/N article of the linked sale (Win1252-decoded; empty when not resolvable)
+	Articulo     string          // name of the first J/N article of the linked sale (empty when not resolvable)
 }
 
 // PagoRitmo is an enriched payment entry within a SemanaRitmo bucket.

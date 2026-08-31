@@ -55,12 +55,16 @@ type scannable interface {
 }
 
 // rutaRowRaw holds the raw scan targets for one rutas row.
-// Win1252 fields decode Windows-1252 legacy bytes to UTF-8 at scan time.
+//
+// The two name columns do NOT share a charset: ZONAS_CLIENTES.NOMBRE is
+// CHARACTER SET NONE (raw Windows-1252 bytes, decoded here) while
+// COBRADORES.NOMBRE is CHARACTER SET ISO8859_1 (already transliterated to
+// UTF-8 by Firebird for the charset=UTF8 connection).
 type rutaRowRaw struct {
 	zonaID        int
-	zonaNombreRaw firebird.Win1252
+	zonaNombreRaw firebird.Win1252 // ZONAS_CLIENTES.NOMBRE — NONE
 	cobradorIDRaw sql.NullInt64
-	cobrNombreRaw firebird.Win1252
+	cobrNombre    sql.NullString // COBRADORES.NOMBRE — ISO8859_1; LEFT JOIN → nullable
 	numClientes   int
 	saldoTotalRaw any // NUMERIC(18,2) after CAST; use firebird.ScanDecimal.
 }
@@ -71,7 +75,7 @@ func scanRutaResumen(s scannable) (rutasdomain.RutaResumen, error) {
 		&raw.zonaID,
 		&raw.zonaNombreRaw,
 		&raw.cobradorIDRaw,
-		&raw.cobrNombreRaw,
+		&raw.cobrNombre,
 		&raw.numClientes,
 		&raw.saldoTotalRaw,
 	); err != nil {
@@ -90,7 +94,7 @@ func scanRutaResumen(s scannable) (rutasdomain.RutaResumen, error) {
 	if raw.cobradorIDRaw.Valid && raw.cobradorIDRaw.Int64 != -1 {
 		v := int(raw.cobradorIDRaw.Int64)
 		cobradorID = &v
-		cobradorNombre = string(raw.cobrNombreRaw)
+		cobradorNombre = raw.cobrNombre.String
 	}
 
 	return rutasdomain.RutaResumen{

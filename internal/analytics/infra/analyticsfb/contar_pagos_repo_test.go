@@ -51,7 +51,7 @@ func TestRepo_ContarPagosRecientes(t *testing.T) {
 
 		// Tres pagos dentro de la ventana y uno FUERA, para que el conteo tenga
 		// que descartar algo y no baste con contarlo todo.
-		clienteID := microsipseed.Cliente(t, q, "NORMA IBARRA GALLEGOS")
+		clienteID := microsipseed.Cliente(t, q, "NORMA IBARRA GALLEGOS ÑÉ")
 		venta := microsipseed.VentaCredito(t, q, clienteID, microsipseed.OpcionesVenta{})
 		const enVentana = 3
 		fechas := []time.Time{

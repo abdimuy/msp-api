@@ -5,8 +5,28 @@
 // MSP_SALDOS_VENTAS cobranza cache — a read-model OF native cargo facts, verified
 // to match the native saldo formula exactly. See selectDirectorioColsGrouped. The cache
 // is a plain MSP_ table (CHARACTER SET UTF8, NUMERIC) — no Win1252 decoding.
-// Text columns in native Microsip tables are CHARACTER SET NONE (raw Windows-1252
-// bytes) and must be scanned with firebird.Win1252.
+//
+// CHARSET, THE ONLY RULE THAT MATTERS HERE
+// ========================================
+// Microsip text columns do NOT share one charset, and the name of a column
+// tells you nothing: CIUDADES.NOMBRE is ISO8859_1 while ZONAS_CLIENTES.NOMBRE
+// is NONE. Measured on the live catalog (RDB$RELATION_FIELDS × RDB$FIELDS):
+// 2,365 columns are NONE, 100 are ISO8859_1, 155 are ASCII, 81 are UTF8.
+//
+// The connection is charset=UTF8 (FB_CHARSET, every environment), and that
+// splits the two families:
+//
+//	ISO8859_1 / UTF8 → Firebird transliterates on the wire. Scan as string or
+//	                   sql.NullString. Scanning through firebird.Win1252 adds a
+//	                   SECOND decode and turns "Ñ" into "Ã‘".
+//	NONE             → Firebird transliterates NOTHING. The raw Windows-1252
+//	                   bytes arrive as-is; scan through firebird.Win1252 or the
+//	                   value is invalid UTF-8.
+//
+// Which columns this file reads, and how each is scanned, is pinned by
+// TestCatalogoCharsets_ClasificacionDeColumnas in
+// internal/platform/fbcharset — adding a column to a query without
+// classifying it there fails that test.
 //
 //nolint:misspell // Spanish domain vocabulary (clientes, directorio, ficha, etc.) by project convention.
 package clientesfb
@@ -27,11 +47,24 @@ package clientesfb
 // Using NOMBRE_CALLE here keeps it clean; if the app wants the full composite
 // swap to CALLE.
 //
-// All text columns from Microsip are CHARACTER SET NONE (raw Windows-1252
-// bytes). COALESCE(none_col, ”) is intentionally OMITTED because mixing a
-// NONE column with a UTF-8 connection literal causes Firebird to attempt
-// transliteration, failing on bytes such as ñ (0xF1). The columns are selected
-// bare and scanned as firebird.Win1252, which handles NULL → "" internally.
+// The text columns this projection reads split across two charsets, so they
+// split across two scan targets (see the package doc above):
+//
+//	c.NOMBRE        CLIENTES.NOMBRE            ISO8859_1 → string
+//	cob.NOMBRE      COBRADORES.NOMBRE          ISO8859_1 → sql.NullString
+//	e.NOMBRE        ESTADOS.NOMBRE             ISO8859_1 → sql.NullString
+//	c.NOTAS         CLIENTES.NOTAS             NONE      → firebird.Win1252
+//	z.NOMBRE        ZONAS_CLIENTES.NOMBRE      NONE      → firebird.Win1252
+//	d.NOMBRE_CALLE  DIRS_CLIENTES.NOMBRE_CALLE NONE      → firebird.Win1252
+//	d.COLONIA       DIRS_CLIENTES.COLONIA      NONE      → firebird.Win1252
+//	d.POBLACION     DIRS_CLIENTES.POBLACION    NONE      → firebird.Win1252
+//	d.TELEFONO1     DIRS_CLIENTES.TELEFONO1    NONE      → firebird.Win1252
+//
+// COALESCE(none_col, ”) is intentionally OMITTED for the NONE columns because
+// mixing a NONE column with a UTF-8 connection literal makes Firebird attempt
+// a transliteration that fails on bytes such as ñ (0xF1); those are selected
+// bare and firebird.Win1252 handles NULL → "" internally. The ISO8859_1
+// columns have no such restriction — they are transliterated on the wire.
 // GPS columns (U_LATITUD, U_LONGITUD) are VARCHAR CHARACTER SET NONE in
 // LIBRES_CLIENTES — raw ASCII decimal text (e.g. "18.5032044"). Scanned as
 // sql.NullString and parsed to float64 by parseUbicacion in rowmappers.go.
@@ -271,13 +304,15 @@ ORDER BY ANIO, MES, CONCEPTO`
 // BE-R enrichment columns added:
 //   - HORA: wall-clock display string "HH:MM:SS" from DOCTOS_CC.HORA (TIME column).
 //   - CONCEPTO_CC_ID: the abono's concepto identifier for ClasificarConcepto in Go.
-//   - NOMBRE (from CONCEPTOS_CC): human-readable concepto name (Win1252-encoded legacy col).
+//   - NOMBRE (from CONCEPTOS_CC): human-readable concepto name. CONCEPTOS_CC.NOMBRE
+//     is CHARACTER SET NONE — raw bytes on the wire, decoded in Go.
 //   - DOCTO_PV_ID: the linked PV sale resolved via DOCTOS_ENTRE_SIS (PV→CC bridge), or 0.
 //   - FOLIO: the linked PV sale's folio (ASCII string), or "" when not resolvable.
 //
 // BE-R2 enrichment column added:
 //   - ARTICULO: name of the first J/N article (by POSICION) of the linked PV sale.
-//     Uses ARTICULOS.NOMBRE (Win1252 legacy col) via a nested correlated scalar subquery
+//     Uses ARTICULOS.NOMBRE (CHARACTER SET ISO8859_1 — Firebird already delivered
+//     UTF-8, scanned as a plain string) via a nested correlated scalar subquery
 //     that first resolves DOCTO_PV_ID from DOCTOS_ENTRE_SIS, then fetches the first
 //     DOCTOS_PV_DET row with ROL IN ('J','N') ordered by POSICION. COALESCE to ”.
 //
@@ -458,15 +493,19 @@ const selectVentaClienteCols = `
 	-- to extract "HH:MM:SS" without driver-specific time handling.
 	SUBSTRING(CAST(pv.HORA AS VARCHAR(13)) FROM 1 FOR 8) AS HORA,
 	-- BE-2 enrichment: almacén/ruta name via ALMACENES.
-	-- ALMACENES.NOMBRE is CHARACTER SET NONE (Win1252) — scanned with firebird.Win1252.
+	-- ALMACENES.NOMBRE is CHARACTER SET ISO8859_1 — Firebird transliterates it to
+	-- UTF-8 for this charset=UTF8 connection, so it is scanned as sql.NullString
+	-- (the LEFT JOIN can leave it NULL). NOT firebird.Win1252: that double-decode
+	-- turned "Mercancía en tránsito" into mojibake.
 	alm.NOMBRE AS ALMACEN_NOMBRE,
 	-- BE-2 enrichment: name of first J/N line item (kit-header or normal article).
 	-- Correlated scalar subquery with ROWS 1 sidesteps the firebirdsql v0.9.19
 	-- param bug (cannot bind ? inside FROM-clause derived tables). Returns NULL
-	-- when there are no J/N lines; the Win1252 scanner maps nil→"". NO COALESCE
-	-- with a '' literal here: that literal is the connection charset (UTF8) and
-	-- would coerce the CHARACTER SET NONE column to UTF8, throwing "Malformed
-	-- string" on Win1252 bytes (e.g. accented article names).
+	-- when there are no J/N lines, so the scan target is sql.NullString.
+	-- ARTICULOS.NOMBRE is CHARACTER SET ISO8859_1: reading it bare over a UTF-8
+	-- connection returns "NIÑO" correctly — verified live. (A COALESCE with a ''
+	-- literal would also work here for the same reason; it is only a NONE column
+	-- that "Malformed string" trips on.)
 	(
 		SELECT a.NOMBRE
 		FROM DOCTOS_PV_DET d
@@ -573,11 +612,13 @@ ORDER BY det.POSICION`
 // ORDER BY DOCTO_DEST_ID DESC uses the cargo CC ID as a tiebreaker (highest wins).
 // CONFIRMED (live DB): TIEMPO_A_CORTO_PLAZOMESES exists in LIBRES_CARGOS_CC
 // alongside CREDITO_EN_MESES (opaque FK); TIEMPO_A_CORTO_PLAZOMESES is correct.
-// Note: VALOR_DESPLEGADO columns are CHARACTER SET NONE in Microsip. COALESCE
-// and UPPER() with a UTF-8 connection literal would force transliteration on
-// those bytes, failing on Win1252 characters. Bare column selects are used
-// instead; NULL → "" is handled in Go by firebird.Win1252.Scan. UPPER() on
-// vendedor names is also done in Go (strings.ToUpper) rather than SQL.
+// Note: LISTAS_ATRIBUTOS.VALOR_DESPLEGADO is genuinely CHARACTER SET NONE
+// (verified against RDB$FIELDS, and 371 of its 1,246 rows carry non-ASCII).
+// COALESCE or UPPER() against a UTF-8 connection literal forces Firebird to
+// coerce those raw bytes to UTF-8 and fails with "Malformed string" — measured,
+// not folklore. Bare column selects are used instead; NULL → "" is handled in Go
+// by firebird.Win1252.Scan, and UPPER() on vendedor names is done in Go
+// (strings.ToUpper) rather than SQL.
 const queryContrato = `
 SELECT
 	lc.PARCIALIDAD,
@@ -629,21 +670,38 @@ SELECT
 	-- 7241.38 + 1158.62 = 8400.00. Esto cuadra con el saldo per-venta, que ahora
 	-- también resta el abono bruto (cargo bruto − abono bruto = SALDO del cache).
 	CAST(COALESCE(i.IMPORTE + i.IMPUESTO, 0) AS NUMERIC(18,2)) AS IMPORTE,
-	COALESCE((
+	-- FORMAS_COBRO.NOMBRE is CHARACTER SET NONE, so the subquery is read BARE
+	-- and the Win1252 scanner decodes it (it also maps nil→""). It used to be
+	-- wrapped in COALESCE(..., ''): that literal is UTF-8, it drags the whole
+	-- expression to UTF-8, and Firebird then has to coerce the raw bytes — over
+	-- "Crédito" (1 of the 4 formas in the catalog) the WHOLE query dies with
+	-- "SQL error code = -303 / Malformed string", so the entire payment history
+	-- 500s, not just this cell. Nothing had tripped it because
+	-- FORMAS_COBRO_DOCTOS.FORMA_COBRO_ID matches NO row of FORMAS_COBRO in the
+	-- live data (157/158/52569/137026 vs 67/68/71/27773) and the subquery
+	-- always returned NULL. Pinned by
+	-- TestClientesRepo_Acentos_FormaCobroEnHistorialDePagos.
+	(
 		SELECT fc.NOMBRE
 		FROM FORMAS_COBRO_DOCTOS fcd
 		JOIN FORMAS_COBRO fc ON fc.FORMA_COBRO_ID = fcd.FORMA_COBRO_ID
 		WHERE fcd.NOM_TABLA_DOCTOS = 'DOCTOS_CC'
 		  AND fcd.DOCTO_ID = pago.DOCTO_CC_ID
 		ROWS 1
-	), '') AS FORMA_COBRO,
+	) AS FORMA_COBRO,
 	des.DOCTO_DEST_ID,
 	pago.CONCEPTO_CC_ID,
-	-- Read text raw (CHARACTER SET NONE) so the Win1252 scanner decodes it; the
-	-- scanner maps nil→"". Do NOT COALESCE with a '' literal: it is UTF8 and
-	-- coerces NONE→UTF8, throwing "Malformed string" on Win1252 bytes (e.g. the
-	-- concepto "Devolución en mostrador").
+	-- CONCEPTOS_CC.NOMBRE is CHARACTER SET NONE: read it bare so the Win1252
+	-- scanner decodes it (the scanner also maps nil→""). Do NOT COALESCE with a
+	-- '' literal: the literal is UTF8, it coerces NONE→UTF8, and the read then
+	-- fails with "Malformed string" on the accented conceptos (13 of the 34 rows
+	-- in the catalog, e.g. "Interés moratorio"). Verified live, still true.
 	conc.NOMBRE AS CONCEPTO_NOMBRE,
+	-- COBRADORES.NOMBRE is ISO8859_1 and DOCTOS_CC.DESCRIPCION is NONE. Firebird
+	-- resolves a COALESCE over that pair to the non-NONE charset — ISO8859_1 —
+	-- and transliterates BOTH branches to UTF-8 for this connection. Verified
+	-- live on a row per branch: each comes back as valid UTF-8. So this single
+	-- expression is scanned as one sql.NullString and needs no CAST or split.
 	COALESCE(cob.NOMBRE, pago.DESCRIPCION) AS COBRADOR_NOMBRE
 FROM DOCTOS_ENTRE_SIS des
 JOIN IMPORTES_DOCTOS_CC i   ON i.DOCTO_CC_ACR_ID  = des.DOCTO_DEST_ID
@@ -671,9 +729,11 @@ ORDER BY pago.FECHA`
 // SUM casts are mandatory (firebirdsql v0.9.19 scale bug on NUMERIC aggregates).
 // CANCELADO and APLICADO are CHAR(1) ('S'/'N') — scanned as string and converted
 // to bool in pagoDetalleRowRaw.assemble().
-// Text columns from Microsip (CONCEPTOS_CC.NOMBRE, COBRADORES.NOMBRE,
-// DOCTOS_CC.DESCRIPCION, FORMAS_COBRO.NOMBRE, FORMAS_COBRO_DOCTOS.REFERENCIA)
-// are CHARACTER SET NONE (Win1252). MSP_PAGOS_RECIBIDOS columns are UTF8.
+// The Microsip text columns here do not share a charset:
+// CONCEPTOS_CC.NOMBRE, DOCTOS_CC.DESCRIPCION, FORMAS_COBRO.NOMBRE and
+// FORMAS_COBRO_DOCTOS.REFERENCIA are CHARACTER SET NONE (firebird.Win1252),
+// while COBRADORES.NOMBRE is CHARACTER SET ISO8859_1 (sql.NullString — Firebird
+// already transliterated it). MSP_PAGOS_RECIBIDOS columns are UTF8.
 //
 // GPS: native DOCTOS_CC has no LAT/LON columns; GPS comes only from
 // MSP_PAGOS_RECIBIDOS.LAT/LON (VARCHAR(20), ASCII decimal text).

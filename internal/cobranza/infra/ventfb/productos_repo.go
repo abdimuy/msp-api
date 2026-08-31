@@ -21,9 +21,10 @@ import (
 //     impuesto, mismo criterio que el total de la venta.
 //   - IMPORTE = precio_unitario_impto * unidades * (1 - dscto/100), casteado a
 //     NUMERIC(18,2) por el bug de escala del driver en agregados/expresiones.
-//   - ARTICULOS.NOMBRE es CHARACTER SET NONE (Win1252) — se escanea con
-//     firebird.Win1252 (igual que clientes/infra/clientesfb/rowmappers.go);
-//     una conexión UTF8 tira "Malformed string" al forzar acentos legacy.
+//   - ARTICULOS.NOMBRE es CHARACTER SET ISO8859_1 — con FB_CHARSET=UTF8
+//     Firebird ya lo transliteró a UTF-8 en el cable, así que se escanea como
+//     string plano. Decodificarlo otra vez con firebird.Win1252 partía la Ñ
+//     en "Ã‘" (medido: 121 de 6,113 artículos traen no-ASCII).
 const selectProductosCols = `
 	det.DOCTO_PV_DET_ID,
 	det.DOCTO_PV_ID,
@@ -117,7 +118,7 @@ type productoRowScan struct {
 	doctoPVID      int
 	folio          sql.NullString
 	articuloID     int
-	articuloRaw    firebird.Win1252 // ARTICULOS.NOMBRE — CHARACTER SET NONE (Win1252)
+	articulo       string // ARTICULOS.NOMBRE — ISO8859_1; JOIN interno + NOT NULL
 	unidadesRaw    any
 	precioUnitRaw  any
 	precioTotalRaw any
@@ -130,7 +131,7 @@ func (s *productoRowScan) scanFrom(r scannable) error {
 		&s.doctoPVID,
 		&s.folio,
 		&s.articuloID,
-		&s.articuloRaw,
+		&s.articulo,
 		&s.unidadesRaw,
 		&s.precioUnitRaw,
 		&s.precioTotalRaw,
@@ -160,7 +161,7 @@ func (s *productoRowScan) hydrate() (domain.ProductoVenta, error) {
 		DoctoPVID:       s.doctoPVID,
 		Folio:           nullableString(s.folio),
 		ArticuloID:      s.articuloID,
-		Articulo:        string(s.articuloRaw),
+		Articulo:        s.articulo,
 		Cantidad:        int(unidades.IntPart()),
 		PrecioUnitario:  precioUnit,
 		PrecioTotalNeto: precioTotal,

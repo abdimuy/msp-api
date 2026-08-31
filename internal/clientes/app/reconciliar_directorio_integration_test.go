@@ -77,9 +77,9 @@ func sembrarClientesDirectorio(t *testing.T, pool *firebird.Pool, cuantos int) [
 		// contra el índice en vez de contra el código.
 		sufijo := uuid.NewString()[:8]
 		for _, nombre := range []string{
-			"ROSALINDA MEJIA ANGUIANO",
-			"EVERARDO PALOMINO SEGURA",
-			"MARIBEL OCHOA CASTELLANOS",
+			"ROSALINDA MEJÍA ANGUIANO",
+			"EVERARDO PALOMINO SEGURA Ñ",
+			"MARIBEL OCHOA CASTELLAÑOS",
 		}[:cuantos] {
 			ids = append(ids, microsipseed.ClienteEnZona(t, q, nombre+" "+sufijo, zona))
 		}

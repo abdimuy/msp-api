@@ -150,19 +150,24 @@ func (r *CobranzaRepo) VentasPorZona(
 
 // ventaCobranzaRaw holds raw scan targets for one cobranza row.
 type ventaCobranzaRaw struct {
-	ventaID          int
-	clienteID        int
-	zonaID           int
-	parcialidadRaw   any
-	frecuencia       string
-	abonoRaw         any
-	saldoRaw         any
-	totalRaw         any
-	fechaCargo       time.Time
-	fechaUltPago     sql.NullTime
-	clienteNombreRaw firebird.Win1252 // CLIENTES.NOMBRE — CHARACTER SET NONE (Win1252)
-	doctoPVID        int
-	folioRaw         firebird.Win1252 // DOCTOS_PV.FOLIO — CHARACTER SET NONE (Win1252)
+	ventaID        int
+	clienteID      int
+	zonaID         int
+	parcialidadRaw any
+	frecuencia     string
+	abonoRaw       any
+	saldoRaw       any
+	totalRaw       any
+	fechaCargo     time.Time
+	fechaUltPago   sql.NullTime
+	// CLIENTES.NOMBRE — ISO8859_1 (already UTF-8 on the wire), pero llega por
+	// un LEFT JOIN sobre un caché que NO tiene FK a CLIENTES: una fila
+	// huérfana la entrega en NULL y un `string` pelado tumba la zona entera
+	// con "converting NULL to string is unsupported".
+	// Ver TestCobranzaRepo_VentasPorZona_ClienteHuerfano.
+	clienteNombre sql.NullString
+	doctoPVID     int
+	folioRaw      firebird.Win1252 // DOCTOS_PV.FOLIO — NONE (raw bytes, decoded here)
 }
 
 func scanVentaCobranza(s scannable) (rutasdomain.VentaCobranza, error) {
@@ -178,7 +183,7 @@ func scanVentaCobranza(s scannable) (rutasdomain.VentaCobranza, error) {
 		&raw.totalRaw,
 		&raw.fechaCargo,
 		&raw.fechaUltPago,
-		&raw.clienteNombreRaw,
+		&raw.clienteNombre,
 		&raw.doctoPVID,
 		&raw.folioRaw,
 	); err != nil {
@@ -223,7 +228,7 @@ func scanVentaCobranza(s scannable) (rutasdomain.VentaCobranza, error) {
 		VentaID:       raw.ventaID,
 		ClienteID:     raw.clienteID,
 		ZonaID:        raw.zonaID,
-		ClienteNombre: string(raw.clienteNombreRaw),
+		ClienteNombre: raw.clienteNombre.String,
 		Folio:         string(raw.folioRaw),
 		DoctoPVID:     raw.doctoPVID,
 		Parcialidad:   parcialidad,

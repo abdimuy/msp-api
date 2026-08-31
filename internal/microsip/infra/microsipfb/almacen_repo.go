@@ -91,11 +91,15 @@ func (r *AlmacenRepo) Obtener(ctx context.Context, almacenID int) (*domain.Almac
 func (r *AlmacenRepo) ListarArticulos(ctx context.Context, almacenID int, buscar string) ([]domain.ArticuloAlmacen, error) {
 	// CONTAINING is case-insensitive in Firebird and treats an empty
 	// argument as "match anything", matching the legacy default of "".
-	containing, err := firebird.EncodeWin1252(buscar)
-	if err != nil {
-		return nil, firebird.MapError(err)
-	}
-	rows, err := r.pool.QueryContext(ctx, r.articulosByAlmcQ, almacenID, containing)
+	//
+	// The search term goes over the wire as a plain Go string. The connection
+	// is charset=UTF8 and ARTICULOS.NOMBRE is CHARACTER SET ISO8859_1, so
+	// Firebird transliterates the parameter down to the column's charset before
+	// comparing. Re-encoding it to Windows-1252 bytes here (as this used to do)
+	// shipped bytes the UTF-8 session could not read: any accented search term
+	// failed with "SQL error code = -303 / Malformed string". Measured by
+	// reverting the fix — see TestAlmacenRepo_ListarArticulos_BuscaPorAcento.
+	rows, err := r.pool.QueryContext(ctx, r.articulosByAlmcQ, almacenID, buscar)
 	if err != nil {
 		return nil, firebird.MapError(err)
 	}
@@ -105,19 +109,22 @@ func (r *AlmacenRepo) ListarArticulos(ctx context.Context, almacenID int, buscar
 	for rows.Next() {
 		var (
 			articuloID, lineaID int
-			articulo, linea     firebird.Win1252
-			existencias         int64
-			precios             sql.NullString
+			// ARTICULOS.NOMBRE and LINEAS_ARTICULOS.NOMBRE are CHARACTER SET
+			// ISO8859_1 — already UTF-8 on the wire. Both joins are INNER, so
+			// neither can be NULL.
+			articulo, linea string
+			existencias     int64
+			precios         sql.NullString
 		)
 		if err := rows.Scan(&articuloID, &articulo, &existencias, &lineaID, &linea, &precios); err != nil {
 			return nil, firebird.MapError(err)
 		}
 		out = append(out, domain.ArticuloAlmacen{
 			ArticuloID:      articuloID,
-			Articulo:        string(articulo),
+			Articulo:        articulo,
 			Existencias:     existencias,
 			LineaArticuloID: lineaID,
-			LineaArticulo:   string(linea),
+			LineaArticulo:   linea,
 			Precios:         precios.String,
 		})
 	}
@@ -135,8 +142,10 @@ type scanner interface {
 
 func scanAlmacen(s scanner) (domain.Almacen, error) {
 	var (
-		id          int
-		nombre      firebird.Win1252
+		id int
+		// ALMACENES.NOMBRE is CHARACTER SET ISO8859_1 — already UTF-8 on the
+		// wire ("Traspaso sucursal - Mercancía en tránsito" is a live row).
+		nombre      string
 		existencias int64
 	)
 	if err := s.Scan(&id, &nombre, &existencias); err != nil {
@@ -145,5 +154,5 @@ func scanAlmacen(s scanner) (domain.Almacen, error) {
 		}
 		return domain.Almacen{}, firebird.MapError(err)
 	}
-	return domain.Almacen{ID: id, Nombre: string(nombre), Existencias: existencias}, nil
+	return domain.Almacen{ID: id, Nombre: nombre, Existencias: existencias}, nil
 }

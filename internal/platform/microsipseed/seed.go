@@ -90,6 +90,10 @@ type OpcionesVenta struct {
 	PlazoMeses int
 	// Enganche del contrato. Cero → 0.
 	Enganche decimal.Decimal
+	// ArticuloID fija el artículo de la línea. Cero → artículo rotativo.
+	// Se usa con ArticuloConAcento para que la prueba corra sobre un nombre
+	// que de verdad tiene una Ñ; ver el comentario de esa función.
+	ArticuloID int
 }
 
 // Abono es un documento de abono aplicado a una venta.
@@ -101,6 +105,8 @@ type Abono struct {
 	IVA          decimal.Decimal
 	ConceptoCCID int
 	CobradorID   int
+	// Descripcion es lo que quedó en DOCTOS_CC.DESCRIPCION.
+	Descripcion string
 }
 
 // OpcionesAbono parametriza AbonoAplicado.
@@ -117,6 +123,24 @@ type OpcionesAbono struct {
 	ConCobrador bool
 	// ConFormaCobro agrega la fila FORMAS_COBRO_DOCTOS que el detalle de pago lee.
 	ConFormaCobro bool
+	// FormaCobroID fija QUÉ forma de cobro se enlaza cuando ConFormaCobro es
+	// true. Cero → la primera del catálogo, que hoy es "Efectivo" y es ASCII
+	// pura: sirve para todo salvo para probar codificación. Una prueba de
+	// acentos tiene que pasar FormaCobroAcentuada(t, q) o no ejercita nada.
+	FormaCobroID int
+	// Descripcion es el texto de DOCTOS_CC.DESCRIPCION. Vacío → un literal fijo.
+	//
+	// Es el respaldo del que tira COALESCE(cob.NOMBRE, pago.DESCRIPCION) cuando
+	// el abono no trae cobrador, así que una prueba que quiera ejercitar esa
+	// rama con acentos lo pone aquí. Se escribe con firebird.EncodeWin1252
+	// porque la columna es CHARACTER SET NONE y ahí Microsip guarda bytes
+	// Windows-1252: mandar UTF-8 dejaría en la base algo que el cliente Delphi
+	// no sabe leer, y la prueba estaría verificando contra un dato inventado.
+	//
+	// Use sólo acentos que existan en ISO8859_1 (á é í ó ú ñ Ñ ü). Un carácter
+	// del hueco 0x80-0x9F de Windows-1252 (guion largo, comillas tipográficas)
+	// no tiene equivalente y Firebird lo rechaza al resolver la expresión.
+	Descripcion string
 }
 
 // folioCorto arma un folio que cabe en DOCTOS_PV.FOLIO y DOCTOS_CC.FOLIO, que
@@ -168,9 +192,14 @@ func primerID(t *testing.T, q firebird.Querier, tabla, columna string) int {
 	return id
 }
 
-// nombreCatalogo lee NOMBRE de un catálogo legado. El CAST a WIN1252 es
-// obligatorio: estas columnas son CHARACTER SET NONE y leerlas verbatim sobre
-// una conexión UTF8 truena en las filas con acentos.
+// nombreCatalogo lee NOMBRE de un catálogo legado.
+//
+// El CAST a WIN1252 sirve para leer AMBAS familias de charset con una sola
+// consulta. ALMACENES.NOMBRE y ARTICULOS.NOMBRE son CHARACTER SET ISO8859_1 y
+// se podrían leer verbatim; otros catálogos son CHARACTER SET NONE y no. El
+// CAST convierte cualquiera de los dos a un charset declarado, y Firebird lo
+// transliterar a UTF-8 en el cable. Lo que devuelve es, por construcción, el
+// nombre VERDADERO — que es justo lo que la prueba compara contra el repo.
 func nombreCatalogo(t *testing.T, q firebird.Querier, tabla, columna string, id int) string {
 	t.Helper()
 	var nombre string
@@ -183,6 +212,12 @@ func nombreCatalogo(t *testing.T, q firebird.Querier, tabla, columna string, id 
 }
 
 // Cliente inserta un cliente sintético y devuelve su identificador.
+//
+// EL NOMBRE DEBE TRAER ACENTOS. No es coquetería: CLIENTES.NOMBRE es CHARACTER
+// SET ISO8859_1 y durante meses se leyó con un doble-decode que partía la Ñ en
+// "Ã‘". Ninguna prueba lo atrapó porque ningún fixture tenía una — sobre ASCII
+// puro, la lectura correcta y la incorrecta dan el MISMO resultado. Una sola eñe
+// en este parámetro habría hecho fallar los 23 sitios del defecto.
 //
 // El identificador sale del generador de Microsip, así que es único y NO puede
 // chocar con un cliente real. Eso es lo que permite que una prueba afirme
@@ -231,7 +266,10 @@ func VentaCredito(t *testing.T, q firebird.Querier, clienteID int, o OpcionesVen
 	v.AlmacenNombre = nombreCatalogo(t, q, "ALMACENES", "ALMACEN_ID", v.AlmacenID)
 	v.DoctoPVID = nuevoID(t, q)
 	v.Folio = folioCorto("S", v.DoctoPVID)
-	v.ArticuloID = articuloRotativo(t, q, v.DoctoPVID)
+	v.ArticuloID = o.ArticuloID
+	if v.ArticuloID == 0 {
+		v.ArticuloID = articuloRotativo(t, q, v.DoctoPVID)
+	}
 	v.ArticuloNombre = nombreCatalogo(t, q, "ARTICULOS", "ARTICULO_ID", v.ArticuloID)
 
 	insertarEncabezadoPV(t, q, &v)
@@ -273,6 +311,92 @@ func articuloRotativo(t *testing.T, q firebird.Querier, doctoPVID int) int {
 		doctoPVID%total).Scan(&id)
 	require.NoError(t, err, "microsipseed: eligiendo artículo rotativo")
 	return id
+}
+
+// ArticuloConAcento devuelve el ARTICULO_ID más bajo cuyo NOMBRE trae al menos
+// un byte fuera de ASCII, o 0 si el catálogo no tiene ninguno.
+//
+// POR QUÉ EXISTE
+// ==============
+// El artículo rotativo elige por índice, y sólo 121 de los 6,113 artículos del
+// catálogo traen acentos: una prueba que compare nombres tiene ~2% de
+// probabilidad de tocar uno. Sobre ASCII puro, leer la columna bien y leerla
+// con un doble-decode dan EXACTAMENTE el mismo resultado — o sea que la
+// comparación pasa con el defecto puesto. Elegir a propósito un artículo
+// acentuado es lo que convierte esa comparación en una prueba.
+//
+// La búsqueda se hace en Go y no con un predicado SQL a propósito: ARTICULOS.
+// NOMBRE es ISO8859_1 y el predicado funcionaría, pero el mismo helper se
+// quiere poder apuntar a catálogos CHARACTER SET NONE, donde un literal UTF-8
+// en el WHERE revienta con "Malformed string".
+func ArticuloConAcento(t *testing.T, q firebird.Querier) int {
+	t.Helper()
+	rows, err := q.QueryContext(context.Background(),
+		`SELECT ARTICULO_ID, CAST(NOMBRE AS VARCHAR(250) CHARACTER SET WIN1252)
+		 FROM ARTICULOS WHERE ES_JUEGO = 'N' ORDER BY ARTICULO_ID`)
+	require.NoError(t, err, "microsipseed: recorriendo ARTICULOS")
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var (
+			id     int
+			nombre string
+		)
+		require.NoError(t, rows.Scan(&id, &nombre))
+		for i := range len(nombre) {
+			if nombre[i] > 127 {
+				return id
+			}
+		}
+	}
+	require.NoError(t, rows.Err())
+	return 0
+}
+
+// CobradorConNombre inserta un cobrador sintético y devuelve su COBRADOR_ID.
+//
+// POR QUÉ HACE FALTA SEMBRARLO
+// ============================
+// COBRADORES.NOMBRE es CHARACTER SET ISO8859_1 y la leen cuatro módulos
+// (clientes, rutas, config, microsip). Durante meses las cuatro la
+// decodificaban dos veces. Ninguna prueba lo vio porque en la base de
+// desarrollo los 52 cobradores tienen nombres 100% ASCII: sobre ASCII el
+// doble-decode es la identidad. Sembrar uno con acentos es la única forma de
+// convertir esas comparaciones en un control positivo.
+//
+// El nombre DEBE traer acentos; la función lo exige.
+func CobradorConNombre(t *testing.T, q firebird.Querier, nombre string) int {
+	t.Helper()
+	require.Truef(t, contieneNoASCII(nombre),
+		"microsipseed.CobradorConNombre(%q): el nombre tiene que traer acentos o la prueba "+
+			"pasa igual con el destino de escaneo equivocado", nombre)
+
+	id := nuevoID(t, q)
+	politica := primerID(t, q, "POLITICAS_COMISIONES_COBRADORES", "POLITICA_COMIS_COB_ID")
+	_, err := q.ExecContext(context.Background(),
+		`INSERT INTO COBRADORES (COBRADOR_ID, NOMBRE, OCULTO, POLITICA_COMIS_COB_ID)
+		 VALUES (?, ?, 'N', ?)`,
+		id, nombre, politica)
+	require.NoError(t, err, "microsipseed: INSERT COBRADORES")
+	return id
+}
+
+// contieneNoASCII indica si s trae al menos un byte fuera de ASCII.
+func contieneNoASCII(s string) bool {
+	for i := range len(s) {
+		if s[i] > 127 {
+			return true
+		}
+	}
+	return false
+}
+
+// NombreDeCatalogo expone nombreCatalogo a las pruebas: devuelve el nombre
+// VERDADERO (en UTF-8) de una fila de un catálogo legado, leído con un CAST que
+// no depende de cómo el repositorio bajo prueba decida escanear la columna.
+func NombreDeCatalogo(t *testing.T, q firebird.Querier, tabla, columna string, id int) string {
+	t.Helper()
+	return nombreCatalogo(t, q, tabla, columna, id)
 }
 
 // aplicarDefaults traduce el cero de cada opción a un valor utilizable.
@@ -422,11 +546,15 @@ func AbonoAplicado(t *testing.T, q firebird.Querier, v Venta, o OpcionesAbono) A
 	if o.ConCobrador {
 		a.CobradorID = primerID(t, q, "COBRADORES", "COBRADOR_ID")
 	}
+	a.Descripcion = o.Descripcion
+	if a.Descripcion == "" {
+		a.Descripcion = "Abono sembrado por microsipseed"
+	}
 
 	insertarAbonoCC(t, q, v, &a)
 	insertarImporteAbono(t, q, v, a)
 	if o.ConFormaCobro {
-		insertarFormaCobro(t, q, a)
+		insertarFormaCobro(t, q, a, o.FormaCobroID)
 	}
 	return a
 }
@@ -437,7 +565,12 @@ func insertarAbonoCC(t *testing.T, q firebird.Querier, v Venta, a *Abono) {
 	if a.CobradorID != 0 {
 		cobrador = &a.CobradorID
 	}
-	_, err := q.ExecContext(context.Background(),
+	// DOCTOS_CC.DESCRIPCION es CHARACTER SET NONE: Microsip guarda ahí bytes
+	// Windows-1252 y Firebird no transliterar nada al escribir. Mandar la cadena
+	// de Go tal cual dejaría UTF-8 en una columna que nadie lee como UTF-8.
+	descripcion, err := firebird.EncodeWin1252(a.Descripcion)
+	require.NoError(t, err, "microsipseed: codificando DESCRIPCION")
+	_, err = q.ExecContext(context.Background(),
 		`INSERT INTO DOCTOS_CC
 		  (DOCTO_CC_ID, CONCEPTO_CC_ID, FOLIO, NATURALEZA_CONCEPTO,
 		   SUCURSAL_ID, FECHA, CLIENTE_ID, CLAVE_CLIENTE, COBRADOR_ID,
@@ -447,12 +580,12 @@ func insertarAbonoCC(t *testing.T, q firebird.Querier, v Venta, a *Abono) {
 		   INTEG_BA, CONTABILIZADO_BA, CANCELADO)
 		VALUES (?, ?, ?, 'R',
 		        ?, ?, ?, '0001', ?,
-		        1, 'Abono sembrado por microsipseed',
+		        1, ?,
 		        'CC', 'S', 'N', 'N',
 		        'N', 'N', 'N', 'N', 'N',
 		        'N', 'N', 'N')`,
 		a.DoctoCCID, a.ConceptoCCID, a.Folio,
-		sucursal, fechaCalendario(a.Fecha), v.ClienteID, cobrador)
+		sucursal, fechaCalendario(a.Fecha), v.ClienteID, cobrador, descripcion)
 	require.NoError(t, err, "microsipseed: INSERT DOCTOS_CC abono")
 }
 
@@ -472,9 +605,12 @@ func insertarImporteAbono(t *testing.T, q firebird.Querier, v Venta, a Abono) {
 
 // insertarFormaCobro agrega la fila que el detalle de pago lee para nombrar la
 // forma de cobro. La forma se toma del catálogo, no de un identificador escrito.
-func insertarFormaCobro(t *testing.T, q firebird.Querier, a Abono) {
+func insertarFormaCobro(t *testing.T, q firebird.Querier, a Abono, formaCobroID int) {
 	t.Helper()
-	forma := primerID(t, q, "FORMAS_COBRO", "FORMA_COBRO_ID")
+	forma := formaCobroID
+	if forma == 0 {
+		forma = primerID(t, q, "FORMAS_COBRO", "FORMA_COBRO_ID")
+	}
 	_, err := q.ExecContext(context.Background(),
 		`INSERT INTO FORMAS_COBRO_DOCTOS
 		  (FORMA_COBRO_DOC_ID, NOM_TABLA_DOCTOS, DOCTO_ID,
@@ -491,6 +627,74 @@ func NombreFormaCobro(t *testing.T, q firebird.Querier) string {
 	t.Helper()
 	return nombreCatalogo(t, q, "FORMAS_COBRO", "FORMA_COBRO_ID",
 		primerID(t, q, "FORMAS_COBRO", "FORMA_COBRO_ID"))
+}
+
+// FormaCobroAcentuada devuelve el FORMA_COBRO_ID de una forma de cobro cuyo
+// nombre trae no-ASCII, y falla si el catálogo no tiene ninguna.
+//
+// POR QUÉ HACE FALTA ELEGIRLA A PROPÓSITO
+// =======================================
+// FORMAS_COBRO.NOMBRE es CHARACTER SET NONE y sólo 1 de las 4 filas del
+// catálogo trae acento ("Crédito"). insertarFormaCobro toma por defecto la
+// primera por ID —"Efectivo"— así que una prueba que no elija se queda en ASCII
+// puro, donde la lectura buena y la mala dan los mismos bytes y un COALESCE con
+// un literal UTF-8 tampoco revienta. Sobre esta fila sí.
+//
+// El recorrido va en Go, no con un predicado SQL: un literal acentuado en el
+// WHERE contra una columna NONE muere con "Malformed string", que es justo el
+// defecto que se quiere estudiar.
+func FormaCobroAcentuada(t *testing.T, q firebird.Querier) int {
+	t.Helper()
+	rows, err := q.QueryContext(context.Background(),
+		`SELECT FORMA_COBRO_ID, CAST(NOMBRE AS VARCHAR(60) CHARACTER SET WIN1252)
+		 FROM FORMAS_COBRO ORDER BY FORMA_COBRO_ID`)
+	require.NoError(t, err, "microsipseed: recorriendo FORMAS_COBRO")
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var (
+			id     int
+			nombre string
+		)
+		require.NoError(t, rows.Scan(&id, &nombre))
+		if contieneNoASCII(nombre) {
+			return id
+		}
+	}
+	require.NoError(t, rows.Err())
+	t.Fatal("microsipseed: FORMAS_COBRO no tiene ninguna fila con acentos; " +
+		"una prueba de codificación sobre este catálogo no verificaría nada")
+	return 0
+}
+
+// ZonaConNombre renombra una zona del catálogo ZONAS_CLIENTES con `nombre` y
+// devuelve su ZONA_CLIENTE_ID. SÓLO tiene sentido dentro de una transacción que
+// revierte: toca una fila real del catálogo.
+//
+// POR QUÉ HACE FALTA
+// ==================
+// ZONAS_CLIENTES.NOMBRE es CHARACTER SET NONE y las 46 zonas de la base son
+// 100% ASCII. Sobre ASCII, leerla con firebird.Win1252 (correcto) y leerla como
+// string pelado (incorrecto) devuelven exactamente los mismos bytes, así que
+// una comparación contra el catálogo pasa con el defecto puesto — comprobado.
+// Sembrar una eñe es la ÚNICA forma de convertir esa comparación en una prueba.
+//
+// El nombre se escribe en bytes Windows-1252 porque es lo que guarda Microsip;
+// mandar UTF-8 dejaría una semilla falsa. La función exige que el nombre traiga
+// no-ASCII: un nombre ASCII no verificaría nada.
+func ZonaConNombre(t *testing.T, q firebird.Querier, nombre string) int {
+	t.Helper()
+	require.Truef(t, contieneNoASCII(nombre),
+		"microsipseed: ZonaConNombre necesita un nombre con no-ASCII; %q no lo trae "+
+			"y la prueba pasaría igual con el doble-decode puesto", nombre)
+
+	zonaID := primerID(t, q, "ZONAS_CLIENTES", "ZONA_CLIENTE_ID")
+	bytes, err := firebird.EncodeWin1252(nombre)
+	require.NoError(t, err, "microsipseed: codificando NOMBRE de zona")
+	_, err = q.ExecContext(context.Background(),
+		`UPDATE ZONAS_CLIENTES SET NOMBRE = ? WHERE ZONA_CLIENTE_ID = ?`, bytes, zonaID)
+	require.NoError(t, err, "microsipseed: UPDATE ZONAS_CLIENTES.NOMBRE")
+	return zonaID
 }
 
 // NombreConcepto devuelve el nombre que el catálogo CONCEPTOS_CC le da a un
@@ -512,6 +716,13 @@ type OpcionesDireccion struct {
 	// CiudadID de DIRS_CLIENTES. Cero → la primera del catálogo CIUDADES.
 	CiudadID int
 	// Telefono1. Vacío → un número sintético de 10 dígitos.
+	//
+	// DIRS_CLIENTES.TELEFONO1 es CHARACTER SET NONE, así que el valor se
+	// escribe en bytes Windows-1252 igual que lo haría Microsip. Importa sólo
+	// si trae no-ASCII —hoy la columna no tiene ni una fila que lo traiga—,
+	// y ahí es donde importa de verdad: mandar UTF-8 a una columna NONE deja
+	// una semilla FALSA, con la que la lectura correcta parece rota y la
+	// incorrecta parece buena. Use sólo caracteres que existan en Windows-1252.
 	Telefono string
 }
 
@@ -532,12 +743,16 @@ func DireccionPrincipal(t *testing.T, q firebird.Querier, clienteID int, o Opcio
 		telefono = "2381234567"
 	}
 
-	_, err := q.ExecContext(context.Background(),
+	// TELEFONO1 es CHARACTER SET NONE: se escribe en bytes Windows-1252, que es
+	// lo que guarda el cliente Delphi. Ver el comentario de OpcionesDireccion.
+	telefonoBytes, err := firebird.EncodeWin1252(telefono)
+	require.NoError(t, err, "microsipseed: codificando TELEFONO1")
+	_, err = q.ExecContext(context.Background(),
 		`INSERT INTO DIRS_CLIENTES
 		  (DIR_CLI_ID, CLIENTE_ID, NOMBRE_CONSIG, ES_DIR_PPAL,
 		   CIUDAD_ID, TELEFONO1)
 		VALUES (?, ?, 'DOMICILIO PRUEBA', 'S', ?, ?)`,
-		nuevoID(t, q), clienteID, ciudad, telefono)
+		nuevoID(t, q), clienteID, ciudad, telefonoBytes)
 	require.NoError(t, err, "microsipseed: INSERT DIRS_CLIENTES")
 	return ciudad, telefono
 }

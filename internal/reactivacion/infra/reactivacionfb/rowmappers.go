@@ -22,19 +22,21 @@ type rowScanner interface {
 // ─── ClienteUniverso row mapper ────────────────────────────────────────────────
 
 // universoRowRaw is the intermediate scan target for one row of
-// selectUniversoTehuacan. Microsip text columns (CLIENTES.NOMBRE,
-// DIRS_CLIENTES.TELEFONO1) are CHARACTER SET NONE but arrive as UTF-8 because the
-// connection uses charset=UTF8 — scanned as plain string / sql.NullString, NOT
-// firebird.Win1252 (which would double-decode). Column order must match
-// selectUniversoTehuacan exactly.
+// selectUniversoTehuacan. The two Microsip text columns it reads have
+// DIFFERENT charsets and therefore different scan targets:
+//
+//	CLIENTES.NOMBRE         ISO8859_1 → string (Firebird transliterated it)
+//	DIRS_CLIENTES.TELEFONO1 NONE      → firebird.Win1252 (raw bytes, decoded here)
+//
+// Column order must match selectUniversoTehuacan exactly.
 type universoRowRaw struct {
 	clienteID         int
-	nombre            string // CLIENTES.NOMBRE — transliterated to UTF-8 by Firebird
-	telefono          sql.NullString
-	segmento          string // ASCII literal emitted by the CASE expression
-	saldoRaw          any    // NUMERIC(18,2)
-	porLiquidarPctRaw any    // NUMERIC(5,2)
-	fechaUltimaCompra any    // TIMESTAMP nullable
+	nombre            string           // CLIENTES.NOMBRE — ISO8859_1
+	telefono          firebird.Win1252 // DIRS_CLIENTES.TELEFONO1 — NONE; maps NULL → ""
+	segmento          string           // ASCII literal emitted by the CASE expression
+	saldoRaw          any              // NUMERIC(18,2)
+	porLiquidarPctRaw any              // NUMERIC(5,2)
+	fechaUltimaCompra any              // TIMESTAMP nullable
 }
 
 func (r *universoRowRaw) scanFrom(s rowScanner) error {
@@ -69,7 +71,7 @@ func assembleUniverso(r *universoRowRaw) (outbound.ClienteUniverso, error) {
 	return outbound.ClienteUniverso{
 		ClienteID:         r.clienteID,
 		Nombre:            r.nombre,
-		Telefono:          nullStringVal(r.telefono),
+		Telefono:          string(r.telefono),
 		Segmento:          seg,
 		Saldo:             saldo,
 		PorLiquidarPct:    porLiquidarPct,

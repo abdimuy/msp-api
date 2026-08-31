@@ -86,9 +86,22 @@ func (r *ConfigRepo) UpsertZonaCajaConfig(ctx context.Context, c configdomain.Zo
 // ─── CatalogoReader: Microsip catalogs (read-only) ─────────────────────────
 
 // listCatalogoRef runs a `SELECT <id>, NOMBRE FROM <table> ORDER BY NOMBRE`
-// query and scans it into []configdomain.CatalogoRef. NOMBRE is read via
-// firebird.Win1252 like every other legacy Microsip text column.
-func (r *ConfigRepo) listCatalogoRef(ctx context.Context, query string) ([]configdomain.CatalogoRef, error) {
+// query and scans it into []configdomain.CatalogoRef.
+//
+// nombreEsNone selects the scan target, and it is NOT a stylistic choice —
+// the five catalogs this helper serves do not share a charset:
+//
+//	ZONAS_CLIENTES.NOMBRE  CHARACTER SET NONE       → firebird.Win1252
+//	CAJAS.NOMBRE           CHARACTER SET NONE       → firebird.Win1252
+//	CAJEROS.NOMBRE         CHARACTER SET ISO8859_1  → plain string
+//	VENDEDORES.NOMBRE      CHARACTER SET ISO8859_1  → plain string
+//	COBRADORES.NOMBRE      CHARACTER SET ISO8859_1  → plain string
+//
+// A NONE column arrives as raw Windows-1252 bytes and has to be decoded in Go;
+// an ISO8859_1 column was already transliterated to UTF-8 by Firebird for the
+// charset=UTF8 connection and decoding it again yields mojibake. Reading all
+// five through one target is wrong for one half whichever target is picked.
+func (r *ConfigRepo) listCatalogoRef(ctx context.Context, query string, nombreEsNone bool) ([]configdomain.CatalogoRef, error) {
 	q := firebird.GetQuerier(ctx, r.pool.DB)
 	rows, err := q.QueryContext(ctx, query)
 	if err != nil {
@@ -98,12 +111,27 @@ func (r *ConfigRepo) listCatalogoRef(ctx context.Context, query string) ([]confi
 
 	var result []configdomain.CatalogoRef
 	for rows.Next() {
-		var id int
-		var nombreRaw firebird.Win1252
-		if serr := rows.Scan(&id, &nombreRaw); serr != nil {
+		var (
+			id int
+			// ZONAS_CLIENTES.NOMBRE and CAJAS.NOMBRE are CHARACTER SET NONE —
+			// raw Windows-1252 bytes, decoded here.
+			nombreRaw firebird.Win1252
+			// CAJEROS.NOMBRE, VENDEDORES.NOMBRE and COBRADORES.NOMBRE are
+			// CHARACTER SET ISO8859_1 — Firebird already delivered UTF-8.
+			nombreUTF sql.NullString
+			dest      any = &nombreUTF
+		)
+		if nombreEsNone {
+			dest = &nombreRaw
+		}
+		if serr := rows.Scan(&id, dest); serr != nil {
 			return nil, firebird.MapError(serr)
 		}
-		result = append(result, configdomain.CatalogoRef{ID: id, Nombre: string(nombreRaw)})
+		nombre := nombreUTF.String
+		if nombreEsNone {
+			nombre = string(nombreRaw)
+		}
+		result = append(result, configdomain.CatalogoRef{ID: id, Nombre: nombre})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, firebird.MapError(err)
@@ -111,18 +139,25 @@ func (r *ConfigRepo) listCatalogoRef(ctx context.Context, query string) ([]confi
 	return result, nil
 }
 
+// nombreNONE / nombreISO name the two charset families listCatalogoRef serves,
+// so each call site reads as a claim about the column instead of a bare bool.
+const (
+	nombreNONE = true
+	nombreISO  = false
+)
+
 const selectZonas = `SELECT ZONA_CLIENTE_ID, NOMBRE FROM ZONAS_CLIENTES ORDER BY NOMBRE`
 
 // ListarZonas returns every ZONAS_CLIENTES row (id + NOMBRE).
 func (r *ConfigRepo) ListarZonas(ctx context.Context) ([]configdomain.CatalogoRef, error) {
-	return r.listCatalogoRef(ctx, selectZonas)
+	return r.listCatalogoRef(ctx, selectZonas, nombreNONE)
 }
 
 const selectCajas = `SELECT CAJA_ID, NOMBRE FROM CAJAS ORDER BY NOMBRE`
 
 // ListarCajas returns every CAJAS row (id + NOMBRE).
 func (r *ConfigRepo) ListarCajas(ctx context.Context) ([]configdomain.CatalogoRef, error) {
-	return r.listCatalogoRef(ctx, selectCajas)
+	return r.listCatalogoRef(ctx, selectCajas, nombreNONE)
 }
 
 // selectCajeros reads Microsip's CAJEROS catalog (confirmed empirically
@@ -133,21 +168,21 @@ const selectCajeros = `SELECT CAJERO_ID, NOMBRE FROM CAJEROS ORDER BY NOMBRE`
 
 // ListarCajeros returns every CAJEROS row (id + NOMBRE).
 func (r *ConfigRepo) ListarCajeros(ctx context.Context) ([]configdomain.CatalogoRef, error) {
-	return r.listCatalogoRef(ctx, selectCajeros)
+	return r.listCatalogoRef(ctx, selectCajeros, nombreISO)
 }
 
 const selectVendedoresCatalogo = `SELECT VENDEDOR_ID, NOMBRE FROM VENDEDORES ORDER BY NOMBRE`
 
 // ListarVendedoresCatalogo returns every VENDEDORES row (id + NOMBRE).
 func (r *ConfigRepo) ListarVendedoresCatalogo(ctx context.Context) ([]configdomain.CatalogoRef, error) {
-	return r.listCatalogoRef(ctx, selectVendedoresCatalogo)
+	return r.listCatalogoRef(ctx, selectVendedoresCatalogo, nombreISO)
 }
 
 const selectCobradores = `SELECT COBRADOR_ID, NOMBRE FROM COBRADORES ORDER BY NOMBRE`
 
 // ListarCobradores returns every COBRADORES row (id + NOMBRE).
 func (r *ConfigRepo) ListarCobradores(ctx context.Context) ([]configdomain.CatalogoRef, error) {
-	return r.listCatalogoRef(ctx, selectCobradores)
+	return r.listCatalogoRef(ctx, selectCobradores, nombreISO)
 }
 
 // existeEnCatalogo runs a `SELECT 1 FROM <table> WHERE <id column> = ?`

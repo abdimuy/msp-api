@@ -84,7 +84,7 @@ func TestLeerCobranzaSignals_SinglePaymentIncluded(t *testing.T) {
 		})
 
 		// Cliente de DOS pagos → rama de cadencia (un gap).
-		clienteDos := microsipseed.Cliente(t, q, "EMILIO ZAVALA PARRA")
+		clienteDos := microsipseed.Cliente(t, q, "EMILIO ZAVALA PEÑA")
 		ventaDos := microsipseed.VentaCredito(t, q, clienteDos, microsipseed.OpcionesVenta{})
 		for _, f := range []time.Time{primero, segundo} {
 			microsipseed.AbonoAplicado(t, q, ventaDos, microsipseed.OpcionesAbono{

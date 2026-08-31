@@ -1,7 +1,8 @@
 // Package analyticsfb implements the Firebird-backed repositories for the
 // analytics module. It satisfies both outbound.WinbackRepo (reads/writes our
 // MSP_AN_* tables, CHARACTER SET UTF8) and outbound.MicrosipReader (read-only
-// over legacy Microsip tables, Win1252-encoded text).
+// over legacy Microsip tables, whose text columns are ISO8859_1 or
+// CHARACTER SET NONE — see the "Microsip read queries" section below).
 //
 //nolint:misspell // Spanish domain vocabulary (candidato, cohorte, zona, etc.) by project convention.
 package analyticsfb
@@ -83,19 +84,31 @@ VALUES (?, ?, ?)`
 
 // ─── Microsip read queries ─────────────────────────────────────────────────────
 //
-// All Microsip text columns (CLIENTES.NOMBRE, ZONAS_CLIENTES.NOMBRE,
-// DIRS_CLIENTES.TELEFONO1, ARTICULOS.NOMBRE) are CHARACTER SET NONE (raw
-// Win1252 bytes in the DB). Because the Firebird connection uses charset=UTF8,
-// the server automatically transliterates those columns to UTF-8 on the wire
-// before the driver receives them. Scan targets are therefore plain string /
-// sql.NullString — NOT firebird.Win1252. Using Win1252.Scan on already-UTF-8
-// bytes would apply a second Win1252→UTF-8 decode, producing mojibake (e.g.
-// "Ã'" instead of "ñ"). NULL results from LEFT JOINs are mapped to "" in Go.
+// The Microsip text columns read here do NOT share a charset, and the scan
+// target follows the catalog one column at a time:
 //
-// COALESCE with string literals is intentionally OMITTED: a '' literal in a
-// UTF-8 connection forces Firebird to coerce the NONE column to UTF-8 at the
-// point of the expression, which can fail with "Malformed string" on Win1252
-// bytes (e.g. accented characters). NULL → "" is handled in Go instead.
+//	CLIENTES.NOMBRE          ISO8859_1 → string
+//	ARTICULOS.NOMBRE         ISO8859_1 → sql.NullString
+//	ZONAS_CLIENTES.NOMBRE    NONE      → firebird.Win1252
+//	DIRS_CLIENTES.TELEFONO1  NONE      → firebird.Win1252
+//
+//   - CHARACTER SET ISO8859_1 / UTF8 → Firebird transliterates on the wire for
+//     the charset=UTF8 connection. Scan as string / sql.NullString. Scanning
+//     through firebird.Win1252 double-decodes and turns "Ñ" into "Ã‘".
+//   - CHARACTER SET NONE → Firebird transliterates NOTHING; the raw
+//     Windows-1252 bytes arrive as-is. Scan through firebird.Win1252 or the
+//     value is invalid UTF-8. A '' literal COALESCEd onto a NONE column also
+//     forces a coercion that fails with "Malformed string" — that restriction
+//     is real, and applies ONLY to NONE columns.
+//
+// The charset is NOT derivable from the column name: CIUDADES.NOMBRE is
+// ISO8859_1 while ZONAS_CLIENTES.NOMBRE is NONE. Look it up in RDB$FIELDS —
+// internal/platform/fbcharset holds the classification this repo depends on and
+// a test that fails when a column is read without one.
+//
+// COALESCE with a '' literal is intentionally OMITTED over the NONE columns
+// (z.NOMBRE, d.TELEFONO1): the literal is UTF-8, it forces a coercion of the
+// raw bytes and fails with "Malformed string". NULL → "" is handled in Go.
 //
 // Money aggregates use CAST(SUM(…) AS NUMERIC(18,2)) to avoid the nakagami
 // driver bug where SUM over NUMERIC returns *big.Int without applying the
@@ -264,10 +277,11 @@ nbp AS (
 SELECT
   rfm.CLIENTE_ID,
   c.NOMBRE                                                            AS NOMBRE,
-  -- Do NOT COALESCE z.NOMBRE with a '' literal: '' is a UTF-8 connection
-  -- literal and would force Firebird to coerce the CHARACTER SET NONE column
-  -- to UTF-8, potentially causing "Malformed string" errors on Win1252 bytes.
-  -- NULL is handled in Go by nullStringVal (returns "").
+  -- ZONAS_CLIENTES.NOMBRE is CHARACTER SET NONE: it arrives as raw
+  -- Windows-1252 bytes and is decoded in Go by firebird.Win1252 (which also
+  -- maps NULL → ""). Do NOT COALESCE it with a '' literal: '' is a UTF-8
+  -- connection literal and forces Firebird to coerce the NONE column, failing
+  -- with "Malformed string" on accented bytes.
   z.NOMBRE                                                           AS ZONA,
   d.TELEFONO1                                                        AS TELEFONO,
   rfm.FECHA_ULTIMA_COMPRA,
@@ -281,8 +295,9 @@ SELECT
               AS NUMERIC(5,2))
        ELSE 0
   END                                                                AS POR_LIQUIDAR_PCT,
-  -- Do NOT COALESCE nbp.ARTICULO_NOMBRE with '' for the same NONE-charset
-  -- reason. SUBSTRING returns NULL when the argument is NULL; Go maps NULL→"".
+  -- ARTICULOS.NOMBRE is CHARACTER SET ISO8859_1, so unlike z.NOMBRE above it
+  -- IS safe to COALESCE with a literal — it is left bare only because SUBSTRING
+  -- already returns NULL for a NULL argument and Go maps NULL→"" anyway.
   SUBSTRING(nbp.ARTICULO_NOMBRE FROM 1 FOR 120)                      AS NEXT_BEST_PRODUCT,
   sc.FECHA_ULTIMO_PAGO                                               AS FECHA_ULTIMO_PAGO,
   sc.FECHA_PRIMER_CARGO                                              AS FECHA_PRIMER_CARGO,

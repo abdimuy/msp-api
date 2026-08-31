@@ -162,6 +162,8 @@ WHERE LISTA_ATRIB_ID IN (` + strings.Join(placeholders, ",") + `)`
 	result := make(map[int]string, len(listaIDs))
 	for rows.Next() {
 		var id int
+		// LISTAS_ATRIBUTOS.VALOR_DESPLEGADO is CHARACTER SET NONE — Firebird
+		// hands the Windows-1252 bytes over raw, so Go decodes them here.
 		var nombreRaw firebird.Win1252
 		if serr := rows.Scan(&id, &nombreRaw); serr != nil {
 			return nil, firebird.MapError(serr)
@@ -200,6 +202,7 @@ func (r *ConfigRepo) ListarIdentidadesMicrosip(ctx context.Context) ([]configdom
 	var order []string
 	for rows.Next() {
 		var listaID, atributoID int
+		// LISTAS_ATRIBUTOS.VALOR_DESPLEGADO is CHARACTER SET NONE — see above.
 		var nombreRaw firebird.Win1252
 		if serr := rows.Scan(&listaID, &atributoID, &nombreRaw); serr != nil {
 			return nil, firebird.MapError(serr)

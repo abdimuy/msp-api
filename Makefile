@@ -251,16 +251,34 @@ test-firebird: ## Run platform Firebird integration tests against the dev Micros
 	@[ -n "$(FB_DATABASE)" ] || (echo "❌ FB_DATABASE not set — start mueblera-firebird and source .env first" && exit 1)
 	$(GO) test ./internal/platform/firebird/... ./internal/platform/fbtestutil/... -race -count=1 -timeout 120s
 
-test-firebird-all: ## Run ALL Firebird-backed tests including module repos (auth + ventas + cobranza)
+# -p 1 NO es cosmético. FOLIOS_CAJAS es un contador de Microsip, y como todas
+# estas pruebas corren dentro de una transacción que SIEMPRE revierte, el
+# contador nunca avanza: cada corrida acuña EXACTAMENTE el mismo folio
+# (hoy Y00002216, con la serie Y en 2216 y el máximo comprometido en Y00002215).
+# ventas/infra/ventfb y ventas/infra/venthttp lo acuñan los dos; en paralelo
+# chocan contra el índice único de DOCTOS_PV.FOLIO y sale un
+# "duplicate FOLIO" intermitente que NO es residuo comprometido — no existe
+# ninguna fila con ese folio en la base. Es la misma razón por la que el job de
+# CI corre -p 1.
+#
+# Los paquetes de charset (fbcharset + los repositorios que leen catálogos
+# legados de Microsip) entraron aquí junto con el arreglo del doble-decode
+# Windows-1252: si no corren, la clasificación de charset por columna deja de
+# estar verificada contra RDB$FIELDS y una Ñ mal leída vuelve a poder entrar sin
+# que nada falle. Todos escriben dentro de fbtestutil.WithTestTransaction, que
+# siempre revierte.
+test-firebird-all: ## Run ALL Firebird-backed tests including module repos (auth + ventas + cobranza + charset)
 	@[ -n "$(FB_DATABASE)" ] || (echo "❌ FB_DATABASE not set — start mueblera-firebird and source .env first" && exit 1)
 	$(GO) test ./internal/platform/firebird/... ./internal/platform/fbtestutil/... \
-	          ./internal/platform/failedintent/... \
+	          ./internal/platform/failedintent/... ./internal/platform/fbcharset/... \
 	          ./internal/auth/infra/firebird/... \
 	          ./internal/ventas/infra/ventfb/... ./internal/ventas/infra/venthttp/... \
 	          ./internal/ventas/infra/failedintents/... \
 	          ./internal/cobranza/infra/ventfb/... ./internal/cobranza/infra/cobranzahttp/... \
 	          ./internal/visitas/infra/visitasfb/... ./internal/visitas/infra/visitashttp/... \
-	          -race -count=1 -timeout 300s
+	          ./internal/clientes/infra/clientesfb/... ./internal/config/infra/configfb/... \
+	          ./internal/rutas/infra/rutasfb/... ./internal/microsip/infra/microsipfb/... \
+	          -p 1 -race -count=1 -timeout 600s
 
 test-firebird-ventas: ## Run Firebird-backed tests for the venta creation flow (platform + ventas)
 	@[ -n "$(FB_DATABASE)" ] || (echo "❌ FB_DATABASE not set — start mueblera-firebird and source .env first" && exit 1)

@@ -13,8 +13,10 @@ import (
 
 // CiudadRepo is the Firebird-backed implementation of outbound.CiudadRepo.
 //
-// CIUDADES is a legacy Microsip table, so names are decoded with
-// firebird.Win1252 like every other legacy read in this module.
+// CIUDADES.NOMBRE and ESTADOS.NOMBRE are CHARACTER SET ISO8859_1, so Firebird
+// already transliterates them to UTF-8 for the charset=UTF8 connection: they
+// are scanned as plain strings. Decoding them again through firebird.Win1252
+// would turn "CAÑADA MORELOS" into "CAÃ‘ADA MORELOS".
 type CiudadRepo struct {
 	pool *firebird.Pool
 }
@@ -43,22 +45,22 @@ func (r *CiudadRepo) Listar(ctx context.Context) ([]domain.Ciudad, error) {
 	for rows.Next() {
 		var (
 			id       int
-			nombre   firebird.Win1252
+			nombre   string // CIUDADES.NOMBRE — ISO8859_1, NOT NULL
 			estadoID sql.NullInt64
-			estado   *firebird.Win1252
+			estado   sql.NullString // ESTADOS.NOMBRE — ISO8859_1; LEFT JOIN → nullable
 		)
 		if err := rows.Scan(&id, &nombre, &estadoID, &estado); err != nil {
 			return nil, firebird.MapError(err)
 		}
 		c := domain.Ciudad{
 			ID:     id,
-			Nombre: strings.TrimSpace(string(nombre)),
+			Nombre: strings.TrimSpace(nombre),
 		}
 		if estadoID.Valid {
 			c.EstadoID = int(estadoID.Int64)
 		}
-		if estado != nil {
-			c.Estado = strings.TrimSpace(string(*estado))
+		if estado.Valid {
+			c.Estado = strings.TrimSpace(estado.String)
 		}
 		out = append(out, c)
 	}
