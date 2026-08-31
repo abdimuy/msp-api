@@ -52,6 +52,7 @@ type buzonRepoFake struct {
 	byWamid map[string]uuid.UUID
 
 	guardarLlamadas       int
+	guardarFalla          error
 	contarPendientesFalla error
 }
 
@@ -66,6 +67,9 @@ func (r *buzonRepoFake) Guardar(_ context.Context, m *domain.MensajeEntrante) (b
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.guardarLlamadas++
+	if r.guardarFalla != nil {
+		return false, r.guardarFalla
+	}
 	if _, exists := r.byWamid[m.Wamid()]; exists {
 		return false, nil
 	}

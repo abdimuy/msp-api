@@ -9,6 +9,7 @@ package canalsqlite_test
 import (
 	"context"
 	"database/sql"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -63,6 +64,23 @@ func TestOpen_CreatesSchema(t *testing.T) {
 	n, err := repo.ContarPendientes(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, 0, n, "a freshly created mailbox has no pending rows")
+}
+
+// TestOpen_CreatesMissingParentDirectory proves a clean boot survives a
+// CANAL_SQLITE_PATH whose directory does not exist yet — exactly the state
+// a fresh VPS checkout is in with the shipped .env.example's
+// CANAL_SQLITE_PATH=./var/canal/buzon.db, since ./var is not in the repo.
+func TestOpen_CreatesMissingParentDirectory(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "nested", "does", "not", "exist", "buzon.db")
+
+	repo, err := canalsqlite.Open(path)
+	require.NoError(t, err, "Open must create the missing parent directory rather than fail")
+	t.Cleanup(func() { _ = repo.Close() })
+
+	n, err := repo.ContarPendientes(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
 }
 
 func TestNew_IsSafeToRerunAgainstAnExistingDatabase(t *testing.T) {

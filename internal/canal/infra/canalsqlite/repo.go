@@ -23,6 +23,9 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,6 +34,26 @@ import (
 	"github.com/abdimuy/msp-api/internal/canal/domain"
 	"github.com/abdimuy/msp-api/internal/canal/ports/outbound"
 )
+
+// sqliteMemoryPath is the modernc.org/sqlite DSN meaning "in-memory, no
+// file" — used only by tests (see repo_test.go). Open skips MkdirAll for
+// it, since there is no parent directory to create.
+const sqliteMemoryPath = ":memory:"
+
+// busyTimeoutDSNSuffix appends SQLite's busy_timeout pragma (milliseconds)
+// to every DSN Open builds. Production runs a single process capped at one
+// open connection (see Repo's doc comment), so contention from THIS
+// process is not the target — an external reader (a backup job, an
+// operator poking the file with the sqlite3 CLI) is. Without this,
+// SQLITE_BUSY from that reader fails Guardar immediately instead of
+// waiting a few seconds for the lock to clear, and canalhttp.handleReceive
+// now answers Meta a non-2xx on exactly that failure so it redelivers —
+// waiting out a brief external lock is strictly better than forcing a
+// round trip to Meta and back for the same message. Mirrors the DSN
+// cmd/winback/canal_e2e_test.go's rowState uses for its own assertion
+// connection, for an unrelated reason (a test-harness race, not this one —
+// see that file's doc comment).
+const busyTimeoutDSNSuffix = "?_busy_timeout=5000"
 
 // schemaSQL is the mailbox's DDL, embedded at build time. It lives beside
 // this code rather than in migrations-firebird/ — that directory's lefthook
@@ -57,9 +80,20 @@ type Repo struct {
 }
 
 // Open opens (or creates) the SQLite database at path — which may be
-// ":memory:" for tests — and returns a Repo with its schema ensured.
+// ":memory:" for tests — and returns a Repo with its schema ensured. When
+// path names a real file, its parent directory is created first (0o750,
+// matching internal/ventas/infra/storage's filesystemDirMode and
+// internal/platform/failedintent/blobfs's dirMode) if missing: a clean VPS
+// boot with the shipped .env.example's CANAL_SQLITE_PATH=./var/canal/buzon.db
+// must not fail at graph construction just because ./var/canal was never in
+// the repo.
 func Open(path string) (*Repo, error) {
-	db, err := sql.Open("sqlite", path)
+	if path != sqliteMemoryPath {
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			return nil, fmt.Errorf("canalsqlite: create parent directory for %q: %w", path, err)
+		}
+	}
+	db, err := sql.Open("sqlite", path+busyTimeoutDSNSuffix)
 	if err != nil {
 		return nil, mapError(err)
 	}

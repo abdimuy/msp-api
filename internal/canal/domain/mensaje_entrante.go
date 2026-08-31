@@ -227,6 +227,24 @@ func (m *MensajeEntrante) MarcarFallido(motivo string, now time.Time) error {
 // to EstadoReenvioPendiente. Only legal from EstadoReenvioFallido. No event
 // is buffered — the retry is an internal mailbox mechanic, not something a
 // downstream consumer needs to react to.
+//
+// 🔴 This method has NO automatic caller, by design. EstadoReenvioFallido
+// is terminal along app.Service's own drain path (DrenarCola/reenviarUno):
+// once a message is marked fallido, nothing in app/ or infra/ ever calls
+// MarcarPendiente to requeue it, and that is deliberate, not an oversight —
+// a message only reaches fallido after being classified a PERMANENT
+// forwarding failure (see domain.IsTransient and DrenarResultado.Fallidos'
+// doc comment), and a permanent failure retrying itself on a timer would
+// just burn attempts against a store that already said no.
+//
+// This edge exists for OPERATOR-DRIVEN recovery instead: a message can be
+// permanent for a reason that later stops being true — a phone that was
+// unresolvable until the pilot's cohorte was rebuilt is the canonical
+// example — and an operator who has confirmed that changed needs a way to
+// put the message back in front of the forwarder without inventing a new
+// mechanism. Nothing here builds that requeue path (no HTTP handler, no
+// CLI, no cron) — MarcarPendiente only keeps the domain transition legal
+// so one can be added later without a schema or state-machine change.
 func (m *MensajeEntrante) MarcarPendiente(now time.Time) error {
 	if err := m.transitionTo(EstadoReenvioPendiente); err != nil {
 		return err

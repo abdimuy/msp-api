@@ -256,9 +256,22 @@ type DrenarResultado struct {
 // wrong in either direction has a real cost, and the costs are not
 // symmetric: a transient failure wrongly marked Fallido silently drops a
 // customer's reply forever (nothing in this module ever moves
-// EstadoReenvioFallido back to Pendiente); a permanent failure wrongly
+// EstadoReenvioFallido back to Pendiente, except an operator-driven
+// MarcarPendiente call — see its doc comment); a permanent failure wrongly
 // left Pendiente just parks one message an operator can see and act on via
-// GET /canal/v1/salud. When in doubt, this code errs toward Diferidos.
+// GET /canal/v1/salud.
+//
+// What actually dispatches: domain.IsTransient classifies an error as
+// transient (→ Diferidos) only when it recognizes the shape — today, a
+// *domain.TransientError. Everything it does NOT recognize, including any
+// UNCLASSIFIED error type a future failure mode introduces, defaults to
+// permanent (→ Fallido) — the opposite of "when in doubt, defer". So the
+// actual guidance for whoever adds a new failure type is the reverse of a
+// comment that just restates intent: if the new failure is transient,
+// it MUST be classified as such explicitly (wrapped in
+// domain.TransientError, or added to domain.IsTransient's recognized
+// shapes) — silence defaults to Fallido, and Fallido is where a reply that
+// still needed a retry quietly stops being retried.
 //
 // A ListarPendientes or persistence failure aborts the whole pass and
 // returns the error — a message already processed earlier in the pass keeps

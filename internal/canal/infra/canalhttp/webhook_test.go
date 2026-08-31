@@ -185,6 +185,54 @@ func TestWebhookReceive_UnknownMessageType_ContenidoEmpty_StillPersists(t *testi
 	assert.Equal(t, "location", m.Tipo())
 }
 
+func TestWebhookReceive_PersistenceFails_ReturnsNon2xx_NotSwallowed(t *testing.T) {
+	t.Parallel()
+	r, deps := newTestRouter(t)
+	deps.repo.guardarFalla = errRepoBoom
+
+	body := metaTextPayload("wamid.persist-fails", "5215511112222", "1234567890", "hola", time.Now())
+	req := httptest.NewRequest(http.MethodPost, webhookPath, bytes.NewReader(body))
+	req.Header.Set(signatureHeaderName, signBody(testAppSecret, body))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	// A signature-valid body whose message content is fine must NOT be
+	// answered 200 when persistence itself failed: 200 here would tell
+	// Meta the delivery is done, and no mailbox row exists to prove
+	// otherwise — GET /canal/v1/salud would report pendientes: 0 and look
+	// healthy while the reply was silently destroyed. Redelivery is safe
+	// (Guardar is ON CONFLICT (wamid) DO NOTHING), so Meta retrying is the
+	// correct outcome here, not a bug to route around.
+	require.Equal(t, http.StatusInternalServerError, rec.Code,
+		"a storage failure must not be answered 200 — Meta must redeliver")
+	_, ok := deps.repo.mensajePorWamid("wamid.persist-fails")
+	assert.False(t, ok, "the message was never actually persisted")
+}
+
+func TestWebhookReceive_ValidationFails_Returns200_NotPersisted(t *testing.T) {
+	t.Parallel()
+	r, deps := newTestRouter(t)
+
+	// A message with no "from" fails domain.NewMensajeEntrante's Remitente
+	// requirement — a genuinely permanent, validation-class failure. Meta
+	// must never be told to retry this: retrying an invalid payload cannot
+	// make it valid.
+	body := []byte(`{
+		"entry": [{"changes": [{"value": {
+			"metadata": {"phone_number_id": "1234567890"},
+			"messages": [{"id": "wamid.no-remitente", "timestamp": "1700000000", "type": "text", "text": {"body": "hola"}}]
+		}}]}]
+	}`)
+	req := httptest.NewRequest(http.MethodPost, webhookPath, bytes.NewReader(body))
+	req.Header.Set(signatureHeaderName, signBody(testAppSecret, body))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "a validation-class failure keeps the old 200: retrying it cannot help")
+	_, ok := deps.repo.mensajePorWamid("wamid.no-remitente")
+	assert.False(t, ok, "an invalid message must never be persisted")
+}
+
 func TestWebhookReceive_MalformedJSON_ValidSignature_Returns200_NotPersisted(t *testing.T) {
 	t.Parallel()
 	r, deps := newTestRouter(t)

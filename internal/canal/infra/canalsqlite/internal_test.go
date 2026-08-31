@@ -275,12 +275,27 @@ func TestNew_ClosedDBReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "closed")
 }
 
-func TestOpen_UnwritablePathReturnsMappedError(t *testing.T) {
+// TestOpen_UnwritableParentReturnsPathNamingError proves Open fails loudly
+// and names the path when its parent directory cannot be created (here:
+// permission denied creating a directory under /, which no test process
+// may write to) — the papercut this guards against is a silent or
+// unhelpful failure on a clean VPS boot, not a specific error taxonomy.
+//
+// This used to assert the failure came back through mapError as an
+// apperror (Open just handed path straight to sql.Open, so "file cannot be
+// created" was a SQLite driver error). Now Open calls os.MkdirAll first,
+// and that call is what fails here — a boot-time directory-creation
+// error, not a SQLite driver error, so it is wrapped directly (fmt.Errorf
+// %w) rather than routed through mapError, mirroring how module.go's
+// provideBuzonRepo already wraps Open's own error for the same reason: a
+// fatal fx-graph-construction failure, never surfaced over HTTP, has no
+// need for apperror.Kind classification.
+func TestOpen_UnwritableParentReturnsPathNamingError(t *testing.T) {
 	t.Parallel()
 	_, err := Open("/this/directory/does/not/exist/mailbox.db")
 	require.Error(t, err)
-	_, ok := apperror.As(err)
-	assert.True(t, ok, "Open must map the underlying failure through mapError")
+	assert.Contains(t, err.Error(), "/this/directory/does/not/exist",
+		"the error must name the path that could not be created, for an operator reading a boot failure")
 }
 
 // ── row-mapper failure paths ────────────────────────────────────────────

@@ -277,10 +277,14 @@ func metaTextPayload(wamid, from, phoneNumberID, texto string, ts time.Time) []b
 // carries "?_busy_timeout=5000" as defence in depth — a poll waits up to
 // 5s for the writer instead of erroring — but the single long-lived
 // connection is what actually removes the race (see
-// buildWinbackComposition). Never add busy_timeout to
-// internal/canal/infra/canalsqlite to chase this: production runs one
-// process with MaxOpenConns(1), so this contention is the test harness's
-// own creation, not something the production code needs to accommodate.
+// buildWinbackComposition). Adding busy_timeout to
+// internal/canal/infra/canalsqlite would not have fixed THIS flake:
+// production runs one process with MaxOpenConns(1), so this specific
+// contention was the test harness's own creation. canalsqlite.Open does
+// carry busy_timeout now regardless — a separate, later, production
+// decision about an external reader (e.g. a backup job) racing the one
+// production connection, unrelated to the harness race this comment
+// documents. See canalsqlite.Open's doc comment.
 func rowState(t *testing.T, db *sql.DB, wamid string) (string, string, bool) {
 	t.Helper()
 
@@ -398,16 +402,20 @@ func TestE2E_ReenvioWorker_ForwardsPendienteToStore(t *testing.T) {
 // buildWinbackComposition) before bringing it back, rather than avoiding
 // the question by never draining until after the receiver is healthy.
 //
-// 🔴 As written, this test currently FAILS — see task-11-report.md's defect
-// section. reliability.DefaultRetry's MaxAttempts (3) is smaller than
-// reliability.DefaultCircuit's FailureThreshold (5): a single pendiente's
-// retry-exhaustion (internal/canal/app/service.go's intentarReenvio) always
-// finishes and calls MarcarFallido before the circuit breaker ever
-// accumulates enough failures to open and skip it instead. Once fallido,
-// nothing in app/ or infra/ ever calls domain's own MarcarPendiente to
-// requeue it — outbound.BuzonRepo has no such method — so the message is
-// never forwarded even after the receiver returns. Left failing rather than
-// weakened, per task-11-brief.md's "do not fix production code" instruction.
+// This test now PASSES: internal/canal/app/service.go's reenviarUno
+// classifies a store-unreachable failure as TRANSIENT
+// (domain.IsTransient), which leaves the message untouched in
+// EstadoReenvioPendiente (DrenarResultado.Diferidos) rather than marking it
+// EstadoReenvioFallido — so there is nothing to requeue once the receiver
+// returns; the next drain tick simply retries a pendiente that was never
+// moved out of that state. It used to fail for the reason task-11-report.md
+// documented: retry-exhaustion (MaxAttempts=3) always finished and called
+// MarcarFallido before the circuit breaker's FailureThreshold (5) had a
+// chance to open and skip the attempt instead, and nothing then existed to
+// move a fallido message back to pendiente. That defect — every message
+// drained during the routine case (a receiver-down window) being marked
+// permanently failed — is exactly what this test exists to catch, and it
+// now does so by staying green.
 func TestE2E_Durability_StoreDown_MessageSurvives_ThenForwardedOnceStoreReturns(t *testing.T) {
 	t.Parallel()
 	store := newStoreReceiver(false) // the store's receiver starts down.

@@ -134,13 +134,34 @@ func (f *ForwarderClient) Reenviar(ctx context.Context, m *canaldomain.MensajeEn
 }
 
 // classifyForwarderStatus turns a store response status into nil (success),
-// a canaldomain.TransientError (5xx, 429 — safe to retry), or a bare
-// permanent error (every other non-2xx).
+// a canaldomain.TransientError (5xx, 429, 401, 403 — safe to retry), or a
+// bare permanent error (every other non-2xx).
+//
+// 401/403 are transient, not permanent, DESPITE being 4xx: both come from
+// tiendaTokenMiddleware (internal/reactivacion/infra/reactivacionhttp) —
+// the shared token not matching, or (403) the IP allowlist rejecting the
+// caller. Neither is ever specific to the message being forwarded; both
+// are a configuration fault on one side of the VPS<->store trust boundary
+// (a rotated token, a changed tunnel IP). Treating them as permanent would
+// mean every reply drained during a misconfiguration gets marked fallido
+// forever — and nothing in this module ever moves fallido back to
+// pendiente — so the whole backlog accumulated during the fault is written
+// off instead of recovering once the token/IP is fixed.
+//
+// 404 stays permanent on purpose: it is ambiguous with the tienda
+// handler's own "phone number did not resolve to a cliente" case
+// (internal/reactivacion/infra/reactivacionhttp/tienda_handlers.go), which
+// is a genuine per-message condition, not a configuration fault — treating
+// it as transient would retry something retrying cannot fix.
 func classifyForwarderStatus(statusCode int) error {
 	if statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices {
 		return nil
 	}
-	if statusCode == http.StatusTooManyRequests || statusCode >= http.StatusInternalServerError {
+	switch statusCode {
+	case http.StatusTooManyRequests, http.StatusUnauthorized, http.StatusForbidden:
+		return &canaldomain.TransientError{Cause: fmt.Errorf("%w: status %d", errForwarderHTTP, statusCode)}
+	}
+	if statusCode >= http.StatusInternalServerError {
 		return &canaldomain.TransientError{Cause: fmt.Errorf("%w: status %d", errForwarderHTTP, statusCode)}
 	}
 	return fmt.Errorf("%w: status %d", errForwarderHTTP, statusCode)

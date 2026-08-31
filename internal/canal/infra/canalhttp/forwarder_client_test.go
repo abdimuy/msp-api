@@ -79,6 +79,51 @@ func TestForwarderClient_Permanent4xx_NotTransient(t *testing.T) {
 	assert.False(t, domain.IsTransient(err), "a 400 must be permanent, not retried")
 }
 
+func TestForwarderClient_401_IsTransient(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	client := canalhttp.NewForwarderClient(canalhttp.ForwarderConfig{URL: server.URL, Token: testSharedToken})
+	err := client.Reenviar(context.Background(), newTestEntrante(t))
+
+	require.Error(t, err)
+	assert.True(t, domain.IsTransient(err),
+		"a 401 is never message-specific — it means the shared token is wrong, a configuration fault, not this message's fault")
+}
+
+func TestForwarderClient_403_IsTransient(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	client := canalhttp.NewForwarderClient(canalhttp.ForwarderConfig{URL: server.URL, Token: testSharedToken})
+	err := client.Reenviar(context.Background(), newTestEntrante(t))
+
+	require.Error(t, err)
+	assert.True(t, domain.IsTransient(err),
+		"a 403 is never message-specific — it means the IP allowlist rejected the caller, a configuration fault, not this message's fault")
+}
+
+func TestForwarderClient_404_StaysPermanent(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	client := canalhttp.NewForwarderClient(canalhttp.ForwarderConfig{URL: server.URL, Token: testSharedToken})
+	err := client.Reenviar(context.Background(), newTestEntrante(t))
+
+	require.Error(t, err)
+	assert.False(t, domain.IsTransient(err),
+		"404 stays permanent: it is ambiguous with the tienda handler's own unresolved-phone case, a genuine per-message condition")
+}
+
 func TestForwarderClient_5xx_IsTransient(t *testing.T) {
 	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
