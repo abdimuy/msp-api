@@ -76,6 +76,7 @@ type Config struct {
 	Flota          Flota
 	WhatsApp       WhatsApp
 	Canal          Canal
+	Winback        Winback
 }
 
 // Flota holds the knobs of the roster snapshot worker — the process that
@@ -552,6 +553,23 @@ type Canal struct {
 	// ForwarderTimeout bounds each forwarding HTTP call. Zero (the env var
 	// unset) falls back to a sane default in canalhttp.NewForwarderClient.
 	ForwarderTimeout time.Duration `env:"CANAL_FORWARDER_TIMEOUT" envDefault:"15s"`
+}
+
+// Winback holds settings for cmd/winback, the always-on binary that runs
+// internal/canal on the Linux VPS. See
+// docs/adr/0010-whatsapp-cloud-api-and-the-always-on-edge.md for why that
+// binary exists.
+//
+// Port is the only field here: every other HTTP knob (read/write/idle/
+// shutdown timeouts, max body size) is shared with cmd/api via [HTTP].
+// cmd/winback and cmd/api never run on the same machine — they read
+// separate .env files on separate hosts — so sharing those four fields
+// costs nothing and avoids a second place for them to drift out of sync.
+type Winback struct {
+	// Port is the HTTP port cmd/winback binds. Distinct from HTTP.Port
+	// (cmd/api's port, read from APP_PORT) so both fields can be set at
+	// once in a shared .env.example without colliding.
+	Port int `env:"WINBACK_PORT" envDefault:"8090"`
 }
 
 // validate enforces that the Meilisearch configuration is internally
