@@ -425,6 +425,7 @@ linters:
             - github.com/abdimuy/msp-api/internal/garantias/domain
             - github.com/abdimuy/msp-api/internal/visitas/domain
             - github.com/abdimuy/msp-api/internal/flota/domain
+            - github.com/abdimuy/msp-api/internal/canal/domain
 
         app-no-infra:
           list-mode: lax
