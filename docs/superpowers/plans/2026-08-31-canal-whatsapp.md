@@ -235,8 +235,13 @@ Solo configuración; nada de lógica.
   `canaloutbound`, `canalhttp`, `canalsqlite` para
   `internal/canal/{domain,app,ports/outbound,infra/canalhttp,infra/canalsqlite}`.
   (`platformwhatsapp` ya lo agregó Task 1; verifica que esté y no lo dupliques.)
-- **`.golangci.yml` · allowlist `domain-pure`** — agregar `internal/canal/domain` a la
-  regla que mantiene los `domain/` puros, exactamente como están los demás.
+- **`.golangci.yml` · regla `domain-pure`** — **verificar, no editar.** La regla (línea
+  ~398) selecciona por glob `**/internal/*/domain/*.go`, así que `internal/canal/domain`
+  ya queda cubierta sola: no hay allowlist de módulos que tocar. Confirma con un
+  **control positivo** —que la regla efectivamente dispara sobre un import prohibido
+  metido a propósito en `internal/canal/domain`, y bórralo— antes de declarar que
+  aplica. Si al hacerlo descubres que no dispara, eso sí es un cambio a hacer, y dilo
+  en el reporte.
 - **`.golangci.yml` · regla `canal-sealed`** — copiar el bloque `flota-sealed`
   (está alrededor de la línea 470) cambiando `flota` por `canal`, con su `desc`
   explicando que canal es sellado por ADR-0009.
