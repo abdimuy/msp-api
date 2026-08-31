@@ -65,12 +65,30 @@ type ReenvioConfig struct {
 	Circuit reliability.CircuitConfig
 }
 
+// canalCircuitDelay overrides reliability.DefaultCircuit's 30s Delay when
+// ReenvioConfig.Circuit is left zero-valued. ReenvioWorker's own tick
+// cadence (30s in production — defaultReenvioInterval) is already what
+// rate-limits how often the module actually touches the store; the
+// breaker's Delay only controls how soon AFTER opening a probe becomes
+// eligible, and the worker still will not attempt anything until its next
+// tick regardless. So a Delay shorter than the tick interval costs nothing
+// extra in production — probes stay bounded to once per tick either way —
+// while the platform default's 30s sits right at that interval and can
+// silently double a real outage's forward latency once it does recover,
+// for no benefit. A short Delay does mean more frequent probes while the
+// store is briefly ticking faster than 30s (worker warm-up, or a test), but
+// a failed probe against an unreachable store is a fast, cheap no-op — the
+// mailbox's whole design already assumes that failure is the routine case
+// (ADR-0010).
+const canalCircuitDelay = 200 * time.Millisecond
+
 func (c *ReenvioConfig) applyDefaults() {
 	if c.Retry.MaxAttempts <= 0 {
 		c.Retry = reliability.DefaultRetry()
 	}
 	if c.Circuit.FailureThreshold == 0 {
 		c.Circuit = reliability.DefaultCircuit()
+		c.Circuit.Delay = canalCircuitDelay
 	}
 }
 
@@ -198,14 +216,26 @@ type DrenarResultado struct {
 	// Reenviados is the number of mensajes the forwarder accepted this pass.
 	Reenviados int
 	// Fallidos is the number of mensajes moved to EstadoReenvioFallido this
-	// pass — either a permanent forwarder error, or a transient one that
-	// exhausted its retries.
+	// pass — a PERMANENT forwarder error only (e.g. the store rejected the
+	// message outright). This message will never be accepted; retrying is
+	// pointless, which is exactly what EstadoReenvioFallido records.
 	Fallidos int
 	// Saltados is the number of pendientes left untouched because the
-	// circuit breaker was open when they were reached — the store looks
-	// consistently down, so the pass stops spending attempts on it and
-	// leaves them EstadoReenvioPendiente for a later pass.
+	// circuit breaker was already open when they were reached — the store
+	// looks consistently down, so the pass stops spending attempts on it
+	// and leaves them EstadoReenvioPendiente for a later pass.
 	Saltados int
+	// Diferidos is the number of pendientes left untouched because the
+	// forwarder failed TRANSIENTLY, including a transient error whose
+	// retries were exhausted this pass. A transient failure is not a
+	// failure — it is "not yet": the store being unreachable is the
+	// ROUTINE case (ADR-0010; the tunnel rotates hourly and is started by
+	// hand), and the mailbox exists precisely so a customer's reply
+	// survives that window rather than being lost. The message stays
+	// EstadoReenvioPendiente and the next drain cycle picks it up again;
+	// the circuit breaker (Saltados) is what keeps repeated transient
+	// failures from hammering an already-down store.
+	Diferidos int
 }
 
 // DrenarCola forwards up to limite pendientes to the store's on-premise
@@ -213,11 +243,22 @@ type DrenarResultado struct {
 //
 // Each pendiente is attempted through intentarReenvio (retry-with-backoff
 // for transient failures, no retry for permanent ones, both bounded by the
-// shared circuit breaker). A forwarder success moves the message to
-// EstadoReenvioReenviado; a forwarder failure (permanent, or transient with
-// retries exhausted) moves it to EstadoReenvioFallido with a legible
-// failure reason. A circuit-open skip touches nothing and counts toward
-// Saltados instead.
+// shared circuit breaker), and the outcome is classified into exactly one
+// of four buckets — see DrenarResultado's field docs for the reasoning
+// behind each:
+//   - forwarder success            → EstadoReenvioReenviado (Reenviados)
+//   - PERMANENT forwarder failure  → EstadoReenvioFallido   (Fallidos)
+//   - TRANSIENT forwarder failure  → untouched, still Pendiente (Diferidos)
+//   - circuit already open         → untouched, still Pendiente (Saltados)
+//
+// The permanent/transient distinction is domain.IsTransient — the same one
+// intentarReenvio already uses against the retry policy. Getting this
+// wrong in either direction has a real cost, and the costs are not
+// symmetric: a transient failure wrongly marked Fallido silently drops a
+// customer's reply forever (nothing in this module ever moves
+// EstadoReenvioFallido back to Pendiente); a permanent failure wrongly
+// left Pendiente just parks one message an operator can see and act on via
+// GET /canal/v1/salud. When in doubt, this code errs toward Diferidos.
 //
 // A ListarPendientes or persistence failure aborts the whole pass and
 // returns the error — a message already processed earlier in the pass keeps
@@ -240,22 +281,40 @@ func (s *Service) DrenarCola(ctx context.Context, limite int) (DrenarResultado, 
 }
 
 // reenviarUno attempts to forward one message and persists the outcome,
-// mutating result in place. A forwarder rejection (permanent, or transient
-// exhausted) and a circuit-open skip are both normal outcomes reflected in
-// result, not errors; only a repository failure returns an error.
+// mutating result in place. A forwarder success, a PERMANENT forwarder
+// rejection, a TRANSIENT forwarder failure, and a circuit-open skip are
+// all normal outcomes reflected in result, not errors; only a repository
+// failure returns an error.
+//
+// The transient case deliberately does nothing to m or the repo: the
+// message is already EstadoReenvioPendiente and stays there, so the next
+// DrenarCola pass retries it. See DrenarResultado.Diferidos for why this
+// must not be folded into Fallidos — that was the actual defect Task 11's
+// durability composition test caught (a receiver-down window is the
+// routine case per ADR-0010, and every message drained during it used to
+// be marked Fallido — permanently, since nothing in this module ever
+// transitions Fallido back to Pendiente).
 func (s *Service) reenviarUno(ctx context.Context, m *domain.MensajeEntrante, result *DrenarResultado) error {
 	now := s.clock.Now()
 
 	fwdErr := s.intentarReenvio(ctx, m)
-	if errors.Is(fwdErr, errCircuitoAbierto) {
+	switch {
+	case errors.Is(fwdErr, errCircuitoAbierto):
 		s.logger.WarnContext(ctx, "canal.circuito_abierto", slog.String("wamid", m.Wamid()))
 		result.Saltados++
 		return nil
-	}
-	if fwdErr == nil {
+	case fwdErr == nil:
 		return s.marcarReenviado(ctx, m, now, result)
+	case domain.IsTransient(fwdErr):
+		s.logger.WarnContext(
+			ctx, "canal.reenvio_diferido",
+			slog.String("wamid", m.Wamid()), slog.String("motivo", fwdErr.Error()),
+		)
+		result.Diferidos++
+		return nil
+	default:
+		return s.marcarFallido(ctx, m, fwdErr, now, result)
 	}
-	return s.marcarFallido(ctx, m, fwdErr, now, result)
 }
 
 // marcarReenviado transitions m to EstadoReenvioReenviado and persists that
@@ -304,11 +363,25 @@ func (s *Service) marcarFallido(
 // circuit breaker (reliability.NewCircuit) when the store looks
 // consistently down. It returns:
 //   - nil on success;
-//   - errCircuitoAbierto if the breaker was open before the forwarder was
-//     ever called for m;
+//   - errCircuitoAbierto if the breaker rejected the attempt before the
+//     forwarder was ever called for m;
 //   - the forwarder's own error otherwise — the last one observed, whether
 //     that is a permanent failure (no retry spent) or a transient one whose
 //     retries were exhausted.
+//
+// It deliberately does NOT pre-check s.circuit.IsOpen() before calling
+// failsafe.With(...).Get(...) — an earlier version of this method did, and
+// it was a real bug, not a harmless fast path: failsafe-go's circuit
+// breaker only advances past OpenState's Delay inside
+// TryAcquirePermit(), which its own executor calls when an execution is
+// actually attempted through Get()/Run(). openState.State() itself always
+// reports OpenState unconditionally, with no regard for elapsed time —
+// querying it never advances anything. So a pre-check that returns early
+// on IsOpen() == true, without ever calling the executor again, leaves the
+// breaker stuck open forever: Delay becomes meaningless once nothing is
+// left to observe it elapsing. Calling Get() unconditionally
+// lets failsafe's own executor decide — attempted stays false exactly when
+// it rejected the permit, which is what errCircuitoAbierto below reports.
 //
 // The real outcome is captured via the attempted/lastErr closure variables
 // rather than read off the executor's own return value on purpose: when
@@ -330,10 +403,6 @@ func (s *Service) marcarFallido(
 // error — the kind that means the store itself is having trouble — is
 // ever reported to the circuit as a failure.
 func (s *Service) intentarReenvio(ctx context.Context, m *domain.MensajeEntrante) error {
-	if s.circuit.IsOpen() {
-		return errCircuitoAbierto
-	}
-
 	var attempted bool
 	var lastErr error
 	_, _ = failsafe.With[forwardOutcome](s.retry, s.circuit).Get(func() (forwardOutcome, error) {

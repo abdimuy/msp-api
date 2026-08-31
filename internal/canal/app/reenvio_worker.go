@@ -138,5 +138,6 @@ func (w *ReenvioWorker) tick(ctx context.Context) {
 		slog.Int("reenviados", result.Reenviados),
 		slog.Int("fallidos", result.Fallidos),
 		slog.Int("saltados", result.Saltados),
+		slog.Int("diferidos", result.Diferidos),
 	)
 }

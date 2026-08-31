@@ -167,7 +167,13 @@ func TestDrenarCola_FalloPermanente_MarcaFallidoConMotivoLegibleSinReintentar(t 
 	assert.Contains(t, motivo, "número inválido", "the persisted reason must still be legible to a human")
 }
 
-func TestDrenarCola_FalloTransitorioAgotaReintentos_MarcaFallidoConMotivoLegible(t *testing.T) {
+// TestDrenarCola_FalloTransitorioAgotaReintentos_QuedaPendiente is the
+// direct regression test for the durability defect Task 11's composition
+// test caught: exhausting the retry budget on a TRANSIENT error must never
+// mark EstadoReenvioFallido. A store outage (ADR-0010: routine, the tunnel
+// rotates hourly and is started by hand) is not a reason to give up on a
+// customer's reply — the message must stay Pendiente for the next drain.
+func TestDrenarCola_FalloTransitorioAgotaReintentos_QuedaPendiente(t *testing.T) {
 	t.Parallel()
 	repo := newBuzonRepoFake()
 	transitorio := &domain.TransientError{Cause: errors.New("connection reset by peer")}
@@ -181,15 +187,51 @@ func TestDrenarCola_FalloTransitorioAgotaReintentos_MarcaFallidoConMotivoLegible
 	require.NoError(t, err)
 
 	assert.Equal(t, 0, result.Reenviados)
-	assert.Equal(t, 1, result.Fallidos)
-	assert.Equal(t, 3, fwd.llamadasTotales(), "must retry exactly MaxAttempts times before giving up")
+	assert.Equal(t, 0, result.Fallidos, "a transient failure must never mark fallido, no matter how many retries it burns")
+	assert.Equal(t, 1, result.Diferidos)
+	assert.Equal(t, 3, fwd.llamadasTotales(), "must retry exactly MaxAttempts times before deferring")
 
 	estado, ok := repo.estado(id)
 	require.True(t, ok)
-	assert.Equal(t, domain.EstadoReenvioFallido, estado)
+	assert.Equal(t, domain.EstadoReenvioPendiente, estado, "must stay pendiente — nothing ever moves fallido back")
+}
 
-	motivo := repo.motivoFallo(id)
-	assert.Contains(t, motivo, "connection reset by peer")
+// TestDrenarCola_TransitorioLuegoRecuperado_ElSiguienteDrenadoLoReenvia
+// drives the full round trip: an outage pass where every attempt fails
+// transiently, followed by a recovery pass. This is what ADR-0010 promises
+// in its degradation table — "Inbound replies: Held in the VPS mailbox,
+// processed on return" — proven end to end rather than only proving the
+// message does not land in fallido.
+func TestDrenarCola_TransitorioLuegoRecuperado_ElSiguienteDrenadoLoReenvia(t *testing.T) {
+	t.Parallel()
+	repo := newBuzonRepoFake()
+	transitorio := &domain.TransientError{Cause: errors.New("connection refused")}
+	// The whole outage pass (3 attempts, smallRetry) fails transiently; the
+	// store "comes back" for the single attempt the recovery pass makes.
+	fwd := newForwarderFake(transitorio, transitorio, transitorio, nil)
+	clock := newFixedClock(time.Date(2026, 8, 31, 10, 0, 0, 0, time.UTC))
+	svc := newServiceFor(repo, fwd, clock, smallRetry(3))
+
+	id := recibirUno(t, svc, repo, clock, "wamid-store-caida")
+
+	result1, err := svc.DrenarCola(context.Background(), 10)
+	require.NoError(t, err)
+	assert.Equal(t, 0, result1.Fallidos, "an outage pass must never mark fallido")
+	assert.Equal(t, 1, result1.Diferidos)
+
+	estado, ok := repo.estado(id)
+	require.True(t, ok)
+	require.Equal(t, domain.EstadoReenvioPendiente, estado, "must still be pendiente after the outage pass")
+
+	// The store is back: same message, picked up again because nothing
+	// ever moved it out of pendiente.
+	result2, err := svc.DrenarCola(context.Background(), 10)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result2.Reenviados, "the recovered store must accept it on the very next drain")
+
+	estado, ok = repo.estado(id)
+	require.True(t, ok)
+	assert.Equal(t, domain.EstadoReenvioReenviado, estado)
 }
 
 func TestDrenarCola_ReintentaConBackoffYLuegoTieneExito(t *testing.T) {
@@ -290,7 +332,7 @@ func TestDrenarCola_MotivoDemasiadoLargo_SeTruncaYSiguePersistiendo(t *testing.T
 	assert.NotEmpty(t, repo.motivoFallo(id))
 }
 
-func TestDrenarCola_CircuitoAbierto_SaltaSinMarcarFallido(t *testing.T) {
+func TestDrenarCola_CircuitoAbierto_NingunoQuedaFallido(t *testing.T) {
 	t.Parallel()
 	repo := newBuzonRepoFake()
 	transitorio := &domain.TransientError{Cause: errors.New("connection refused")}
@@ -318,16 +360,17 @@ func TestDrenarCola_CircuitoAbierto_SaltaSinMarcarFallido(t *testing.T) {
 	result, err := svc.DrenarCola(context.Background(), 10)
 	require.NoError(t, err)
 
-	assert.Equal(t, 1, result.Fallidos, "the earliest pendiente trips the breaker on its own failure")
-	assert.Equal(t, 1, result.Saltados, "the later pendiente is skipped once the breaker is open")
+	assert.Equal(t, 0, result.Fallidos, "a transient failure — even the one that trips the breaker — must never mark fallido")
+	assert.Equal(t, 1, result.Diferidos, "the earliest pendiente trips the breaker on its own transient failure")
+	assert.Equal(t, 1, result.Saltados, "the later pendiente is skipped once the breaker is already open")
 
 	estadoTrip, ok := repo.estado(idTrip)
 	require.True(t, ok)
-	assert.Equal(t, domain.EstadoReenvioFallido, estadoTrip)
+	assert.Equal(t, domain.EstadoReenvioPendiente, estadoTrip, "the message that tripped the breaker also stays pendiente")
 
 	estadoSkip, ok := repo.estado(idSkip)
 	require.True(t, ok)
-	assert.Equal(t, domain.EstadoReenvioPendiente, estadoSkip, "the skipped message must stay pendiente, not fallido")
+	assert.Equal(t, domain.EstadoReenvioPendiente, estadoSkip, "the skipped message must stay pendiente too")
 }
 
 // ── TxRunner ─────────────────────────────────────────────────────────────
