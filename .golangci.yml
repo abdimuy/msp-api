@@ -358,6 +358,16 @@ linters:
           alias: visitasfb
         - pkg: github.com/abdimuy/msp-api/internal/visitas/infra/visitashttp
           alias: visitashttp
+        - pkg: github.com/abdimuy/msp-api/internal/canal/domain
+          alias: canaldomain
+        - pkg: github.com/abdimuy/msp-api/internal/canal/app
+          alias: canalapp
+        - pkg: github.com/abdimuy/msp-api/internal/canal/ports/outbound
+          alias: canaloutbound
+        - pkg: github.com/abdimuy/msp-api/internal/canal/infra/canalhttp
+          alias: canalhttp
+        - pkg: github.com/abdimuy/msp-api/internal/canal/infra/canalsqlite
+          alias: canalsqlite
         - pkg: firebase.google.com/go/v4
           alias: firebasesdk
 
@@ -483,6 +493,20 @@ linters:
             - github.com/shopspring/decimal
             - github.com/abdimuy/msp-api/internal/platform
             - github.com/abdimuy/msp-api/internal/flota
+
+        canal-sealed:
+          list-mode: lax
+          files:
+            - "**/internal/canal/**/*.go"
+          deny:
+            - pkg: "github.com/abdimuy/msp-api/internal"
+              desc: "canal is sealed (ADR 0009): only internal/canal and internal/platform are allowed — not even another module's contracts"
+          allow:
+            - $gostd
+            - github.com/google/uuid
+            - github.com/shopspring/decimal
+            - github.com/abdimuy/msp-api/internal/platform
+            - github.com/abdimuy/msp-api/internal/canal
 
         # ── La plataforma de captura no sabe de módulos ──────────────
         # Es la regla que sostiene la inversión del puerto ResumenExtractor.

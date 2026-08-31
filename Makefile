@@ -1,8 +1,9 @@
-.PHONY: help setup build run dev test test-unit test-mutation test-mutation-domain test-mutation-app test-mutation-ventas test-mutation-ventas-domain test-mutation-ventas-app test-mutation-cobranza test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-cobranza-eventbus test-mutation-visitas test-mutation-visitas-domain test-mutation-visitas-app test-mutation-httpdispatch lint lint-fix check-sealed fmt generate clean test-firebird test-firebird-all test-firebird-ventas coverage-auth coverage-auth-full coverage-ventas coverage-ventas-full precommit-strict fb-migrate-up fb-migrate-down fb-migrate-status fb-seed-admin fb-snapshot fb-snapshot-list fb-restore fb-snapshot-delete fb-emu-up fb-emu-down fb-emu-logs meilisearch-up meilisearch-down test-meilisearch
+.PHONY: help setup build build-winback run dev test test-unit test-mutation test-mutation-domain test-mutation-app test-mutation-ventas test-mutation-ventas-domain test-mutation-ventas-app test-mutation-cobranza test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-cobranza-eventbus test-mutation-visitas test-mutation-visitas-domain test-mutation-visitas-app test-mutation-httpdispatch lint lint-fix check-sealed fmt generate clean test-firebird test-firebird-all test-firebird-ventas coverage-auth coverage-auth-full coverage-ventas coverage-ventas-full coverage-canal precommit-strict fb-migrate-up fb-migrate-down fb-migrate-status fb-seed-admin fb-snapshot fb-snapshot-list fb-restore fb-snapshot-delete fb-emu-up fb-emu-down fb-emu-logs meilisearch-up meilisearch-down test-meilisearch
 
 # ── Config ───────────────────────────────────────────────────────────
 APP_NAME      := msp-api
 API_BIN       := bin/api
+WINBACK_BIN   := bin/winback
 
 GO            := go
 GOFLAGS       := -trimpath
@@ -12,7 +13,7 @@ LDFLAGS       := -s -w -X main.version=$(shell git rev-parse --short HEAD 2>/dev
 # internal/platform — not even another module's contracts. Verified by
 # `make check-sealed`; also enforced statically by depguard in .golangci.yml.
 # Adding a module here without its matching depguard rule leaves half the gate.
-SEALED_MODULES := asistencia garantias flota
+SEALED_MODULES := asistencia garantias flota canal
 
 # Load .env if present (FB_* and other vars consumed by Go binaries + targets).
 ifneq (,$(wildcard .env))
@@ -43,6 +44,10 @@ build-api: ## Build API server (current OS)
 build-windows: ## Cross-compile all binaries to Windows amd64 (.exe)
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o $(API_BIN).exe ./cmd/api
 	@echo "✔ Built Windows binaries in bin/"
+
+build-winback: ## Cross-compile the winback binary for the Linux VPS (canal, ADR 0009)
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o $(WINBACK_BIN) ./cmd/winback
+	@echo "✔ Built Linux winback binary in bin/"
 
 # ── Run ──────────────────────────────────────────────────────────────
 run: ## Run API server
@@ -311,6 +316,12 @@ coverage-ventas-full: ## Generate ventas coverage INCLUDING Firebird integration
 	$(GO) tool cover -func=coverage-ventas.out | tail -25
 	$(GO) tool cover -html=coverage-ventas.out -o coverage-ventas.html
 	@echo "✔ Full coverage report: coverage-ventas.html"
+
+coverage-canal: ## Generate per-package coverage report for the canal module (short mode)
+	$(GO) test ./internal/canal/... -count=1 -short -coverprofile=coverage-canal.out -covermode=atomic
+	$(GO) tool cover -func=coverage-canal.out | tail -20
+	$(GO) tool cover -html=coverage-canal.out -o coverage-canal.html
+	@echo "✔ Coverage report: coverage-canal.html"
 
 precommit-strict: ## Full local quality gate before opening a PR — equivalent to a CI run
 	@# Strip ambient env so unit tests start from a clean slate (same as a
