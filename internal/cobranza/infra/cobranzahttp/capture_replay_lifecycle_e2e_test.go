@@ -222,13 +222,19 @@ func a2ReleaseAfterRollback(ctx context.Context, q firebird.Querier, name string
 }
 
 // TestA2SavepointTxRunner_SinTransaccionDeAfuera_Rechaza is the control for
-// the guard in RunInTx: with no outer transaction the runner must refuse
-// instead of running the closure. Anything that got past that point would
-// write to the shared dev database in autocommit and the ROLLBACK TO could
-// land on another pooled connection and undo nothing.
+// the guard in RunInTx: with no outer transaction the runner must answer
+// firebird.ErrNoTx and must NOT run the closure.
 //
-// Needs no Firebird: the guard answers before any statement is issued, which
-// is why passing a nil *sql.DB here is safe and also proves it.
+// That — the error, and the closure never running — is all this test
+// measures. WHY the guard has to exist is a different claim and it is READ,
+// not measured here: GetQuerier falls back to the pool's *sql.DB when the
+// context carries no tx (transaction.go:145-150), so the closure's writes
+// would land in autocommit on the shared dev database. Measuring that would
+// mean committing to that database on purpose, which is exactly what the
+// guard is for.
+//
+// The nil *sql.DB is not decoration: it is safe only because the guard
+// answers before any statement is issued, so it pins that ordering too.
 func TestA2SavepointTxRunner_SinTransaccionDeAfuera_Rechaza(t *testing.T) {
 	t.Parallel()
 
@@ -585,7 +591,7 @@ func TestE2E_CobranzaPagoRechazadoPorMicrosip_SeCaptura(t *testing.T) {
 		// The pago must not survive the rejection. Counted by cargo, not by
 		// id: a row written under a different id would still be a pago this
 		// request created, and counting by the unique id could not see it.
-		assert.Equal(t, 0, a2CountPagosPorCargo(ctx, t, q, validCargo),
+		assert.Equal(t, 0, a2CountPagosByCargo(ctx, t, q, validCargo),
 			"el pago rechazado no puede quedar en MSP_PAGOS_RECIBIDOS")
 
 		// ...and it must be in custody, with its blob and its resumen.
@@ -669,7 +675,7 @@ func TestE2E_CobranzaPagoRechazado_ReplayDejaExactamenteUnaFila(t *testing.T) {
 		rec := doA2Request(t, h.root, http.MethodPost, "/v2/cobranza/pagos", body, ct)
 		require.GreaterOrEqual(t, rec.Code, http.StatusBadRequest,
 			"el rechazo debe propagar; body=%s", rec.Body.String())
-		require.Equal(t, 0, a2CountPagosPorCargo(ctx, t, q, validCargo),
+		require.Equal(t, 0, a2CountPagosByCargo(ctx, t, q, validCargo),
 			"tras el rechazo MSP_PAGOS_RECIBIDOS debe quedar sin la fila")
 
 		list, err := h.intents.List(ctx, failedintent.ListParams{UsuarioID: &cu.ID})
@@ -698,7 +704,7 @@ func TestE2E_CobranzaPagoRechazado_ReplayDejaExactamenteUnaFila(t *testing.T) {
 		assert.Equal(t, http.StatusOK, replay.ReplayHTTPStatus,
 			"el éxito sigue siendo 200, no 201")
 
-		assert.Equal(t, 1, a2CountPagosPorCargo(ctx, t, q, validCargo),
+		assert.Equal(t, 1, a2CountPagosByCargo(ctx, t, q, validCargo),
 			"el replay debe dejar exactamente una fila, ni cero ni dos")
 
 		var estado string
@@ -731,13 +737,13 @@ func doA2Request(t *testing.T, root http.Handler, method, target string, body *b
 	return rec
 }
 
-// a2CountPagosPorCargo returns the number of MSP_PAGOS_RECIBIDOS rows charged
+// a2CountPagosByCargo returns the number of MSP_PAGOS_RECIBIDOS rows charged
 // to a cargo. Unlike a2CountPagos it can actually see a SECOND row: the pago
 // id is a unique key, so counting by it can never return more than one and a
 // spurious row under a different id would be invisible. Every test seeds its
 // own cargo through GEN_ID(ID_DOCTOS), so this counts every row the test could
 // possibly have created.
-func a2CountPagosPorCargo(ctx context.Context, t *testing.T, q firebird.Querier, cargoID int) int {
+func a2CountPagosByCargo(ctx context.Context, t *testing.T, q firebird.Querier, cargoID int) int {
 	t.Helper()
 	var n int
 	require.NoError(t, q.QueryRowContext(ctx,

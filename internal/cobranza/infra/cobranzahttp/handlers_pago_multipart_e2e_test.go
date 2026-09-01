@@ -264,6 +264,12 @@ func TestE2E_CrearPagoConImagenes_IdempotentReplay(t *testing.T) {
 		writer := &recordingMicrosipWriter{
 			result: cobranzaoutbound.MicrosipPagoResult{DoctoCCID: 1, ImpteDoctoCCID: 2, Folio: "E2E-MP-002"},
 		}
+		// Same sleeping trap as in FullCycle: this TxManager sits under the
+		// test tx buildReadRouter splices in, so its RunInTx joins that
+		// transaction and hands the rollback to the outer owner. Harmless
+		// while the writer always accepts; useless for testing a rejection.
+		// Use a2SavepointTxRunner (capture_replay_lifecycle_e2e_test.go) for
+		// that.
 		txMgr := firebird.NewTxManager(pool.DB)
 
 		svc := cobranzaapp.NewService(
