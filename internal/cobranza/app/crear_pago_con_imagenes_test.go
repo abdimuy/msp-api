@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"testing"
 	"time"
 
@@ -233,7 +234,22 @@ func TestCrearPagoConImagenes_RollbackOnInsertPagoFails(t *testing.T) {
 // write landed (inside the rolled-back tx or in one of its own) asserts on it.
 // beforeTx, when set, runs before each closure with the 1-indexed transaction
 // number — the hook for simulating another caller committing in between.
+//
+// CONCURRENCY: mu serializes whole transactions, snapshot and restore
+// included. Two properties depend on that and neither is optional:
+//
+//   - txCount++ and the snapshot maps are plain fields. Under parallel
+//     callers they are a data race, and -race would fail the run.
+//   - a snapshot taken while ANOTHER transaction is mid-flight would, on
+//     rollback, restore that transaction's rows away too — a double that
+//     invents lost writes and then blames production for them.
+//
+// The cost is stated plainly: this runner does not model two transactions
+// interleaving. It models a database that runs them one at a time. Row-level
+// contention between overlapping transactions is only reachable against real
+// Firebird — see internal/cobranza/infra/ventfb/pagos_recibidos_concurrency_test.go.
 type snapshottingTxRunner struct {
+	mu       sync.Mutex
 	pagos    *fakePagosRecibidosRepo
 	imagenes *fakePagosImagenesRepo
 	txCount  int
@@ -250,6 +266,8 @@ func newSnapshottingTxRunner(p *fakePagosRecibidosRepo, i *fakePagosImagenesRepo
 func (r *snapshottingTxRunner) HasTx(context.Context) bool { return false }
 
 func (r *snapshottingTxRunner) RunInTx(ctx context.Context, fn func(context.Context) error) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.txCount++
 	if r.beforeTx != nil {
 		r.beforeTx(r.txCount)

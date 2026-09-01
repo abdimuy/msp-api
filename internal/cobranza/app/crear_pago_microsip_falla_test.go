@@ -364,9 +364,15 @@ func TestAplicarPago_WriterFalla_ElFalloSobreviveAlRollback(t *testing.T) {
 	require.NotNil(t, guardado.UltimoError(), "ULTIMO_ERROR must survive the rollback")
 	assert.Contains(t, *guardado.UltimoError(), "microsip_conexion_perdida")
 
-	// Step 6: proof of the mechanism — a second transaction was needed.
+	// Step 6: proof of the mechanism — a second transaction was needed, and
+	// each of the two took the row lock. Counting the transactions alone does
+	// not say the second one is safe: a second transaction that re-read
+	// WITHOUT the lock would pass every assertion above and still lose the
+	// race described in the next test.
 	assert.Equal(t, 2, runner.txCount,
 		"the failure record goes in its own transaction, not the one that rolls back")
+	assert.Equal(t, 2, repo.lockCnt,
+		"both transactions must take the row lock: the apply, and the failure record that follows it")
 }
 
 // ─── 6. the failure record must not resurrect an applied pago ───────────────
@@ -436,6 +442,17 @@ func TestAplicarPago_FalloNoRevierteUnPagoYaAplicado(t *testing.T) {
 		"an applied pago earns no failure record")
 	assert.Equal(t, 0, guardado.Intentos())
 	assert.Equal(t, 2, runner.txCount, "the failure path still opened its own tx")
+
+	// Step 6: the lock itself, not just its result. Everything above pins
+	// STATE — and a failure path that re-read the row without locking it
+	// would produce exactly the same state on this single-threaded fake,
+	// while losing the race against a real concurrent AplicarPagoForzar. The
+	// count is what makes the serialization claim in AplicarPago's doc
+	// comment ("EVERY write to the row happens under the row lock, including
+	// the failure record in step 4, which re-acquires it") an assertion
+	// instead of prose.
+	assert.Equal(t, 2, repo.lockCnt,
+		"the failure record must RE-TAKE the lock before re-reading, not read unlocked")
 }
 
 // aplicadoTwin returns a NEW aggregate carrying the same identity as p but

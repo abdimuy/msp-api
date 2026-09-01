@@ -306,6 +306,25 @@ func (r *concurrentSafePagosRecibidosRepo) Update(ctx context.Context, p *domain
 	return r.fakePagosRecibidosRepo.Update(ctx, p)
 }
 
+// LockByID must take the mutex too. It mutates lockCnt on the wrapped fake,
+// so leaving it promoted un-guarded would be a data race waiting for the
+// first parallel test that exercises the AplicarPago path.
+func (r *concurrentSafePagosRecibidosRepo) LockByID(ctx context.Context, id uuid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.fakePagosRecibidosRepo.LockByID(ctx, id)
+}
+
 func (r *concurrentSafePagosRecibidosRepo) count() int {
 	return int(r.n.Load())
+}
+
+// rowCount reports how many rows are actually in the map. It is NOT count():
+// count tallies successful Inserts and never decrements, so once a rollback
+// is in play — which is the whole point of the chaos tests — only rowCount
+// answers "what survived".
+func (r *concurrentSafePagosRecibidosRepo) rowCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.rows)
 }

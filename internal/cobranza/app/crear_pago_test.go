@@ -29,6 +29,12 @@ type fakePagosRecibidosRepo struct {
 	updateErr error // if set, Update returns this error always
 	listErr   error // if set, ListPendientes returns this error always
 	updateCnt int   // counts how many times Update has been called
+	// lockCnt counts LockByID calls. Without it a test can only pin the
+	// RESULT of the apply flow, never the pessimistic lock that produces it:
+	// an implementation that re-read the row WITHOUT taking the lock would
+	// satisfy every state assertion and still allow the lost update that
+	// resurrects an applied pago and charges the client twice.
+	lockCnt int
 }
 
 func newFakePagosRecibidosRepo() *fakePagosRecibidosRepo {
@@ -71,6 +77,7 @@ func (f *fakePagosRecibidosRepo) FindByID(_ context.Context, id uuid.UUID) (*dom
 }
 
 func (f *fakePagosRecibidosRepo) LockByID(_ context.Context, id uuid.UUID) error {
+	f.lockCnt++
 	if f.lockErr != nil {
 		return f.lockErr
 	}
@@ -146,7 +153,10 @@ func newAplicarSvc(
 	t *testing.T,
 	txRunner app.TxRunner,
 	pagosRecibidos *fakePagosRecibidosRepo,
-	writer *fakeMicrosipPagoWriter,
+	// writer is the port, not the concrete fake: the chaos tests need doubles
+	// that model things fakeMicrosipPagoWriter does not (a lock conflict, the
+	// shape of the context the writer is handed).
+	writer outbound.MicrosipPagoWriter,
 	now time.Time,
 ) *app.Service {
 	t.Helper()
