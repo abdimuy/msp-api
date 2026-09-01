@@ -1,4 +1,4 @@
-//nolint:misspell // Spanish domain vocabulary (pago, cobranza, censo) by project convention.
+//nolint:misspell // Spanish domain vocabulary (pago, cobranza) by project convention.
 package cobranzahttp_test
 
 import (
@@ -11,19 +11,20 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	cobranzaapp "github.com/abdimuy/msp-api/internal/cobranza/app"
 	"github.com/abdimuy/msp-api/internal/cobranza/domain"
-	"github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
 )
 
-// errMicrosipRechaza is what the Microsip writer double returns when it
+// errMicrosipRejected is what the Microsip writer double returns when it
 // refuses the pago. A plain error on purpose: it is what the port promises,
-// and mapAppError turns anything that is not an *apperror.Error into a 500.
-var errMicrosipRechaza = errors.New("microsip: DOCTO_CC rechazado por el servidor")
+// and it pins the status these tests expect — mapAppError turns anything that
+// is not an *apperror.Error into a 500 through its default branch
+// (auth.go:64). The contract under test is "not 2xx"; the exact code is
+// asserted so a change in that mapping is deliberate rather than silent.
+var errMicrosipRejected = errors.New("microsip: DOCTO_CC rechazado por el servidor")
 
 // ─── Rollback-modelling TxRunner ─────────────────────────────────────────────
 
@@ -44,13 +45,13 @@ type rollbackFakeTxRunner struct {
 }
 
 func (r rollbackFakeTxRunner) RunInTx(ctx context.Context, fn func(context.Context) error) error {
-	pagosAntes := maps.Clone(r.pagos.rows)
-	imagenesAntes := maps.Clone(r.imagenes.images)
-	porPagoAntes := maps.Clone(r.imagenes.byPago)
+	pagosBefore := maps.Clone(r.pagos.rows)
+	imagenesBefore := maps.Clone(r.imagenes.images)
+	byPagoBefore := maps.Clone(r.imagenes.byPago)
 	if err := fn(ctx); err != nil {
-		r.pagos.rows = pagosAntes
-		r.imagenes.images = imagenesAntes
-		r.imagenes.byPago = porPagoAntes
+		r.pagos.rows = pagosBefore
+		r.imagenes.images = imagenesBefore
+		r.imagenes.byPago = byPagoBefore
 		return err
 	}
 	return nil
@@ -64,57 +65,35 @@ var _ cobranzaapp.TxRunner = rollbackFakeTxRunner{}
 
 // ─── Census ──────────────────────────────────────────────────────────────────
 
-// censoFakes counts, store by store, everything a pago creation can write.
-// Named after the real tables so a failure message points at the row that
-// should not be there.
-type censoFakes struct {
+// fakeStoreCounts counts, store by store, everything a pago creation can
+// write. Named after the real tables so a failure message points at the row
+// that should not be there.
+type fakeStoreCounts struct {
 	pagosRecibidos int
 	pagosImagenes  int
 	blobs          int
 }
 
-func tomarCensoFakes(
+func snapshotFakeCounts(
 	pagos *fakePagosRecibidosRepo, imagenes *fakePagosImagenesRepo, store *fakeStorageProvider,
-) censoFakes {
-	return censoFakes{
+) fakeStoreCounts {
+	return fakeStoreCounts{
 		pagosRecibidos: len(pagos.rows),
 		pagosImagenes:  len(imagenes.images),
 		blobs:          len(store.objects),
 	}
 }
 
-// assertCensoFakesIgual compares two censuses store by store, naming the
+// assertFakeCountsUnchanged compares two censuses store by store, naming the
 // store in the failure message.
-func assertCensoFakesIgual(t *testing.T, antes, despues censoFakes) {
+func assertFakeCountsUnchanged(t *testing.T, before, after fakeStoreCounts) {
 	t.Helper()
-	assert.Equal(t, antes.pagosRecibidos, despues.pagosRecibidos,
-		"MSP_PAGOS_RECIBIDOS: antes=%d despues=%d", antes.pagosRecibidos, despues.pagosRecibidos)
-	assert.Equal(t, antes.pagosImagenes, despues.pagosImagenes,
-		"MSP_PAGOS_IMAGENES: antes=%d despues=%d", antes.pagosImagenes, despues.pagosImagenes)
-	assert.Equal(t, antes.blobs, despues.blobs,
-		"blobs en disco: antes=%d despues=%d", antes.blobs, despues.blobs)
-}
-
-// ─── Service wiring ──────────────────────────────────────────────────────────
-
-// rechazoSvc wires the same Service happyPathSvc builds, with two changes:
-// the Microsip writer rejects, and the TxRunner honours the rollback.
-func rechazoSvc(t *testing.T, now time.Time) (
-	*cobranzaapp.Service, *fakePagosRecibidosRepo, *fakePagosImagenesRepo, *fakeStorageProvider,
-) {
-	t.Helper()
-	saldos := newFakeSaldosRepoHTTP()
-	s := makeSaldoHTTP(5000, decimal.NewFromInt(2000))
-	saldos.byCargo[5000] = &s
-	pagosRepo := newFakePagosRecibidosRepo()
-	imagenes := newFakePagosImagenesRepo()
-	store := newFakeStorageProvider()
-	writer := &fakeMicrosipPagoWriter{err: errMicrosipRechaza}
-	svc := buildTestService(
-		now, saldos, pagosRepo, imagenes, writer, store, nil,
-		rollbackFakeTxRunner{pagos: pagosRepo, imagenes: imagenes},
-	)
-	return svc, pagosRepo, imagenes, store
+	assert.Equal(t, before.pagosRecibidos, after.pagosRecibidos,
+		"MSP_PAGOS_RECIBIDOS: antes=%d despues=%d", before.pagosRecibidos, after.pagosRecibidos)
+	assert.Equal(t, before.pagosImagenes, after.pagosImagenes,
+		"MSP_PAGOS_IMAGENES: antes=%d despues=%d", before.pagosImagenes, after.pagosImagenes)
+	assert.Equal(t, before.blobs, after.blobs,
+		"blobs en disco: antes=%d despues=%d", before.blobs, after.blobs)
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -132,9 +111,11 @@ func TestHTTP_CrearPago_MicrosipRechaza_SinImagenes_NoDevuelve2xx(t *testing.T) 
 	t.Parallel()
 
 	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
-	svc, pagosRepo, imagenes, store := rechazoSvc(t, now)
+	svc, pagosRepo, imagenes, store := buildPagoSvc(t, now, pagoSvcOpts{
+		writerErr: errMicrosipRejected, rollback: true,
+	})
 
-	antes := tomarCensoFakes(pagosRepo, imagenes, store)
+	before := snapshotFakeCounts(pagosRepo, imagenes, store)
 
 	pagoID := uuid.New()
 	datos := crearPagoDatosJSON(pagoID.String(), now.Add(-30*time.Minute).Format(time.RFC3339))
@@ -147,10 +128,9 @@ func TestHTTP_CrearPago_MicrosipRechaza_SinImagenes_NoDevuelve2xx(t *testing.T) 
 
 	require.GreaterOrEqual(t, rec.Code, http.StatusBadRequest,
 		"un rechazo de Microsip no puede contestar 2xx; body=%s", rec.Body.String())
-	assert.Equal(t, http.StatusInternalServerError, rec.Code,
-		"un error liso del escritor cae en la rama por defecto de mapAppError")
+	assert.Equal(t, http.StatusInternalServerError, rec.Code, "ver errMicrosipRejected")
 
-	assertCensoFakesIgual(t, antes, tomarCensoFakes(pagosRepo, imagenes, store))
+	assertFakeCountsUnchanged(t, before, snapshotFakeCounts(pagosRepo, imagenes, store))
 	assert.Empty(t, pagosRepo.rows, "el pago rechazado no puede sobrevivir en MSP_PAGOS_RECIBIDOS")
 
 	_, err := pagosRepo.FindByID(context.Background(), pagoID)
@@ -167,9 +147,11 @@ func TestHTTP_CrearPago_MicrosipRechaza_ConImagenes_NoDevuelve2xx(t *testing.T) 
 	t.Parallel()
 
 	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
-	svc, pagosRepo, imagenes, store := rechazoSvc(t, now)
+	svc, pagosRepo, imagenes, store := buildPagoSvc(t, now, pagoSvcOpts{
+		writerErr: errMicrosipRejected, rollback: true,
+	})
 
-	antes := tomarCensoFakes(pagosRepo, imagenes, store)
+	before := snapshotFakeCounts(pagosRepo, imagenes, store)
 
 	pagoID := uuid.New()
 	datos := crearPagoDatosJSON(pagoID.String(), now.Add(-30*time.Minute).Format(time.RFC3339))
@@ -185,36 +167,27 @@ func TestHTTP_CrearPago_MicrosipRechaza_ConImagenes_NoDevuelve2xx(t *testing.T) 
 
 	require.GreaterOrEqual(t, rec.Code, http.StatusBadRequest,
 		"un rechazo de Microsip no puede contestar 2xx; body=%s", rec.Body.String())
+	assert.Equal(t, http.StatusInternalServerError, rec.Code, "ver errMicrosipRejected")
 
-	assertCensoFakesIgual(t, antes, tomarCensoFakes(pagosRepo, imagenes, store))
+	assertFakeCountsUnchanged(t, before, snapshotFakeCounts(pagosRepo, imagenes, store))
 	assert.Empty(t, pagosRepo.rows, "el pago rechazado no puede sobrevivir en MSP_PAGOS_RECIBIDOS")
 	assert.Empty(t, imagenes.images, "sin pago no puede quedar ninguna imagen")
 	assert.Equal(t, 2, store.storeCalls, "los dos blobs se escriben antes de abrir la transacción")
 	assert.Equal(t, 2, store.deleteCalls, "y los dos se borran al deshacerse la creación")
 }
 
-// TestHTTP_CrearPago_MicrosipAcepta_Sigue200 is the control for the two
-// above: with the very same wiring and a writer that accepts, the endpoint
-// still answers 200 (not 201 — routes.go pins DefaultStatus to OK) and the
-// pago lands applied. Without it, a change that made CrearPago fail for any
-// reason would leave the rejection tests green.
-func TestHTTP_CrearPago_MicrosipAcepta_Sigue200(t *testing.T) {
+// TestHTTP_CrearPago_MicrosipAcepta_ConRollbackRunner_Sigue200 is the control
+// for the two above. It is NOT a second copy of
+// TestHTTP_CrearPago_Multipart_HappyPath_SinImagenes: what it adds is that
+// rollbackFakeTxRunner — the double those two depend on — does not undo a
+// creation that SUCCEEDED, and that the pago lands applied rather than
+// pending. Without it, a runner that restored its snapshot unconditionally
+// would leave both rejection tests green while quietly proving nothing.
+func TestHTTP_CrearPago_MicrosipAcepta_ConRollbackRunner_Sigue200(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
-	saldos := newFakeSaldosRepoHTTP()
-	s := makeSaldoHTTP(5000, decimal.NewFromInt(2000))
-	saldos.byCargo[5000] = &s
-	pagosRepo := newFakePagosRecibidosRepo()
-	imagenes := newFakePagosImagenesRepo()
-	store := newFakeStorageProvider()
-	writer := &fakeMicrosipPagoWriter{
-		result: outbound.MicrosipPagoResult{DoctoCCID: 1, ImpteDoctoCCID: 2, Folio: "Z001"},
-	}
-	svc := buildTestService(
-		now, saldos, pagosRepo, imagenes, writer, store, nil,
-		rollbackFakeTxRunner{pagos: pagosRepo, imagenes: imagenes},
-	)
+	svc, pagosRepo, _, _ := buildPagoSvc(t, now, pagoSvcOpts{rollback: true})
 
 	pagoID := uuid.New()
 	datos := crearPagoDatosJSON(pagoID.String(), now.Add(-30*time.Minute).Format(time.RFC3339))
@@ -226,7 +199,7 @@ func TestHTTP_CrearPago_MicrosipAcepta_Sigue200(t *testing.T) {
 	mountReadWithUser(pagoUser(), svc).ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code, "el éxito sigue siendo 200; body=%s", rec.Body.String())
-	require.Len(t, pagosRepo.rows, 1)
+	require.Len(t, pagosRepo.rows, 1, "el runner no puede deshacer una creación exitosa")
 
 	stored, err := pagosRepo.FindByID(context.Background(), pagoID)
 	require.NoError(t, err)

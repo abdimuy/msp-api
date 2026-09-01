@@ -224,6 +224,16 @@ func TestE2E_CrearPagoConImagenes_FullCycle(t *testing.T) {
 		// longer a post-commit best-effort call: it is the last step of the
 		// transaction, and its rejection would have rolled everything above
 		// back instead of leaving these rows behind a 200.
+		//
+		// Careful before reusing THIS harness to test a rejection: the
+		// firebird.NewTxManager above sits under the test tx that
+		// buildReadRouter splices in, so its RunInTx joins that transaction
+		// and hands the rollback to the outer owner — the rejected row would
+		// survive to the end of the test and the assertion would lie. The
+		// trap is asleep here only because this writer always accepts. A
+		// rejection needs a2SavepointTxRunner
+		// (capture_replay_lifecycle_e2e_test.go), which supplies the missing
+		// boundary.
 		assert.Equal(t, 1, writer.calls(), "el escritor de Microsip debe correr exactamente una vez")
 	})
 }

@@ -469,9 +469,21 @@ func humaErrorCode(t *testing.T, body *bytes.Buffer) string {
 
 // ─── CrearPago (multipart) ───────────────────────────────────────────────────
 
-// happyPathSvc wires the standard happy-path Service for CrearPago: saldo 2000
-// in cargo 5000, working microsip writer, in-memory repos + storage.
-func happyPathSvc(t *testing.T, now time.Time) (
+// pagoSvcOpts tunes the Service buildPagoSvc assembles. The zero value is the
+// happy path.
+type pagoSvcOpts struct {
+	// writerErr, when non-nil, makes the Microsip writer reject the pago.
+	writerErr error
+	// rollback swaps the pass-through TxRunner for one that undoes what the
+	// closure wrote when it fails. Required by any test that asserts what a
+	// failed creation left behind — see rollbackFakeTxRunner.
+	rollback bool
+}
+
+// buildPagoSvc wires the standard Service for CrearPago: saldo 2000 in cargo
+// 5000, in-memory repos + storage, and a Microsip writer that accepts unless
+// opts says otherwise.
+func buildPagoSvc(t *testing.T, now time.Time, opts pagoSvcOpts) (
 	*cobranzaapp.Service, *fakePagosRecibidosRepo, *fakePagosImagenesRepo, *fakeStorageProvider,
 ) {
 	t.Helper()
@@ -483,9 +495,25 @@ func happyPathSvc(t *testing.T, now time.Time) (
 	store := newFakeStorageProvider()
 	writer := &fakeMicrosipPagoWriter{
 		result: outbound.MicrosipPagoResult{DoctoCCID: 1, ImpteDoctoCCID: 2, Folio: "Z001"},
+		err:    opts.writerErr,
 	}
-	svc := buildTestService(now, saldos, pagosRepo, imagenes, writer, store, nil, fakeTxRunner{})
+
+	var txRunner cobranzaapp.TxRunner = fakeTxRunner{}
+	if opts.rollback {
+		txRunner = rollbackFakeTxRunner{pagos: pagosRepo, imagenes: imagenes}
+	}
+
+	svc := buildTestService(now, saldos, pagosRepo, imagenes, writer, store, nil, txRunner)
 	return svc, pagosRepo, imagenes, store
+}
+
+// happyPathSvc is buildPagoSvc with every option at its zero value: the
+// writer accepts and the TxRunner runs fn straight through.
+func happyPathSvc(t *testing.T, now time.Time) (
+	*cobranzaapp.Service, *fakePagosRecibidosRepo, *fakePagosImagenesRepo, *fakeStorageProvider,
+) {
+	t.Helper()
+	return buildPagoSvc(t, now, pagoSvcOpts{})
 }
 
 func TestHTTP_CrearPago_Multipart_HappyPath_SinImagenes(t *testing.T) {

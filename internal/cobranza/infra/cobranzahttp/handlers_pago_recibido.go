@@ -19,13 +19,18 @@ import (
 //
 // Accepts a multipart/form-data body that carries both the pago JSON
 // (`datos` field) and zero or more comprobantes (`imagen` repeated). Server
-// persists pago + imagenes atómicamente inside one Firebird tx via
+// persists pago + imagenes atomically inside one Firebird tx via
 // [cobranzaapp.Service.CrearPagoConImagenes]; any failure rolls back the
 // whole write and best-effort-cleans the blobs already on disk.
 //
-// After the atomic write commits, the legacy best-effort fast-path
-// AplicarPago runs unchanged — if the Microsip writer fails the pago stays
-// ESTADO='P' for the retry worker and the HTTP response still returns 201.
+// The Microsip write is the LAST step of that same transaction, not a
+// best-effort call after the commit. A rejection propagates: the transaction
+// rolls back, no row survives in MSP_PAGOS_RECIBIDOS, and the response is a
+// 5xx the capture middleware turns into a failed_intent a human can correct
+// and re-dispatch. A pago that Microsip refused must never be answered with
+// a success — an invisible ESTADO='P' row behind a 2xx is what makes a
+// cobrador charge a client who already paid. Success answers 200 (the
+// operation inherits DefaultStatus from op(); see routes.go).
 //
 // Idempotency: the client-generated UUID in `datos.id` is the idempotency
 // key end-to-end. A second request with the same UUID returns the existing
