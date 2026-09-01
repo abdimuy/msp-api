@@ -104,7 +104,13 @@ func (w *PagoRetryWorker) Start(ctx context.Context) error {
 	if w.running {
 		return nil
 	}
-	loopCtx, cancel := context.WithCancel(ctx)
+	// fx cancels the OnStart ctx (and applies its StartTimeout deadline) once
+	// the start phase completes, so the loop must NOT inherit either or its
+	// drain ticks would die with "context deadline exceeded" right after the
+	// immediate cold-start tick. Keep ctx's values (trace/log) but drop fx's
+	// cancellation+deadline; Stop() cancels loopCtx explicitly for clean
+	// shutdown.
+	loopCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	w.cancel = cancel
 	w.done = make(chan struct{})
 	w.running = true
