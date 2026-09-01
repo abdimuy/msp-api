@@ -3,6 +3,7 @@ package ventfb_test
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"sync"
 	"testing"
@@ -12,7 +13,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	cobranzaapp "github.com/abdimuy/msp-api/internal/cobranza/app"
 	cobranzaventfb "github.com/abdimuy/msp-api/internal/cobranza/infra/ventfb"
+	cobranzaoutbound "github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/apperror"
 	"github.com/abdimuy/msp-api/internal/platform/fbtestutil"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
@@ -27,18 +30,26 @@ import (
 // firebird_lock_conflict; the blocked statement waits until the server's
 // statement timeout cuts it, and that maps to firebird_timeout.
 //
-// EL LADO BLOQUEADO LO ABRE PRODUCCIÓN, NO LA PRUEBA. That is the whole point
-// of the harness below and it is worth stating because the obvious shortcut
-// is wrong: opening the blocked transaction with
-// conn.BeginTx(&sql.TxOptions{Isolation: sql.LevelReadCommitted}) would
-// RE-STATE the isolation flavor firebird.RunInTx picks
-// (transaction.go:68) instead of READING it. Measured: with that shortcut in
-// place, patching firebird.RunInTx to LevelReadCommittedNoWait — the exact
-// change this file's conclusion depends on NOT having happened — left the
-// test passing while the real path would have returned
-// firebird_lock_conflict immediately. So the blocked side runs on
-// firebird.TxManager.RunInTx, the same call CrearPagoConImagenes and
-// AplicarPago make.
+// EL LADO BLOQUEADO LO ABRE PRODUCCIÓN, NO LA PRUEBA — Y POR EL SERVICIO.
+// This has been walked back twice, so the reasoning is written down.
+//
+// First shortcut, wrong: opening the blocked transaction with
+// conn.BeginTx(&sql.TxOptions{Isolation: sql.LevelReadCommitted}) RE-STATES
+// the isolation flavor firebird.RunInTx picks (transaction.go:67) instead of
+// READING it. Measured: with that shortcut, patching firebird.RunInTx to
+// LevelReadCommittedNoWait left the test passing while the real path would
+// have returned firebird_lock_conflict immediately.
+//
+// Second shortcut, also wrong, one level down: calling
+// firebird.TxManager.RunInTx directly reads that function's isolation, but
+// NOT the call site. Somebody could move CrearPagoConImagenes or AplicarPago
+// onto a no-wait runner with firebird.RunInTx untouched and this test would
+// stay green — and that is not hypothetical, since §4.3 of this plan's report
+// recommends considering exactly that change.
+//
+// So the blocked side calls cobranza's Service.AplicarPago, whose first act
+// inside its transaction is LockByID. Both the isolation flavor AND the call
+// site are read from production.
 //
 // WHY THE CEILING GOES ON A PRIVATE ONE-CONNECTION POOL. Setting
 // cfg.StatementTimeout does NOT work: firebird.registerOtelDriver wraps its
@@ -56,6 +67,24 @@ import (
 // limited to ONE connection, which is therefore the connection every
 // production call on that pool receives. The pool is closed at cleanup, so
 // nothing survives the test — in particular the shared pool is never touched.
+//
+// The one-connection trick holds for a reason stronger than pool arithmetic:
+// cancelProofConn implements neither driver.SessionResetter nor
+// driver.Validator (driverwrap.go:150-158 lists Conn, ConnPrepareContext,
+// ConnBeginTx, ExecerContext, QueryerContext and Pinger, and nothing else),
+// so database/sql has no proactive way to reset or discard that connection
+// between uses. The attachment — and with it the ceiling — survives.
+//
+// What CAN still replace it is driver.ErrBadConn, which firebirdsql returns
+// from three places (wireprotocol.go:227, connection.go:83,
+// driver_go18.go:95). A replacement connection is opened by
+// cancelProofDriver.Open, which applies the PROCESS-WIDE ceiling
+// (driverwrap.go:98-127) — ten minutes, since .env sets no
+// FB_STATEMENT_TIMEOUT — not this test's two seconds. That is why every
+// blocking call below runs under conPresupuesto: without it the test would
+// hang past `go test`'s own ten-minute default, die by panic, run no
+// t.Cleanup at all, and strand committed rows in the shared DB. That exact
+// incident already happened once during this plan.
 
 const (
 	// bloqueoStatementTimeout is the server-side ceiling for the blocked
@@ -106,6 +135,28 @@ func setStatementTimeout(d time.Duration) string {
 	return "SET STATEMENT TIMEOUT " + strconv.FormatInt(seconds, 10) + " SECOND"
 }
 
+// conPresupuesto runs fn on its own goroutine and fails the test if it has
+// not returned within presupuesto.
+//
+// Every blocking call in this file goes through it, not just the one being
+// measured. The reason is in the header: a connection replaced via
+// driver.ErrBadConn comes back with the process-wide ten-minute ceiling
+// instead of this test's two seconds, and an unguarded call would then
+// outlive `go test`'s own default timeout — which kills the process without
+// running a single t.Cleanup and leaves committed rows in the shared DB.
+func conPresupuesto(t *testing.T, presupuesto time.Duration, mensaje string, fn func() error) error {
+	t.Helper()
+	hecho := make(chan error, 1)
+	go func() { hecho <- fn() }()
+	select {
+	case err := <-hecho:
+		return err
+	case <-time.After(presupuesto):
+		t.Fatal(mensaje)
+		return nil
+	}
+}
+
 // TestE2E_ContencionDeFila_LaEsperaSeCortaComoTimeoutNoComoConflicto is the
 // measurement this plan was missing.
 //
@@ -124,11 +175,12 @@ func setStatementTimeout(d time.Duration) string {
 // WHAT THIS DETECTS:
 //   - the blocked path hanging with no ceiling at all;
 //   - the cut arriving unclassified;
-//   - the write path being moved to RunInTxNoWait (or firebird.RunInTx's
-//     isolation being changed underneath it): the blocked call would return
-//     firebird_lock_conflict at once and step 3 would fail. This is READ from
-//     production — the transaction is opened by firebird.TxManager.RunInTx,
-//     never by the test;
+//   - the cobranza write path losing its WAIT semantics, by either route:
+//     firebird.RunInTx's isolation changed underneath it, OR AplicarPago
+//     moved onto a no-wait runner. Both make the blocked call return
+//     firebird_lock_conflict at once and fail step 3. Both are READ from
+//     production: the transaction is opened by Service.AplicarPago, never by
+//     the test;
 //   - the connection not coming back after the cut. That is the one that
 //     matters operationally: a stuck connection is a pool slot gone for good.
 //
@@ -151,7 +203,21 @@ func TestE2E_ContencionDeFila_LaEsperaSeCortaComoTimeoutNoComoConflicto(t *testi
 	h := newConcurrencyHarness(t)
 	pool := poolDeUnaConexionConTechoCorto(t)
 	repoBloqueado := cobranzaventfb.NewPagosRecibidosRepo(pool)
-	txBloqueado := firebird.NewTxManager(pool.DB)
+
+	// The blocked side is the real cobranza Service on the ceiling-carrying
+	// pool. AplicarPago's first act inside its transaction is LockByID, so
+	// the block happens there — and the writer is never reached, which the
+	// assertion at the end proves.
+	writer := &recordingFakeWriter{}
+	svcBloqueado := cobranzaapp.NewService(
+		nil, nil, nil, // saldos/pagos/ventas — AplicarPago needs none of them
+		cobranzaoutbound.ProductionClock{},
+		repoBloqueado, // PagosRecibidosRepo
+		repoBloqueado, // PagosImagenesRepo — same struct satisfies both
+		writer,
+		nil, nil, // storage, imageProc — unused
+		firebird.NewTxManager(pool.DB),
+	)
 
 	// ── 1. Control positivo, por el mismo camino de producción ───────────
 	// Without this, "the statement was cut" and "the ceiling was never
@@ -161,10 +227,16 @@ func TestE2E_ContencionDeFila_LaEsperaSeCortaComoTimeoutNoComoConflicto(t *testi
 	// on the connection production code will be handed.
 	inicioLenta := time.Now()
 	var total int
-	errLenta := firebird.RunInReadTx(context.Background(), pool.DB, func(ctx context.Context) error {
-		return firebird.GetQuerier(ctx, pool.DB).
-			QueryRowContext(ctx, slowReadOnlyQueryBloqueo).Scan(&total)
-	})
+	errLenta := conPresupuesto(t, bloqueoPresupuesto,
+		"el control positivo no devolvió a tiempo: la conexión no lleva el techo corto "+
+			"(probablemente fue reemplazada vía driver.ErrBadConn y trae el del proceso), "+
+			"así que nada de lo que sigue se puede interpretar",
+		func() error {
+			return firebird.RunInReadTx(context.Background(), pool.DB, func(ctx context.Context) error {
+				return firebird.GetQuerier(ctx, pool.DB).
+					QueryRowContext(ctx, slowReadOnlyQueryBloqueo).Scan(&total)
+			})
+		})
 	esperaLenta := time.Since(inicioLenta)
 
 	require.Error(t, errLenta, "the slow query must be cut by the ceiling")
@@ -205,26 +277,18 @@ func TestE2E_ContencionDeFila_LaEsperaSeCortaComoTimeoutNoComoConflicto(t *testi
 	<-tomado
 
 	// ── 3. La medición: el camino real de cobranza, bloqueado ────────────
-	// firebird.TxManager.RunInTx is the same call CrearPagoConImagenes and
-	// AplicarPago make, so the isolation flavor under test is production's
-	// choice, not a re-statement of it by the test.
-	bloqueado := make(chan error, 1)
+	// Service.AplicarPago, not a transaction the test opened: the isolation
+	// flavor AND the call site are production's choice.
 	inicio := time.Now()
-	go func() {
-		bloqueado <- txBloqueado.RunInTx(context.Background(), func(ctx context.Context) error {
-			return repoBloqueado.LockByID(ctx, pagoID)
+	errBloqueado := conPresupuesto(t, bloqueoPresupuesto,
+		fmt.Sprintf("AplicarPago stayed blocked for %s with a %s ceiling in force: the "+
+			"server is NOT cutting lock waits, so a pago blocked by Cxc.exe would hold "+
+			"its pool connection with no bound at all. Rewrite this test's conclusion "+
+			"with that measurement", bloqueoPresupuesto, bloqueoStatementTimeout),
+		func() error {
+			_, err := svcBloqueado.AplicarPago(context.Background(), pagoID, uuid.Nil)
+			return err
 		})
-	}()
-
-	var errBloqueado error
-	select {
-	case errBloqueado = <-bloqueado:
-	case <-time.After(bloqueoPresupuesto):
-		t.Fatalf("LockByID stayed blocked for %s with a %s ceiling in force: the server is "+
-			"NOT cutting lock waits, so a pago blocked by Cxc.exe would hold its pool "+
-			"connection with no bound at all. Rewrite this test's conclusion with that "+
-			"measurement", bloqueoPresupuesto, bloqueoStatementTimeout)
-	}
 	transcurrido := time.Since(inicio)
 	liberar()
 	require.NoError(t, <-holderErr, "the lock holder must be able to commit")
@@ -246,11 +310,30 @@ func TestE2E_ContencionDeFila_LaEsperaSeCortaComoTimeoutNoComoConflicto(t *testi
 	assert.Equal(t, apperror.KindServiceUnavailable, ae.Kind,
 		"a blocked pago surfaces as 503, indistinguishable from a database that is down")
 
-	// ── 4. La conexión vuelve ────────────────────────────────────────────
+	// ── 4. La ranura del pool no se perdió ───────────────────────────────
+	// Stated precisely, because the previous wording claimed more than this
+	// measures: sql.DBStats exposes no counter of physical opens, so this is
+	// NOT proof that the same connection was reused. What it proves is that
+	// the cut statement gave its slot back — and with MaxOpenConns(1) that is
+	// still worth proving, since a lost slot leaves the pool with none and
+	// shows up as the budget below expiring rather than as a failed
+	// assertion.
 	assert.Equal(t, 0, pool.Stats().InUse,
-		"the cut statement must return its connection: %+v", pool.Stats())
+		"the cut statement must return its pool slot: %+v", pool.Stats())
 
-	require.NoError(t, txBloqueado.RunInTx(context.Background(), func(ctx context.Context) error {
-		return repoBloqueado.LockByID(ctx, pagoID)
-	}), "with the holder gone the same row must lock without trouble on the same connection")
+	require.NoError(t, conPresupuesto(t, bloqueoPresupuesto,
+		"the pool never served again after the cut: its only slot was not given back",
+		func() error {
+			return firebird.RunInTx(context.Background(), pool.DB, func(ctx context.Context) error {
+				return repoBloqueado.LockByID(ctx, pagoID)
+			})
+		}), "with the holder gone the same row must lock without trouble")
+
+	// The writer was never reached: the block happened at the lock, which is
+	// what makes this a contention measurement and not a Microsip one.
+	writer.mu.Lock()
+	llamadasWriter := writer.callCount
+	writer.mu.Unlock()
+	assert.Equal(t, 0, llamadasWriter,
+		"AplicarPago must have died at LockByID, before touching Microsip")
 }
