@@ -4,9 +4,11 @@
 //
 // Flow:
 //
-//  1. CaptureMiddleware sits inside the authentication + idempotency group,
-//     so it only sees requests with a planted CurrentUser and a request body
-//     that was not rejected at the auth boundary.
+//  1. CaptureMiddleware is mounted twice per captured module: inside the
+//     authentication + idempotency group, where it sees the planted
+//     CurrentUser, and outside it, narrowed via Config.CaptureStatuses to the
+//     401 the auth boundary answers on its own — the one failure the inside
+//     instance can never observe.
 //  2. For requests on the configured method+path-prefix set, the middleware
 //     buffers up to BodyCapBytes of the request body (then restores it for
 //     the downstream handler) and wraps the ResponseWriter so it can
@@ -30,8 +32,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -399,6 +403,30 @@ type Config struct {
 	// Methods lists HTTP methods that opt-in to capture.
 	// Defaults to {POST, PATCH, PUT}.
 	Methods []string
+	// CaptureStatuses restricts this instance to the listed response status
+	// codes. The zero value (nil) captures every response >= 400, which is
+	// the historical behavior and what the in-chain instances use.
+	//
+	// It exists for an instance mounted OUTSIDE the authentication chain,
+	// which owns the one status the in-chain instance can never observe: the
+	// 401 that authn answers before the request ever reaches it. Splitting
+	// the statuses between the two instances is what keeps one request from
+	// producing two rows.
+	//
+	// Setting it also makes this instance a narrow outside observer, with
+	// two deliberate consequences:
+	//
+	//   - Multipart bodies are NOT streamed to blob storage while the
+	//     handler runs. An instance that captures almost nothing must not
+	//     write (and then delete) a copy of every upload that succeeds. The
+	//     body is read AFTER the response instead, which works precisely
+	//     because the rejection this instance exists for answers without
+	//     reading it. When something downstream did read it, the body cannot
+	//     be reconstructed and the row is persisted truncated.
+	//   - Closing a pending intent whose work just landed (cerrarPorExito)
+	//     is left to the in-chain instance, which sees every authenticated
+	//     request anyway. Doing it here would only repeat the query.
+	CaptureStatuses []int
 	// BodyCapBytes is the maximum captured request body. Defaults to
 	// DefaultBodyCapBytes (256 KiB).
 	BodyCapBytes int64
@@ -450,8 +478,11 @@ func (c *Config) defaults() {
 // captured Intent best-effort: a Store.Save failure is logged but never
 // propagated.
 //
-// CaptureMiddleware must run INSIDE the auth chain so it sees the planted
-// CurrentUser; requests that fail auth never reach this middleware by design.
+// The instance that owns UsuarioID must run INSIDE the auth chain so it sees
+// the planted CurrentUser — a captured intent without it cannot be replayed as
+// the original requester. That placement is also why a request rejected AT the
+// auth boundary never reaches it: covering those takes a second instance
+// mounted outside the chain and narrowed with CaptureStatuses.
 func CaptureMiddleware(cfg Config) func(http.Handler) http.Handler {
 	cfg.defaults()
 	return func(next http.Handler) http.Handler {
@@ -471,10 +502,54 @@ func handle(cfg Config, next http.Handler, w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if cfg.Blob != nil && isMultipart(r) {
+		if statusFiltered(cfg) {
+			handleMultipartDeferred(cfg, next, w, r)
+			return
+		}
 		handleMultipart(cfg, next, w, r)
 		return
 	}
 	handleJSON(cfg, next, w, r)
+}
+
+// statusFiltered reports whether cfg restricts capture to a fixed set of
+// status codes — that is, whether this is the narrow instance mounted outside
+// the auth chain rather than the in-chain one.
+func statusFiltered(cfg Config) bool {
+	return len(cfg.CaptureStatuses) > 0
+}
+
+// shouldPersist decides, once the response is known, whether THIS instance
+// owns the evidence for it. shouldCapture is its counterpart before the
+// request runs, when only method, path and content-type are known.
+func shouldPersist(cfg Config, cw *captureWriter) bool {
+	if cw.status < http.StatusBadRequest {
+		return false
+	}
+	if isIdempotentReplay(cw) {
+		// Cached response from idempotency — the underlying intent was
+		// already captured on the original call. Skipping avoids duplicate
+		// rows on every retry.
+		return false
+	}
+	if custodyClaimed(cw) {
+		// Another capture instance further in already saved this response
+		// and stamped the confirmation on the shared header map. It knows
+		// more than we do (it ran inside the auth chain, so its row carries
+		// the requester), and a second row would be the same evidence twice.
+		return false
+	}
+	if statusFiltered(cfg) && !slices.Contains(cfg.CaptureStatuses, cw.status) {
+		return false
+	}
+	return true
+}
+
+// custodyClaimed reports whether a downstream capture instance already took
+// custody of this response. The nested captureWriters share one header map, so
+// the confirmation an inner instance stamped is visible to the outer one.
+func custodyClaimed(cw *captureWriter) bool {
+	return cw.Header().Get(HeaderIntentCaptured) != ""
 }
 
 // handleJSON is the original capture path: buffer up to BodyCapBytes, run the
@@ -499,15 +574,11 @@ func handleJSON(cfg Config, next http.Handler, w http.ResponseWriter, r *http.Re
 	cw := newCaptureWriter(w)
 	next.ServeHTTP(cw, r)
 
-	if cw.status < http.StatusBadRequest {
-		cerrarPorExito(r, cfg, cw)
-		cw.flushDeferred("")
-		return
-	}
-	if isIdempotentReplay(cw) {
-		// Cached response from idempotency — the underlying intent was
-		// already captured on the original call. Skipping avoids duplicate
-		// rows on every retry. No Save ran now, so no custody is claimed now.
+	if !shouldPersist(cfg, cw) {
+		// No Save runs now, so no custody is claimed now.
+		if cw.status < http.StatusBadRequest && !statusFiltered(cfg) {
+			cerrarPorExito(r, cfg, cw)
+		}
 		cw.flushDeferred("")
 		return
 	}
@@ -539,8 +610,20 @@ func aplicarResumen(ctx context.Context, cfg Config, intent *Intent) {
 
 // confirmationFor persists the intent and returns the value for
 // HeaderIntentCaptured — the Intent UUID when it is in custody, "" otherwise.
+//
+// A narrowed instance saves but never confirms. Its rows carry no UsuarioID —
+// a request rejected at the auth boundary has no requester to record — and the
+// admin screen refuses to re-dispatch an intent without one
+// (failedintent/http/handlers.go:397, "intent_has_no_usuario"). The phone reads
+// this header as "the server has it, stop retrying", so confirming here would
+// trade a retry that can still succeed after the session is renewed for a row
+// nobody is able to replay. The row is still written: the office can see the
+// pago that never landed, which is the whole point.
 func confirmationFor(ctx context.Context, cfg Config, intent Intent) string {
 	if !saveIntent(ctx, cfg, intent) {
+		return ""
+	}
+	if statusFiltered(cfg) {
 		return ""
 	}
 	return intent.ID.String()
@@ -589,15 +672,17 @@ func handleMultipart(cfg Config, next http.Handler, w http.ResponseWriter, r *ht
 
 	saveResult := <-saveDone
 
-	// 2xx/3xx or idempotency cache replay: best-effort cleanup of the blob;
-	// the request either succeeded or was already captured on the original
-	// call, so there is no audit row to anchor the blob to.
-	if cw.status < http.StatusBadRequest || isIdempotentReplay(cw) {
+	// Nothing to persist here: best-effort cleanup of the blob, because the
+	// request either succeeded or its evidence belongs to somebody else, and
+	// either way there is no audit row to anchor the blob to.
+	if !shouldPersist(cfg, cw) {
 		if saveResult.err == nil && saveResult.path != "" {
 			//nolint:contextcheck // detached so a client disconnect does not abort cleanup.
 			_ = cfg.Blob.Delete(saveCtx, saveResult.path)
 		}
-		cerrarPorExito(r, cfg, cw)
+		if cw.status < http.StatusBadRequest && !statusFiltered(cfg) {
+			cerrarPorExito(r, cfg, cw)
+		}
 		cw.flushDeferred("")
 		return
 	}
@@ -613,6 +698,108 @@ func handleMultipart(cfg Config, next http.Handler, w http.ResponseWriter, r *ht
 	//nolint:contextcheck // saveCtx ya está desacoplado de r.Context().
 	aplicarResumen(saveCtx, cfg, &intent)
 	cw.flushDeferred(confirmationFor(r.Context(), cfg, intent))
+}
+
+// handleMultipartDeferred is the multipart path of a status-filtered
+// instance — the one mounted OUTSIDE the auth chain (see Config.CaptureStatuses).
+//
+// It does not tee the body into blob storage while the handler runs, the way
+// handleMultipart does. Teeing here would write, and immediately delete, a
+// full copy of every upload that goes on to succeed: on the pago path that is
+// megabytes of receipt photos per payment, paid on every payment, by an
+// instance whose whole point is that it almost never captures.
+//
+// The body is read afterwards instead, once the response says it is worth
+// reading. That is sound for exactly the rejection this instance exists for —
+// a 401 is answered before anyone parses the body — and the read counter is
+// what proves it: if anything downstream consumed even one byte, what remains
+// is no longer the request that was sent, so the row is persisted without a
+// body rather than with a fragment that looks whole.
+func handleMultipartDeferred(cfg Config, next http.Handler, w http.ResponseWriter, r *http.Request) {
+	intentID := cfg.NewID()
+	contentType := r.Header.Get("Content-Type")
+
+	source := r.Body
+	if source == nil {
+		source = http.NoBody
+	}
+	body := &countingReadCloser{ReadCloser: source}
+	r.Body = body
+
+	cw := newCaptureWriter(w)
+	next.ServeHTTP(cw, r)
+
+	if !shouldPersist(cfg, cw) {
+		cw.flushDeferred("")
+		return
+	}
+
+	// Detached from r.Context(), like handleMultipart: a phone that hung up
+	// must still leave its evidence.
+	saveCtx := context.WithoutCancel(r.Context())
+	//nolint:contextcheck // saveCtx is already detached from r.Context().
+	saveResult := saveUnreadBody(saveCtx, cfg, intentID, body)
+
+	intent := buildMultipartIntent(cfg, r, intentID, contentType, saveResult, cw)
+	//nolint:contextcheck // saveCtx is already detached from r.Context().
+	aplicarResumen(saveCtx, cfg, &intent)
+	cw.flushDeferred(confirmationFor(r.Context(), cfg, intent))
+}
+
+// errBodyAlreadyConsumed is the save outcome when the downstream handler read
+// part of the request body before the response turned out to be capturable.
+// It travels as multipartSaveResult.err so the intent is persisted with
+// BodyTruncated=true and no blob path — the audit row still exists.
+var errBodyAlreadyConsumed = errors.New(
+	"failedintent: request body was already consumed downstream",
+)
+
+// errBodyUnavailable is the save outcome when the body yielded no bytes at
+// all: closed downstream, or never sent because the client hung up.
+var errBodyUnavailable = errors.New(
+	"failedintent: request body yielded no bytes",
+)
+
+// saveUnreadBody streams the still-unread request body into blob storage.
+func saveUnreadBody(
+	ctx context.Context, cfg Config, intentID uuid.UUID, body *countingReadCloser,
+) multipartSaveResult {
+	if body.bytesRead() > 0 {
+		return multipartSaveResult{err: errBodyAlreadyConsumed}
+	}
+	path, err := cfg.Blob.Save(ctx, intentID, body, cfg.MaxMultipartBytes)
+	if err != nil {
+		return multipartSaveResult{err: err}
+	}
+	if body.bytesRead() == 0 {
+		// Nothing came back. An empty blob that presents itself as the
+		// request would read on the screen as "the phone sent nothing",
+		// which is a different — and unfounded — accusation.
+		_ = cfg.Blob.Delete(ctx, path)
+		return multipartSaveResult{err: errBodyUnavailable}
+	}
+	return multipartSaveResult{path: path}
+}
+
+// countingReadCloser counts the bytes the downstream handler read from the
+// request body. It buffers nothing and starts no goroutine: on the happy path
+// it costs one atomic add per Read. The counter is atomic because the handler
+// may read the body from a goroutine of its own.
+type countingReadCloser struct {
+	io.ReadCloser
+	n atomic.Int64
+}
+
+func (c *countingReadCloser) Read(p []byte) (int, error) {
+	n, err := c.ReadCloser.Read(p)
+	if n > 0 {
+		c.n.Add(int64(n))
+	}
+	return n, err
+}
+
+func (c *countingReadCloser) bytesRead() int64 {
+	return c.n.Load()
 }
 
 // isIdempotentReplay reports whether the captured response was emitted by

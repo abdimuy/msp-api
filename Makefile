@@ -276,6 +276,7 @@ test-firebird-all: ## Run ALL Firebird-backed tests including module repos (auth
 	@[ -n "$(FB_DATABASE)" ] || (echo "❌ FB_DATABASE not set — start mueblera-firebird and source .env first" && exit 1)
 	$(GO) test ./internal/platform/firebird/... ./internal/platform/fbtestutil/... \
 	          ./internal/platform/failedintent/... ./internal/platform/fbcharset/... \
+	          ./cmd/api/... \
 	          ./internal/auth/infra/firebird/... \
 	          ./internal/ventas/infra/ventfb/... ./internal/ventas/infra/venthttp/... \
 	          ./internal/ventas/infra/failedintents/... \

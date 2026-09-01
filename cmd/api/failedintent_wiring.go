@@ -248,6 +248,36 @@ func provideFailedIntentCapturas(
 	}
 }
 
+// capturePair is the two capture middlewares a captured module mounts around
+// its authentication handler. Fielded rather than returned as a bare pair so
+// the mount site names where each one goes: the order IS the mechanism.
+type capturePair struct {
+	// OutsideAuth owns exactly one status: the 401 that authn answers before
+	// anything further in the chain gets to see the request. Without it a
+	// phone whose session expired posts a pago, reads a 401, and leaves no
+	// trace anywhere — the very case the failed-intent screen exists for,
+	// and the one it could never show.
+	OutsideAuth func(http.Handler) http.Handler
+	// InsideAuth owns every other failure. It is the instance that carries
+	// UsuarioID, which /replay-with and /replay-with-multipart need to
+	// rebuild the original requester, and that is why it cannot simply be
+	// moved outside instead of adding a second one.
+	InsideAuth func(http.Handler) http.Handler
+}
+
+// captureAroundAuth builds the pair for one module's capture config. Both
+// instances share the Store, the blob storage and the path prefixes; they
+// differ only in which statuses each one owns, which is what keeps a single
+// request from producing two rows.
+func captureAroundAuth(cfg failedintent.Config) capturePair {
+	narrowed := cfg
+	narrowed.CaptureStatuses = []int{http.StatusUnauthorized}
+	return capturePair{
+		OutsideAuth: failedintent.CaptureMiddleware(narrowed),
+		InsideAuth:  failedintent.CaptureMiddleware(cfg),
+	}
+}
+
 // provideSettableReplayDispatcher constructs the cycle-breaking dispatcher.
 func provideSettableReplayDispatcher() *SettableReplayDispatcher {
 	return NewSettableReplayDispatcher()
