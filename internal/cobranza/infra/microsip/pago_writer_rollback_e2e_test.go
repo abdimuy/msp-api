@@ -35,7 +35,7 @@ import (
 // BEFORE INSERT trigger never fires and no GEN_ID is consumed.
 const formaCobroOutOfRange = math.MaxInt32 + 1
 
-// cargoInexistenteOffset is the failure lever for the second INSERT. Added to
+// nonexistentCargoOffset is the failure lever for the second INSERT. Added to
 // the ID_DOCTOS watermark it yields a DOCTO_CC_ID far above anything the
 // generator has handed out, so IMPORTES_DOCTOS_CC.DOCTO_CC_ACR_ID points at a
 // cargo that does not exist. The test asserts that absence rather than
@@ -72,7 +72,7 @@ const formaCobroOutOfRange = math.MaxInt32 + 1
 // and 2 as "someone else was writing", not as a regression — and note the
 // counter has no positive control either: the happy path would burn 3 and
 // nothing records it.
-const cargoInexistenteOffset = 1_000_000
+const nonexistentCargoOffset = 1_000_000
 
 // writerRowCount holds how many rows each of the three tables PagoWriter
 // inserts into gained above a generator watermark.
@@ -209,7 +209,7 @@ func registerLeakCleanup(t *testing.T, pool *firebird.Pool, clienteID, mark int)
 //
 //   - Third INSERT, rejected PARAMETER (formaCobroOutOfRange). Widest reach —
 //     two prior INSERTs must be undone — but the row insert never begins.
-//   - Second INSERT, rejected ROW (cargoInexistenteOffset). Narrower reach —
+//   - Second INSERT, rejected ROW (nonexistentCargoOffset). Narrower reach —
 //     one prior INSERT — but the failure is raised from INSIDE the statement
 //     body, by a BEFORE INSERT trigger that already ran. This recovers the
 //     class of failure the plan asked for with its (nonexistent) FK, and it is
@@ -238,7 +238,7 @@ func registerLeakCleanup(t *testing.T, pool *firebird.Pool, clienteID, mark int)
 //     exactly this: 1 id burned there against 2 on the third-INSERT subtest,
 //     in both cases only for rows that fully succeeded.
 //   - The CARGO_AFECTADO_CC foreign key itself. It exists and is enforced, but
-//     it is unreachable from this path — see cargoInexistenteOffset. No test
+//     it is unreachable from this path — see nonexistentCargoOffset. No test
 //     here proves that key works.
 //   - Whether the generator gap left by a rolled-back INSERT is reclaimed. It
 //     is not, by design: every failing run burns the ID_DOCTOS value that the
@@ -350,19 +350,19 @@ func TestE2E_PagoWriter_Aplicar_FalloDeInsertNoDejaRastro(t *testing.T) {
 	// above cannot reach.
 	t.Run("el INSERT rechazado por el cargo inexistente tampoco deja rastro", func(t *testing.T) {
 		mark := peekIDDoctos(t, ctx, q)
-		cargoInexistente := mark + cargoInexistenteOffset
+		nonexistentCargo := mark + nonexistentCargoOffset
 
 		// Do not assume the cargo is missing — measure it. Otherwise a value
 		// that happened to exist would turn this into a happy path that the
 		// following assertions would misread.
-		var existentes int
+		var existingRows int
 		require.NoError(t,
-			q.QueryRowContext(ctx, `SELECT COUNT(*) FROM DOCTOS_CC WHERE DOCTO_CC_ID = ?`, cargoInexistente).Scan(&existentes),
+			q.QueryRowContext(ctx, `SELECT COUNT(*) FROM DOCTOS_CC WHERE DOCTO_CC_ID = ?`, nonexistentCargo).Scan(&existingRows),
 		)
-		require.Equal(t, 0, existentes, "the cargo whose absence triggers the rejection must not exist")
+		require.Equal(t, 0, existingRows, "the cargo whose absence triggers the rejection must not exist")
 
 		runFailingAplicar(t,
-			buildInput(cargoInexistente, testFormaCobroID),
+			buildInput(nonexistentCargo, testFormaCobroID),
 			writerRowCount{doctosCC: 1, importes: 0, formasCobro: 0},
 		)
 	})
