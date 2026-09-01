@@ -50,20 +50,21 @@ import (
 // considering exactly that change.
 //
 // Third shortcut, wrong for the same reason one level down again: reading
-// ONE call site. Service.runInTx (service.go:194) has two production
-// callers — AplicarPago (aplicar_pago.go:92) and persistPagoTx, the
-// transaction of CrearPagoConImagenes (crear_pago_con_imagenes.go:188).
-// Measured: with persistPagoTx alone derived onto a no-wait runner, a version
-// of this test that only exercised AplicarPago passed. That is the WORSE half
-// to miss: the §4.3 recommendation is about the push to Microsip, and the
-// phone's push goes through persistPagoTx → aplicarPagoRecienCreado, so it is
-// the likelier place for somebody to apply it.
+// SOME of the call sites. Service.runInTx (service.go:194) has THREE
+// production callers, counted with grep rather than from memory — the count
+// was wrong twice in review before somebody measured it:
 //
-// So the blocked side is measured TWICE, once per call site: step 3 through
-// Service.AplicarPago, whose first act inside its transaction is LockByID,
-// and step 5 through Service.CrearPagoConImagenes, whose first act is the
-// pago INSERT. Both the isolation flavor AND both call sites are read from
-// production.
+//	aplicar_pago.go:92              AplicarPago            → step 3
+//	aplicar_pago.go:193             registrarFalloAparte   → step 6
+//	crear_pago_con_imagenes.go:188  persistPagoTx          → step 5
+//
+// Each was measured to be independently missable: deriving any ONE of them
+// onto a no-wait runner, with the other two and firebird.RunInTx untouched,
+// left every earlier version of this test green.
+//
+// So the blocked side is measured THREE times, once per call site. All three
+// read the isolation flavor AND the call site from production; none of them
+// opens a transaction of the test's own.
 //
 // WHY THE CEILING GOES ON A PRIVATE ONE-CONNECTION POOL. Setting
 // cfg.StatementTimeout does NOT work: firebird.registerOtelDriver wraps its
@@ -176,12 +177,22 @@ func conPresupuesto(t *testing.T, presupuesto time.Duration, mensaje string, fn 
 	t.Helper()
 	hecho := make(chan error, 1)
 	go func() { hecho <- fn() }()
+	return recibirConPresupuesto(t, presupuesto, mensaje, hecho)
+}
+
+// recibirConPresupuesto is conPresupuesto for a goroutine that was started
+// earlier, which step 6 needs because its call has to be in flight before the
+// lock holder can even try to take the lock. Same contract: test goroutine
+// only, and the channel must be buffered.
+func recibirConPresupuesto[T any](t *testing.T, presupuesto time.Duration, mensaje string, ch <-chan T) T {
+	t.Helper()
 	select {
-	case err := <-hecho:
-		return err
+	case v := <-ch:
+		return v
 	case <-time.After(presupuesto):
 		t.Fatal(mensaje)
-		return nil
+		var cero T
+		return cero
 	}
 }
 
@@ -203,12 +214,13 @@ func conPresupuesto(t *testing.T, presupuesto time.Duration, mensaje string, fn 
 // WHAT THIS DETECTS:
 //   - the blocked path hanging with no ceiling at all;
 //   - the cut arriving unclassified;
-//   - the cobranza write path losing its WAIT semantics, by any of the three
-//     routes: firebird.RunInTx's isolation changed underneath it, AplicarPago
-//     moved onto a no-wait runner, or persistPagoTx moved onto one. Each
-//     makes the corresponding blocked call return firebird_lock_conflict at
-//     once and fail step 3 or step 5. All READ from production: both
-//     transactions are opened by the Service, never by the test;
+//   - the cobranza write path losing its WAIT semantics, by any of the four
+//     routes: firebird.RunInTx's isolation changed underneath it, or any one
+//     of its three callers moved onto a no-wait runner — AplicarPago,
+//     persistPagoTx, or registrarFalloAparte. Each makes the corresponding
+//     blocked call return early and fails step 3, 5 or 6. All READ from
+//     production: every transaction here is opened by the Service, never by
+//     the test;
 //   - the connection not coming back after the cut. That is the one that
 //     matters operationally: a stuck connection is a pool slot gone for good.
 //
@@ -307,7 +319,8 @@ func TestE2E_ContencionDeFila_LaEsperaSeCortaComoTimeoutNoComoConflicto(t *testi
 			return nil
 		})
 	}()
-	<-tomado
+	recibirConPresupuesto(t, bloqueoPresupuesto,
+		"el bloqueador del paso 2 nunca tomó el lock", tomado)
 
 	// ── 3. La medición: el camino real de cobranza, bloqueado ────────────
 	// Service.AplicarPago, not a transaction the test opened: the isolation
@@ -324,7 +337,9 @@ func TestE2E_ContencionDeFila_LaEsperaSeCortaComoTimeoutNoComoConflicto(t *testi
 		})
 	transcurrido := time.Since(inicio)
 	liberar()
-	require.NoError(t, <-holderErr, "the lock holder must be able to commit")
+	require.NoError(t, recibirConPresupuesto(t, bloqueoPresupuesto,
+		"el bloqueador del paso 2 no terminó tras soltarlo", holderErr),
+		"the lock holder must be able to commit")
 
 	require.Error(t, errBloqueado, "a row held by another session must not let LockByID through")
 	var ae *apperror.Error
@@ -371,8 +386,8 @@ func TestE2E_ContencionDeFila_LaEsperaSeCortaComoTimeoutNoComoConflicto(t *testi
 		"AplicarPago must have died at LockByID, before touching Microsip")
 
 	// ── 5. El OTRO call site: CrearPagoConImagenes ───────────────────────
-	// Service.runInTx has two production callers and step 3 only read one.
-	// This reads the other, and it is the one that matters most: the phone's
+	// The second of Service.runInTx's three callers. It is the one that
+	// matters most: the phone's
 	// push to Microsip goes through persistPagoTx, so it is where somebody
 	// would most plausibly apply the "make the push no-wait" recommendation.
 	//
@@ -407,7 +422,8 @@ func TestE2E_ContencionDeFila_LaEsperaSeCortaComoTimeoutNoComoConflicto(t *testi
 			return errRollbackDeliberado
 		})
 	}()
-	<-insertTomado
+	recibirConPresupuesto(t, bloqueoPresupuesto,
+		"el bloqueador del paso 5 nunca dejó su INSERT en vuelo", insertTomado)
 
 	inicioCrear := time.Now()
 	errCrear := conPresupuesto(t, bloqueoPresupuesto,
@@ -422,7 +438,9 @@ func TestE2E_ContencionDeFila_LaEsperaSeCortaComoTimeoutNoComoConflicto(t *testi
 	transcurridoCrear := time.Since(inicioCrear)
 
 	liberarInsert()
-	require.ErrorIs(t, <-insertHolder, errRollbackDeliberado,
+	require.ErrorIs(t, recibirConPresupuesto(t, bloqueoPresupuesto,
+		"el bloqueador del paso 5 no terminó tras soltarlo", insertHolder),
+		errRollbackDeliberado,
 		"the blocking INSERT must roll back so this step commits nothing")
 
 	require.Error(t, errCrear, "a UUID another transaction is inserting must not go through")
@@ -445,7 +463,168 @@ func TestE2E_ContencionDeFila_LaEsperaSeCortaComoTimeoutNoComoConflicto(t *testi
 	assert.Equal(t, "firebird_timeout", aeCrear.Code,
 		"same scoping as step 3, on the other call site: a non-timeout here means "+
 			"persistPagoTx lost its WAIT semantics")
+
+	// ── 6. El TERCER call site: registrarFalloAparte ─────────────────────
+	// This is the caller nobody had measured, and the worst one to leave
+	// unread. registrarFalloAparte is the transaction that RE-TAKES the row
+	// lock after Microsip rejected a pago, to record INTENTOS and
+	// ULTIMO_ERROR. It is reachable from the retry worker
+	// (pago_retry_worker.go:176) and from the admin endpoint, and it is the
+	// most natural place for somebody to say "this one need not wait ten
+	// minutes, it is only the failure record".
+	//
+	// If they do, a lock held by Cxc.exe means the attempt is NOT COUNTED:
+	// INTENTOS stays at 0, the worker hammers the pago every tick with no
+	// backoff, and the only trace is the pago.fallo_no_persistido line that
+	// AplicarPago itself calls "the one degradation this flow can still
+	// suffer in silence".
+	//
+	// Reaching it under contention needs the lock to be taken in the window
+	// between the apply transaction rolling back and the failure record
+	// starting — a window the test cannot hook from outside. The writer
+	// double is the hook: it runs INSIDE the apply transaction, while that
+	// transaction holds the row lock. So the holder is launched from there
+	// and blocks on the lock the apply tx is holding; when the writer returns
+	// its rejection and the apply tx rolls back, the holder is next in
+	// Firebird's queue and takes it, and registrarFalloAparte lands behind it.
+	pago6ID := uuid.New()
+	h.trackID(pago6ID)
+	pago6 := buildValidPagoRecibidoWithID(t, pago6ID)
+	require.NoError(t, h.txMgr.RunInTx(context.Background(), func(ctx context.Context) error {
+		return h.repo.Insert(ctx, pago6)
+	}))
+
+	rechazoMicrosip := errors.New("microsip_rechazo_para_medir_el_registro_del_fallo")
+	writer6 := &writerQueSostieneElLock{
+		err:        rechazoMicrosip,
+		enElWriter: make(chan struct{}),
+		seguir:     make(chan struct{}),
+	}
+	svcFallo := cobranzaapp.NewService(
+		newCaosSaldosRepo(), nil, nil,
+		cobranzaoutbound.ProductionClock{},
+		repoBloqueado, repoBloqueado, writer6, nil, nil,
+		firebird.NewTxManager(pool.DB),
+	)
+
+	aplicarErr := make(chan error, 1)
+	go func() {
+		_, err := svcFallo.AplicarPago(context.Background(), pago6ID, uuid.Nil)
+		aplicarErr <- err
+	}()
+
+	// The apply transaction is now inside the writer, holding the row lock.
+	recibirConPresupuesto(t, bloqueoPresupuesto,
+		"AplicarPago nunca llegó al writer: sin eso no hay ventana donde medir "+
+			"registrarFalloAparte", writer6.enElWriter)
+
+	soltar6 := make(chan struct{})
+	liberar6 := sync.OnceFunc(func() { close(soltar6) })
+	t.Cleanup(liberar6)
+	errRollback6 := errors.New("el bloqueador del paso 6 revierte a propósito")
+	holder6 := make(chan error, 1)
+	tomado6 := make(chan struct{})
+	go func() {
+		holder6 <- h.txMgr.RunInTx(context.Background(), func(ctx context.Context) error {
+			if e := h.repo.LockByID(ctx, pago6ID); e != nil {
+				return e
+			}
+			close(tomado6)
+			<-soltar6
+			return errRollback6
+		})
+	}()
+
+	// A barrier, not a guess about speed: the holder's LockByID has to have
+	// reached the server and joined the lock queue before the apply tx lets
+	// go, or the apply tx's own next transaction would win the lock instead.
+	// No channel can signal "my statement is now blocked in the driver", so
+	// this is a sleep — and it is safe to get wrong in one direction only: if
+	// it is too short the holder loses the race, registrarFalloAparte
+	// SUCCEEDS, AplicarPago returns the bare writer error with no apperror
+	// inside it, and the ErrorAs below fails. The test cannot pass vacuously.
+	time.Sleep(500 * time.Millisecond)
+	close(writer6.seguir)
+	// Guarded like every other wait in this file, and NOT as a formality:
+	// measured, with firebird.RunInTx globally switched to no-wait this very
+	// receive hung for the whole `go test` budget — the holder's own LockByID
+	// was refused instead of queuing, so tomado6 was never closed. An
+	// unguarded receive there turns a clean failure into a hang, and a hang
+	// runs no t.Cleanup and strands committed rows.
+	recibirConPresupuesto(t, bloqueoPresupuesto,
+		"el bloqueador del paso 6 nunca tomó el lock; sin él registrarFalloAparte no "+
+			"encuentra contención y no hay nada que medir", tomado6)
+
+	inicioFallo := time.Now()
+	errAplicar := recibirConPresupuesto(t, bloqueoPresupuesto,
+		fmt.Sprintf("AplicarPago never returned within %s: registrarFalloAparte is blocked "+
+			"on the row lock and was not cut by the %s ceiling",
+			bloqueoPresupuesto, bloqueoStatementTimeout),
+		aplicarErr)
+	transcurridoFallo := time.Since(inicioFallo)
+
+	liberar6()
+	require.ErrorIs(t, recibirConPresupuesto(t, bloqueoPresupuesto,
+		"el bloqueador del paso 6 no terminó tras soltarlo", holder6),
+		errRollback6, "the step-6 blocker must roll back")
+
+	// Both errors come back joined: the rejection says what Microsip
+	// answered, the second says why nobody will see it recorded.
+	require.Error(t, errAplicar)
+	require.ErrorIs(t, errAplicar, rechazoMicrosip,
+		"the Microsip rejection must survive the join")
+	var aeFallo *apperror.Error
+	require.ErrorAs(t, errAplicar, &aeFallo,
+		"registrarFalloAparte must have failed too and joined its error; got %v", errAplicar)
+	t.Logf("contención medida (registrarFalloAparte): espera=%s code=%s kind=%v",
+		transcurridoFallo, aeFallo.Code, aeFallo.Kind)
+
+	assert.Equal(t, "firebird_timeout", aeFallo.Code,
+		"same scoping as steps 3 and 5, on the third call site: a non-timeout here means "+
+			"registrarFalloAparte lost its WAIT semantics")
+
+	// The damage, recorded but NOT the discriminator — it is the same whether
+	// the failure record was cut by a timeout or refused by a no-wait
+	// conflict. It is here because it is the reason the call site matters.
+	var intentos int
+	require.NoError(t, firebird.RunInReadTx(context.Background(), h.pool.DB, func(ctx context.Context) error {
+		return firebird.GetQuerier(ctx, h.pool.DB).
+			QueryRowContext(ctx, "SELECT INTENTOS FROM MSP_PAGOS_RECIBIDOS WHERE ID = ?",
+				pago6ID.String()).Scan(&intentos)
+	}))
+	assert.Equal(t, 0, intentos,
+		"the blocked failure record leaves INTENTOS at 0: the worker will retry this pago "+
+			"every tick with no backoff and nobody can see what Microsip said")
 }
+
+// writerQueSostieneElLock is the hook that lets step 6 reach
+// registrarFalloAparte under contention. It runs inside AplicarPago's
+// transaction — which is holding the row lock — so the test can launch the
+// lock holder from there and have it queue behind that very lock.
+//
+// The rejection it returns is a PLAIN error on purpose: AplicarPago joins it
+// with registrarFalloAparte's error, and errors.As walks the join in order,
+// so an apperror here would shadow the one the assertions are about.
+type writerQueSostieneElLock struct {
+	mu         sync.Mutex
+	calls      int
+	err        error
+	enElWriter chan struct{}
+	seguir     chan struct{}
+}
+
+func (w *writerQueSostieneElLock) Aplicar(
+	context.Context, cobranzaoutbound.MicrosipPagoInput,
+) (cobranzaoutbound.MicrosipPagoResult, error) {
+	w.mu.Lock()
+	w.calls++
+	w.mu.Unlock()
+	close(w.enElWriter)
+	<-w.seguir
+	return cobranzaoutbound.MicrosipPagoResult{}, w.err
+}
+
+var _ cobranzaoutbound.MicrosipPagoWriter = (*writerQueSostieneElLock)(nil)
 
 // inputBloqueoConID builds the CrearPagoInput for step 5. The cargo is the
 // one caosSaldosRepo answers for, and the importe fits inside its saldo, so
