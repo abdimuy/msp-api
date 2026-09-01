@@ -66,8 +66,8 @@ func newCaptureChainDeps(t *testing.T, pool *firebird.Pool) captureChainDeps {
 func assembleCobranzaChain(
 	txCtx context.Context, deps captureChainDeps, planted *auth.CurrentUser, downstream http.HandlerFunc,
 ) http.Handler {
-	capturas := provideFailedIntentCapturas(deps.store, deps.blobs, nil, &config.Config{})
-	capture := captureAroundAuth(capturas.Cobranza)
+	configs := provideFailedIntentCapturas(deps.store, deps.blobs, nil, &config.Config{})
+	capture := captureAroundAuth(configs.Cobranza)
 	authn := authhttp.NewAuthnMiddleware(nil, nil, nil)
 
 	r := chi.NewRouter()
@@ -232,14 +232,14 @@ func TestCapture_PagoWithExpiredSession_LeavesEvidence(t *testing.T) {
 		require.Equal(t, http.StatusUnauthorized, rw.Code)
 		require.False(t, reached, "authn must have cut the chain before the handler")
 		assert.Empty(t, rw.Header().Get(failedintent.HeaderIntentCaptured),
-			"custody is NOT promised: a row without a usuario cannot be replayed, "+
-				"so the phone must keep its own copy and retry after re-authenticating")
+			"custody is NOT promised: the header means stored AND re-dispatchable, "+
+				"and a row without a usuario is not")
 
-		nuevas := newlyCaptured(before, capturedIDs(ctx, t, pool))
-		require.Len(t, nuevas, 1,
+		fresh := newlyCaptured(before, capturedIDs(ctx, t, pool))
+		require.Len(t, fresh, 1,
 			"the rejected pago must leave exactly one row in MSP_FAILED_INTENTS")
 
-		row := readCapturedRow(ctx, t, pool, nuevas[0])
+		row := readCapturedRow(ctx, t, pool, fresh[0])
 		assert.False(t, row.usuarioID.Valid, "no one was authenticated, so no one may be named")
 		assert.Empty(t, strings.TrimSpace(row.firebaseUID.String))
 		assert.Equal(t, http.StatusUnauthorized, row.httpStatus)
@@ -301,10 +301,10 @@ func TestCapture_AuthenticatedFailure_LeavesExactlyOneRow(t *testing.T) {
 		id := rw.Header().Get(failedintent.HeaderIntentCaptured)
 		require.NotEmpty(t, id, "the in-chain instance still confirms custody, as it always did")
 
-		nuevas := newlyCaptured(before, capturedIDs(ctx, t, pool))
-		require.Len(t, nuevas, 1,
+		fresh := newlyCaptured(before, capturedIDs(ctx, t, pool))
+		require.Len(t, fresh, 1,
 			"an authenticated failure leaves ONE row, not one per capture instance")
-		assert.Equal(t, id, nuevas[0], "and it is the row the client was told about")
+		assert.Equal(t, id, fresh[0], "and it is the row the client was told about")
 
 		row := readCapturedRow(ctx, t, pool, id)
 		require.True(t, row.usuarioID.Valid, "the in-chain instance owns this row, so it carries the requester")

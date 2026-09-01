@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -175,7 +176,8 @@ func TestCaptureMiddleware_CaptureStatuses_MultipartKeepsTheBodyOfARejectedReque
 	require.NotEmpty(t, got.BodyBlobPath, "the body is the evidence")
 	assert.Equal(t, sent, blobs.blobBytes(got.BodyBlobPath), "the stored body must be the one that was sent")
 	assert.Empty(t, rw.Header().Get(failedintent.HeaderIntentCaptured),
-		"custody must NOT be confirmed: the phone would stop retrying a pago nobody can replay")
+		"custody must NOT be confirmed: the header promises a row that can be re-dispatched, "+
+			"and one without a usuario cannot")
 }
 
 // countingBlobStore counts Save calls on top of fakeBlobStore. Counting the
@@ -279,4 +281,72 @@ func TestCaptureMiddleware_CaptureStatuses_MultipartWithoutBodyIsNotStoredAsEmpt
 	assert.True(t, got.BodyTruncated)
 	assert.Empty(t, got.BodyBlobPath)
 	assert.Equal(t, 0, blobs.blobCount(), "no zero-byte blob may be left behind")
+}
+
+// TestCaptureMiddleware_CaptureStatuses_JSONDoesNotAlterABodyItDoesNotCapture
+// pins the property that makes a narrowed instance safe to mount in front of
+// everything: when it captures nothing, it must be invisible.
+//
+// readCappedBody does not merely read — it CUTS at BodyCapBytes and hands the
+// cut bytes to whoever comes next. An instance that reads on the way in would
+// therefore truncate every oversized request that goes on to succeed, and
+// would hand the in-chain instance a body already shortened, whose remaining
+// length it would then measure as fitting.
+func TestCaptureMiddleware_CaptureStatuses_JSONDoesNotAlterABodyItDoesNotCapture(t *testing.T) {
+	t.Parallel()
+
+	const cap64 = 64
+
+	store := &fakeStore{}
+	cfg := newTestConfig(store, cap64)
+	cfg.CaptureStatuses = []int{http.StatusUnauthorized}
+
+	sent := `{"x":"` + strings.Repeat("a", 4*cap64) + `"}`
+	var received []byte
+	downstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusUnprocessableEntity)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v2/ventas", bytes.NewBufferString(sent))
+	failedintent.CaptureMiddleware(cfg)(downstream).ServeHTTP(httptest.NewRecorder(), req)
+
+	assert.Equal(t, 0, store.count(), "a 422 is not this instance's business")
+	assert.Equal(t, sent, string(received),
+		"the request must reach the handler exactly as it was sent, not cut at BodyCapBytes")
+}
+
+// TestCaptureMiddleware_CaptureStatuses_YieldsEvenWhenTheConfirmationHeaderIsMissing
+// covers the hole in the header signal. captureWriter releases a withheld
+// response early once it outgrows the deferred cap, and from then on
+// flushDeferred can no longer add X-Intent-Captured: the in-chain instance
+// saves its row and stamps nothing. Since this is the ONLY lock on the
+// overlap, it cannot depend on a signal that legitimately goes missing.
+func TestCaptureMiddleware_CaptureStatuses_YieldsEvenWhenTheConfirmationHeaderIsMissing(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeStore{}
+	inner := newTestConfig(store, 1024)
+	outer := newTestConfig(store, 1024)
+	outer.CaptureStatuses = []int{http.StatusUnauthorized}
+
+	// A 401 whose response body is past deferredBodyCapBytes (1 MiB), so the
+	// in-chain instance flushes before it knows whether it has custody.
+	chatty := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json; charset=utf-8")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(strings.Repeat("x", 2<<20)))
+	})
+
+	chain := failedintent.CaptureMiddleware(outer)(
+		failedintent.CaptureMiddleware(inner)(chatty),
+	)
+
+	rw := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v2/ventas", bytes.NewBufferString(`{"total":10}`))
+	chain.ServeHTTP(rw, req)
+
+	require.Empty(t, rw.Header().Get(failedintent.HeaderIntentCaptured),
+		"the premise: the response outgrew the deferred cap, so no header was stamped")
+	assert.Equal(t, 1, store.count(), "one request, one row — the header was not the only signal")
 }

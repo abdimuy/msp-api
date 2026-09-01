@@ -487,6 +487,7 @@ func CaptureMiddleware(cfg Config) func(http.Handler) http.Handler {
 	cfg.defaults()
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			//nolint:contextcheck // the detached save contexts are annotated at their own call sites.
 			handle(cfg, next, w, r)
 		})
 	}
@@ -501,15 +502,17 @@ func handle(cfg Config, next http.Handler, w http.ResponseWriter, r *http.Reques
 		next.ServeHTTP(w, r)
 		return
 	}
-	if cfg.Blob != nil && isMultipart(r) {
-		if statusFiltered(cfg) {
-			handleMultipartDeferred(cfg, next, w, r)
-			return
-		}
+	multipart := cfg.Blob != nil && isMultipart(r)
+	switch {
+	case multipart && statusFiltered(cfg):
+		handleMultipartDeferred(cfg, next, w, r)
+	case multipart:
 		handleMultipart(cfg, next, w, r)
-		return
+	case statusFiltered(cfg):
+		handleJSONDeferred(cfg, next, w, r)
+	default:
+		handleJSON(cfg, next, w, r)
 	}
-	handleJSON(cfg, next, w, r)
 }
 
 // statusFiltered reports whether cfg restricts capture to a fixed set of
@@ -522,7 +525,7 @@ func statusFiltered(cfg Config) bool {
 // shouldPersist decides, once the response is known, whether THIS instance
 // owns the evidence for it. shouldCapture is its counterpart before the
 // request runs, when only method, path and content-type are known.
-func shouldPersist(cfg Config, cw *captureWriter) bool {
+func shouldPersist(ctx context.Context, cfg Config, cw *captureWriter) bool {
 	if cw.status < http.StatusBadRequest {
 		return false
 	}
@@ -532,7 +535,7 @@ func shouldPersist(cfg Config, cw *captureWriter) bool {
 		// rows on every retry.
 		return false
 	}
-	if custodyClaimed(cw) {
+	if custodyClaimed(ctx, cw) {
 		// Another capture instance further in already saved this response
 		// and stamped the confirmation on the shared header map. It knows
 		// more than we do (it ran inside the auth chain, so its row carries
@@ -545,11 +548,56 @@ func shouldPersist(cfg Config, cw *captureWriter) bool {
 	return true
 }
 
-// custodyClaimed reports whether a downstream capture instance already took
-// custody of this response. The nested captureWriters share one header map, so
-// the confirmation an inner instance stamped is visible to the outer one.
-func custodyClaimed(cw *captureWriter) bool {
-	return cw.Header().Get(HeaderIntentCaptured) != ""
+// custodyClaimed reports whether a capture instance further in already took
+// custody of this response.
+//
+// Two signals, because neither alone is enough:
+//
+//   - The nested captureWriters share one header map, so a confirmation an
+//     inner instance stamped is visible here. But that signal can legitimately
+//     be missing: captureWriter.Write releases the withheld response early
+//     when it outgrows deferredBodyCapBytes, and from then on flushDeferred
+//     cannot add the header — the row exists and the header does not.
+//   - The custody mark on the context, which saveIntent sets the moment a row
+//     is in the table, regardless of what the response looks like. The outer
+//     instance plants the holder before running the chain; without one, the
+//     mark is a no-op.
+//
+// Being the ONLY lock on the overlap, it cannot rest on a signal that may go
+// missing.
+func custodyClaimed(ctx context.Context, cw *captureWriter) bool {
+	return cw.Header().Get(HeaderIntentCaptured) != "" || custodyMarked(ctx)
+}
+
+// custodyMarkKey is the context key for the custody holder.
+type custodyMarkKey struct{}
+
+// custodyMark is the holder a narrowed instance plants on the request context
+// so any capture running further in can report that it saved a row. A pointer
+// with an atomic flag, because the context itself is immutable and a handler
+// may run the chain from a goroutine of its own.
+type custodyMark struct {
+	claimed atomic.Bool
+}
+
+// withCustodyMark returns ctx carrying a fresh custody holder.
+func withCustodyMark(ctx context.Context) context.Context {
+	return context.WithValue(ctx, custodyMarkKey{}, &custodyMark{})
+}
+
+// markCustody records that a row for this request is in the table. No-op when
+// nobody planted a holder, which is the single-instance case.
+func markCustody(ctx context.Context) {
+	if m, ok := ctx.Value(custodyMarkKey{}).(*custodyMark); ok {
+		m.claimed.Store(true)
+	}
+}
+
+// custodyMarked reports whether some capture already saved a row for this
+// request.
+func custodyMarked(ctx context.Context) bool {
+	m, ok := ctx.Value(custodyMarkKey{}).(*custodyMark)
+	return ok && m.claimed.Load()
 }
 
 // handleJSON is the original capture path: buffer up to BodyCapBytes, run the
@@ -574,7 +622,7 @@ func handleJSON(cfg Config, next http.Handler, w http.ResponseWriter, r *http.Re
 	cw := newCaptureWriter(w)
 	next.ServeHTTP(cw, r)
 
-	if !shouldPersist(cfg, cw) {
+	if !shouldPersist(r.Context(), cfg, cw) {
 		// No Save runs now, so no custody is claimed now.
 		if cw.status < http.StatusBadRequest && !statusFiltered(cfg) {
 			cerrarPorExito(r, cfg, cw)
@@ -611,14 +659,18 @@ func aplicarResumen(ctx context.Context, cfg Config, intent *Intent) {
 // confirmationFor persists the intent and returns the value for
 // HeaderIntentCaptured — the Intent UUID when it is in custody, "" otherwise.
 //
-// A narrowed instance saves but never confirms. Its rows carry no UsuarioID —
-// a request rejected at the auth boundary has no requester to record — and the
+// A narrowed instance saves but never confirms. The header means "this is
+// stored AND recoverable" — it is what a client is allowed to release its own
+// copy on. A row born outside the auth chain carries no UsuarioID, and the
 // admin screen refuses to re-dispatch an intent without one
-// (failedintent/http/handlers.go:397, "intent_has_no_usuario"). The phone reads
-// this header as "the server has it, stop retrying", so confirming here would
-// trade a retry that can still succeed after the session is renewed for a row
-// nobody is able to replay. The row is still written: the office can see the
-// pago that never landed, which is the whole point.
+// (failedintent/http/handlers.go:397, "intent_has_no_usuario"), so the second
+// half of that promise would be false.
+//
+// Nothing is lost by staying quiet: the phone's decision table answers
+// REINTENTA for 401 in every combination, above the rows that read the header
+// at all (docs/module-standards/ENTREGA_GARANTIZADA.md:112,155), so it never
+// looks here. The row is still written, which is the whole point: the office
+// sees the pago that never landed.
 func confirmationFor(ctx context.Context, cfg Config, intent Intent) string {
 	if !saveIntent(ctx, cfg, intent) {
 		return ""
@@ -675,7 +727,7 @@ func handleMultipart(cfg Config, next http.Handler, w http.ResponseWriter, r *ht
 	// Nothing to persist here: best-effort cleanup of the blob, because the
 	// request either succeeded or its evidence belongs to somebody else, and
 	// either way there is no audit row to anchor the blob to.
-	if !shouldPersist(cfg, cw) {
+	if !shouldPersist(r.Context(), cfg, cw) {
 		if saveResult.err == nil && saveResult.path != "" {
 			//nolint:contextcheck // detached so a client disconnect does not abort cleanup.
 			_ = cfg.Blob.Delete(saveCtx, saveResult.path)
@@ -715,21 +767,24 @@ func handleMultipart(cfg Config, next http.Handler, w http.ResponseWriter, r *ht
 // what proves it: if anything downstream consumed even one byte, what remains
 // is no longer the request that was sent, so the row is persisted without a
 // body rather than with a fragment that looks whole.
+//
+// The cost, and it is deliberate: captureWriter withholds every 4xx until
+// flushDeferred, which runs AFTER this read. A pago rejected for an expired
+// session therefore no longer gets its 401 immediately — the phone uploads the
+// whole body first, and only then reads the rejection. Reading before
+// answering is the safe order (answering first would race the client into
+// closing the connection with the evidence half-written), but it does move the
+// cost of a stale session from "one rejected handshake" to "one full upload".
 func handleMultipartDeferred(cfg Config, next http.Handler, w http.ResponseWriter, r *http.Request) {
 	intentID := cfg.NewID()
 	contentType := r.Header.Get("Content-Type")
 
-	source := r.Body
-	if source == nil {
-		source = http.NoBody
-	}
-	body := &countingReadCloser{ReadCloser: source}
-	r.Body = body
+	r, body := deferBody(r)
 
 	cw := newCaptureWriter(w)
 	next.ServeHTTP(cw, r)
 
-	if !shouldPersist(cfg, cw) {
+	if !shouldPersist(r.Context(), cfg, cw) {
 		cw.flushDeferred("")
 		return
 	}
@@ -744,6 +799,70 @@ func handleMultipartDeferred(cfg Config, next http.Handler, w http.ResponseWrite
 	//nolint:contextcheck // saveCtx is already detached from r.Context().
 	aplicarResumen(saveCtx, cfg, &intent)
 	cw.flushDeferred(confirmationFor(r.Context(), cfg, intent))
+}
+
+// deferBody prepares a request for a narrowed instance: it plants the custody
+// holder other captures report into, and wraps the body in a counter so the
+// caller can tell whether anything downstream consumed it.
+//
+// Returns the derived request, which the caller MUST pass on: the holder lives
+// on its context.
+func deferBody(r *http.Request) (*http.Request, *countingReadCloser) {
+	r = r.WithContext(withCustodyMark(r.Context()))
+	source := r.Body
+	if source == nil {
+		source = http.NoBody
+	}
+	body := &countingReadCloser{ReadCloser: source}
+	r.Body = body
+	return r, body
+}
+
+// handleJSONDeferred is the JSON path of a narrowed instance. Like
+// handleMultipartDeferred it leaves the body alone until the response says it
+// is worth reading, and for a second reason beyond cost:
+//
+// readCappedBody TRUNCATES at BodyCapBytes and hands the truncated bytes to
+// whoever comes next. If the outer instance did that on the way in, the
+// in-chain instance would receive an already-cut body, measure it as fitting,
+// and record BodyTruncated=false on a row whose body is missing its tail —
+// the screen would claim the evidence is whole. Not reading it on the way in
+// keeps that instance's flag honest.
+func handleJSONDeferred(cfg Config, next http.Handler, w http.ResponseWriter, r *http.Request) {
+	r, body := deferBody(r)
+
+	cw := newCaptureWriter(w)
+	next.ServeHTTP(cw, r)
+
+	if !shouldPersist(r.Context(), cfg, cw) {
+		cw.flushDeferred("")
+		return
+	}
+
+	buf, truncated := readUnreadJSONBody(cfg, r, body)
+	intent := buildIntent(cfg, r, buf, truncated, cw)
+	aplicarResumen(r.Context(), cfg, &intent)
+	cw.flushDeferred(confirmationFor(r.Context(), cfg, intent))
+}
+
+// readUnreadJSONBody returns the request body, and whether what it returns is
+// less than what was sent. A body something downstream already read cannot be
+// reconstructed, so it comes back empty and flagged rather than as a leftover
+// posing as the whole thing.
+func readUnreadJSONBody(cfg Config, r *http.Request, body *countingReadCloser) ([]byte, bool) {
+	if body.bytesRead() > 0 {
+		return nil, true
+	}
+	buf, truncated, err := readCappedBody(r, cfg.BodyCapBytes)
+	if err != nil {
+		slog.WarnContext(
+			r.Context(),
+			"failedintent: body read failed after the response",
+			"error", err, "path", r.URL.Path,
+		)
+		return nil, true
+	}
+	return buf, truncated
 }
 
 // errBodyAlreadyConsumed is the save outcome when the downstream handler read
@@ -935,6 +1054,7 @@ func saveIntent(parentCtx context.Context, cfg Config, intent Intent) bool {
 			)
 		}
 	}
+	markCustody(parentCtx)
 	emitCapturedLog(parentCtx, intent)
 	return true
 }

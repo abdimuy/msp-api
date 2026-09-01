@@ -272,7 +272,7 @@ test-firebird: ## Run platform Firebird integration tests against the dev Micros
 # estar verificada contra RDB$FIELDS y una Ñ mal leída vuelve a poder entrar sin
 # que nada falle. Todos escriben dentro de fbtestutil.WithTestTransaction, que
 # siempre revierte.
-test-firebird-all: ## Run ALL Firebird-backed tests including module repos (auth + ventas + cobranza + charset)
+test-firebird-all: ## Run ALL Firebird-backed tests: platform, module repos (auth + ventas + cobranza + charset) and the cmd/api composition
 	@[ -n "$(FB_DATABASE)" ] || (echo "❌ FB_DATABASE not set — start mueblera-firebird and source .env first" && exit 1)
 	$(GO) test ./internal/platform/firebird/... ./internal/platform/fbtestutil/... \
 	          ./internal/platform/failedintent/... ./internal/platform/fbcharset/... \

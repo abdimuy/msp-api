@@ -103,6 +103,13 @@ type intentoPendiente struct {
 	blobPath  string
 	truncated bool
 	bodyBytes int
+	// usuarioID y firebaseUID vacíos significan "la fila no sabe quién la
+	// mandó". Se leen porque la fusión tiene que poder rellenarlos: la
+	// captura del 401 no tiene requester que anotar, y sin esto la fila
+	// quedaría para siempre sin usuario aunque el reintento autenticado
+	// llegue con él.
+	usuarioID   string
+	firebaseUID string
 }
 
 // findPendienteConClave busca el intento pendiente que representa el mismo
@@ -120,7 +127,9 @@ func (s *Store) findPendienteConClave(
 			ID,
 			COALESCE(BODY_BLOB_PATH, ''),
 			BODY_TRUNCATED,
-			COALESCE(OCTET_LENGTH(BODY), 0)
+			COALESCE(OCTET_LENGTH(BODY), 0),
+			COALESCE(USUARIO_ID, ''),
+			COALESCE(FIREBASE_UID, '')
 		FROM MSP_FAILED_INTENTS
 		WHERE PATH = ? AND IDEMPOTENCY_KEY = ? AND STATUS = ?
 		ORDER BY RECEIVED_AT, ID`
@@ -131,7 +140,8 @@ func (s *Store) findPendienteConClave(
 		truncated string
 	)
 	err := q2.QueryRowContext(ctx, q, path, key, string(failedintent.StatusNew)).
-		Scan(&prev.id, &prev.blobPath, &truncated, &prev.bodyBytes)
+		Scan(&prev.id, &prev.blobPath, &truncated, &prev.bodyBytes,
+			&prev.usuarioID, &prev.firebaseUID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil //nolint:nilnil // contract: (nil, nil) = no hay pendiente
 	}
@@ -142,6 +152,8 @@ func (s *Store) findPendienteConClave(
 	}
 	prev.truncated = charToTruncated(truncated)
 	prev.id = strings.TrimSpace(prev.id)
+	prev.usuarioID = strings.TrimSpace(prev.usuarioID)
+	prev.firebaseUID = strings.TrimSpace(prev.firebaseUID)
 	return &prev, nil
 }
 
@@ -156,9 +168,14 @@ func (s *Store) findPendienteConClave(
 //     empezó fallando por red y ahora falla por inventario necesita a una
 //     persona, y con el error viejo se leería como que se cura sola.
 //   - RETRY_COUNT + 1.
+//   - USUARIO_ID y FIREBASE_UID se rellenan **sólo si faltaban**. La captura
+//     que corre fuera de la autenticación no tiene requester que anotar, así
+//     que su fila entra con los dos en nulo; cuando el mismo trabajo vuelve
+//     autenticado y funde aquí, la fila tiene que quedarse con el usuario o
+//     el intento deja de poder reproducirse (`intent_has_no_usuario`).
 //
 // El cuerpo sigue la regla de **nunca sustituir uno bueno por uno peor** (ver
-// mejoraElCuerpo).
+// mejoraElCuerpo), y el usuario también: nunca al revés.
 func (s *Store) fundirEn(
 	ctx context.Context, prev intentoPendiente, i failedintent.Intent,
 ) (failedintent.SaveOutcome, error) {
@@ -189,6 +206,7 @@ func (s *Store) fundirEn(
 			nullableString(i.BodyContentType))
 	}
 	sets, args = fundirResumen(sets, args, i)
+	sets, args = fundirRequester(sets, args, prev, i)
 	args = append(args, prev.id, string(failedintent.StatusNew))
 
 	//nolint:gosec // sets viene de literales de este archivo; los valores van por parámetro.
@@ -223,6 +241,34 @@ func (s *Store) fundirEn(
 		out.OrphanedBlobPath = ""
 	}
 	return out, nil
+}
+
+// fundirRequester rellena USUARIO_ID / FIREBASE_UID en la fusión cuando la
+// fila pendiente no los tiene y el intento nuevo sí.
+//
+// El caso que lo obliga: la instancia montada fuera de la autenticación
+// captura el 401 sin saber quién lo mandó. Si el cobrador se reautentica y
+// reintenta el mismo trabajo —misma clave de idempotencia—, esa segunda
+// captura sí trae el usuario y funde en la fila del 401. Sin estas dos
+// columnas en el SET, la fila resultante conservaría el nulo y la pantalla
+// se negaría a reproducirla: un trabajo que antes se recuperaba con un clic
+// pasaría a recuperarse a mano.
+//
+// Nunca al revés. Una captura sin usuario que llegue después no puede borrar
+// al que ya está anotado: es la misma regla que gobierna el cuerpo y el
+// resumen.
+func fundirRequester(
+	sets []string, args []any, prev intentoPendiente, i failedintent.Intent,
+) ([]string, []any) {
+	if prev.usuarioID == "" && i.UsuarioID != nil {
+		sets = append(sets, "USUARIO_ID = ?")
+		args = append(args, i.UsuarioID.String())
+	}
+	if prev.firebaseUID == "" && strings.TrimSpace(i.FirebaseUID) != "" {
+		sets = append(sets, "FIREBASE_UID = ?")
+		args = append(args, i.FirebaseUID)
+	}
+	return sets, args
 }
 
 // fundirResumen añade MODULO/RESUMEN al UPDATE de la fusión, y sólo cuando el
