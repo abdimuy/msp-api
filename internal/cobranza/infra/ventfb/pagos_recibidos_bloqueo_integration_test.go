@@ -3,6 +3,7 @@ package ventfb_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -42,14 +44,26 @@ import (
 //
 // Second shortcut, also wrong, one level down: calling
 // firebird.TxManager.RunInTx directly reads that function's isolation, but
-// NOT the call site. Somebody could move CrearPagoConImagenes or AplicarPago
-// onto a no-wait runner with firebird.RunInTx untouched and this test would
-// stay green — and that is not hypothetical, since §4.3 of this plan's report
-// recommends considering exactly that change.
+// NOT the call site. Somebody could move a service method onto a no-wait
+// runner with firebird.RunInTx untouched and the test would stay green — and
+// that is not hypothetical, since §4.3 of this plan's report recommends
+// considering exactly that change.
 //
-// So the blocked side calls cobranza's Service.AplicarPago, whose first act
-// inside its transaction is LockByID. Both the isolation flavor AND the call
-// site are read from production.
+// Third shortcut, wrong for the same reason one level down again: reading
+// ONE call site. Service.runInTx (service.go:194) has two production
+// callers — AplicarPago (aplicar_pago.go:92) and persistPagoTx, the
+// transaction of CrearPagoConImagenes (crear_pago_con_imagenes.go:188).
+// Measured: with persistPagoTx alone derived onto a no-wait runner, a version
+// of this test that only exercised AplicarPago passed. That is the WORSE half
+// to miss: the §4.3 recommendation is about the push to Microsip, and the
+// phone's push goes through persistPagoTx → aplicarPagoRecienCreado, so it is
+// the likelier place for somebody to apply it.
+//
+// So the blocked side is measured TWICE, once per call site: step 3 through
+// Service.AplicarPago, whose first act inside its transaction is LockByID,
+// and step 5 through Service.CrearPagoConImagenes, whose first act is the
+// pago INSERT. Both the isolation flavor AND both call sites are read from
+// production.
 //
 // WHY THE CEILING GOES ON A PRIVATE ONE-CONNECTION POOL. Setting
 // cfg.StatementTimeout does NOT work: firebird.registerOtelDriver wraps its
@@ -70,7 +84,7 @@ import (
 //
 // The one-connection trick holds for a reason stronger than pool arithmetic:
 // cancelProofConn implements neither driver.SessionResetter nor
-// driver.Validator (driverwrap.go:150-158 lists Conn, ConnPrepareContext,
+// driver.Validator (driverwrap.go:150-156 lists Conn, ConnPrepareContext,
 // ConnBeginTx, ExecerContext, QueryerContext and Pinger, and nothing else),
 // so database/sql has no proactive way to reset or discard that connection
 // between uses. The attachment — and with it the ceiling — survives.
@@ -78,8 +92,9 @@ import (
 // What CAN still replace it is driver.ErrBadConn, which firebirdsql returns
 // from three places (wireprotocol.go:227, connection.go:83,
 // driver_go18.go:95). A replacement connection is opened by
-// cancelProofDriver.Open, which applies the PROCESS-WIDE ceiling
-// (driverwrap.go:98-127) — ten minutes, since .env sets no
+// cancelProofDriver.Open (driverwrap.go:99-106), which applies the
+// PROCESS-WIDE ceiling via applyStatementTimeout (driverwrap.go:112-128) —
+// ten minutes, since .env sets no
 // FB_STATEMENT_TIMEOUT — not this test's two seconds. That is why every
 // blocking call below runs under conPresupuesto: without it the test would
 // hang past `go test`'s own ten-minute default, die by panic, run no
@@ -138,12 +153,25 @@ func setStatementTimeout(d time.Duration) string {
 // conPresupuesto runs fn on its own goroutine and fails the test if it has
 // not returned within presupuesto.
 //
+// MUST BE CALLED FROM THE TEST GOROUTINE. The t.Fatal on expiry only stops
+// the test when it runs on the goroutine that owns t; from anywhere else it
+// marks the test failed and the body keeps going. All uses below comply.
+//
 // Every blocking call in this file goes through it, not just the one being
 // measured. The reason is in the header: a connection replaced via
 // driver.ErrBadConn comes back with the process-wide ten-minute ceiling
 // instead of this test's two seconds, and an unguarded call would then
 // outlive `go test`'s own default timeout — which kills the process without
 // running a single t.Cleanup and leaves committed rows in the shared DB.
+//
+// On expiry the goroutine running fn is LEAKED, on purpose: it is blocked in
+// the driver and there is no safe way to interrupt it (cancelling its context
+// is the move that desyncs the firebirdsql wire). The channel is buffered so
+// it can never wedge on send. What it can still do, once the lock holder is
+// released, is finish its statement against a pool that is closing. The
+// t.Cleanup order makes that harmless: cleanups run LIFO, so the holder is
+// released BEFORE pool.Stop, and pool.Stop waits on database/sql's own
+// bookkeeping rather than yanking the socket.
 func conPresupuesto(t *testing.T, presupuesto time.Duration, mensaje string, fn func() error) error {
 	t.Helper()
 	hecho := make(chan error, 1)
@@ -175,12 +203,12 @@ func conPresupuesto(t *testing.T, presupuesto time.Duration, mensaje string, fn 
 // WHAT THIS DETECTS:
 //   - the blocked path hanging with no ceiling at all;
 //   - the cut arriving unclassified;
-//   - the cobranza write path losing its WAIT semantics, by either route:
-//     firebird.RunInTx's isolation changed underneath it, OR AplicarPago
-//     moved onto a no-wait runner. Both make the blocked call return
-//     firebird_lock_conflict at once and fail step 3. Both are READ from
-//     production: the transaction is opened by Service.AplicarPago, never by
-//     the test;
+//   - the cobranza write path losing its WAIT semantics, by any of the three
+//     routes: firebird.RunInTx's isolation changed underneath it, AplicarPago
+//     moved onto a no-wait runner, or persistPagoTx moved onto one. Each
+//     makes the corresponding blocked call return firebird_lock_conflict at
+//     once and fail step 3 or step 5. All READ from production: both
+//     transactions are opened by the Service, never by the test;
 //   - the connection not coming back after the cut. That is the one that
 //     matters operationally: a stuck connection is a pool slot gone for good.
 //
@@ -210,7 +238,12 @@ func TestE2E_ContencionDeFila_LaEsperaSeCortaComoTimeoutNoComoConflicto(t *testi
 	// assertion at the end proves.
 	writer := &recordingFakeWriter{}
 	svcBloqueado := cobranzaapp.NewService(
-		nil, nil, nil, // saldos/pagos/ventas — AplicarPago needs none of them
+		// saldos answers the cargo check CrearPagoConImagenes makes BEFORE
+		// opening its transaction; routing it through the ceiling-carrying
+		// pool would add a statement to the measurement for no gain.
+		// AplicarPago never touches it.
+		newCaosSaldosRepo(),
+		nil, nil, // pagos/ventas — neither entry point needs them
 		cobranzaoutbound.ProductionClock{},
 		repoBloqueado, // PagosRecibidosRepo
 		repoBloqueado, // PagosImagenesRepo — same struct satisfies both
@@ -336,4 +369,96 @@ func TestE2E_ContencionDeFila_LaEsperaSeCortaComoTimeoutNoComoConflicto(t *testi
 	writer.mu.Unlock()
 	assert.Equal(t, 0, llamadasWriter,
 		"AplicarPago must have died at LockByID, before touching Microsip")
+
+	// ── 5. El OTRO call site: CrearPagoConImagenes ───────────────────────
+	// Service.runInTx has two production callers and step 3 only read one.
+	// This reads the other, and it is the one that matters most: the phone's
+	// push to Microsip goes through persistPagoTx, so it is where somebody
+	// would most plausibly apply the "make the push no-wait" recommendation.
+	//
+	// The block is produced differently here — CrearPagoConImagenes takes no
+	// row lock; its transaction opens with the pago INSERT. So the holder
+	// INSERTS the same UUID and does not commit: in WAIT mode the second
+	// INSERT waits on the uncommitted unique-index entry, in NO WAIT it is
+	// refused at once. The holder then ROLLS BACK, so unlike step 2 this step
+	// commits nothing at all.
+	pagoNuevoID := uuid.New()
+	h.trackID(pagoNuevoID) // defensivo: si algo commiteara, se limpia igual
+
+	insertTomado := make(chan struct{})
+	insertSoltar := make(chan struct{})
+	liberarInsert := sync.OnceFunc(func() { close(insertSoltar) })
+	t.Cleanup(liberarInsert)
+
+	// Built here and not inside the goroutine: buildValidPagoRecibidoWithID
+	// asserts, and testifylint's go-require rule is right that an assertion
+	// off the test goroutine does not stop the test.
+	pagoBloqueador := buildValidPagoRecibidoWithID(t, pagoNuevoID)
+
+	errRollbackDeliberado := errors.New("el bloqueador revierte a propósito")
+	insertHolder := make(chan error, 1)
+	go func() {
+		insertHolder <- h.txMgr.RunInTx(context.Background(), func(ctx context.Context) error {
+			if e := h.repo.Insert(ctx, pagoBloqueador); e != nil {
+				return e
+			}
+			close(insertTomado)
+			<-insertSoltar
+			return errRollbackDeliberado
+		})
+	}()
+	<-insertTomado
+
+	inicioCrear := time.Now()
+	errCrear := conPresupuesto(t, bloqueoPresupuesto,
+		fmt.Sprintf("CrearPagoConImagenes stayed blocked for %s with a %s ceiling in "+
+			"force: same conclusion as step 3 — the server is not cutting lock waits",
+			bloqueoPresupuesto, bloqueoStatementTimeout),
+		func() error {
+			_, err := svcBloqueado.CrearPagoConImagenes(
+				context.Background(), inputBloqueoConID(pagoNuevoID), nil, uuid.Nil)
+			return err
+		})
+	transcurridoCrear := time.Since(inicioCrear)
+
+	liberarInsert()
+	require.ErrorIs(t, <-insertHolder, errRollbackDeliberado,
+		"the blocking INSERT must roll back so this step commits nothing")
+
+	require.Error(t, errCrear, "a UUID another transaction is inserting must not go through")
+	var aeCrear *apperror.Error
+	require.ErrorAs(t, errCrear, &aeCrear,
+		"the blocked create must return a classified error, got %T: %v", errCrear, errCrear)
+	t.Logf("contención medida (CrearPagoConImagenes): espera=%s code=%s kind=%v",
+		transcurridoCrear, aeCrear.Code, aeCrear.Kind)
+
+	// Anything other than a timeout here means persistPagoTx — the
+	// transaction that carries the phone's push to Microsip — is no longer
+	// the WAIT flavor. The symptom is NOT the firebird_lock_conflict step 3
+	// produces, which is worth writing down because it is worse: measured
+	// with persistPagoTx alone on a no-wait runner, Firebird reports the
+	// duplicate key against the uncommitted row as a UNIQUE VIOLATION, the
+	// repo maps that to ErrPagoYaExiste, persistPagoTx takes its idempotent
+	// replay branch, FindByID finds nothing (the twin was never committed),
+	// and the phone gets pago_no_encontrado — a 404 for a pago that was never
+	// created, in 17ms.
+	assert.Equal(t, "firebird_timeout", aeCrear.Code,
+		"same scoping as step 3, on the other call site: a non-timeout here means "+
+			"persistPagoTx lost its WAIT semantics")
+}
+
+// inputBloqueoConID builds the CrearPagoInput for step 5. The cargo is the
+// one caosSaldosRepo answers for, and the importe fits inside its saldo, so
+// the pre-transaction validation passes without touching any database.
+func inputBloqueoConID(id uuid.UUID) cobranzaapp.CrearPagoInput {
+	return cobranzaapp.CrearPagoInput{
+		ID:             id,
+		CargoDoctoCCID: caosCargoID,
+		ClienteID:      11486,
+		CobradorID:     200,
+		Cobrador:       "Ramírez García, Jorge",
+		Importe:        decimal.NewFromInt(1500),
+		FormaCobroID:   87327,
+		FechaHoraPago:  time.Now().UTC().Add(-30 * time.Minute),
+	}
 }
