@@ -56,6 +56,18 @@ const (
 	ventanaObservacion  = 1200 * time.Millisecond
 )
 
+// fxStartTimeoutDeadline es el StartTimeout de TestFx_CtxDeOnStartTraeDeadline,
+// que NO comparte el de arriba a propósito.
+//
+// Esa prueba no monta el worker, así que no la ata la relación
+// «StartTimeout < intervalo de tick» de la que depende la reproducción; en
+// cambio sí la castiga un presupuesto estrecho, porque afirma sobre un contexto
+// que se está muriendo solo. Con 60 ms, un stall del planificador entre el
+// OnStart y las aserciones —cosa normal bajo -race en un runner cargado— la
+// ponía en rojo sin que nada estuviera roto. Medio segundo da holgura y la
+// prueba sigue durando eso: el contexto muere igual de solo.
+const fxStartTimeoutDeadline = 500 * time.Millisecond
+
 // newCountingRetryWorker construye el worker con el repo contador. svc es nil a
 // propósito (ver countingPendientesRepo).
 func newCountingRetryWorker(t *testing.T, repo *countingPendientesRepo) *app.PagoRetryWorker {
@@ -136,18 +148,22 @@ func TestFx_CtxDeOnStartTraeDeadline(t *testing.T) {
 	// No se guarda el ctx (fatcontext): basta con su canal Done y un cierre que
 	// consulta Err(), que es todo lo que hace falta para observar su muerte.
 	var (
-		vencido  <-chan struct{}
-		errDelFx func() error
-		teniaDL  bool
-		deadline time.Time
+		vencido   <-chan struct{}
+		errDelFx  func() error
+		teniaDL   bool
+		deadline  time.Time
+		enOnStart time.Time
 	)
 
 	fxApp := fx.New(
 		fx.NopLogger,
-		fx.StartTimeout(fxStartTimeoutCorto),
+		fx.StartTimeout(fxStartTimeoutDeadline),
 		fx.Invoke(func(lc fx.Lifecycle) {
 			lc.Append(fx.Hook{
 				OnStart: func(ctx context.Context) error {
+					// El instante se toma DENTRO del hook para poder medir el
+					// deadline como un intervalo desde aquí (ver abajo).
+					enOnStart = time.Now()
 					vencido = ctx.Done()
 					errDelFx = ctx.Err
 					deadline, teniaDL = ctx.Deadline()
@@ -168,8 +184,20 @@ func TestFx_CtxDeOnStartTraeDeadline(t *testing.T) {
 	})
 
 	require.True(t, teniaDL, "el ctx de OnStart DEBE traer deadline (fx lo construye con WithTimeout(StartTimeout))")
-	assert.WithinDuration(t, time.Now().Add(fxStartTimeoutCorto), deadline, 40*time.Millisecond,
-		"el deadline debe caer aproximadamente a StartTimeout del arranque")
+
+	// Se afirma un INTERVALO medido contra un instante tomado DENTRO del hook,
+	// no un punto medido contra time.Now() en la aserción. La versión anterior
+	// («el deadline cae a StartTimeout de ahora, ±40 ms») convertía cualquier
+	// pausa entre el OnStart y esta línea en un rojo. Medido desde dentro, el
+	// intervalo es exacto por construcción: WithTimeout fijó el deadline ANTES
+	// de que corriera el hook, así que lo que queda es forzosamente positivo y
+	// como mucho un StartTimeout.
+	restante := deadline.Sub(enOnStart)
+	assert.Positive(t, restante,
+		"dentro del OnStart el deadline aún no puede haber pasado")
+	assert.LessOrEqual(t, restante, fxStartTimeoutDeadline,
+		"el deadline no puede caer más allá de un StartTimeout (%s) del arranque; quedaban %s",
+		fxStartTimeoutDeadline, restante)
 
 	// Cuando OnStart retornó, el ctx seguía vivo — el arranque no lo cancela.
 	require.NoError(t, errDelFx(), "recién arrancado, el ctx de OnStart aún no está cancelado")
@@ -177,7 +205,7 @@ func TestFx_CtxDeOnStartTraeDeadline(t *testing.T) {
 	// Pero muere solo al vencer el deadline, con la app perfectamente viva.
 	select {
 	case <-vencido:
-	case <-time.After(2 * fxStartTimeoutCorto):
+	case <-time.After(2 * fxStartTimeoutDeadline):
 		t.Fatal("el ctx de OnStart nunca se canceló")
 	}
 	require.ErrorIs(t, errDelFx(), context.DeadlineExceeded,
