@@ -4,6 +4,7 @@ package ventfb_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
@@ -173,13 +174,25 @@ func assertDoctoCCImportes(t *testing.T, q firebird.Querier, doctoPVID int, expe
 // ─── inventory assertions ─────────────────────────────────────────────────────
 
 // snapshotSalidasInventario reads SALDOS_IN.SALIDAS_UNIDADES for the given
-// (articuloID, almacenID) at ANO=current-year MES=current-month. Returns zero
-// when the row does not exist (new article/month with no exits yet).
+// (articuloID, almacenID) at ANO/MES of the current business month. Returns
+// zero when the row does not exist (new article/month with no exits yet).
 //
-// The Microsip column is ANO (no Ñ). The query uses Firebird's EXTRACT to
-// derive year/month from CURRENT_DATE so the snapshot stays tx-local.
+// The Microsip column is ANO (no Ñ).
+//
+// 🔴 The year/month MUST come from the business wall clock, not from
+// Firebird's CURRENT_DATE. AFECTA_SALDOS_IN keys the row by the document's
+// date, and that date is written from Go in America/Mexico_City (see
+// firebird.ToWallClock). In development Firebird runs in a UTC container
+// while Go runs on a CST host, so for the last six hours of every month
+// CURRENT_DATE has already rolled to the next month while the document —
+// and therefore the SALDOS_IN row — is still written to the current one.
+// Reading with CURRENT_DATE made this assertion look in an empty month and
+// fail, reporting a delta of 0 while the sale had in fact decremented
+// inventory correctly. Measured 2026-08-31 21:40 CST / 2026-09-01 03:40 UTC:
+// the row landed in ano=2026 mes=8, the query asked for mes=9.
 func snapshotSalidasInventario(ctx context.Context, t *testing.T, q firebird.Querier, articuloID, almacenID int) decimal.Decimal {
 	t.Helper()
+	ahora := time.Now().In(firebird.BusinessTZ())
 	var raw any
 	err := q.QueryRowContext(
 		ctx, `
@@ -187,9 +200,9 @@ func snapshotSalidasInventario(ctx context.Context, t *testing.T, q firebird.Que
 		FROM SALDOS_IN
 		WHERE ARTICULO_ID = ?
 		  AND ALMACEN_ID  = ?
-		  AND ANO         = EXTRACT(YEAR  FROM CURRENT_DATE)
-		  AND MES         = EXTRACT(MONTH FROM CURRENT_DATE)`,
-		articuloID, almacenID,
+		  AND ANO         = ?
+		  AND MES         = ?`,
+		articuloID, almacenID, ahora.Year(), int(ahora.Month()),
 	).Scan(&raw)
 	if err != nil {
 		// Row may not exist for a new article/month; treat as zero.
