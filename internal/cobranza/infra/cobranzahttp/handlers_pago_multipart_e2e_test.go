@@ -55,9 +55,10 @@ func (a *cobranzaStorageE2EAdapter) Delete(ctx context.Context, key string) erro
 	return a.inner.Delete(ctx, key)
 }
 
-// recordingMicrosipWriter records calls to Aplicar. Used so the E2E test can
-// verify the post-commit fast-path fired without exercising the real Microsip
-// writer (which has its own integration suite).
+// recordingMicrosipWriter records calls to Aplicar and can be told to reject.
+// Used so the E2E tests can drive the Microsip step of the creation
+// transaction — accepting or rejecting — without exercising the real writer
+// (which has its own integration suite).
 type recordingMicrosipWriter struct {
 	mu        sync.Mutex
 	callCount int
@@ -67,8 +68,8 @@ type recordingMicrosipWriter struct {
 
 func (r *recordingMicrosipWriter) Aplicar(_ context.Context, _ cobranzaoutbound.MicrosipPagoInput) (cobranzaoutbound.MicrosipPagoResult, error) {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.callCount++
-	r.mu.Unlock()
 	return r.result, r.err
 }
 
@@ -76,6 +77,15 @@ func (r *recordingMicrosipWriter) calls() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.callCount
+}
+
+// setErr makes every subsequent Aplicar reject (non-nil) or accept (nil).
+// Guarded by the same mutex as callCount so a test can flip the writer
+// between requests without racing the handler goroutine.
+func (r *recordingMicrosipWriter) setErr(err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.err = err
 }
 
 // e2eRequireCargo ensures cargo 1001 exists in DOCTOS_CC + MSP_SALDOS_VENTAS
@@ -98,7 +108,8 @@ func e2eRequireCargo(ctx context.Context, t *testing.T, q firebird.Querier, carg
 //  2. MSP_PAGOS_RECIBIDOS has one row for the pago UUID.
 //  3. MSP_PAGOS_IMAGENES has N rows linked to the pago.
 //  4. N blob files exist on disk under STORAGE_DIR/pagos/<pago_id>/.
-//  5. The post-commit AplicarPago fast-path fired exactly once.
+//  5. The Microsip write ran exactly once, as the last step INSIDE the
+//     creation transaction.
 //
 // Wrapped in the rollback-only outer tx (WithTestTransaction); the inner
 // runInTx the service uses is composed re-entrantly so everything rolls back
@@ -209,8 +220,11 @@ func TestE2E_CrearPagoConImagenes_FullCycle(t *testing.T) {
 			require.NoError(t, statErr, "blob must exist on disk at %s", blobPath)
 		}
 
-		// 4) Microsip apply fast-path fired once.
-		assert.Equal(t, 1, writer.calls(), "post-commit AplicarPago must have fired exactly once")
+		// 4) The Microsip write ran once, inside the creation tx. It is no
+		// longer a post-commit best-effort call: it is the last step of the
+		// transaction, and its rejection would have rolled everything above
+		// back instead of leaving these rows behind a 200.
+		assert.Equal(t, 1, writer.calls(), "el escritor de Microsip debe correr exactamente una vez")
 	})
 }
 
