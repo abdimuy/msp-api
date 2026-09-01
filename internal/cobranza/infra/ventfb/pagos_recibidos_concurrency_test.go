@@ -27,6 +27,10 @@ import (
 // Unlike the rollback-only WithTestTransaction tests, these tests commit real
 // transactions and rely on UUID-scoped cleanup to avoid polluting the shared DB.
 type concurrencyHarness struct {
+	// t is held so cleanup can report a failed DELETE. Cleanup runs after
+	// the test body has returned, which is exactly when a silent error would
+	// be invisible.
+	t        *testing.T
 	pool     *firebird.Pool
 	txMgr    *firebird.TxManager
 	repo     *cobranzaventfb.PagosRecibidosRepo
@@ -39,6 +43,7 @@ func newConcurrencyHarness(t *testing.T) *concurrencyHarness {
 	requireFBEnv(t)
 	pool := fbtestutil.NewTestFirebirdPool(t)
 	h := &concurrencyHarness{
+		t:     t,
 		pool:  pool,
 		txMgr: firebird.NewTxManager(pool.DB),
 		repo:  cobranzaventfb.NewPagosRecibidosRepo(pool),
@@ -56,8 +61,18 @@ func (h *concurrencyHarness) trackID(id uuid.UUID) {
 }
 
 // cleanup deletes every tracked pago (and its imagenes) in a single committed
-// transaction. Errors are ignored — cleanup is best-effort; a subsequent
-// admin sweep or the next test run's unique UUIDs make orphans harmless.
+// transaction, children before parents.
+//
+// NINGÚN BORRADO DESCARTA SU ERROR. This used to swallow both the DELETE
+// errors and the transaction's, on the grounds that cleanup is best-effort.
+// CLAUDE.md §7 forbids exactly that, and for a concrete reason: a DELETE that
+// fails in silence leaves the row in the shared dev DB forever AND makes the
+// cleanup look like it worked, so nobody goes looking. The rows these tests
+// commit are real MSP_PAGOS_RECIBIDOS rows; two of them did leak during this
+// plan's work and had to be found by comparing censuses and removed by hand.
+//
+// A DELETE matching nothing is not an error, so a tracked ID whose INSERT
+// rolled back costs nothing here.
 func (h *concurrencyHarness) cleanup(ctx context.Context) {
 	h.mu.Lock()
 	ids := make([]uuid.UUID, len(h.inserted))
@@ -66,14 +81,26 @@ func (h *concurrencyHarness) cleanup(ctx context.Context) {
 	if len(ids) == 0 {
 		return
 	}
-	_ = h.txMgr.RunInTx(ctx, func(ctx context.Context) error {
+	err := h.txMgr.RunInTx(ctx, func(ctx context.Context) error {
 		q := firebird.GetQuerier(ctx, h.pool.DB)
 		for _, id := range ids {
-			_, _ = q.ExecContext(ctx, "DELETE FROM MSP_PAGOS_IMAGENES WHERE PAGO_ID = ?", id.String())
-			_, _ = q.ExecContext(ctx, "DELETE FROM MSP_PAGOS_RECIBIDOS WHERE ID = ?", id.String())
+			for _, sentencia := range []string{
+				"DELETE FROM MSP_PAGOS_IMAGENES WHERE PAGO_ID = ?",
+				"DELETE FROM MSP_PAGOS_RECIBIDOS WHERE ID = ?",
+			} {
+				if _, execErr := q.ExecContext(ctx, sentencia, id.String()); execErr != nil {
+					// Reported, not returned: the remaining IDs must still be
+					// attempted, or one bad row would strand all the others.
+					h.t.Errorf("limpieza del pago %s (%s): %v", id, sentencia, execErr)
+				}
+			}
 		}
 		return nil
 	})
+	if err != nil {
+		h.t.Errorf("limpieza de pagos de concurrencia: la transacción falló y las filas "+
+			"siguen en la base compartida: %v", err)
+	}
 }
 
 // buildValidPagoRecibidoWithID constructs a PagoRecibido with the given ID so
