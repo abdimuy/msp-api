@@ -117,16 +117,23 @@ func TestConcurrente_MismoUUID_UnSoloEnvioAMicrosip(t *testing.T) {
 	require.Equal(t, 0, pagosRepo.rowCount())
 	require.Equal(t, 0, writer.callCountSafe())
 
+	// A starting gate, not a for-loop. Launching in sequence lets the first
+	// goroutine finish its pre-transactional work (validateCargo,
+	// storeAllBlobs) before the last one is even scheduled, which is where
+	// -race would have something to find. The gate makes them collide.
+	arranque := make(chan struct{})
 	var wg sync.WaitGroup
 	errs := make(chan error, goroutines)
 	wg.Add(goroutines)
 	for range goroutines {
 		go func() {
 			defer wg.Done()
+			<-arranque
 			_, err := svc.CrearPagoConImagenes(context.Background(), in, nil, uuid.New())
 			errs <- err
 		}()
 	}
+	close(arranque)
 	wg.Wait()
 	close(errs)
 
@@ -172,16 +179,19 @@ func TestConcurrente_MismoUUID_MicrosipRechaza_NoDejaFilaNiQuemaElUUID(t *testin
 
 	in := baseCrearInput(now)
 
+	arranque := make(chan struct{})
 	var wg sync.WaitGroup
 	errs := make(chan error, goroutines)
 	wg.Add(goroutines)
 	for range goroutines {
 		go func() {
 			defer wg.Done()
+			<-arranque
 			_, err := svc.CrearPagoConImagenes(context.Background(), in, nil, uuid.New())
 			errs <- err
 		}()
 	}
+	close(arranque)
 	wg.Wait()
 	close(errs)
 

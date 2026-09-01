@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	cobranzaapp "github.com/abdimuy/msp-api/internal/cobranza/app"
 	"github.com/abdimuy/msp-api/internal/cobranza/domain"
 	cobranzamicrosip "github.com/abdimuy/msp-api/internal/cobranza/infra/microsip"
 	cobranzaventfb "github.com/abdimuy/msp-api/internal/cobranza/infra/ventfb"
@@ -59,16 +60,29 @@ import (
 // statement failable and, as a bonus, exercises the REAL transaction
 // lifecycle — BEGIN, the statement sequence, and ROLLBACK vs COMMIT.
 //
+// THE FLOW UNDER TEST IS THE REAL ONE. The harness calls
+// app.Service.CrearPagoConImagenes — not a hand-assembled sequence. That
+// matters more than it looks: the composition task 2 introduced (the Microsip
+// push runs INSIDE the transaction that inserted the pago, as its last step)
+// is the thing being tested, so it must be READ from production, never
+// re-stated by the test. A harness that opened its own transaction and called
+// repo.Insert + writer.Aplicar by hand would stay green if somebody moved the
+// push back outside the commit — which is the original defect this whole plan
+// removes.
+//
 // WHAT THESE TESTS DETECT:
-//   - the writer joining the caller's transaction instead of taking its own
-//     connection (asserted as opens == 1);
+//   - the push escaping the transaction: moved after the commit, or into a
+//     transaction of its own. Either shows up as a second connection
+//     (opens > 1), a COMMIT that should not exist, or an ordinal that no
+//     longer matches caosStmtOrder;
 //   - a failure at statement N leaving the transaction rolled back and never
 //     committed, with statements 1..N-1 already issued;
-//   - the exact statement order of the combined flow — a reordered or added
-//     statement in PagoWriter moves the ordinals and fails the table;
+//   - the exact statement order of the whole write path — a reordered, added
+//     or dropped statement anywhere in the service, the repo or PagoWriter
+//     moves the ordinals and fails the table;
 //   - a Firebird lock conflict surfacing as apperror KindConflict /
-//     firebird_lock_conflict, classified transient, with the pooled
-//     connection returned healthy and reused afterwards.
+//     firebird_lock_conflict, with the pooled connection returned healthy and
+//     reused afterwards.
 //
 // WHAT THEY DO NOT DETECT:
 //   - whether Firebird actually UNDOES the rows. The double records that
@@ -78,7 +92,17 @@ import (
 //     parses it, so a syntactically broken statement passes here.
 //   - server-side statement timeouts and the wire-protocol desync that
 //     internal/platform/firebird/driverwrap.go exists to prevent. Those live
-//     below database/sql, where this double sits.
+//     below database/sql, where this double sits. In particular a caosConn is
+//     never sick: "the connection came back healthy" here is a statement
+//     about database/sql's bookkeeping, not about the firebirdsql driver. The
+//     real thing is measured in
+//     pagos_recibidos_bloqueo_integration_test.go and in
+//     internal/platform/firebird/poolleak_integration_test.go;
+//   - argument types Firebird would refuse. CheckNamedValue runs the same
+//     driver.DefaultParameterConverter database/sql would use, so a type no
+//     converter accepts is caught — but a type the converter accepts and
+//     Firebird rejects (a string too long for the column, a bad date format)
+//     passes here.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // caosPlan is the shared recorder + fault injector behind one registered
@@ -161,10 +185,20 @@ func (c *caosConn) BeginTx(context.Context, driver.TxOptions) (driver.Tx, error)
 	return &caosTx{plan: c.plan}, nil
 }
 
-// CheckNamedValue accepts every argument verbatim. PagoWriter binds 59
-// columns of mixed types (nil, string, int, decimal-as-string); converting
-// them is Firebird's job, not this double's.
-func (c *caosConn) CheckNamedValue(*driver.NamedValue) error { return nil }
+// CheckNamedValue runs the same conversion database/sql applies to a driver
+// with no converter of its own. Accepting arguments verbatim instead would
+// make the double MORE permissive than Firebird and let a binding a real
+// driver refuses pass green — PagoWriter binds 59 columns of mixed types
+// (nil, string, int, decimal-as-string) and that is exactly where a wrong
+// type would hide.
+func (c *caosConn) CheckNamedValue(nv *driver.NamedValue) error {
+	v, err := driver.DefaultParameterConverter.ConvertValue(nv.Value)
+	if err != nil {
+		return err //nolint:wrapcheck // verbatim converter error, as a driver would.
+	}
+	nv.Value = v
+	return nil
+}
 
 func (c *caosConn) ExecContext(ctx context.Context, query string, _ []driver.NamedValue) (driver.Result, error) {
 	if err := c.plan.record(ctx, query); err != nil {
@@ -239,14 +273,48 @@ func caosAnswerFor(query string) (string, driver.Value) {
 // panics on a repeat and these tests run in parallel.
 var caosDriverSeq atomic.Int64
 
+// caosCargoID is the cargo every chaos pago is applied against. It never
+// reaches a database: caosSaldosRepo answers for it in memory.
+const caosCargoID = 5000
+
+// caosSaldosRepo is the ONLY double in the harness besides the driver.
+// CrearPagoConImagenes validates the cargo before opening the transaction,
+// and that read has nothing to do with what these tests measure — routing it
+// through the fault-injecting driver would add statements to the sequence and
+// shift every ordinal for no gain.
+//
+// The embedded port is nil ON PURPOSE: CrearPagoConImagenes must read exactly
+// one thing from saldos, and any other call panics loudly instead of quietly
+// returning a zero value.
+type caosSaldosRepo struct {
+	cobranzaoutbound.SaldosRepo
+	saldo domain.Saldo
+}
+
+func newCaosSaldosRepo() *caosSaldosRepo {
+	return &caosSaldosRepo{saldo: domain.HydrateSaldo(domain.HydrateSaldoParams{
+		DoctoCCID:   caosCargoID,
+		ClienteID:   11486,
+		Folio:       "CV-CAOS",
+		FechaCargo:  time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC),
+		PrecioTotal: decimal.NewFromInt(50000),
+		Saldo:       decimal.NewFromInt(50000),
+		UpdatedAt:   time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC),
+	})}
+}
+
+func (r *caosSaldosRepo) PorCargo(context.Context, int) (*domain.Saldo, error) {
+	return &r.saldo, nil
+}
+
 // caosHarness wires a *sql.DB over the fault-injecting driver into the real
-// TxManager, the real PagosRecibidosRepo and the real PagoWriter.
+// TxManager, the real PagosRecibidosRepo, the real PagoWriter and the real
+// cobranza Service. Everything except the saldos read and the driver itself
+// is production code.
 type caosHarness struct {
-	plan   *caosPlan
-	db     *sql.DB
-	txMgr  *firebird.TxManager
-	repo   *cobranzaventfb.PagosRecibidosRepo
-	writer *cobranzamicrosip.PagoWriter
+	plan *caosPlan
+	db   *sql.DB
+	svc  *cobranzaapp.Service
 }
 
 func newCaosHarness(t *testing.T, failAt int, failErr error) *caosHarness {
@@ -259,68 +327,54 @@ func newCaosHarness(t *testing.T, failAt int, failErr error) *caosHarness {
 	t.Cleanup(func() { _ = db.Close() })
 
 	pool := &firebird.Pool{DB: db}
+	repo := cobranzaventfb.NewPagosRecibidosRepo(pool)
 	return &caosHarness{
-		plan:   plan,
-		db:     db,
-		txMgr:  firebird.NewTxManager(db),
-		repo:   cobranzaventfb.NewPagosRecibidosRepo(pool),
-		writer: cobranzamicrosip.NewPagoWriter(pool),
+		plan: plan,
+		db:   db,
+		svc: cobranzaapp.NewService(
+			newCaosSaldosRepo(),
+			nil, // pagos — unused by CrearPagoConImagenes
+			nil, // ventas — unused
+			cobranzaoutbound.ProductionClock{},
+			repo, // PagosRecibidosRepo
+			repo, // PagosImagenesRepo — same struct satisfies both
+			cobranzamicrosip.NewPagoWriter(pool),
+			nil, // storage — no imagenes on this path
+			nil, // imageProc — idem
+			firebird.NewTxManager(db),
+		),
 	}
 }
 
-// crearYAplicar reproduces the shape task 2 introduced: one transaction that
-// inserts the pago row and then pushes it to Microsip as its last step.
-func (h *caosHarness) crearYAplicar(ctx context.Context, pago *domain.PagoRecibido) error {
-	return h.txMgr.RunInTx(ctx, func(ctx context.Context) error {
-		if err := h.repo.Insert(ctx, pago); err != nil {
-			return err
-		}
-		_, err := h.writer.Aplicar(ctx, caosInputFrom(pago))
-		return err
-	})
+// crearPago drives the real entry point: the same method the multipart
+// handler calls when the phone posts a pago with no photo, which is the path
+// the phone actually takes.
+func (h *caosHarness) crearPago(ctx context.Context) error {
+	_, err := h.svc.CrearPagoConImagenes(ctx, buildCaosInput(), nil, uuid.New())
+	return err
 }
 
-func caosInputFrom(p *domain.PagoRecibido) cobranzaoutbound.MicrosipPagoInput {
-	return cobranzaoutbound.MicrosipPagoInput{
-		CargoDoctoCCID: p.CargoDoctoCCID(),
-		ClienteID:      p.ClienteID(),
-		CobradorID:     p.CobradorID(),
-		Cobrador:       p.Cobrador(),
-		FormaCobroID:   p.FormaCobroID(),
-		ConceptoCCID:   p.ConceptoCCID(),
-		Importe:        p.Importe(),
-		FechaHoraPago:  p.FechaHoraPago(),
-		Lat:            p.Lat(),
-		Lon:            p.Lon(),
-	}
-}
-
-// buildCaosPago builds a valid aggregate without touching the database, so
-// this file stays runnable with FB_DATABASE unset.
-func buildCaosPago(t *testing.T) *domain.PagoRecibido {
-	t.Helper()
-	now := time.Now().UTC()
-	p, err := domain.NewPagoRecibido(domain.CrearPagoRecibidoParams{
+// buildCaosInput is a valid CrearPagoInput built without touching a database,
+// so this file stays runnable with FB_DATABASE unset.
+func buildCaosInput() cobranzaapp.CrearPagoInput {
+	return cobranzaapp.CrearPagoInput{
 		ID:             uuid.New(),
-		CargoDoctoCCID: 5000,
+		CargoDoctoCCID: caosCargoID,
 		ClienteID:      11486,
 		CobradorID:     200,
 		Cobrador:       "Ramírez García, Jorge",
 		Importe:        decimal.NewFromInt(1500),
 		FormaCobroID:   87327,
-		FechaHoraPago:  now.Add(-30 * time.Minute),
-		CreatedBy:      uuid.New(),
-		Now:            now,
-	})
-	require.NoError(t, err, "buildCaosPago: NewPagoRecibido must not fail")
-	return p
+		FechaHoraPago:  time.Now().UTC().Add(-30 * time.Minute),
+	}
 }
 
 // ─── the statement map of the combined flow ─────────────────────────────────
 
-// caosStmtOrder is the statement sequence the flow must issue, in order. It
-// is the assertion, not documentation: a test names an ordinal, the harness
-// checks the statement recorded at that ordinal really targets this table.
+// caosStmtOrder is the statement sequence CrearPagoConImagenes must issue
+// inside its single transaction, in order. It is the assertion, not
+// documentation: the harness checks the statement recorded at each ordinal
+// really targets this table.
 //
 //	1  INSERT MSP_PAGOS_RECIBIDOS   PagosRecibidosRepo.Insert
 //	2  EXECUTE PROCEDURE            PagoWriter.execGenFolioTemp
@@ -328,13 +382,20 @@ func buildCaosPago(t *testing.T) *domain.PagoRecibido {
 //	4  INSERT DOCTOS_CC             PagoWriter.insertDoctoCC
 //	5  INSERT IMPORTES_DOCTOS_CC    PagoWriter.insertImporteDoctoCC
 //	6  INSERT FORMAS_COBRO_DOCTOS   PagoWriter.insertFormaCobroDocto
+//	7  UPDATE MSP_PAGOS_RECIBIDOS   the MarcarAplicada write-back
+//
+// Statements 2-7 all belong to aplicarPagoRecienCreado, the last step of
+// persistPagoTx. If that step were moved out of the transaction, statement 1
+// would commit alone and the rest would arrive on a second connection — which
+// is what opens > 1 and the ordinal check catch.
 var caosStmtOrder = []string{
-	"MSP_PAGOS_RECIBIDOS",
+	"INSERT INTO MSP_PAGOS_RECIBIDOS",
 	"GEN_FOLIO_TEMP",
 	"CLAVES_CLIENTES",
-	"INTO DOCTOS_CC",
-	"INTO IMPORTES_DOCTOS_CC",
-	"INTO FORMAS_COBRO_DOCTOS",
+	"INSERT INTO DOCTOS_CC",
+	"INSERT INTO IMPORTES_DOCTOS_CC",
+	"INSERT INTO FORMAS_COBRO_DOCTOS",
+	"UPDATE MSP_PAGOS_RECIBIDOS",
 }
 
 // assertSecuencia checks that the recorded statements are the expected
@@ -368,24 +429,27 @@ func resumirStmts(stmts []string) []string {
 
 // ─── 1. the happy path — the positive control for the harness ───────────────
 
-// TestCaos_FlujoCompleto_SeisSentenciasYUnCommit is the control that gives
-// the failure tests their meaning: with no fault injected the flow issues all
-// six statements over ONE connection and commits exactly once. Without it a
-// broken harness that never reached Microsip would make every rollback
-// assertion below pass for the wrong reason.
-func TestCaos_FlujoCompleto_SeisSentenciasYUnCommit(t *testing.T) {
+// TestCaos_FlujoCompleto_SieteSentenciasYUnCommit is the control that gives
+// the failure tests their meaning: with no fault injected the real service
+// issues all seven statements over ONE connection and commits exactly once.
+// Without it a broken harness that never reached Microsip would make every
+// rollback assertion below pass for the wrong reason.
+//
+// It is also the assertion that the Microsip push lives inside the same
+// transaction as the INSERT: one connection, one commit, seven statements.
+func TestCaos_FlujoCompleto_SieteSentenciasYUnCommit(t *testing.T) {
 	t.Parallel()
 
 	h := newCaosHarness(t, 0, nil)
-	err := h.crearYAplicar(context.Background(), buildCaosPago(t))
-	require.NoError(t, err, "with no fault injected the flow must complete")
+	require.NoError(t, h.crearPago(context.Background()),
+		"with no fault injected the flow must complete")
 
 	c := h.plan.censo()
 	assertSecuencia(t, c.stmts, len(caosStmtOrder))
 	assert.Equal(t, 1, c.commits, "the flow commits exactly once")
 	assert.Equal(t, 0, c.rollbacks, "nothing to roll back on the happy path")
 	assert.Equal(t, 1, c.opens,
-		"one connection: the writer joins the caller's tx instead of taking its own")
+		"one connection: the whole flow, push included, rides the caller's tx")
 }
 
 // ─── 2. fallo a mitad ───────────────────────────────────────────────────────
@@ -400,7 +464,7 @@ func TestCaos_FlujoCompleto_SeisSentenciasYUnCommit(t *testing.T) {
 // with no commit anywhere.
 //
 // Detects: a statement failing mid-sequence that does not roll the caller's
-// transaction back, a commit issued anyway, the writer opening its own
+// transaction back, a commit issued anyway, the push escaping to its own
 // connection, and any change to the statement order.
 //
 // Does NOT detect: whether the rows are physically gone — the double has no
@@ -411,65 +475,42 @@ func TestCaos_FalloAMitadDelWriter_LaTransaccionSeDeshace(t *testing.T) {
 	casos := []struct {
 		nombre string
 		failAt int
-		// yaEscrito is what the flow had already issued when it broke — the
-		// positive control that the failure really happened in the MIDDLE.
-		yaEscrito []string
 	}{
-		{
-			nombre:    "el encabezado DOCTOS_CC es rechazado",
-			failAt:    4,
-			yaEscrito: []string{"MSP_PAGOS_RECIBIDOS"},
-		},
-		{
-			nombre:    "entra DOCTOS_CC pero el importe es rechazado",
-			failAt:    5,
-			yaEscrito: []string{"MSP_PAGOS_RECIBIDOS", "INTO DOCTOS_CC"},
-		},
-		{
-			nombre:    "entran encabezado e importe pero la forma de cobro es rechazada",
-			failAt:    6,
-			yaEscrito: []string{"MSP_PAGOS_RECIBIDOS", "INTO DOCTOS_CC", "INTO IMPORTES_DOCTOS_CC"},
-		},
+		{nombre: "el encabezado DOCTOS_CC es rechazado", failAt: 4},
+		{nombre: "entra DOCTOS_CC pero el importe es rechazado", failAt: 5},
+		{nombre: "entran encabezado e importe pero la forma de cobro es rechazada", failAt: 6},
 	}
 
 	for _, c := range casos {
 		t.Run(c.nombre, func(t *testing.T) {
 			t.Parallel()
 
-			// Census BEFORE: a fresh harness has issued nothing.
 			rechazo := errors.New("microsip_rechazo_sintetico")
 			h := newCaosHarness(t, c.failAt, rechazo)
-			antes := h.plan.censo()
-			require.Empty(t, antes.stmts)
-			require.Equal(t, 0, antes.opens)
-			require.Equal(t, 0, antes.commits)
-			require.Equal(t, 0, antes.rollbacks)
 
-			err := h.crearYAplicar(context.Background(), buildCaosPago(t))
+			err := h.crearPago(context.Background())
 
 			// The rejection reaches the caller untouched: MapError leaves a
 			// non-FbError alone, so errors.Is still finds the cause.
 			require.Error(t, err, "a rejected statement must not be swallowed")
 			require.ErrorIs(t, err, rechazo)
 
-			// Census AFTER.
-			despues := h.plan.censo()
-			assertSecuencia(t, despues.stmts, c.failAt)
-			assert.Equal(t, 0, despues.commits,
-				"a rejected pago must never reach a COMMIT")
-			assert.Equal(t, 1, despues.rollbacks,
-				"the transaction that carried the half-written document must roll back")
-			assert.Equal(t, 1, despues.opens,
-				"one connection: the half-write and its rollback share the caller's tx")
+			c2 := h.plan.censo()
 
-			// Positive control for "a mitad": everything in yaEscrito really
-			// was issued before the break. Without this the test would also
-			// pass if the flow had failed at statement 1.
-			resumen := resumirStmts(despues.stmts)
-			for _, tabla := range c.yaEscrito {
-				assert.Contains(t, resumen, tabla,
-					"%s must have been written BEFORE the rejection; recorded: %v", tabla, resumen)
-			}
+			// assertSecuencia is the control for "a mitad", and it is the
+			// only one needed: it requires EXACTLY failAt statements and
+			// checks each ordinal against caosStmtOrder, so a break at
+			// statement 1 — or at any ordinal other than the injected one —
+			// fails here. An extra loop re-asserting that the earlier tables
+			// were written would be a strict subset of this and could never
+			// fail; it was removed rather than left as decoration.
+			assertSecuencia(t, c2.stmts, c.failAt)
+			assert.Equal(t, 0, c2.commits,
+				"a rejected pago must never reach a COMMIT")
+			assert.Equal(t, 1, c2.rollbacks,
+				"the transaction that carried the half-written document must roll back")
+			assert.Equal(t, 1, c2.opens,
+				"one connection: the half-write and its rollback share the caller's tx")
 		})
 	}
 }
@@ -492,15 +533,17 @@ func TestCaos_FalloAMitadDelWriter_LaTransaccionSeDeshace(t *testing.T) {
 // context to escape a lock, and after the rejection the same physical
 // connection is reused.
 //
-// Detects: a lock conflict that stops being classified transient (the retry
-// worker would give up on a pago Microsip would have accepted a second
-// later), a lock conflict that stops being a Conflict, a connection that is
-// not returned to the pool, and any cancellation introduced into this path.
+// Detects: a lock conflict that stops arriving as a Conflict with its shared
+// code (the HTTP layer would answer 500 instead of 409, and the failure
+// record would carry an opaque message), a connection that is not returned to
+// the pool, and any cancellation introduced into this path.
 //
 // Does NOT detect: the driver-level desync itself. That happens below
 // database/sql, where this double sits — it is driverwrap's own test's job.
-// This test also does not prove Firebird emits that GDS code; that mapping is
-// pinned by internal/platform/firebird/errors_test.go.
+// This test also does not prove Firebird emits that GDS code under real
+// contention. It does not, in fact: see
+// pagos_recibidos_bloqueo_integration_test.go, which measures what the real
+// blocked path returns.
 func TestCaos_ConflictoDeBloqueo_SeMapeaYNoDejaLaConexionColgada(t *testing.T) {
 	t.Parallel()
 
@@ -513,7 +556,7 @@ func TestCaos_ConflictoDeBloqueo_SeMapeaYNoDejaLaConexionColgada(t *testing.T) {
 	// The conflict lands on DOCTOS_CC — the statement that touches the rows
 	// Cxc.exe holds.
 	h := newCaosHarness(t, 4, bloqueo)
-	err := h.crearYAplicar(context.Background(), buildCaosPago(t))
+	err := h.crearPago(context.Background())
 	require.Error(t, err)
 
 	// 1. It is a Conflict with the shared code, not an opaque 500.
@@ -522,25 +565,35 @@ func TestCaos_ConflictoDeBloqueo_SeMapeaYNoDejaLaConexionColgada(t *testing.T) {
 	assert.Equal(t, "firebird_lock_conflict", ae.Code)
 	assert.Equal(t, apperror.KindConflict, ae.Kind)
 
-	// 2. It is transient, so the retry worker will come back for it.
-	assert.True(t, firebird.IsTransient(err),
-		"a lock conflict must stay retryable or the pago is abandoned")
+	// NOTE, so nobody adds it back: there is no firebird.IsTransient
+	// assertion here. IsTransient has no caller in this repo — PagoRetryWorker
+	// retries on intentos < MaxIntentos plus backoff, never on transience —
+	// so asserting it would claim a consequence the code does not have. The
+	// GDS→code mapping itself is already pinned by
+	// internal/platform/firebird/errors_test.go; what is NOT pinned anywhere
+	// else, and is what this test is for, is that the code survives the whole
+	// cobranza write path and that the connection comes back.
 
-	// 3. The transaction was undone, never committed.
+	// 2. The transaction was undone, never committed.
 	c := h.plan.censo()
 	assertSecuencia(t, c.stmts, 4)
 	assert.Equal(t, 0, c.commits)
 	assert.Equal(t, 1, c.rollbacks)
 
-	// 4. Nobody cancelled a context to get out of the lock — the move that
+	// 3. Nobody cancelled a context to get out of the lock — the move that
 	//    poisons the firebirdsql pool.
 	for i, ctxErr := range c.ctxErrs {
 		require.NoErrorf(t, ctxErr,
 			"statement %d ran on a cancelled context; cancelling to escape a lock desyncs the driver", i+1)
 	}
 
-	// 5. The connection came back. InUse must drain and the next transaction
+	// 4. The connection came back. InUse must drain and the next transaction
 	//    must reuse the SAME physical connection — opens stays at 1.
+	//    Scope, stated plainly: a caosConn is never sick, so this measures
+	//    database/sql's bookkeeping — that nothing in the cobranza path holds
+	//    a connection hostage after a rejection. It does NOT measure the
+	//    firebirdsql wire desync; that is
+	//    internal/platform/firebird/poolleak_integration_test.go.
 	stats := h.db.Stats()
 	assert.Equal(t, 0, stats.InUse,
 		"the connection must be returned to the pool after the rejection")
@@ -549,7 +602,7 @@ func TestCaos_ConflictoDeBloqueo_SeMapeaYNoDejaLaConexionColgada(t *testing.T) {
 	h.plan.mu.Lock()
 	h.plan.failAt = 0
 	h.plan.mu.Unlock()
-	require.NoError(t, h.crearYAplicar(context.Background(), buildCaosPago(t)),
+	require.NoError(t, h.crearPago(context.Background()),
 		"the pool must still be usable after a lock conflict")
 
 	despues := h.plan.censo()
