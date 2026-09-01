@@ -59,6 +59,16 @@ func (c *PagoRetryWorkerConfig) applyDefaults() {
 // Service.AplicarPago on each pendiente. It runs as a background goroutine
 // kicked off by Start; Stop signals shutdown and waits for the current tick
 // to complete.
+//
+// Its role has changed, and reading it with the old one in mind is
+// misleading. It used to be the net holding the whole flow up: creation
+// pushed to Microsip AFTER the commit and swallowed the writer error, so
+// every rejected pago became an invisible ESTADO='P' row that only this
+// worker would ever touch again. The push now runs inside the creation
+// transaction and a rejection propagates, which means creation no longer
+// produces pendientes at all. What is left for the worker is narrow: rows the
+// admin AplicarPagoForzar endpoint left pendiente, rows whose own retries
+// failed, and rows inherited from before the change.
 type PagoRetryWorker struct {
 	svc    *Service
 	repo   outbound.PagosRecibidosRepo
@@ -199,8 +209,12 @@ func (w *PagoRetryWorker) tick(ctx context.Context) {
 // Audit.UpdatedAt for subsequent ones (RegistrarFallo bumps audit).
 func (w *PagoRetryWorker) elegible(p *domain.PagoRecibido, now time.Time) bool {
 	if p.Intentos() == 0 {
-		// First attempt: process immediately (the fast-path may have failed
-		// without registering a real failure if the tx couldn't even start).
+		// Nothing has ever been counted against this row, so there is no
+		// backoff window to respect: process it on this tick. Since the
+		// Microsip push moved inside the creation transaction, the creation
+		// path cannot produce a row like this any more — what lands here is
+		// either inherited from before that change, or a row whose failed
+		// attempt registrarFalloAparte could not persist.
 		return true
 	}
 	delay := backoffDelay(p.Intentos(), w.cfg.BackoffBase, w.cfg.BackoffCap)

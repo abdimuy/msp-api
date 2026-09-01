@@ -69,8 +69,24 @@ type MicrosipPagoResult struct {
 // transaction (5 statements). The caller (AplicarPago in app layer) is
 // responsible for the surrounding transaction begin/commit.
 //
-// On any error the caller treats it as transient: RegistrarFallo on the
-// aggregate and leave ESTADO='P' so the retry worker picks it up later.
+// What the caller does with an error depends on WHICH caller it is, and the
+// difference matters: the single "treat any error as transient, leave
+// ESTADO='P' for the retry worker" rule this comment used to state is the
+// sentence behind the incident — it described a pago Microsip had rejected
+// surviving as an invisible pendiente row behind a 2xx.
+//
+//   - Creation (Service.CrearPagoConImagenes, the path the phone takes):
+//     the writer runs INSIDE the transaction that inserted the pago, so an
+//     error propagates and that transaction is rolled back. No pendiente row
+//     is left behind and the caller gets a non-2xx; the evidence lives in
+//     MSP_FAILED_INTENTS, one table instead of two.
+//   - Retry worker and the admin AplicarPagoForzar endpoint
+//     (Service.AplicarPago): they operate on rows already committed. The
+//     error propagates as well, but the attempt is recorded out of band by
+//     Service.registrarFalloAparte, in a transaction of its own that survives
+//     the rollback. The row stays in ESTADO='P' with INTENTOS and
+//     ULTIMO_ERROR updated, so the worker picks it up again under backoff.
+//
 // The writer itself is stateless — it owns no retry/backoff logic.
 type MicrosipPagoWriter interface {
 	// Aplicar runs the 5-statement INSERT sequence and returns the generated

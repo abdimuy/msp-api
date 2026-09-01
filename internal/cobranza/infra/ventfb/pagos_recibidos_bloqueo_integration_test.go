@@ -46,8 +46,13 @@ import (
 // firebird.TxManager.RunInTx directly reads that function's isolation, but
 // NOT the call site. Somebody could move a service method onto a no-wait
 // runner with firebird.RunInTx untouched and the test would stay green — and
-// that is not hypothetical, since §4.3 of this plan's report recommends
-// considering exactly that change.
+// that is not hypothetical. Moving the push to Microsip onto RunInTxNoWait is
+// a change somebody will weigh, to fail fast instead of waiting out the
+// statement ceiling. Whoever weighs it should know that it cannot be done
+// alone: persistPagoTx's idempotent-replay branch has to be fixed in the same
+// move, or the phone stops getting a retryable firebird_timeout (503) and
+// starts getting pago_no_encontrado (404) for a pago that was never created.
+// That is measured, with the three caveats it carries, at step 5 below.
 //
 // Third shortcut, wrong for the same reason one level down again: reading
 // SOME of the call sites. Service.runInTx (service.go:194) has THREE
