@@ -823,11 +823,17 @@ func deferBody(r *http.Request) (*http.Request, *countingReadCloser) {
 // is worth reading, and for a second reason beyond cost:
 //
 // readCappedBody TRUNCATES at BodyCapBytes and hands the truncated bytes to
-// whoever comes next. If the outer instance did that on the way in, the
-// in-chain instance would receive an already-cut body, measure it as fitting,
-// and record BodyTruncated=false on a row whose body is missing its tail —
-// the screen would claim the evidence is whole. Not reading it on the way in
-// keeps that instance's flag honest.
+// whoever comes next. If the outer instance did that on the way in, every
+// oversized request would reach the handler cut — including the ones that go
+// on to succeed — and the in-chain instance would receive an already-shortened
+// body and measure it as fitting. Not reading it on the way in keeps this
+// instance invisible to the requests it does not capture.
+//
+// It carries the same withholding cost as handleMultipartDeferred, bounded
+// here by BodyCapBytes rather than by the upload: captureWriter holds the 4xx
+// until flushDeferred, which runs AFTER this read, so a rejected request waits
+// for up to BodyCapBytes to be read before it sees its status. Reading before
+// answering is the safe order for the same reason there.
 func handleJSONDeferred(cfg Config, next http.Handler, w http.ResponseWriter, r *http.Request) {
 	r, body := deferBody(r)
 

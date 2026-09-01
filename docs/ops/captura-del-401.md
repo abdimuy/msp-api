@@ -25,7 +25,7 @@ Tres hechos que se juntan:
 
 1. El teléfono **reintenta el 401 sin tope**
    (`docs/module-standards/ENTREGA_GARANTIZADA.md:112` — `401 → REINTENTA` en
-   toda combinación; `:172` — WorkManager sin tope de reintentos).
+   toda combinación; `:167-168` — WorkManager sin tope de reintentos).
 2. `POST /v2/cobranza/pagos` **no manda `Idempotency-Key`**: su idempotencia es
    `body.id`, dentro del cuerpo. Sin clave, la dedup del Store **no dispara**
    (`internal/platform/failedintent/firebird/store.go:76-78`) y el conciliador
