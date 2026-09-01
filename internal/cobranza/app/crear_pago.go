@@ -51,17 +51,22 @@ const (
 	umbralLateUpload = 24 * time.Hour
 )
 
-// CrearPago is the legacy single-row entry point: persists a PagoRecibido
-// with no comprobantes attached, then best-effort fast-paths AplicarPago.
+// CrearPago is the single-row entry point: persists a PagoRecibido with no
+// comprobantes attached AND pushes it to Microsip, in one transaction. It is
+// a thin wrapper over [Service.CrearPagoConImagenes] with imgs nil — the same
+// code, not a parallel flow.
 //
-// New callers should prefer [Service.CrearPagoConImagenes], the atomic
-// multipart endpoint that attaches the pago and its imagenes in a single
-// Firebird transaction. CrearPago is now a thin wrapper for backward
-// compatibility — semantics are identical to the prior non-multipart flow.
+// There is no longer a best-effort apply behind it. A pago Microsip rejects
+// takes the whole transaction down with it and the error reaches the caller:
+// the row that used to survive as an invisible ESTADO='P' behind a 2xx is
+// what made a cobrador believe the payment had not registered and charge the
+// client again.
 //
 // Idempotency: if a pago with the same UUID already exists, returns the
 // existing row instead of an error (fast-path for cliente retries). The
-// client's outbox uses the UUID as the dedupe key end-to-end.
+// client's outbox uses the UUID as the dedupe key end-to-end. A pago rolled
+// back by a Microsip rejection never reached the table, so its UUID stays
+// usable and the phone's retry works.
 func (s *Service) CrearPago(ctx context.Context, in CrearPagoInput, by uuid.UUID) (*domain.PagoRecibido, error) {
 	return s.CrearPagoConImagenes(ctx, in, nil, by)
 }

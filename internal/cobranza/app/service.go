@@ -46,8 +46,15 @@ const (
 // TxRunner abstracts the Firebird transaction manager so tests can inject a
 // no-op runner that executes fn synchronously without a real DB connection.
 // *firebird.TxManager satisfies this interface implicitly.
+//
+// HasTx reports whether ctx already carries an active transaction. It is part
+// of the port — not an import of internal/platform/firebird — because
+// AplicarPago must be able to refuse to run inside somebody else's
+// transaction: it needs one of its own so the failure record can outlive a
+// rollback, and joining an outer tx would silently lose it.
 type TxRunner interface {
 	RunInTx(ctx context.Context, fn func(ctx context.Context) error) error
+	HasTx(ctx context.Context) bool
 }
 
 // Service is the cobranza module's query and command surface. Handlers depend

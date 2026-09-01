@@ -102,6 +102,8 @@ func (internalFakeTxRunner) RunInTx(ctx context.Context, fn func(context.Context
 	return fn(ctx)
 }
 
+func (internalFakeTxRunner) HasTx(context.Context) bool { return false }
+
 // newInternalAplicarSvc wires a Service for white-box tick tests.
 func newInternalAplicarSvc(
 	repo *internalFakeRepo,

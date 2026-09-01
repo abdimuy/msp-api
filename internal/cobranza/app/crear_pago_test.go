@@ -128,6 +128,16 @@ func (f fakeTxRunner) RunInTx(ctx context.Context, fn func(context.Context) erro
 	return fn(ctx)
 }
 
+// HasTx satisfies app.TxRunner. The double never plants a transaction on the
+// context; tests that need "already inside a tx" use insideTxRunner.
+func (f fakeTxRunner) HasTx(context.Context) bool { return false }
+
+// insideTxRunner reports that the context already carries a transaction —
+// the shape a caller has when it wraps the service in its own RunInTx.
+type insideTxRunner struct{ fakeTxRunner }
+
+func (insideTxRunner) HasTx(context.Context) bool { return true }
+
 // newAplicarSvc wires a Service with the given fakes specifically for
 // AplicarPago unit tests. saldos and pagos repos are set to no-op fakes
 // (AplicarPago does not use them). The caller supplies the TxRunner, the

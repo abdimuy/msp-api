@@ -26,6 +26,10 @@ import (
 //
 // Census discipline is borrowed from internal/ventas/infra/ventfb/atomicity_test.go:
 // numbered steps, one census before, one after, compared entry by entry.
+//
+// The rollback double is snapshottingTxRunner, defined once in
+// crear_pago_con_imagenes_test.go. It clones pagos in depth, so a write that
+// happens inside a failing closure really does disappear.
 
 // ─── census helpers ─────────────────────────────────────────────────────────
 
@@ -55,11 +59,11 @@ func tomarCenso(
 func assertCensoIgual(t *testing.T, antes, despues censo) {
 	t.Helper()
 	assert.Equal(t, antes.pagos, despues.pagos,
-		"MSP_PAGOS_RECIBIDOS: antes=%d despues=%d", antes.pagos, despues.pagos)
+		"MSP_PAGOS_RECIBIDOS: before=%d after=%d", antes.pagos, despues.pagos)
 	assert.Equal(t, antes.imagenes, despues.imagenes,
-		"MSP_PAGOS_IMAGENES: antes=%d despues=%d", antes.imagenes, despues.imagenes)
+		"MSP_PAGOS_IMAGENES: before=%d after=%d", antes.imagenes, despues.imagenes)
 	assert.Equal(t, antes.blobs, despues.blobs,
-		"blobs en disco: antes=%d despues=%d", antes.blobs, despues.blobs)
+		"blobs on disk: before=%d after=%d", antes.blobs, despues.blobs)
 }
 
 // ─── doubles ────────────────────────────────────────────────────────────────
@@ -86,65 +90,6 @@ func (w *rejectingWriterByImporte) Aplicar(
 	return w.result, nil
 }
 
-// clonePagoRecibido deep-copies a pago through the hydration constructor.
-// Needed because the in-memory repo stores the very pointer the service
-// mutates: restoring the map alone would not undo a RegistrarFallo, so a
-// rollback double that only swaps maps would silently "pass".
-func clonePagoRecibido(p *domain.PagoRecibido) *domain.PagoRecibido {
-	aud := p.Audit()
-	return domain.HydratePagoRecibido(domain.HydratePagoRecibidoParams{
-		ID:             p.ID(),
-		CargoDoctoCCID: p.CargoDoctoCCID(),
-		ClienteID:      p.ClienteID(),
-		CobradorID:     p.CobradorID(),
-		Cobrador:       p.Cobrador(),
-		Importe:        p.Importe(),
-		FormaCobroID:   p.FormaCobroID(),
-		ConceptoCCID:   p.ConceptoCCID(),
-		FechaHoraPago:  p.FechaHoraPago(),
-		Lat:            p.Lat(),
-		Lon:            p.Lon(),
-		Sincronizacion: p.Sincronizacion(),
-		Intentos:       p.Intentos(),
-		UltimoError:    p.UltimoError(),
-		DoctoCCID:      p.DoctoCCID(),
-		ImpteDoctoCCID: p.ImpteDoctoCCID(),
-		Folio:          p.Folio(),
-		ReceivedAt:     p.ReceivedAt(),
-		AplicadoAt:     p.AplicadoAt(),
-		CreatedAt:      aud.CreatedAt(),
-		UpdatedAt:      aud.UpdatedAt(),
-		CreatedBy:      aud.CreatedBy(),
-		UpdatedBy:      aud.UpdatedBy(),
-		Imagenes:       p.ImagenesForRepo(),
-	})
-}
-
-// rollbackPagosTxRunner models a REAL Firebird rollback over the pagos repo:
-// it deep-clones every row before fn and restores the clones when fn returns
-// an error. Anything written (or mutated) inside a failing closure vanishes,
-// exactly like a rolled-back transaction.
-//
-// txCount is the load-bearing observation: persisting a failure record after
-// the apply transaction rolls back requires a SECOND transaction.
-type rollbackPagosTxRunner struct {
-	repo    *fakePagosRecibidosRepo
-	txCount int
-}
-
-func (r *rollbackPagosTxRunner) RunInTx(ctx context.Context, fn func(context.Context) error) error {
-	r.txCount++
-	snap := make(map[uuid.UUID]*domain.PagoRecibido, len(r.repo.rows))
-	for k, v := range r.repo.rows {
-		snap[k] = clonePagoRecibido(v)
-	}
-	if err := fn(ctx); err != nil {
-		r.repo.rows = snap
-		return err
-	}
-	return nil
-}
-
 // pdfUploads builds n valid PDF uploads for pagoID with deterministic keys.
 func pdfUploads(pagoID uuid.UUID, n int) []app.ImagenUploadInput {
 	imgs := make([]app.ImagenUploadInput, n)
@@ -166,42 +111,42 @@ func TestCrearPagoConImagenes_MicrosipRechaza_ConImagenes_Propaga(t *testing.T) 
 	t.Parallel()
 	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
 
-	// Paso 1: fakes + censo ANTES.
+	// Step 1: fakes + census BEFORE.
 	saldos := seedCargoSaldo(t)
 	pagosRepo := newFakePagosRecibidosRepo()
 	imgRepo := newFakePagosImagenesRepo()
 	store := newFakeStorageProvider()
 	antes := tomarCenso(pagosRepo, imgRepo, store)
 
-	// Paso 2: Microsip rechaza.
+	// Step 2: Microsip rejects.
 	writerErr := errors.New("microsip_docto_cc_rechazado")
 	writer := &fakeMicrosipPagoWriter{err: writerErr}
 
-	// Paso 3: el único doble que modela el rollback de verdad.
+	// Step 3: the double that models a real rollback.
 	txRunner := newSnapshottingTxRunner(pagosRepo, imgRepo)
 	svc := app.NewService(
 		saldos, newFakePagosRepo(), nil, fixedClock{T: now},
 		pagosRepo, imgRepo, writer, store, nil, txRunner,
 	)
 
-	// Paso 4: crear el pago con dos comprobantes.
+	// Step 4: create the pago with two comprobantes.
 	in := baseCrearInput(now)
 	imgs := pdfUploads(in.ID, 2)
 	pago, err := svc.CrearPagoConImagenes(context.Background(), in, imgs, uuid.New())
 
-	// Paso 5: el rechazo propaga.
-	require.Error(t, err, "un rechazo de Microsip no puede devolver 2xx")
+	// Step 5: the rejection propagates.
+	require.Error(t, err, "a Microsip rejection must not answer 2xx")
 	require.ErrorIs(t, err, writerErr)
 	assert.Nil(t, pago)
 
-	// Paso 6: censo DESPUÉS, tienda por tienda.
+	// Step 6: census AFTER, store by store.
 	despues := tomarCenso(pagosRepo, imgRepo, store)
 	assertCensoIgual(t, antes, despues)
 
-	// Paso 7: el escritor corrió una sola vez y los blobs se limpiaron.
-	assert.Equal(t, 1, writer.callCount, "el escritor corre una vez, dentro de la tx")
-	assert.Equal(t, 2, store.storeCalls, "ambos blobs se escribieron antes de la tx")
-	assert.Equal(t, 2, store.deleteCalls, "ambos blobs se limpiaron tras el rollback")
+	// Step 7: the writer ran once and the blobs were cleaned up.
+	assert.Equal(t, 1, writer.callCount, "the writer runs once, inside the tx")
+	assert.Equal(t, 2, store.storeCalls, "both blobs were written before the tx")
+	assert.Equal(t, 2, store.deleteCalls, "both blobs cleaned up after the rollback")
 }
 
 // ─── 2. rejection propagates — without imagenes (the phone's path) ──────────
@@ -214,38 +159,38 @@ func TestCrearPagoConImagenes_MicrosipRechaza_SinImagenes_Propaga(t *testing.T) 
 	t.Parallel()
 	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
 
-	// Paso 1: fakes + censo ANTES.
+	// Step 1: fakes + census BEFORE.
 	saldos := seedCargoSaldo(t)
 	pagosRepo := newFakePagosRecibidosRepo()
 	imgRepo := newFakePagosImagenesRepo()
 	store := newFakeStorageProvider()
 	antes := tomarCenso(pagosRepo, imgRepo, store)
 
-	// Paso 2: Microsip rechaza.
+	// Step 2: Microsip rejects.
 	writerErr := errors.New("microsip_saldo_cc_bloqueado")
 	writer := &fakeMicrosipPagoWriter{err: writerErr}
 
-	// Paso 3: runner con rollback real.
+	// Step 3: runner with a real rollback.
 	txRunner := newSnapshottingTxRunner(pagosRepo, imgRepo)
 	svc := app.NewService(
 		saldos, newFakePagosRepo(), nil, fixedClock{T: now},
 		pagosRepo, imgRepo, writer, store, nil, txRunner,
 	)
 
-	// Paso 4: crear el pago SIN comprobantes.
+	// Step 4: create the pago WITHOUT comprobantes.
 	in := baseCrearInput(now)
 	pago, err := svc.CrearPagoConImagenes(context.Background(), in, nil, uuid.New())
 
-	// Paso 5: el rechazo propaga.
-	require.Error(t, err, "el camino sin imágenes también debe propagar el rechazo")
+	// Step 5: the rejection propagates.
+	require.Error(t, err, "the no-images path must propagate the rejection too")
 	require.ErrorIs(t, err, writerErr)
 	assert.Nil(t, pago)
 
-	// Paso 6: censo DESPUÉS.
+	// Step 6: census AFTER.
 	despues := tomarCenso(pagosRepo, imgRepo, store)
 	assertCensoIgual(t, antes, despues)
 
-	// Paso 7: sin imágenes no se toca el almacenamiento.
+	// Step 7: with no images, storage is never touched.
 	assert.Equal(t, 1, writer.callCount)
 	assert.Equal(t, 0, store.storeCalls)
 	assert.Equal(t, 0, store.deleteCalls)
@@ -277,26 +222,26 @@ func TestCrearPago_TrasRechazoDeMicrosip_UUIDNoQuemado(t *testing.T) {
 
 	in := baseCrearInput(now)
 
-	// Paso 1: primer intento — Microsip rechaza, todo se deshace.
+	// Step 1: first attempt — Microsip rejects, everything is undone.
 	_, err := svc.CrearPagoConImagenes(context.Background(), in, nil, by)
 	require.Error(t, err)
 	require.ErrorIs(t, err, writerErr)
-	assert.Empty(t, pagosRepo.rows, "el rollback no puede dejar la fila")
+	assert.Empty(t, pagosRepo.rows, "the rollback must not leave the row behind")
 
-	// Paso 2: Microsip vuelve en sí.
+	// Step 2: Microsip comes back.
 	writer.err = nil
 	writer.result = validWriterResult()
 
-	// Paso 3: el teléfono reintenta con el MISMO UUID.
+	// Step 3: the phone retries with the SAME UUID.
 	pago, err := svc.CrearPagoConImagenes(context.Background(), in, nil, by)
-	require.NoError(t, err, "el UUID no quedó quemado por el intento fallido")
+	require.NoError(t, err, "the failed attempt must not burn the UUID")
 	require.NotNil(t, pago)
 	assert.Equal(t, in.ID, pago.ID())
-	assert.True(t, pago.IsAplicada(), "el reintento sí llegó a Microsip")
+	assert.True(t, pago.IsAplicada(), "the retry did reach Microsip")
 
-	// Paso 4: censo — exactamente una fila, la buena.
+	// Step 4: census — exactly one row, the good one.
 	assert.Len(t, pagosRepo.rows, 1)
-	assert.Equal(t, 2, writer.callCount, "un intento rechazado + un intento aceptado")
+	assert.Equal(t, 2, writer.callCount, "one rejected attempt + one accepted attempt")
 }
 
 // ─── 4. the Juana case ──────────────────────────────────────────────────────
@@ -315,14 +260,14 @@ func TestCrearPago_CasoJuana_ElRechazadoAcabaVisible(t *testing.T) {
 	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
 	by := uuid.New()
 
-	// Paso 1: fakes + censo ANTES.
+	// Step 1: fakes + census BEFORE.
 	saldos := seedCargoSaldo(t)
 	pagosRepo := newFakePagosRecibidosRepo()
 	imgRepo := newFakePagosImagenesRepo()
 	store := newFakeStorageProvider()
 	antes := tomarCenso(pagosRepo, imgRepo, store)
 
-	// Paso 2: Microsip acepta el primero y rechaza el segundo.
+	// Step 2: Microsip accepts the first and rejects the second.
 	rechazoErr := errors.New("microsip_docto_cc_duplicado")
 	const importeAceptado = 1500
 	const importeRechazado = 2300
@@ -337,7 +282,7 @@ func TestCrearPago_CasoJuana_ElRechazadoAcabaVisible(t *testing.T) {
 		pagosRepo, imgRepo, writer, store, nil, txRunner,
 	)
 
-	// Paso 3: los dos pagos de Juana, con segundos de diferencia.
+	// Step 3: Juana's two pagos, seconds apart.
 	primero := baseCrearInput(now)
 	primero.Importe = decimal.NewFromInt(importeAceptado)
 	primero.FechaHoraPago = now.Add(-2 * time.Minute)
@@ -348,35 +293,31 @@ func TestCrearPago_CasoJuana_ElRechazadoAcabaVisible(t *testing.T) {
 	segundo.Importe = decimal.NewFromInt(importeRechazado)
 	segundo.FechaHoraPago = primero.FechaHoraPago.Add(8 * time.Second)
 
-	// Paso 4: el primero entra.
+	// Step 4: the first one goes through.
 	pagoA, errA := svc.CrearPagoConImagenes(context.Background(), primero, nil, by)
-	require.NoError(t, errA, "el pago aceptado por Microsip debe entrar")
+	require.NoError(t, errA, "the pago Microsip accepted must go through")
 	require.NotNil(t, pagoA)
 	assert.True(t, pagoA.IsAplicada())
 
-	// Paso 5: al segundo Microsip lo rechaza — y el rechazo se ve.
+	// Step 5: Microsip rejects the second — and the rejection is visible.
 	pagoB, errB := svc.CrearPagoConImagenes(context.Background(), segundo, nil, by)
 	require.Error(t, errB,
-		"el pago rechazado debe acabar visible: el error propaga para que la capa HTTP lo capture")
+		"the rejected pago must end up visible: the error propagates so the HTTP layer can capture it")
 	require.ErrorIs(t, errB, rechazoErr)
 	assert.Nil(t, pagoB)
 
-	// Paso 6: censo DESPUÉS — sólo la fila del pago que sí llegó.
+	// Step 6: census AFTER — only the row of the pago that actually landed.
 	despues := tomarCenso(pagosRepo, imgRepo, store)
-	assert.Equal(t, antes.pagos+1, despues.pagos,
-		"MSP_PAGOS_RECIBIDOS: sólo el pago aceptado deja fila (antes=%d despues=%d)",
-		antes.pagos, despues.pagos)
-	assert.Equal(t, antes.imagenes, despues.imagenes, "MSP_PAGOS_IMAGENES sin cambios")
-	assert.Equal(t, antes.blobs, despues.blobs, "sin blobs")
+	assertCensoIgual(t, censo{pagos: antes.pagos + 1, imagenes: antes.imagenes, blobs: antes.blobs}, despues)
 
-	// Paso 7: la tabla de pagos queda SIN la fila del rechazado.
+	// Step 7: the pagos table is left WITHOUT the rejected row.
 	guardadoA, findErrA := pagosRepo.FindByID(context.Background(), primero.ID)
 	require.NoError(t, findErrA)
 	assert.True(t, guardadoA.IsAplicada())
 
 	_, findErrB := pagosRepo.FindByID(context.Background(), segundo.ID)
 	require.ErrorIs(t, findErrB, domain.ErrPagoNoEncontrado,
-		"el pago rechazado no puede quedarse en la cola invisible")
+		"the rejected pago must not stay in the invisible queue")
 
 	assert.Equal(t, 1, writer.accepted)
 	assert.Equal(t, 1, writer.rejected)
@@ -396,34 +337,156 @@ func TestCrearPago_CasoJuana_ElRechazadoAcabaVisible(t *testing.T) {
 func TestAplicarPago_WriterFalla_ElFalloSobreviveAlRollback(t *testing.T) {
 	t.Parallel()
 
-	// Paso 1: un pago pendiente ya confirmado en la tabla (camino worker).
+	// Step 1: a pendiente pago already committed to the table (worker path).
 	repo := newFakePagosRecibidosRepo()
 	pago := pendingPagoInRepo(t, repo)
-	require.Equal(t, 0, pago.Intentos(), "censo ANTES: intentos=0")
+	require.Equal(t, 0, pago.Intentos(), "census BEFORE: intentos=0")
 
-	// Paso 2: Microsip rechaza.
+	// Step 2: Microsip rejects.
 	writerErr := errors.New("microsip_conexion_perdida")
 	writer := &fakeMicrosipPagoWriter{err: writerErr}
 
-	// Paso 3: runner que deshace de verdad lo escrito en una clausura fallida.
-	runner := &rollbackPagosTxRunner{repo: repo}
+	// Step 3: a runner that really undoes what a failing closure wrote.
+	runner := newSnapshottingTxRunner(repo, newFakePagosImagenesRepo())
 	svc := newAplicarSvc(t, runner, repo, writer, fixedNow)
 
-	// Paso 4: aplicar — debe fallar.
+	// Step 4: apply — must fail.
 	_, err := svc.AplicarPago(context.Background(), pago.ID(), uuid.New())
 	require.Error(t, err)
 	require.ErrorIs(t, err, writerErr)
 
-	// Paso 5: censo DESPUÉS — el registro del fallo sobrevivió.
+	// Step 5: census AFTER — the failure record survived.
 	guardado, findErr := repo.FindByID(context.Background(), pago.ID())
 	require.NoError(t, findErr)
-	assert.True(t, guardado.IsPendiente(), "el pago sigue pendiente para el worker")
+	assert.True(t, guardado.IsPendiente(), "the pago stays pendiente for the worker")
 	assert.Equal(t, 1, guardado.Intentos(),
-		"INTENTOS debe sobrevivir al rollback de la tx de aplicación")
-	require.NotNil(t, guardado.UltimoError(), "ULTIMO_ERROR debe sobrevivir al rollback")
+		"INTENTOS must survive the rollback of the apply tx")
+	require.NotNil(t, guardado.UltimoError(), "ULTIMO_ERROR must survive the rollback")
 	assert.Contains(t, *guardado.UltimoError(), "microsip_conexion_perdida")
 
-	// Paso 6: la prueba del mecanismo — hizo falta una segunda transacción.
+	// Step 6: proof of the mechanism — a second transaction was needed.
 	assert.Equal(t, 2, runner.txCount,
-		"el registro del fallo va en su propia transacción, no en la que se deshace")
+		"the failure record goes in its own transaction, not the one that rolls back")
+}
+
+// ─── 6. the failure record must not resurrect an applied pago ───────────────
+
+// TestAplicarPago_FalloNoRevierteUnPagoYaAplicado is the positive control for
+// the double-charge this design can produce if the second transaction writes
+// blind.
+//
+// The window: the apply tx rolls back and RELEASES the row lock. Before the
+// failure record is written, another caller (AplicarPagoForzar, a second
+// worker) takes the lock, applies the pago for real and commits. If the
+// failure record then writes back the snapshot it read before the lock was
+// released, the repo's blind UPDATE ... WHERE ID resets ESTADO to 'P' and
+// wipes DOCTO_CC_ID / IMPTE_DOCTO_CC_ID / FOLIO / APLICADO_AT. The next tick
+// sees a pendiente and sends it to Microsip AGAIN — PagoWriter.Aplicar
+// deduplicates nothing, so the client is charged twice.
+//
+// The fix is that the second transaction re-takes the lock, re-reads, and
+// writes nothing when the pago is already aplicada.
+func TestAplicarPago_FalloNoRevierteUnPagoYaAplicado(t *testing.T) {
+	t.Parallel()
+
+	// Step 1: a pendiente pago, and Microsip rejecting it.
+	repo := newFakePagosRecibidosRepo()
+	pago := pendingPagoInRepo(t, repo)
+	writerErr := errors.New("microsip_timeout")
+	writer := &fakeMicrosipPagoWriter{err: writerErr}
+
+	runner := newSnapshottingTxRunner(repo, newFakePagosImagenesRepo())
+
+	// Step 2: between the apply tx and the failure-record tx, somebody else
+	// wins the lock, applies the pago and commits. Modeled as a brand-new
+	// aggregate in the repo, the way a competing connection would leave it.
+	const doctoCCID = 7777
+	const impteDoctoCCID = 7778
+	runner.beforeTx = func(txN int) {
+		if txN != 2 {
+			return
+		}
+		repo.rows[pago.ID()] = aplicadoTwin(pago, doctoCCID, impteDoctoCCID, "FORZ-001")
+	}
+
+	svc := newAplicarSvc(t, runner, repo, writer, fixedNow)
+
+	// Step 3: the worker's apply fails, as before.
+	_, err := svc.AplicarPago(context.Background(), pago.ID(), uuid.New())
+	require.Error(t, err)
+	require.ErrorIs(t, err, writerErr)
+
+	// Step 4: the winner's state must be intact. A blind write would have
+	// reset all four of these.
+	guardado, findErr := repo.FindByID(context.Background(), pago.ID())
+	require.NoError(t, findErr)
+	assert.True(t, guardado.IsAplicada(),
+		"the failure record must not resurrect a pago somebody else applied")
+	require.NotNil(t, guardado.DoctoCCID(), "DOCTO_CC_ID must not be erased")
+	assert.Equal(t, doctoCCID, *guardado.DoctoCCID())
+	require.NotNil(t, guardado.ImpteDoctoCCID(), "IMPTE_DOCTO_CC_ID must not be erased")
+	assert.Equal(t, impteDoctoCCID, *guardado.ImpteDoctoCCID())
+	require.NotNil(t, guardado.Folio(), "FOLIO must not be erased")
+	assert.Equal(t, "FORZ-001", *guardado.Folio())
+	assert.NotNil(t, guardado.AplicadoAt(), "APLICADO_AT must not be erased")
+
+	// Step 5: nothing was written at all — no Update, and no attempt counted
+	// against a pago that succeeded.
+	assert.Equal(t, 0, repo.updateCnt,
+		"an applied pago earns no failure record")
+	assert.Equal(t, 0, guardado.Intentos())
+	assert.Equal(t, 2, runner.txCount, "the failure path still opened its own tx")
+}
+
+// aplicadoTwin returns a NEW aggregate carrying the same identity as p but
+// already aplicada — what a competing connection leaves committed in the row.
+// A new object, not a mutation of p, because the point of the test is that
+// the caller is holding a stale snapshot.
+func aplicadoTwin(p *domain.PagoRecibido, doctoCCID, impteDoctoCCID int, folio string) *domain.PagoRecibido {
+	aud := p.Audit()
+	aplicadoAt := fixedNow
+	return domain.HydratePagoRecibido(domain.HydratePagoRecibidoParams{
+		ID:             p.ID(),
+		CargoDoctoCCID: p.CargoDoctoCCID(),
+		ClienteID:      p.ClienteID(),
+		CobradorID:     p.CobradorID(),
+		Cobrador:       p.Cobrador(),
+		Importe:        p.Importe(),
+		FormaCobroID:   p.FormaCobroID(),
+		ConceptoCCID:   p.ConceptoCCID(),
+		FechaHoraPago:  p.FechaHoraPago(),
+		Sincronizacion: domain.SincronizacionAplicada,
+		DoctoCCID:      &doctoCCID,
+		ImpteDoctoCCID: &impteDoctoCCID,
+		Folio:          &folio,
+		ReceivedAt:     p.ReceivedAt(),
+		AplicadoAt:     &aplicadoAt,
+		CreatedAt:      aud.CreatedAt(),
+		UpdatedAt:      aplicadoAt,
+		CreatedBy:      aud.CreatedBy(),
+		UpdatedBy:      uuid.New(),
+	})
+}
+
+// ─── 7. refusing to run inside somebody else's transaction ──────────────────
+
+// TestAplicarPago_DentroDeOtraTx_Rechaza pins the guard that keeps the
+// failure record writable. If AplicarPago joined an outer transaction, its
+// own "separate" transaction would nest into that one and the failure record
+// would roll back with it — silently, which is how this class of defect
+// survives.
+func TestAplicarPago_DentroDeOtraTx_Rechaza(t *testing.T) {
+	t.Parallel()
+
+	repo := newFakePagosRecibidosRepo()
+	pago := pendingPagoInRepo(t, repo)
+	writer := &fakeMicrosipPagoWriter{result: validWriterResult()}
+
+	svc := newAplicarSvc(t, insideTxRunner{}, repo, writer, fixedNow)
+
+	_, err := svc.AplicarPago(context.Background(), pago.ID(), uuid.New())
+
+	require.ErrorIs(t, err, app.ErrAplicarPagoDentroDeTx)
+	assert.Equal(t, 0, writer.callCount, "it must refuse before touching Microsip")
+	assert.Equal(t, 0, repo.updateCnt)
 }

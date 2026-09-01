@@ -264,6 +264,11 @@ func (f fakeTxRunner) RunInTx(ctx context.Context, fn func(context.Context) erro
 	return fn(ctx)
 }
 
+// HasTx satisfies cobranzaapp.TxRunner. The double never plants a transaction
+// on the context, so AplicarPago's "not inside another tx" guard lets these
+// handler tests through exactly as before.
+func (f fakeTxRunner) HasTx(context.Context) bool { return false }
+
 // fakeSaldosRepoHTTP is a minimal SaldosRepo for HTTP handler tests.
 type fakeSaldosRepoHTTP struct {
 	byCargo map[int]*domain.Saldo

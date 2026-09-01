@@ -218,22 +218,45 @@ func TestCrearPagoConImagenes_RollbackOnInsertPagoFails(t *testing.T) {
 	assert.Empty(t, storage.objects, "no blobs remain in storage")
 }
 
-// snapshottingTxRunner snapshots the fake repos before fn runs and restores
-// them on error — modeling real Firebird tx rollback. Used by atomicity tests
-// so an InsertImagen failure mid-loop leaves no trace in either repo.
+// snapshottingTxRunner is THE rollback double for this package: it snapshots
+// the fake repos before fn runs and restores them on error, modeling a real
+// Firebird transaction rollback.
+//
+// Pagos are cloned in DEPTH, not by pointer. The fake repo stores the very
+// aggregate the service mutates, so a shallow map copy would restore the map
+// while leaving a RegistrarFallo (or a MarcarAplicada) applied — a rollback
+// double that gives green to production code that never rolled anything back.
+// That is the whole class of defect this package exists to catch, so there is
+// exactly one runner and it clones.
+//
+// txCount counts transactions actually opened; a test that cares WHERE a
+// write landed (inside the rolled-back tx or in one of its own) asserts on it.
+// beforeTx, when set, runs before each closure with the 1-indexed transaction
+// number — the hook for simulating another caller committing in between.
 type snapshottingTxRunner struct {
 	pagos    *fakePagosRecibidosRepo
 	imagenes *fakePagosImagenesRepo
+	txCount  int
+	beforeTx func(txN int)
 }
 
 func newSnapshottingTxRunner(p *fakePagosRecibidosRepo, i *fakePagosImagenesRepo) *snapshottingTxRunner {
 	return &snapshottingTxRunner{pagos: p, imagenes: i}
 }
 
+// HasTx satisfies app.TxRunner. The double never leaves a transaction on the
+// context, so nested calls are always genuinely new — which is exactly what
+// firebird.runInTx does with its call-local context key.
+func (r *snapshottingTxRunner) HasTx(context.Context) bool { return false }
+
 func (r *snapshottingTxRunner) RunInTx(ctx context.Context, fn func(context.Context) error) error {
+	r.txCount++
+	if r.beforeTx != nil {
+		r.beforeTx(r.txCount)
+	}
 	pagoSnap := make(map[uuid.UUID]*domain.PagoRecibido, len(r.pagos.rows))
 	for k, v := range r.pagos.rows {
-		pagoSnap[k] = v
+		pagoSnap[k] = clonePagoRecibido(v)
 	}
 	imgSnap := make(map[uuid.UUID]*domain.Imagen, len(r.imagenes.images))
 	for k, v := range r.imagenes.images {
@@ -253,6 +276,39 @@ func (r *snapshottingTxRunner) RunInTx(ctx context.Context, fn func(context.Cont
 		r.imagenes.byPago = byPagoSnap
 	}
 	return err
+}
+
+// clonePagoRecibido deep-copies a pago through the hydration constructor.
+// Lives next to the runner that needs it: without it a "rollback" would only
+// swap map entries and leave the aggregate mutated.
+func clonePagoRecibido(p *domain.PagoRecibido) *domain.PagoRecibido {
+	aud := p.Audit()
+	return domain.HydratePagoRecibido(domain.HydratePagoRecibidoParams{
+		ID:             p.ID(),
+		CargoDoctoCCID: p.CargoDoctoCCID(),
+		ClienteID:      p.ClienteID(),
+		CobradorID:     p.CobradorID(),
+		Cobrador:       p.Cobrador(),
+		Importe:        p.Importe(),
+		FormaCobroID:   p.FormaCobroID(),
+		ConceptoCCID:   p.ConceptoCCID(),
+		FechaHoraPago:  p.FechaHoraPago(),
+		Lat:            p.Lat(),
+		Lon:            p.Lon(),
+		Sincronizacion: p.Sincronizacion(),
+		Intentos:       p.Intentos(),
+		UltimoError:    p.UltimoError(),
+		DoctoCCID:      p.DoctoCCID(),
+		ImpteDoctoCCID: p.ImpteDoctoCCID(),
+		Folio:          p.Folio(),
+		ReceivedAt:     p.ReceivedAt(),
+		AplicadoAt:     p.AplicadoAt(),
+		CreatedAt:      aud.CreatedAt(),
+		UpdatedAt:      aud.UpdatedAt(),
+		CreatedBy:      aud.CreatedBy(),
+		UpdatedBy:      aud.UpdatedBy(),
+		Imagenes:       p.ImagenesForRepo(),
+	})
 }
 
 func TestCrearPagoConImagenes_RollbackOnInsertImagenFails_LastImgErrors(t *testing.T) {
