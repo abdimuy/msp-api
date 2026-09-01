@@ -47,9 +47,13 @@ const formaCobroOutOfRange = math.MaxInt32 + 1
 // from the BEFORE INSERT trigger IMPTES_DOCTOS_CC_BEFINS_0, which calls
 // REGISTRA_IMPORTE_CC and raises EX_SALDO_CARGO_EXCEDIDO ("el importe del
 // crédito es mayor al saldo del cargo") because a cargo that does not exist has
-// no saldo to credit. Firebird runs BEFORE triggers ahead of constraint checks,
-// so on this path CARGO_AFECTADO_CC is unreachable: any value that would
-// violate it is rejected earlier by that trigger.
+// no saldo to credit. Firebird runs BEFORE triggers ahead of constraint checks
+// (this schema depends on that ordering: the -1 → GEN_ID idiom only works if
+// the PK is verified afterwards), so on this path CARGO_AFECTADO_CC is
+// unreachable. Precisely: unreachable while the importe is > 0, which is the
+// only shape PagoWriter ever sends. REGISTRA_IMPORTE_CC guards its raise with
+// a comparison against the cargo saldo, so an importe of 0 would not trip it
+// and the foreign key would get its turn after all.
 //
 // What matters for this test is unchanged, and is the point the -303 lever
 // cannot reach: the failure is raised from INSIDE the statement body, by
@@ -57,10 +61,17 @@ const formaCobroOutOfRange = math.MaxInt32 + 1
 //
 // The generator-assigning trigger IMPTES_DOCTOS_CC_BEFINS sits at
 // RDB$TRIGGER_SEQUENCE 1, behind the one that raises at sequence 0, so the
-// rejected importe row never claims an id. Measured, not inferred: the
-// t.Logf below reports 1 ID_DOCTOS value burned per failed Aplicar here
-// (the DOCTOS_CC header alone) against 2 for the formaCobroOutOfRange
-// subtest, where both earlier INSERTs completed.
+// rejected importe row never claims an id. Measured, not inferred: the t.Logf
+// below reported 1 ID_DOCTOS value burned per failed Aplicar here (the
+// DOCTOS_CC header alone) against 2 for the formaCobroOutOfRange subtest,
+// where both earlier INSERTs completed.
+//
+// Those two numbers are an observation of one run, not an invariant: ID_DOCTOS
+// is shared database-wide and any other writer moving it inflates the delta.
+// That is why the counter only ever reaches t.Logf. Read a departure from 1
+// and 2 as "someone else was writing", not as a regression — and note the
+// counter has no positive control either: the happy path would burn 3 and
+// nothing records it.
 const cargoInexistenteOffset = 1_000_000
 
 // writerRowCount holds how many rows each of the three tables PagoWriter
@@ -215,13 +226,17 @@ func registerLeakCleanup(t *testing.T, pool *firebird.Pool, clienteID, mark int)
 //     through TxManager.RunInTx; it proves the writer composes with an
 //     external transaction, not that AplicarPago wires one up correctly.
 //     That belongs to the app-level tests.
-//   - A failure raised HALFWAY THROUGH the third INSERT, with
-//     FORMAS_COBRO_DOCTOS_BEFINS already fired and a GEN_ID(ID_DOCTOS,1)
-//     already consumed. The parameter rejection above happens before the
-//     statement body runs, so that class is never exercised on the third
-//     statement — the schema offers no constraint there to trigger it
-//     (FORMAS_COBRO_DOCTOS has no FK and no CHECK). The equivalent class IS
-//     covered one statement earlier, on IMPORTES_DOCTOS_CC.
+//   - A failure raised after a BEFORE INSERT trigger has already CONSUMED a
+//     GEN_ID(ID_DOCTOS,1) for the row being rejected. No subtest reaches that
+//     state, and the two get close in different, incomplete ways. On the third
+//     INSERT the parameter is rejected before the statement body runs at all,
+//     so no trigger fires; the schema offers no constraint there to do better
+//     (FORMAS_COBRO_DOCTOS has no FK and no CHECK). On the second INSERT a
+//     trigger does fire and does raise — that half of the class IS covered —
+//     but it is the one at RDB$TRIGGER_SEQUENCE 0, ahead of the trigger that
+//     assigns the id, so the row still never claims one. The counters measure
+//     exactly this: 1 id burned there against 2 on the third-INSERT subtest,
+//     in both cases only for rows that fully succeeded.
 //   - The CARGO_AFECTADO_CC foreign key itself. It exists and is enforced, but
 //     it is unreachable from this path — see cargoInexistenteOffset. No test
 //     here proves that key works.
@@ -270,9 +285,11 @@ func TestE2E_PagoWriter_Aplicar_FalloDeInsertNoDejaRastro(t *testing.T) {
 	})
 
 	// runFailingAplicar drives one rejected Aplicar inside a transaction and
-	// returns what the three probes saw while the transaction was still open
-	// (before the rollback) and what they see after it. wantInsideTx says which
-	// statement is expected to be the one that failed.
+	// asserts on both readings of the three probes: what they see while the
+	// transaction is still open (before the rollback), which must equal
+	// wantInsideTx and is what names the statement expected to fail, and what
+	// they see after it, which must be zero across the board. It returns
+	// nothing; every check is an assertion.
 	runFailingAplicar := func(t *testing.T, in outbound.MicrosipPagoInput, wantInsideTx writerRowCount) {
 		t.Helper()
 		mark := peekIDDoctos(t, ctx, q)
@@ -342,7 +359,7 @@ func TestE2E_PagoWriter_Aplicar_FalloDeInsertNoDejaRastro(t *testing.T) {
 		require.NoError(t,
 			q.QueryRowContext(ctx, `SELECT COUNT(*) FROM DOCTOS_CC WHERE DOCTO_CC_ID = ?`, cargoInexistente).Scan(&existentes),
 		)
-		require.Equal(t, 0, existentes, "the cargo used as the FK violation must not exist")
+		require.Equal(t, 0, existentes, "the cargo whose absence triggers the rejection must not exist")
 
 		runFailingAplicar(t,
 			buildInput(cargoInexistente, testFormaCobroID),
