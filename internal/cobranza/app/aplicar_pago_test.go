@@ -259,6 +259,16 @@ func TestAplicarPago_PreconditionFails(t *testing.T) {
 
 // ─── TestAplicarPago_WriterFails_PersistOK ────────────────────────────────────
 
+// TestAplicarPago_WriterFails_PersistOK covers the worker / AplicarPagoForzar
+// path — the only one that keeps a pendiente row and counts intentos. The
+// creation path no longer lands here: a pago Microsip rejects at creation
+// time is rolled back whole, so there is no row left to register a failure
+// on (see crear_pago_microsip_falla_test.go).
+//
+// The failure record itself is written in a transaction of its own; that it
+// SURVIVES the rollback of the apply transaction is proven by
+// TestAplicarPago_WriterFalla_ElFalloSobreviveAlRollback. fakeTxRunner does
+// not roll anything back, so this test only pins the state that gets written.
 func TestAplicarPago_WriterFails_PersistOK(t *testing.T) {
 	t.Parallel()
 
@@ -280,7 +290,8 @@ func TestAplicarPago_WriterFails_PersistOK(t *testing.T) {
 	// Update was called once to persist the failure record.
 	assert.Equal(t, 1, repo.updateCnt, "Update must be called once to persist the failure")
 
-	// The stored pago should reflect RegistrarFallo: still pendiente, intentos=1.
+	// The stored pago reflects RegistrarFallo: still pendiente, intentos=1,
+	// with the writer's message kept for support.
 	stored, findErr := repo.FindByID(context.Background(), pago.ID())
 	require.NoError(t, findErr)
 	assert.True(t, stored.IsPendiente(), "pago must stay pendiente after writer failure")
@@ -291,6 +302,10 @@ func TestAplicarPago_WriterFails_PersistOK(t *testing.T) {
 
 // ─── TestAplicarPago_WriterFails_PersistFails ─────────────────────────────────
 
+// TestAplicarPago_WriterFails_PersistFails: when the out-of-band failure
+// record cannot be written either, BOTH errors must reach the caller — the
+// rejection says what Microsip refused, the persist error says why nobody
+// will ever see it recorded.
 func TestAplicarPago_WriterFails_PersistFails(t *testing.T) {
 	t.Parallel()
 

@@ -21,10 +21,11 @@ import (
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
-// newCrearConImagenesSvc wires every fake the new CrearPagoConImagenes flow
-// touches. Pass writer=nil to leave AplicarPago in the legacy "best-effort
-// fails, pago stays pendiente" mode; pass a real fake to exercise the
-// full happy-path including Microsip apply.
+// newCrearConImagenesSvc wires every fake the CrearPagoConImagenes flow
+// touches. writer=nil means "Microsip accepts the pago" and wires a fake that
+// succeeds — it used to mean "no writer at all", which made the apply fail
+// and let the pago be persisted anyway. A test that wants a rejection now
+// passes a failing writer explicitly.
 func newCrearConImagenesSvc(
 	t *testing.T,
 	now time.Time,
@@ -36,6 +37,9 @@ func newCrearConImagenesSvc(
 	writer outbound.MicrosipPagoWriter,
 ) *app.Service {
 	t.Helper()
+	if writer == nil {
+		writer = &fakeMicrosipPagoWriter{result: validWriterResult()}
+	}
 	return app.NewService(
 		saldos,
 		newFakePagosRepo(),
@@ -272,7 +276,7 @@ func TestCrearPagoConImagenes_RollbackOnInsertImagenFails_LastImgErrors(t *testi
 		fixedClock{T: now},
 		pagosRepo,
 		imgRepo,
-		nil,
+		&fakeMicrosipPagoWriter{result: validWriterResult()},
 		store,
 		nil, // imageProc not needed for PDF
 		txRunner,
@@ -332,7 +336,7 @@ func TestCrearPagoConImagenes_StorageStoreFails_NoTxStarted(t *testing.T) {
 	}
 	svc := app.NewService(
 		saldos, newFakePagosRepo(), nil, fixedClock{T: now},
-		pagosRepo, imagenes, nil, store, nil, fakeTxRunner{},
+		pagosRepo, imagenes, &fakeMicrosipPagoWriter{result: validWriterResult()}, store, nil, fakeTxRunner{},
 	)
 
 	in := baseCrearInput(now)
@@ -532,7 +536,8 @@ func TestCrearPagoConImagenes_DepsMissing_PagosRecibidos(t *testing.T) {
 	svc := app.NewService(
 		saldos, newFakePagosRepo(), nil, fixedClock{T: now},
 		nil, // pagosRecibidos
-		newFakePagosImagenesRepo(), nil, newFakeStorageProvider(), nil, fakeTxRunner{},
+		newFakePagosImagenesRepo(), &fakeMicrosipPagoWriter{result: validWriterResult()},
+		newFakeStorageProvider(), nil, fakeTxRunner{},
 	)
 	_, err := svc.CrearPagoConImagenes(context.Background(), baseCrearInput(now), nil, uuid.New())
 	require.Error(t, err)
@@ -546,7 +551,8 @@ func TestCrearPagoConImagenes_DepsMissing_PagosImagenes(t *testing.T) {
 		saldos, newFakePagosRepo(), nil, fixedClock{T: now},
 		newFakePagosRecibidosRepo(),
 		nil, // pagosImagenes
-		nil, newFakeStorageProvider(), nil, fakeTxRunner{},
+		&fakeMicrosipPagoWriter{result: validWriterResult()},
+		newFakeStorageProvider(), nil, fakeTxRunner{},
 	)
 	in := baseCrearInput(now)
 	img := baseImagenUpload(in.ID, domain.MimePDF, []byte("x"))
@@ -561,7 +567,8 @@ func TestCrearPagoConImagenes_DepsMissing_Storage(t *testing.T) {
 	saldos := seedCargoSaldo(t)
 	svc := app.NewService(
 		saldos, newFakePagosRepo(), nil, fixedClock{T: now},
-		newFakePagosRecibidosRepo(), newFakePagosImagenesRepo(), nil,
+		newFakePagosRecibidosRepo(), newFakePagosImagenesRepo(),
+		&fakeMicrosipPagoWriter{result: validWriterResult()},
 		nil, // storage
 		nil, fakeTxRunner{},
 	)
@@ -578,7 +585,8 @@ func TestCrearPagoConImagenes_DepsMissing_TxRunner(t *testing.T) {
 	saldos := seedCargoSaldo(t)
 	svc := app.NewService(
 		saldos, newFakePagosRepo(), nil, fixedClock{T: now},
-		newFakePagosRecibidosRepo(), newFakePagosImagenesRepo(), nil, newFakeStorageProvider(), nil,
+		newFakePagosRecibidosRepo(), newFakePagosImagenesRepo(),
+		&fakeMicrosipPagoWriter{result: validWriterResult()}, newFakeStorageProvider(), nil,
 		nil, // txMgr
 	)
 	in := baseCrearInput(now)

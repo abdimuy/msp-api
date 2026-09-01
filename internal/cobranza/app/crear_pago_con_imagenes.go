@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,14 +32,24 @@ type ImagenUploadInput struct {
 // error.
 var errIdempotentReplay = errors.New("cobranza: idempotent replay")
 
-// CrearPagoConImagenes persists a pago + N comprobantes atomically. If any
-// step fails (blob processing, storage write, repo insert, tx commit), nothing
-// is left behind: blobs already written are best-effort deleted, the pago row
-// is rolled back, and the original error is propagated.
+// CrearPagoConImagenes persists a pago + N comprobantes AND pushes the pago
+// to Microsip, all inside one transaction. If any step fails — blob
+// processing, storage write, repo insert, imagen insert, the Microsip writer,
+// or the commit — nothing is left behind: blobs already written are
+// best-effort deleted, the pago row is rolled back, and the original error is
+// propagated to the caller.
 //
-// imgs may be nil/empty — in that case the behavior is identical to
-// CrearPago: no transaction is required, no blobs are written, and the
-// best-effort fast-path AplicarPago runs after insert.
+// The Microsip writer being INSIDE the transaction is the whole point. It
+// used to run after the commit with its error logged and swallowed, so a pago
+// Microsip had rejected survived as an ESTADO='P' row behind a 2xx: a queue
+// nobody looks at, a cobrador who believes the payment did not register, and
+// a client charged twice. Now the rejection propagates and the row is gone —
+// the evidence lives in MSP_FAILED_INTENTS instead, one table rather than
+// two.
+//
+// imgs may be nil/empty — that is the path the phone takes, since pagos are
+// captured without a photo. It goes through the exact same transaction; the
+// only difference is that no blob is written and no imagen row is inserted.
 //
 // Image idempotency: the caller chooses each ImagenID. If the client wants
 // strong replay safety, it should send stable UUIDs (one per image) so this
@@ -48,7 +57,8 @@ var errIdempotentReplay = errors.New("cobranza: idempotent replay")
 // reintentos will duplicate images.
 //
 // Pago idempotency: same UUID twice → second call returns the existing pago
-// without rewriting blobs.
+// without rewriting blobs. A pago rolled back by a Microsip rejection never
+// reached the table, so its UUID is NOT burned and the phone's retry works.
 func (s *Service) CrearPagoConImagenes(
 	ctx context.Context,
 	in CrearPagoInput,
@@ -58,15 +68,21 @@ func (s *Service) CrearPagoConImagenes(
 	if s.pagosRecibidos == nil {
 		return nil, errWriteDepsMissing("pagos_recibidos_repo")
 	}
+	// The writer and the transaction are no longer optional on any path: the
+	// pago is created and pushed to Microsip as a single act, so without them
+	// there is no creation to speak of.
+	if s.microsipPago == nil {
+		return nil, errWriteDepsMissing("microsip_pago_writer")
+	}
+	if s.txMgr == nil {
+		return nil, errWriteDepsMissing("tx_manager")
+	}
 	if len(imgs) > 0 {
 		if s.pagosImagenes == nil {
 			return nil, errWriteDepsMissing("pagos_imagenes_repo")
 		}
 		if s.storage == nil {
 			return nil, errWriteDepsMissing("storage_provider")
-		}
-		if s.txMgr == nil {
-			return nil, errWriteDepsMissing("tx_manager")
 		}
 	}
 
@@ -101,18 +117,16 @@ func (s *Service) CrearPagoConImagenes(
 		return nil, err
 	}
 
-	// No images → preserve the legacy non-tx fast-path verbatim.
-	if len(imgs) == 0 {
-		return s.insertAndApplyPago(ctx, pago, in.ID, by)
-	}
-
+	// With imgs empty this is a no-op that touches neither the processor nor
+	// the storage provider, so the no-images path shares the code verbatim
+	// instead of forking into a second, untested flow.
 	processed, storedKeys, perr := s.storeAllBlobs(ctx, imgs)
 	if perr != nil {
 		s.cleanupBlobs(ctx, storedKeys)
 		return nil, perr
 	}
 
-	existing, txErr := s.persistPagoConImagenesTx(ctx, pago, processed, in.ID, by, now)
+	existing, txErr := s.persistPagoTx(ctx, pago, processed, in.ID, by, now)
 	switch {
 	case errors.Is(txErr, errIdempotentReplay):
 		s.cleanupBlobs(ctx, storedKeys)
@@ -121,10 +135,7 @@ func (s *Service) CrearPagoConImagenes(
 		s.cleanupBlobs(ctx, storedKeys)
 		return nil, txErr
 	}
-
-	// Post-tx: best-effort apply. Mirrors CrearPago — writer errors do not
-	// fail the response; the retry worker handles ESTADO='P' rows later.
-	return s.tryApplyAfterCreate(ctx, pago, by), nil
+	return pago, nil
 }
 
 // storeAllBlobs processes and persists every blob BEFORE the tx opens.
@@ -156,11 +167,16 @@ func (s *Service) cleanupBlobs(ctx context.Context, keys []string) {
 	}
 }
 
-// persistPagoConImagenesTx runs the atomic Insert(pago) + InsertImagen(img)*N
-// closure. On ErrPagoYaExiste it loads + returns the existing pago and
-// signals the caller via errIdempotentReplay so the tx rolls back without
+// persistPagoTx runs the atomic Insert(pago) + InsertImagen(img)*N + push to
+// Microsip closure. On ErrPagoYaExiste it loads + returns the existing pago
+// and signals the caller via errIdempotentReplay so the tx rolls back without
 // leaving partial state.
-func (s *Service) persistPagoConImagenesTx(
+//
+// Order matters: the Microsip writer goes LAST. Everything it can conflict
+// with is already written, and the two rows it shares with Cxc.exe
+// (SALDOS_CC and MSP_SALDOS_VENTAS) stay locked for the shortest possible
+// slice of the transaction.
+func (s *Service) persistPagoTx(
 	ctx context.Context,
 	pago *domain.PagoRecibido,
 	imgs []processedImagen,
@@ -181,7 +197,10 @@ func (s *Service) persistPagoConImagenesTx(
 			}
 			return err
 		}
-		return s.attachAllImagenes(ctx, pago, imgs, by, now)
+		if err := s.attachAllImagenes(ctx, pago, imgs, by, now); err != nil {
+			return err
+		}
+		return s.aplicarPagoRecienCreado(ctx, pago, by)
 	})
 	return existing, err
 }
@@ -249,48 +268,6 @@ func (s *Service) processAndStoreImagen(ctx context.Context, in ImagenUploadInpu
 		SizeBytes:   sizeBytes,
 		Descripcion: in.Descripcion,
 	}, nil
-}
-
-// insertAndApplyPago is the legacy non-tx path: Insert + best-effort apply.
-// Factored out of CrearPago so CrearPagoConImagenes can reuse it when imgs
-// is empty without duplicating the idempotency / fast-path logic.
-func (s *Service) insertAndApplyPago(
-	ctx context.Context, pago *domain.PagoRecibido, pagoID, by uuid.UUID,
-) (*domain.PagoRecibido, error) {
-	if err := s.pagosRecibidos.Insert(ctx, pago); err != nil {
-		if errors.Is(err, domain.ErrPagoYaExiste) {
-			existing, findErr := s.pagosRecibidos.FindByID(ctx, pagoID)
-			if findErr != nil {
-				return nil, findErr
-			}
-			return existing, nil
-		}
-		return nil, err
-	}
-	return s.tryApplyAfterCreate(ctx, pago, by), nil
-}
-
-// tryApplyAfterCreate runs the best-effort fast-path AplicarPago and returns
-// whatever state the pago ends up in. Writer errors do not propagate — the
-// retry worker handles ESTADO='P' rows. Returns the freshest pago snapshot
-// available (apply result on success, reload on apply-failure, original pago
-// if reload also fails).
-func (s *Service) tryApplyAfterCreate(
-	ctx context.Context, pago *domain.PagoRecibido, by uuid.UUID,
-) *domain.PagoRecibido {
-	applied, applyErr := s.AplicarPago(ctx, pago.ID(), by)
-	if applyErr != nil {
-		slog.WarnContext(ctx, "pago.apply_fast_path_failed",
-			slog.String("pago_id", pago.ID().String()),
-			slog.String("error", applyErr.Error()),
-		)
-		reloaded, findErr := s.pagosRecibidos.FindByID(ctx, pago.ID())
-		if findErr != nil {
-			return pago
-		}
-		return reloaded
-	}
-	return applied
 }
 
 // detectDuplicateImagenIDs rejects a request that includes the same imagen
