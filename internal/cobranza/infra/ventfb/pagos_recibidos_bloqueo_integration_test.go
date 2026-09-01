@@ -106,6 +106,14 @@ const (
 	// bloqueoStatementTimeout is the server-side ceiling for the blocked
 	// session. Short enough for a test, long enough that a slow machine
 	// cannot mistake normal lock acquisition for the timeout.
+	//
+	// IT MUST ALSO STAY BELOW app.falloPersistTimeout (5s), which is the Go
+	// deadline registrarFalloAparte puts on its own transaction. That
+	// deadline is a SECOND producer of firebird_timeout — MapError sends
+	// context.DeadlineExceeded to the same code — so a ceiling at or above it
+	// would let step 6 pass for the wrong reason. Measured: raising this to
+	// 4s already moves step 6's wait to 4.46s, which is the ceiling still
+	// winning; at 5s the two would collide.
 	bloqueoStatementTimeout = 2 * time.Second
 	// bloqueoPresupuesto is how long an outcome is waited for before calling
 	// it a hang. Five times the ceiling.
@@ -219,8 +227,10 @@ func recibirConPresupuesto[T any](t *testing.T, presupuesto time.Duration, mensa
 //     of its three callers moved onto a no-wait runner — AplicarPago,
 //     persistPagoTx, or registrarFalloAparte. Each makes the corresponding
 //     blocked call return early and fails step 3, 5 or 6. All READ from
-//     production: every transaction here is opened by the Service, never by
-//     the test;
+//     production: none of the three BLOCKED sides opens a transaction of the
+//     test's own. The scaffolding around them does — the control query, the
+//     three lock holders, the re-take probe, the seed INSERT and the INTENTOS
+//     read are all the test's, and none of them is what is being measured;
 //   - the connection not coming back after the cut. That is the one that
 //     matters operationally: a stuck connection is a pool slot gone for good.
 //
@@ -460,6 +470,25 @@ func TestE2E_ContencionDeFila_LaEsperaSeCortaComoTimeoutNoComoConflicto(t *testi
 	// replay branch, FindByID finds nothing (the twin was never committed),
 	// and the phone gets pago_no_encontrado — a 404 for a pago that was never
 	// created, in 17ms.
+	//
+	// Three things that sentence must not be read as claiming:
+	//
+	//  1. That unique-violation BEATS lock-conflict is a MEASUREMENT, not an
+	//     invariant. MapError walks fbErr.GDSCodes and returns at the
+	//     first recognized code (errors.go:54-86), with unique violation
+	//     (335544665 / 335544349) and lock conflict (335544345) in different
+	//     branches of the same loop. Which one wins depends on the order of
+	//     the status vector the driver hands back.
+	//  2. With the code as it stands (WAIT) that 404 DOES NOT EXIST. If the
+	//     twin commits, FindByID finds it and the caller gets an idempotent
+	//     200; if it rolls back, the INSERT goes through. The 404 is a hazard
+	//     CONDITIONAL on adopting the "make the push no-wait" recommendation,
+	//     not a live defect.
+	//  3. The step is not resting on the blocker having blocked. If the
+	//     INSERT went through instead, recordingFakeWriter returns zeroes and
+	//     MarcarAplicada refuses them with ErrPagoDoctoCCIDInvalido
+	//     (pago_recibido.go:348-350), so the transaction unwinds anyway and
+	//     the require.Error below still holds.
 	assert.Equal(t, "firebird_timeout", aeCrear.Code,
 		"same scoping as step 3, on the other call site: a non-timeout here means "+
 			"persistPagoTx lost its WAIT semantics")
@@ -579,6 +608,12 @@ func TestE2E_ContencionDeFila_LaEsperaSeCortaComoTimeoutNoComoConflicto(t *testi
 	t.Logf("contención medida (registrarFalloAparte): espera=%s code=%s kind=%v",
 		transcurridoFallo, aeFallo.Code, aeFallo.Kind)
 
+	// Measured detail, so the narrative does not drift: when this call site is
+	// put on a no-wait runner the server answers with GDS 335544336
+	// (deadlock / update conflicts with concurrent update), NOT 335544345
+	// (lock conflict on no wait transaction). MapError collapses both into
+	// firebird_lock_conflict, so the assertion below catches it either way —
+	// but the origin is the concurrent-update branch, not the no-wait one.
 	assert.Equal(t, "firebird_timeout", aeFallo.Code,
 		"same scoping as steps 3 and 5, on the third call site: a non-timeout here means "+
 			"registrarFalloAparte lost its WAIT semantics")
