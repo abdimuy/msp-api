@@ -515,6 +515,23 @@ func handle(cfg Config, next http.Handler, w http.ResponseWriter, r *http.Reques
 	}
 }
 
+// StatusesOutsideAuth is the status set the instance mounted OUTSIDE the auth
+// chain owns — the answers the auth boundary produces itself, which the
+// in-chain instance can never observe because the request never reaches it:
+//
+//   - 401, from a missing or expired session.
+//   - 403 "user_inactive", from a cobrador given de baja. Same hole as the
+//     401: the phone posts a pago, reads a rejection, and without this the
+//     request leaves no trace anywhere.
+//
+// It is defined here, next to CaptureStatuses, so the split is stated once
+// and the composition root only has to use it.
+//
+// Widening it does not risk double rows: a 403 raised by a handler deeper in
+// is captured by the in-chain instance first, and this one yields to it — see
+// custodyClaimed.
+var StatusesOutsideAuth = []int{http.StatusUnauthorized, http.StatusForbidden}
+
 // statusFiltered reports whether cfg restricts capture to a fixed set of
 // status codes — that is, whether this is the narrow instance mounted outside
 // the auth chain rather than the in-chain one.
