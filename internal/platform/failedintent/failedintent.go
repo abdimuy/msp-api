@@ -408,10 +408,10 @@ type Config struct {
 	// the historical behavior and what the in-chain instances use.
 	//
 	// It exists for an instance mounted OUTSIDE the authentication chain,
-	// which owns the one status the in-chain instance can never observe: the
-	// 401 that authn answers before the request ever reaches it. Splitting
-	// the statuses between the two instances is what keeps one request from
-	// producing two rows.
+	// which owns the statuses the in-chain instance can never observe because
+	// authn answers them before the request ever reaches it — see
+	// StatusesOutsideAuth. Splitting the statuses between the two instances is
+	// what keeps one request from producing two rows.
 	//
 	// Setting it also makes this instance a narrow outside observer, with
 	// two deliberate consequences:
@@ -516,20 +516,34 @@ func handle(cfg Config, next http.Handler, w http.ResponseWriter, r *http.Reques
 }
 
 // StatusesOutsideAuth is the status set the instance mounted OUTSIDE the auth
-// chain owns — the answers the auth boundary produces itself, which the
-// in-chain instance can never observe because the request never reaches it:
+// chain owns: the answers the auth boundary produces itself, which the
+// in-chain instance can never observe because the request never reaches it.
 //
-//   - 401, from a missing or expired session.
+//   - 401, from a missing or malformed Authorization header, a token Firebase
+//     rejects, or a usuario with no MSP_USUARIOS row.
 //   - 403 "user_inactive", from a cobrador given de baja. Same hole as the
 //     401: the phone posts a pago, reads a rejection, and without this the
 //     request leaves no trace anywhere.
 //
-// It is defined here, next to CaptureStatuses, so the split is stated once
-// and the composition root only has to use it.
+// It is defined here, next to CaptureStatuses, so the split is stated once and
+// the composition root only has to use it.
 //
 // Widening it does not risk double rows: a 403 raised by a handler deeper in
 // is captured by the in-chain instance first, and this one yields to it — see
 // custodyClaimed.
+//
+// WHAT IS DELIBERATELY LEFT OUT, and why. This set is NOT everything authn can
+// answer. The same position in the chain also produces 5xx: the usuario lookup
+// and the permisos load both propagate their own error when Firebird is down,
+// times out, or the pool is exhausted, and those requests are lost with no
+// trace either.
+//
+// They are not here because capture could not help them. The Store this
+// middleware writes to is Firebird — the same database whose failure produced
+// the 5xx. Adding those statuses would buy an extra failing write per lost
+// pago and no evidence. The gap is real and stays open on purpose; closing it
+// needs a store that does not share fate with the one that failed, which is a
+// different design, not a longer list.
 var StatusesOutsideAuth = []int{http.StatusUnauthorized, http.StatusForbidden}
 
 // statusFiltered reports whether cfg restricts capture to a fixed set of
