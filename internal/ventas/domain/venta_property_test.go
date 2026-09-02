@@ -104,9 +104,18 @@ func TestCrearVenta_RandomValidContado_Property(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		numProductos := rapid.IntRange(1, 5).Draw(t, "num_productos")
 		numVendedores := rapid.IntRange(1, 3).Draw(t, "num_vendedores")
-		anual := rapid.Int64Range(0, 999999).Draw(t, "anual")
-		corto := rapid.Int64Range(0, 999999).Draw(t, "corto")
-		contado := rapid.Int64Range(0, 999999).Draw(t, "contado")
+		// The three draws are sorted into the only order a price list can
+		// have (contado ≤ corto plazo ≤ anual) and then blanked down to the
+		// tiers this case carries; an inverted draw is not a valid CONTADO
+		// venta, which is what this property is about. The presence is drawn
+		// once for the whole venta — see drawTierPresence.
+		presencia := drawTierPresence(t)
+		anual, corto, contado := descendingTiers(
+			presencia,
+			rapid.Int64Range(0, 999999).Draw(t, "anual"),
+			rapid.Int64Range(0, 999999).Draw(t, "corto"),
+			rapid.Int64Range(0, 999999).Draw(t, "contado"),
+		)
 		lat := rapid.Float64Range(-90, 90).Draw(t, "lat")
 		lng := rapid.Float64Range(-180, 180).Draw(t, "lng")
 		almOrig := rapid.IntRange(1, 100).Draw(t, "almOrig")

@@ -47,23 +47,16 @@ func (s *Service) AplicarVenta(ctx context.Context, ventaID, by uuid.UUID) (*dom
 			return nil
 		}
 
-		// Snapshot whether the venta already had a ClienteID before the
-		// auto-create step. Auto-created clientes inherit the venta's zona
-		// by construction, so the zona mismatch check only applies when a
-		// pre-existing Microsip cliente was linked at create time.
-		clienteIDPreExistente := v.ClienteID()
-
-		// Auto-create cliente in Microsip when the venta has no ClienteID yet
-		// but carries enough snapshot data (nombre + dirección postal). The
-		// new CLIENTE_ID is linked back to the venta within the same tx.
-		if err := s.autoCrearClienteSiNecesario(ctx, v, by); err != nil {
+		// Reject values Microsip's columns cannot hold BEFORE anything is
+		// written. This is the earliest point at which we know a write is
+		// coming: everything below it — auto-creating the cliente, the whole
+		// Aplicar cascade — burns generators that a rollback does not give
+		// back. The widths live in the adapter; see MicrosipVentaWriter.
+		if err := s.microsipWriter.ValidarCabe(v); err != nil {
 			return err
 		}
 
-		if err := s.validarZonaClienteMicrosipPreExistente(ctx, v, clienteIDPreExistente); err != nil {
-			return err
-		}
-		if err := s.validarEstatusClienteMicrosipPreExistente(ctx, clienteIDPreExistente); err != nil {
+		if err := s.resolverYValidarCliente(ctx, v, by); err != nil {
 			return err
 		}
 
@@ -92,6 +85,33 @@ func (s *Service) AplicarVenta(ctx context.Context, ventaID, by uuid.UUID) (*dom
 
 	s.drainEvents(ctx, venta)
 	return venta, nil
+}
+
+// resolverYValidarCliente settles the Microsip cliente the venta will be
+// posted against: it auto-creates one when the venta carries none, then runs
+// the two checks that only make sense for a cliente that already existed.
+//
+// Extracted from AplicarVenta as one step because the three are inseparable —
+// the snapshot of the pre-existing id has to be taken before the auto-create
+// runs, or both checks below would also fire for the cliente this very call
+// just created.
+func (s *Service) resolverYValidarCliente(ctx context.Context, v *domain.Venta, by uuid.UUID) error {
+	// Snapshot whether the venta already had a ClienteID before the
+	// auto-create step. Auto-created clientes inherit the venta's zona by
+	// construction, so the zona mismatch check only applies when a
+	// pre-existing Microsip cliente was linked at create time.
+	clienteIDPreExistente := v.ClienteID()
+
+	// Auto-create cliente in Microsip when the venta has no ClienteID yet but
+	// carries enough snapshot data (nombre + dirección postal). The new
+	// CLIENTE_ID is linked back to the venta within the same tx.
+	if err := s.autoCrearClienteSiNecesario(ctx, v, by); err != nil {
+		return err
+	}
+	if err := s.validarZonaClienteMicrosipPreExistente(ctx, v, clienteIDPreExistente); err != nil {
+		return err
+	}
+	return s.validarEstatusClienteMicrosipPreExistente(ctx, clienteIDPreExistente)
 }
 
 // checkPreconditions validates the state machine invariants before attempting

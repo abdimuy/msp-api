@@ -2,6 +2,7 @@
 package app_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -61,6 +62,21 @@ func genNonNegativeDecimal2(t *rapid.T, label string) decimal.Decimal {
 	return decimal.New(units, 0).Add(decimal.New(int64(cents), -2))
 }
 
+// genTierPrices draws the three prices of one line and returns them as
+// (anual, corto plazo, contado), already ordered as the domain requires:
+// contado ≤ corto plazo ≤ anual. Three independent draws would keep
+// generating the inverted order the tier rule rejects, which is a capture
+// mistake, not a valid venta.
+func genTierPrices(t *rapid.T, prefix string) (decimal.Decimal, decimal.Decimal, decimal.Decimal) {
+	drawn := []decimal.Decimal{
+		genNonNegativeDecimal2(t, prefix+"anual"),
+		genNonNegativeDecimal2(t, prefix+"corto"),
+		genNonNegativeDecimal2(t, prefix+"contado"),
+	}
+	slices.SortFunc(drawn, func(a, b decimal.Decimal) int { return a.Cmp(b) })
+	return drawn[2], drawn[1], drawn[0]
+}
+
 // genPositiveDecimal4 draws a positive decimal.Decimal with at most 4 decimal
 // places (for cantidad) and value in [0.0001 , 9_999_999_999.9999].
 func genPositiveDecimal4(t *rapid.T, label string) decimal.Decimal {
@@ -97,14 +113,15 @@ func genProductoInput(t *rapid.T, idx int) ventasapp.CrearVentaProductoInput {
 	sfx := rapid.IntRange(idx, idx).Draw(t, "p_idx") // stabilises the label namespace per call
 	_ = sfx
 	orig, dest := genAlmacenPair(t)
+	anual, corto, contado := genTierPrices(t, "")
 	return ventasapp.CrearVentaProductoInput{
 		ID:             uuid.New(),
 		ArticuloID:     rapid.IntRange(1, 9999).Draw(t, "art_id"),
 		Articulo:       genSafeASCII(50).Draw(t, "articulo"),
 		Cantidad:       genPositiveDecimal4(t, "cantidad"),
-		PrecioAnual:    genNonNegativeDecimal2(t, "anual"),
-		PrecioCorto:    genNonNegativeDecimal2(t, "corto"),
-		PrecioContado:  genNonNegativeDecimal2(t, "contado"),
+		PrecioAnual:    anual,
+		PrecioCorto:    corto,
+		PrecioContado:  contado,
 		AlmacenOrigen:  &orig,
 		AlmacenDestino: &dest,
 	}
@@ -147,12 +164,13 @@ func genVendedorInput(t *rapid.T) ventasapp.CrearVentaVendedorInput {
 // genComboInput draws one valid CrearVentaComboInput.
 func genComboInput(t *rapid.T) ventasapp.CrearVentaComboInput {
 	orig, dest := genAlmacenPair(t)
+	anual, corto, contado := genTierPrices(t, "combo_")
 	return ventasapp.CrearVentaComboInput{
 		ID:             uuid.New(),
 		Nombre:         genSafeASCII(40).Draw(t, "combo_nombre"),
-		PrecioAnual:    genNonNegativeDecimal2(t, "combo_anual"),
-		PrecioCorto:    genNonNegativeDecimal2(t, "combo_corto"),
-		PrecioContado:  genNonNegativeDecimal2(t, "combo_contado"),
+		PrecioAnual:    anual,
+		PrecioCorto:    corto,
+		PrecioContado:  contado,
 		Cantidad:       genPositiveDecimal4(t, "combo_cant"),
 		AlmacenOrigen:  orig,
 		AlmacenDestino: dest,

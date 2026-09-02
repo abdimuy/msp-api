@@ -408,10 +408,10 @@ type Config struct {
 	// the historical behavior and what the in-chain instances use.
 	//
 	// It exists for an instance mounted OUTSIDE the authentication chain,
-	// which owns the one status the in-chain instance can never observe: the
-	// 401 that authn answers before the request ever reaches it. Splitting
-	// the statuses between the two instances is what keeps one request from
-	// producing two rows.
+	// which owns the statuses the in-chain instance can never observe because
+	// authn answers them before the request ever reaches it — see
+	// StatusesOutsideAuth. Splitting the statuses between the two instances is
+	// what keeps one request from producing two rows.
 	//
 	// Setting it also makes this instance a narrow outside observer, with
 	// two deliberate consequences:
@@ -514,6 +514,64 @@ func handle(cfg Config, next http.Handler, w http.ResponseWriter, r *http.Reques
 		handleJSON(cfg, next, w, r)
 	}
 }
+
+// StatusesOutsideAuth is the status set the instance mounted OUTSIDE the auth
+// chain owns: the answers the auth boundary produces itself, which the
+// in-chain instance can never observe because the request never reaches it.
+//
+//   - 401, from a missing or malformed Authorization header, a token Firebase
+//     rejects, or a usuario with no MSP_USUARIOS row.
+//   - 403 "user_inactive", from a cobrador given de baja. Same hole as the
+//     401: the phone posts a pago, reads a rejection, and without this the
+//     request leaves no trace anywhere.
+//
+// It is defined here, next to CaptureStatuses, so the split is stated once and
+// the composition root only has to use it.
+//
+// Widening it does not risk double rows: a 403 raised by a handler deeper in
+// is captured by the in-chain instance first, and this one yields to it — see
+// custodyClaimed.
+//
+// WHAT IS DELIBERATELY LEFT OUT, and why. This set is NOT everything the auth
+// position can answer, and the reasons differ per case.
+//
+// Nothing from Firebase itself is missing: classifyVerifyError maps every
+// verification failure — expired, revoked, malformed, and even a failed
+// certificate fetch — to 401, so a Firebase outage arrives as a status this
+// set already owns.
+//
+//   - 5xx from Firebird. The usuario lookup and the permisos load both
+//     propagate their own error when the database is down, times out, or the
+//     pool is exhausted. Capture could not help them: the Store this
+//     middleware writes to IS Firebird, the same database whose failure
+//     produced the 5xx, so adding those statuses would buy an extra failing
+//     write per lost pago and no evidence. Closing this one needs a store that
+//     does not share fate with the one that failed — a different design, not a
+//     longer list.
+//
+//   - 422 from the lazy provisioner. The composition root wires a provisioner
+//     (see cmd/api), so a valid Firebase user with no MSP_USUARIOS row is
+//     enrolled from the token right here; if NewEmail or NewNombre reject what
+//     the token carries, the answer is a validation 422 from this same
+//     position. The in-chain instance never sees it, and — unlike the 5xx
+//     above — Firebird is healthy, so capture WOULD leave evidence.
+//
+//     It is left out because the status is a poor proxy for what makes this
+//     case special, which is who emitted it, not the number.
+//
+//     What widening to 422 actually costs was measured, not argued: it breaks
+//     exactly one test — the unit case that pins the declared split, "422
+//     belongs to the in-chain instance" — and it does NOT break the real
+//     chain. cmd/api stays green, including the authenticated-422 test that
+//     asserts one row per request, because InsideAuth is mounted deeper
+//     (OutsideAuth, authn, InsideAuth): it processes the response first and
+//     claims custody before this instance ever evaluates its filter.
+//
+//     So the cost is not double rows in production. It is declaring a split
+//     that this set would no longer keep, for one narrow case never observed.
+//     Closing it properly means giving the provisioner's own rejection a
+//     distinguishable identity, not widening the set.
+var StatusesOutsideAuth = []int{http.StatusUnauthorized, http.StatusForbidden}
 
 // statusFiltered reports whether cfg restricts capture to a fixed set of
 // status codes — that is, whether this is the narrow instance mounted outside

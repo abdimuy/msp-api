@@ -580,4 +580,28 @@ var (
 		"cantidad_demasiados_decimales",
 		"la cantidad admite máximo 4 decimales",
 	)
+	// ErrPrecioTierOrderInvalid is returned when the prices one line actually
+	// carries are not ordered contado ≤ corto plazo ≤ anual. Cash is by
+	// construction the cheapest tier, so any other order is an economic
+	// impossibility — in practice a capture mistake, typically the line total
+	// typed into one tier and the unit price into another.
+	//
+	// The message names the canonical order rather than a specific pair,
+	// because a tier at zero was not captured and is skipped: with the corto
+	// plazo empty the rule compares contado against anual, and a message
+	// promising "contado vs corto plazo" would describe a comparison that did
+	// not happen. The rejected numbers travel in the fields.
+	ErrPrecioTierOrderInvalid = apperror.NewValidation(
+		"precio_tier_order_invalid",
+		"los precios capturados de la línea deben ir de menor a mayor: contado, corto plazo y anual",
+	)
+	// ErrMontoTierOrderInvalid is the same rule applied to the venta header
+	// totals derived from the lines. Reachable when a venta captured before
+	// the rule existed is hydrated and edited: its stored lines skip
+	// validation, so the impossible order surfaces only in the recomputed
+	// totals.
+	ErrMontoTierOrderInvalid = apperror.NewValidation(
+		"monto_tier_order_invalid",
+		"los totales de la venta son imposibles: los montos capturados deben ir de menor a mayor: contado, corto plazo y anual",
+	)
 )

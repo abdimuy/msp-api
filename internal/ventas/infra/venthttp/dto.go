@@ -46,10 +46,16 @@ type GPSDTO struct {
 
 // MontosDTO mirrors the three-price MontoSnapshot. Decimal values flow as
 // strings so JSON parsing does not lose precision.
+//
+// These are venta TOTALS, not prices: the server derives each one as
+// Σ(precio unitario × cantidad) over the lines. The old doc strings said
+// "Precio", which is exactly the confusion that let venta Z00002678 be
+// captured with a line total in the precio_* fields. In request bodies the
+// block is ignored — see [CrearVentaBody].
 type MontosDTO struct {
-	Anual      string `json:"anual"       doc:"Precio del plan anual"`
-	CortoPlazo string `json:"corto_plazo" doc:"Precio del plan a corto plazo"`
-	Contado    string `json:"contado"     doc:"Precio de contado"`
+	Anual      string `json:"anual"       doc:"Total anual de la venta: suma de precio_anual × cantidad de cada línea. No es un precio unitario"`
+	CortoPlazo string `json:"corto_plazo" doc:"Total a corto plazo de la venta: suma de precio_corto × cantidad de cada línea. No es un precio unitario"`
+	Contado    string `json:"contado"     doc:"Total de contado de la venta: suma de precio_contado × cantidad de cada línea. No es un precio unitario"`
 }
 
 // PlanCreditoDTO mirrors the optional credit-plan VO.
@@ -71,12 +77,16 @@ type DiaCobranzaDTO struct {
 }
 
 // ComboDTO is one combo line in the request/response.
+//
+// The three precio_* fields are UNIT prices — the price of ONE bundle. The
+// server multiplies each by Cantidad to build the venta totals, so sending a
+// line total here multiplies it again.
 type ComboDTO struct {
 	ID               string `json:"id"                 format:"uuid"`
 	Nombre           string `json:"nombre"`
-	PrecioAnual      string `json:"precio_anual"`
-	PrecioCorto      string `json:"precio_corto"`
-	PrecioContado    string `json:"precio_contado"`
+	PrecioAnual      string `json:"precio_anual"       doc:"Precio unitario del combo en el plan anual: lo que cuesta UN combo, no el total de la línea. El servidor lo multiplica por cantidad"`
+	PrecioCorto      string `json:"precio_corto"       doc:"Precio unitario del combo a corto plazo: lo que cuesta UN combo, no el total de la línea. El servidor lo multiplica por cantidad"`
+	PrecioContado    string `json:"precio_contado"     doc:"Precio unitario de contado del combo: lo que cuesta UN combo, no el total de la línea. Debe cumplir precio_contado ≤ precio_corto ≤ precio_anual"`
 	Cantidad         string `json:"cantidad"           doc:"Cantidad decimal del combo como unidad física"`
 	AlmacenOrigenID  int    `json:"almacen_origen_id"  doc:"Almacén de origen del combo"`
 	AlmacenDestinoID int    `json:"almacen_destino_id" doc:"Almacén de destino del combo"`
@@ -85,14 +95,18 @@ type ComboDTO struct {
 // ProductoDTO is one producto line in the request/response. AlmacenOrigenID
 // / AlmacenDestinoID are nil when ComboID is set (the producto inherits the
 // almacenes of its combo).
+//
+// The three precio_* fields are UNIT prices — the price of ONE unit of the
+// articulo. The server multiplies each by Cantidad to build the venta
+// totals, so sending a line total here multiplies it again.
 type ProductoDTO struct {
 	ID               string  `json:"id"                           format:"uuid"`
 	ArticuloID       int     `json:"articulo_id"`
 	Articulo         string  `json:"articulo"`
 	Cantidad         string  `json:"cantidad"                     doc:"Cantidad decimal, p. ej. \"1.5\""`
-	PrecioAnual      string  `json:"precio_anual"`
-	PrecioCorto      string  `json:"precio_corto"`
-	PrecioContado    string  `json:"precio_contado"`
+	PrecioAnual      string  `json:"precio_anual"                 doc:"Precio unitario en el plan anual: lo que cuesta UNA pieza, no el total de la línea. El servidor lo multiplica por cantidad"`
+	PrecioCorto      string  `json:"precio_corto"                 doc:"Precio unitario a corto plazo: lo que cuesta UNA pieza, no el total de la línea. El servidor lo multiplica por cantidad"`
+	PrecioContado    string  `json:"precio_contado"               doc:"Precio unitario de contado: lo que cuesta UNA pieza, no el total de la línea. Debe cumplir precio_contado ≤ precio_corto ≤ precio_anual"`
 	ComboID          *string `json:"combo_id,omitempty"           format:"uuid"`
 	AlmacenOrigenID  *int    `json:"almacen_origen_id,omitempty"  doc:"Almacén de origen — null cuando es parte de un combo"`
 	AlmacenDestinoID *int    `json:"almacen_destino_id,omitempty" doc:"Almacén de destino — null cuando es parte de un combo"`

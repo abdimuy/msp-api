@@ -395,13 +395,20 @@ func TestRecomputarMontos_Property_SumInvariant(t *testing.T) {
 		// Prices use scale -2 (centavos: e.g. 10050 → 100.50) and quantities
 		// use scale -2 (e.g. 175 → 1.75) so that precio × cantidad can produce
 		// up to 4 decimal places, forcing Round(2) to do real work.
+		// One tier presence for the whole venta: standalones and combos share
+		// it, so the header sums stay in a possible order. See drawTierPresence.
+		presencia := drawTierPresence(rt)
+
 		standalones := make([]lineItem, numStandalone)
 		standaloneDTOs := make([]domain.CrearVentaProductoInput, numStandalone)
 		orig, dest := 1, 2
 		for i := range numStandalone {
-			a := rapid.Int64Range(0, 99_999_999).Draw(rt, "sa_a")
-			c := rapid.Int64Range(0, 99_999_999).Draw(rt, "sa_c")
-			k := rapid.Int64Range(0, 99_999_999).Draw(rt, "sa_k")
+			a, c, k := descendingTiers(
+				presencia,
+				rapid.Int64Range(0, 99_999_999).Draw(rt, "sa_a"),
+				rapid.Int64Range(0, 99_999_999).Draw(rt, "sa_c"),
+				rapid.Int64Range(0, 99_999_999).Draw(rt, "sa_k"),
+			)
 			q := rapid.Int64Range(1, 10_000).Draw(rt, "sa_q")
 			anual := decimal.New(a, -2) // e.g. 123456 → 1234.56
 			corto := decimal.New(c, -2)
@@ -422,9 +429,12 @@ func TestRecomputarMontos_Property_SumInvariant(t *testing.T) {
 		var childDTOs []domain.CrearVentaProductoInput
 		comboIDs := make([]uuid.UUID, numCombos)
 		for i := range numCombos {
-			ca := rapid.Int64Range(0, 99_999_999).Draw(rt, "co_a")
-			cc := rapid.Int64Range(0, 99_999_999).Draw(rt, "co_c")
-			ck := rapid.Int64Range(0, 99_999_999).Draw(rt, "co_k")
+			ca, cc, ck := descendingTiers(
+				presencia,
+				rapid.Int64Range(0, 99_999_999).Draw(rt, "co_a"),
+				rapid.Int64Range(0, 99_999_999).Draw(rt, "co_c"),
+				rapid.Int64Range(0, 99_999_999).Draw(rt, "co_k"),
+			)
 			cq := rapid.Int64Range(1, 10_000).Draw(rt, "co_q")
 			anual := decimal.New(ca, -2)
 			corto := decimal.New(cc, -2)
@@ -511,10 +521,19 @@ func TestRecomputarMontos_Property_SumInvariant(t *testing.T) {
 		}
 
 		// ReemplazarProductos: replace with a fresh standalone and assert recompute.
+		//
+		// The replacement carries the SAME tier presence as the rest of the
+		// venta. A hardcoded three-tier 7/6/5 here would be a line from a
+		// crédito venta dropped into a contado one: with the combos carrying
+		// only contado, the header would recompute to anual 7 against a contado
+		// of whatever the combos summed to, and the domain would reject totals
+		// no real venta can have. The rejection would be correct; the fixture
+		// would be the thing that is wrong.
+		na, nc, nk := descendingTiers(presencia, 7, 6, 5)
 		newPrice, _ := domain.NewMontoSnapshot(
-			decimal.RequireFromString("7.00"),
-			decimal.RequireFromString("6.00"),
-			decimal.RequireFromString("5.00"),
+			decimal.NewFromInt(na),
+			decimal.NewFromInt(nc),
+			decimal.NewFromInt(nk),
 		)
 		require.NoError(t, v.ReemplazarProductos(domain.ReemplazarProductosParams{
 			Productos: []domain.CrearVentaProductoInput{{
@@ -532,9 +551,9 @@ func TestRecomputarMontos_Property_SumInvariant(t *testing.T) {
 			comboC = comboC.Add(l.corto.Mul(l.qty))
 			comboK = comboK.Add(l.contado.Mul(l.qty))
 		}
-		wantA2 := comboA.Add(decimal.RequireFromString("7.00")).Round(2)
-		wantC2 := comboC.Add(decimal.RequireFromString("6.00")).Round(2)
-		wantK2 := comboK.Add(decimal.RequireFromString("5.00")).Round(2)
+		wantA2 := comboA.Add(decimal.NewFromInt(na)).Round(2)
+		wantC2 := comboC.Add(decimal.NewFromInt(nc)).Round(2)
+		wantK2 := comboK.Add(decimal.NewFromInt(nk)).Round(2)
 
 		if !v.Montos().Anual().Equal(wantA2) {
 			rt.Fatalf("after reemplazar anual: got=%s want=%s", v.Montos().Anual(), wantA2)

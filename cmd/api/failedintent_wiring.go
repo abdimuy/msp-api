@@ -252,11 +252,13 @@ func provideFailedIntentCapturas(
 // its authentication handler. Fielded rather than returned as a bare pair so
 // the mount site names where each one goes: the order IS the mechanism.
 type capturePair struct {
-	// OutsideAuth owns exactly one status: the 401 that authn answers before
-	// anything further in the chain gets to see the request. Without it a
-	// phone whose session expired posts a pago, reads a 401, and leaves no
-	// trace anywhere — the very case the failed-intent screen exists for,
-	// and the one it could never show.
+	// OutsideAuth owns the statuses the auth boundary answers before anything
+	// further in the chain gets to see the request — see
+	// failedintent.StatusesOutsideAuth for which ones and why. Without it a
+	// phone whose session expired, or whose cobrador was given de baja, posts
+	// a pago, reads the rejection, and leaves no trace anywhere — the very
+	// case the failed-intent screen exists for, and the one it could never
+	// show.
 	OutsideAuth func(http.Handler) http.Handler
 	// InsideAuth owns every other failure. It is the instance that carries
 	// UsuarioID, which /replay-with and /replay-with-multipart need to
@@ -271,7 +273,7 @@ type capturePair struct {
 // request from producing two rows.
 func captureAroundAuth(cfg failedintent.Config) capturePair {
 	narrowed := cfg
-	narrowed.CaptureStatuses = []int{http.StatusUnauthorized}
+	narrowed.CaptureStatuses = failedintent.StatusesOutsideAuth
 	return capturePair{
 		OutsideAuth: failedintent.CaptureMiddleware(narrowed),
 		InsideAuth:  failedintent.CaptureMiddleware(cfg),

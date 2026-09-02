@@ -129,6 +129,10 @@ type fakeMicrosipVentaWriter struct {
 	Err    error
 	res    outbound.MicrosipVentaResult
 	LastIn outbound.MicrosipVentaInput
+	// ValidarErr is what ValidarCabe returns. The real adapter rejects here
+	// the values Microsip's columns cannot hold, before anything is written.
+	ValidarErr   error
+	validarCalls int
 }
 
 func newFakeWriter(doctoPVID int, folio string) *fakeMicrosipVentaWriter {
@@ -146,6 +150,19 @@ func (f *fakeMicrosipVentaWriter) Aplicar(_ context.Context, in outbound.Microsi
 		return outbound.MicrosipVentaResult{}, f.Err
 	}
 	return f.res, nil
+}
+
+func (f *fakeMicrosipVentaWriter) ValidarCabe(_ *domain.Venta) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.validarCalls++
+	return f.ValidarErr
+}
+
+func (f *fakeMicrosipVentaWriter) validarCabeCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.validarCalls
 }
 
 func (f *fakeMicrosipVentaWriter) callsCount() int {

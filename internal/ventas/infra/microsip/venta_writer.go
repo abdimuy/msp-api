@@ -668,6 +668,157 @@ func (w *VentaWriter) insertComponente(
 	return nil
 }
 
+// ─── What LIBRES_CARGOS_CC can actually hold ────────────────────────────────
+//
+// Every value insertDatosCredito binds goes into a legacy Microsip column
+// whose real ceiling is NOT the one the DDL suggests, and Firebird rejects the
+// whole statement rather than truncating. Since phase 7 runs after phase 6 has
+// already flipped APLICADO='S' and fired the trigger cascade, one over-long
+// value takes the entire aplicar down with a driver error that names neither
+// the column nor the value.
+//
+// Census of the eight columns the INSERT writes, measured against the catalog:
+//
+//	DOCTO_CC_ID                INTEGER            — an id, not user input
+//	FORMA_DE_PAGO              INTEGER            — resolved id
+//	PARCIALIDAD                SMALLINT           — 32,767   ← guarded
+//	CREDITO_EN_MESES           INTEGER            — resolved id
+//	TIEMPO_A_CORTO_PLAZOMESES  SMALLINT           — 32,767, fed by a config
+//	                                                constant (w.tiempoCortoPlazoMeses),
+//	                                                not by capture: low risk, unguarded
+//	MONTO_A_CORTO_PLAZO        INTEGER            — 2,147,483,647: unreachable
+//	                                                selling furniture, unguarded
+//	VENDEDOR_1/2/3             INTEGER            — resolved ids
+//	NUMERO_DE_VENDEDORES       INTEGER            — resolved id
+//	ENGANCHE                   NUMERIC(6,-2)/LONG — 21,474,836.47, unguarded
+//	PRECIO_DE_CONTADO          NUMERIC(17,-2)/INT64 — unreachable, unguarded
+//	AVAL_O_RESPONSABLE         VARCHAR(50) NONE   — 50 bytes  ← guarded
+//	OBSERVACIONES              VARCHAR(99) NONE   — 99 bytes  ← guarded
+//
+// The three guarded ones are the three fed straight from what a person typed.
+//
+// maxParcialidadMicrosip is the largest parcialidad LIBRES_CARGOS_CC can hold.
+//
+// The column is declared NUMERIC(4,0), but Firebird stores it in a SMALLINT and
+// enforces the STORAGE range, not the declared precision — so the ceiling is
+// 32,767, not 9,999. The declared precision misleads in BOTH directions: in the
+// same row MONTO_A_CORTO_PLAZO is declared NUMERIC(5,0) and already holds
+// 127,000, which is why this number was measured against the catalog instead of
+// read off the DDL.
+//
+// And it is close. The largest parcialidad on record is 31,950, with five rows
+// already above 30,000. One price increase and the INSERT starts failing.
+const maxParcialidadMicrosip = 32767
+
+// checkParcialidadFits rejects a parcialidad the column cannot hold, BEFORE the
+// INSERT is attempted.
+//
+// It lives here, in the Microsip adapter, and not in the domain: the ceiling is
+// a property of a legacy Microsip column, and the ventas aggregate has no
+// business knowing that LIBRES_CARGOS_CC exists. Letting the INSERT fail instead
+// is what makes this worth guarding — the rejection takes the whole aplicar down
+// (the venta never lands in Microsip) with a driver error that names neither the
+// column nor the value, and the operator reads it on the failed-intent screen
+// with nothing to act on.
+//
+// The message therefore carries both numbers: what was sent and what fits.
+func checkParcialidadFits(parcialidad decimal.Decimal) error {
+	if parcialidad.LessThanOrEqual(decimal.NewFromInt(maxParcialidadMicrosip)) {
+		return nil
+	}
+	return apperror.NewValidation(
+		"parcialidad_exceeds_microsip_max",
+		fmt.Sprintf(
+			"la parcialidad de %s excede el máximo de %d que microsip puede guardar; "+
+				"baje la parcialidad o alargue el plazo",
+			parcialidad.StringFixed(2), maxParcialidadMicrosip,
+		),
+	)
+}
+
+// maxNotaMicrosip and maxAvalMicrosip are the widths of the two text columns
+// of LIBRES_CARGOS_CC, in BYTES.
+//
+// Bytes, not runes, and this is the trap: both columns are CHARACTER SET NONE
+// (RDB$CHARACTER_SET_ID = 0) and the writer binds the Go string with no
+// EncodeWin1252 in between, so what travels is UTF-8 and an accent costs two
+// bytes. A 60-character nota of accented text is 120 bytes and does not fit.
+//
+// The domain allows far more than either — maxNotaLength is 500 and
+// maxAvalLength is 200, and the DTO publishes maxLength:"500" — and nothing in
+// between truncates. The margin is not theoretical: the development database
+// already holds a CREDITO venta in borrador whose nota is 230 characters.
+const (
+	maxNotaMicrosip = 99
+	maxAvalMicrosip = 50
+)
+
+// checkNotaFits rejects a nota that OBSERVACIONES cannot hold.
+func checkNotaFits(nota string) error {
+	if len(nota) <= maxNotaMicrosip {
+		return nil
+	}
+	return apperror.NewValidation(
+		"nota_exceeds_microsip_max",
+		fmt.Sprintf(
+			"la nota ocupa %d bytes y microsip sólo guarda %d; acórtela "+
+				"(cada acento cuenta doble)",
+			len(nota), maxNotaMicrosip,
+		),
+	)
+}
+
+// checkAvalFits rejects an aval that AVAL_O_RESPONSABLE cannot hold.
+func checkAvalFits(aval string) error {
+	if len(aval) <= maxAvalMicrosip {
+		return nil
+	}
+	return apperror.NewValidation(
+		"aval_exceeds_microsip_max",
+		fmt.Sprintf(
+			"el aval ocupa %d bytes y microsip sólo guarda %d; acórtelo "+
+				"(cada acento cuenta doble)",
+			len(aval), maxAvalMicrosip,
+		),
+	)
+}
+
+// ValidarCabe rejects a venta whose captured values do not fit the Microsip
+// columns this writer binds them into.
+//
+// It is a separate port method, and not a check inside Aplicar, because of
+// WHERE the failure would otherwise land. Aplicar's phase 6 flips APLICADO='S'
+// and fires Microsip's trigger cascade; phase 7 — the LIBRES_CARGOS_CC insert —
+// comes after. And before Aplicar is even called, AplicarVenta may have
+// auto-created the cliente in Microsip. A rejection at INSERT time therefore
+// arrives once several generators have been burned that the rollback does not
+// give back, and it arrives as a driver error naming neither the column nor the
+// value. Running the same checks up front costs nothing and fails cleanly.
+//
+// Only CREDITO ventas reach LIBRES_CARGOS_CC, so a CONTADO venta has nothing to
+// check here.
+func (w *VentaWriter) ValidarCabe(v *domain.Venta) error {
+	if v.TipoVenta() != domain.TipoVentaCredito {
+		return nil
+	}
+	if plan := v.PlanCredito(); plan != nil {
+		if err := checkParcialidadFits(plan.Parcialidad()); err != nil {
+			return err
+		}
+	}
+	if nota := v.Nota(); nota != nil {
+		if err := checkNotaFits(*nota); err != nil {
+			return err
+		}
+	}
+	if aval := v.Cliente().Aval(); aval != nil {
+		if err := checkAvalFits(aval.Value()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // insertDatosCredito handles Phase 7 (LIBRES_CARGOS_CC + optional enganche).
 //
 //nolint:funlen // multi-step credit-only block; kept together for traceability.
@@ -699,6 +850,10 @@ func (w *VentaWriter) insertDatosCredito(
 		obs = *v.Nota()
 	}
 
+	// The width checks for parcialidad, nota and aval do NOT run here. By this
+	// point phase 6 has already fired the cascade, so a rejection would burn
+	// generators the rollback does not give back — see ValidarCabe, which the
+	// application command calls before any write happens.
 	if _, err := q.ExecContext(ctx, insertLibresCargosCC,
 		cargoCCID,
 		*in.FormaDePagoID, plan.Parcialidad().StringFixed(2), *in.CreditoEnMesesID,

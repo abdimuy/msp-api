@@ -176,21 +176,8 @@ func TestAlmacenRepo_ListarArticulos_BuscaPorAcento(t *testing.T) {
 
 	// El fragmento acentuado sale del propio catálogo, no de una constante:
 	// así la prueba no depende de que exista un artículo concreto.
-	var fragmento string
 	nombres := fbtestutil.NombresDeCatalogo(ctx, t, q, "ARTICULOS", "ARTICULO_ID", "NOMBRE")
-	for _, n := range nombres {
-		if idx := strings.IndexFunc(n, func(r rune) bool { return r > 127 }); idx >= 0 {
-			// Tres runas alrededor del acento, para que el CONTAINING sea
-			// selectivo pero siga existiendo en varias filas.
-			runas := []rune(n[idx:])
-			if len(runas) >= 3 {
-				fragmento = string(runas[:3])
-			} else {
-				fragmento = string(runas)
-			}
-			break
-		}
-	}
+	fragmento := fragmentoAcentuadoMasComun(nombres)
 	require.NotEmptyf(t, fragmento,
 		"ningún artículo del catálogo trae acentos; sin eso esta prueba no ejercita nada")
 
@@ -228,4 +215,50 @@ func TestAlmacenRepo_ListarArticulos_BuscaPorAcento(t *testing.T) {
 		fragmento, enCatalogo)
 	t.Logf("buscando %q: %d artículos con existencias devueltos (%d en el catálogo)",
 		fragmento, encontrados, enCatalogo)
+}
+
+// fragmentoAcentuadoMasComun elige el fragmento acentuado con el que se busca.
+//
+// La elección tiene que ser DETERMINISTA y no puede consultar el repositorio.
+//
+// Determinista porque antes se recorría el mapa de nombres directamente y se
+// tomaba el primer acento que apareciera: Go sortea el orden de un mapa en cada
+// corrida, así que la prueba buscaba algo distinto cada vez y fallaba 1 de cada
+// 2-4 corridas completas, cuando le tocaba un fragmento cuyos artículos no
+// tienen existencias — ListarArticulos filtra por existencias > 0.
+//
+// Y sin consultar el repositorio porque elegir "el fragmento que sí devuelve
+// resultados" volvería vacua la afirmación que esta prueba existe para hacer:
+// que buscar acentuado devuelve algo. Se elige por frecuencia en el catálogo,
+// que es la mejor apuesta disponible sin mirar la respuesta, con desempate
+// lexicográfico para que dos fragmentos igual de comunes no reintroduzcan el
+// sorteo.
+func fragmentoAcentuadoMasComun(nombres map[int]string) string {
+	frecuencia := map[string]int{}
+	for _, n := range nombres {
+		idx := strings.IndexFunc(n, func(r rune) bool { return r > 127 })
+		if idx < 0 {
+			continue
+		}
+		// Tres runas a partir del acento, para que el CONTAINING sea
+		// selectivo pero siga existiendo en varias filas.
+		runas := []rune(n[idx:])
+		if len(runas) > 3 {
+			runas = runas[:3]
+		}
+		frecuencia[string(runas)]++
+	}
+
+	mejor := ""
+	for frag, veces := range frecuencia {
+		switch {
+		case mejor == "":
+		case veces > frecuencia[mejor]:
+		case veces == frecuencia[mejor] && frag < mejor:
+		default:
+			continue
+		}
+		mejor = frag
+	}
+	return mejor
 }
