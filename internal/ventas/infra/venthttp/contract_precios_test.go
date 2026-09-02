@@ -58,13 +58,14 @@ func TestContrato_PreciosDeLineaSeDocumentanComoUnitarios(t *testing.T) {
 		for _, campo := range campos {
 			desc := strings.ToLower(schema.Properties[campo].Value.Description)
 			assert.NotEmpty(t, desc, "%s.%s must be documented", schemaName, campo)
-			// Two phrases, both discriminating. "unitario" alone is not: the
-			// montos block also contains the word, negated ("No es un precio
-			// unitario"), so asserting on it passes with the two texts SWAPPED
-			// — that is, with the exact confusion that caused Z00002678
-			// published as the contract.
-			assert.Containsf(t, desc, "precio unitario",
-				"%s.%s must state it is a unit price; got %q", schemaName, campo, desc)
+			// Two phrases, both discriminating — and note which one is NOT
+			// used: "precio unitario" passes with the two texts SWAPPED,
+			// because the montos block contains the words too, negated ("No
+			// es un precio unitario"). "lo que cuesta" is the phrase only a
+			// unit price can carry, and it is the same one the header
+			// assertion below forbids.
+			assert.Containsf(t, desc, "lo que cuesta",
+				"%s.%s must describe the price of ONE item; got %q", schemaName, campo, desc)
 			assert.Containsf(t, desc, "no el total de la línea",
 				"%s.%s must rule out the line total explicitly; got %q", schemaName, campo, desc)
 		}
