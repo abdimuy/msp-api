@@ -351,3 +351,126 @@ func TestVenta_ReemplazarCombos_ControlPositivo(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, v.CombosCount())
 }
+
+// ─── escalones ausentes ─────────────────────────────────────────────────────
+//
+// Medido en producción sobre 1,049 líneas de producto: de las 160 líneas de
+// venta CONTADO, 103 llevan `anual` y `corto plazo` en cero. No es un defecto
+// de captura — una venta de contado no tiene precios a crédito, así que esos
+// escalones no existen. Una regla que exigiera los tres presentes rechazaría
+// esas 103 líneas en el mostrador, delante del cliente.
+//
+// El orden se valida entonces sólo entre los escalones PRESENTES, en su orden
+// canónico contado → corto plazo → anual. Lo que la regla rechaza sigue siendo
+// lo imposible; lo inusual (un precio ocho veces la lista) lo juzga la persona.
+
+// TestCrearVenta_AceptaContadoSinEscalonesDeCredito es el control positivo de
+// las 103 líneas: sólo hay precio de contado, así que no hay nada que comparar.
+func TestCrearVenta_AceptaContadoSinEscalonesDeCredito(t *testing.T) {
+	t.Parallel()
+	p := validCrearVentaParams(t)
+	p.Productos[0].Precios = lineasMontos(t, 0, 0, 500) // anual 0, corto 0, contado 500
+
+	v, err := domain.CrearVenta(p)
+
+	require.NoError(t, err, "una venta de contado sin precios a crédito es captura legítima")
+	assert.True(t, v.Montos().Contado().Equal(decimal.NewFromInt(500)))
+	assert.True(t, v.Montos().Anual().IsZero())
+}
+
+// TestCrearVenta_AceptaSoloAnual es el simétrico: una venta a crédito sin
+// precio de contado capturado.
+func TestCrearVenta_AceptaSoloAnual(t *testing.T) {
+	t.Parallel()
+	p := validCrearVentaParams(t)
+	p.Productos[0].Precios = lineasMontos(t, 1400, 0, 0)
+
+	_, err := domain.CrearVenta(p)
+
+	require.NoError(t, err)
+}
+
+// TestCrearVenta_AceptaDosEscalonesPresentesEnOrden: con dos escalones
+// presentes y crecientes no hay nada que rechazar, aunque el tercero falte.
+func TestCrearVenta_AceptaDosEscalonesPresentesEnOrden(t *testing.T) {
+	t.Parallel()
+	p := validCrearVentaParams(t)
+	p.Productos[0].Precios = lineasMontos(t, 0, 600, 500) // anual ausente
+
+	_, err := domain.CrearVenta(p)
+
+	require.NoError(t, err)
+}
+
+// TestCrearVenta_AceptaLosTresEscalonesCrecientes fija que el caso sano de
+// tres escalones sigue pasando: es el 100% de las 889 líneas de CRÉDITO.
+func TestCrearVenta_AceptaLosTresEscalonesCrecientes(t *testing.T) {
+	t.Parallel()
+	p := validCrearVentaParams(t)
+	m, err := domain.NewMontoSnapshot(
+		decimal.RequireFromString("1400"),
+		decimal.RequireFromString("1112.50"),
+		decimal.RequireFromString("962.50"),
+	)
+	require.NoError(t, err)
+	p.Productos[0].Precios = m
+
+	_, err = domain.CrearVenta(p)
+
+	require.NoError(t, err)
+}
+
+// TestCrearVenta_RechazaCortoMayorQueAnualConLosTresPresentes es el defecto
+// real que la regla existe para atrapar, con los tres escalones capturados.
+func TestCrearVenta_RechazaCortoMayorQueAnualConLosTresPresentes(t *testing.T) {
+	t.Parallel()
+	p := validCrearVentaParams(t)
+	p.Productos[0].Precios = lineasMontos(t, 1400, 8900, 7700)
+
+	_, err := domain.CrearVenta(p)
+
+	requireCode(t, err, "precio_tier_order_invalid")
+}
+
+// TestCrearVenta_RechazaContadoMayorQueAnualConCortoAusente es la prueba que
+// cierra el agujero que abriría la implementación ingenua.
+//
+// Saltarse los ceros NO puede degradarse a "comparar pares adyacentes y
+// omitir el par que toque un cero": con el corto plazo ausente, eso dejaría
+// pasar contado 7700 contra anual 1400 — exactamente la forma de la venta de
+// las 8 sillas si el capturista hubiera dejado el escalón de en medio vacío.
+// El contado tiene que seguir midiéndose contra el anual.
+func TestCrearVenta_RechazaContadoMayorQueAnualConCortoAusente(t *testing.T) {
+	t.Parallel()
+	p := validCrearVentaParams(t)
+	p.Productos[0].Precios = lineasMontos(t, 1400, 0, 7700)
+
+	_, err := domain.CrearVenta(p)
+
+	requireCode(t, err, "precio_tier_order_invalid")
+}
+
+// TestCrearVenta_RechazaContadoMayorQueCortoConAnualAusente: el mismo cierre
+// para el otro escalón ausente.
+func TestCrearVenta_RechazaContadoMayorQueCortoConAnualAusente(t *testing.T) {
+	t.Parallel()
+	p := validCrearVentaParams(t)
+	p.Productos[0].Precios = lineasMontos(t, 0, 500, 800)
+
+	_, err := domain.CrearVenta(p)
+
+	requireCode(t, err, "precio_tier_order_invalid")
+}
+
+// TestCrearVenta_AceptaTodosLosEscalonesEnCero: una línea sin ningún precio no
+// tiene orden que romper. Que se acepte aquí no la vuelve válida — el monto
+// cero lo juzgan otras reglas, no ésta.
+func TestCrearVenta_AceptaTodosLosEscalonesEnCero(t *testing.T) {
+	t.Parallel()
+	p := validCrearVentaParams(t)
+	p.Productos[0].Precios = lineasMontos(t, 0, 0, 0)
+
+	_, err := domain.CrearVenta(p)
+
+	require.NoError(t, err)
+}
