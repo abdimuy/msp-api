@@ -1,7 +1,11 @@
 //nolint:misspell // domain vocabulary is Spanish (anual, etc.) per project convention.
 package domain
 
-import "github.com/shopspring/decimal"
+import (
+	"github.com/shopspring/decimal"
+
+	"github.com/abdimuy/msp-api/internal/platform/apperror"
+)
 
 // MontoSnapshot captures the three pricing snapshots a venta carries:
 // anual, corto plazo, and contado. All are required and must be ≥ 0.
@@ -55,13 +59,21 @@ func (m MontoSnapshot) Contado() decimal.Decimal { return m.contado }
 // which reaches the domain through HydrateMontoSnapshot. The two entity
 // constructors are the choke point every captured line actually crosses.
 //
-// violation is the error to return, so a line-level breach stays
-// distinguishable from a header-level one in the failed-intent screen.
-func validateMontoTierOrder(m MontoSnapshot, violation error) error {
-	if m.contado.GreaterThan(m.cortoPlazo) || m.cortoPlazo.GreaterThan(m.anual) {
-		return violation
-	}
-	return nil
+// It returns a bool rather than an error so each caller can attach WHICH line
+// broke the rule: the sentinels carry no data, and on the failed-intent screen
+// "el precio de contado no puede ser mayor…" over a venta of twenty lines does
+// not tell the operator which one to fix.
+func montoTierOrderOK(m MontoSnapshot) bool {
+	return !m.contado.GreaterThan(m.cortoPlazo) && !m.cortoPlazo.GreaterThan(m.anual)
+}
+
+// tierOrderFields attaches the three prices to a tier-order rejection, so the
+// operator reads the numbers that broke the rule instead of only the rule.
+func tierOrderFields(e *apperror.Error, m MontoSnapshot) *apperror.Error {
+	return e.
+		WithField("precio_anual", m.anual.StringFixed(2)).
+		WithField("precio_corto", m.cortoPlazo.StringFixed(2)).
+		WithField("precio_contado", m.contado.StringFixed(2))
 }
 
 // Equals reports whether two MontoSnapshot values are equal.

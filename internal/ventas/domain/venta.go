@@ -1010,9 +1010,10 @@ func (v *Venta) instalarLineas(combos []*Combo, productos []*Producto) error {
 	prevCombos, prevProductos, prevMontos := v.combos, v.productos, v.montos
 	v.combos, v.productos = combos, productos
 	v.recomputarMontos()
-	if err := validateMontoTierOrder(v.montos, ErrMontoTierOrderInvalid); err != nil {
+	if !montoTierOrderOK(v.montos) {
+		totales := v.montos
 		v.combos, v.productos, v.montos = prevCombos, prevProductos, prevMontos
-		return err
+		return tierOrderFields(ErrMontoTierOrderInvalid, totales)
 	}
 	return nil
 }
