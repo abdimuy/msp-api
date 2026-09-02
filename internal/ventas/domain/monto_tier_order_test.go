@@ -10,6 +10,7 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"pgregory.net/rapid"
 
 	"github.com/abdimuy/msp-api/internal/platform/apperror"
 	"github.com/abdimuy/msp-api/internal/ventas/domain"
@@ -39,15 +40,52 @@ func z00002678Precios(t *testing.T) domain.MontoSnapshot {
 	return m
 }
 
+// tierPresence is the set of price tiers a generated venta actually carries.
+// The zero value means every tier is absent.
+type tierPresence struct{ anual, corto, contado bool }
+
+// drawTierPresence draws which tiers a generated venta carries — ONCE per
+// generated case, never per line.
+//
+// That is not a convenience: it is the invariant. A venta is contado or it is
+// crédito, and its tipo decides which tiers its lines carry, so every line of
+// one venta shares the same presence. Drawing per line would let one case mix
+// a contado-only line (contado 100, corto 0, anual 0) with a credit-only line
+// (contado 0, corto 0, anual 50); the header sums to contado 100 against anual
+// 50, which is impossible, and the domain would rightly reject a venta the
+// property claims is valid. With one presence per case the sums keep the
+// order, because every line respects it over the same set of tiers.
+func drawTierPresence(rt *rapid.T) tierPresence {
+	return tierPresence{
+		anual:   rapid.Bool().Draw(rt, "tiene_anual"),
+		corto:   rapid.Bool().Draw(rt, "tiene_corto"),
+		contado: rapid.Bool().Draw(rt, "tiene_contado"),
+	}
+}
+
 // descendingTiers reorders three independently drawn prices into the only
-// order a price list can have, returning them as (anual, corto plazo,
-// contado). The property tests keep drawing arbitrary magnitudes; they just
-// stop asserting that the domain accepts the impossible combination it now
-// rejects.
-func descendingTiers(a, b, c int64) (int64, int64, int64) {
+// order a price list can have and then blanks the tiers the case says are
+// absent, returning them as (anual, corto plazo, contado).
+//
+// Zeroing after the sort is safe: the tiers that survive are a subsequence of
+// an already-ordered sequence, so they are still ordered. What it buys is the
+// region the generators never used to reach — the 103 contado lines measured
+// in production carry anual and corto plazo at zero, and before this the
+// draws only ever produced a zero in the cheapest slot.
+func descendingTiers(p tierPresence, a, b, c int64) (int64, int64, int64) {
 	v := []int64{a, b, c}
 	slices.Sort(v)
-	return v[2], v[1], v[0]
+	anual, corto, contado := v[2], v[1], v[0]
+	if !p.anual {
+		anual = 0
+	}
+	if !p.corto {
+		corto = 0
+	}
+	if !p.contado {
+		contado = 0
+	}
+	return anual, corto, contado
 }
 
 // ─── line level ─────────────────────────────────────────────────────────────
