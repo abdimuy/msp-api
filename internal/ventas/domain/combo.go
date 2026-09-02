@@ -65,6 +65,9 @@ func newCombo(p NewComboParams) (*Combo, error) {
 	if err := validateMontoSnapshotScale(p.Precios); err != nil {
 		return nil, err
 	}
+	if err := validateMontoTierOrder(p.Precios, ErrPrecioTierOrderInvalid); err != nil {
+		return nil, err
+	}
 	if p.AlmacenOrigen <= 0 {
 		return nil, ErrComboAlmacenOrigenRequerido
 	}

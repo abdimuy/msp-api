@@ -44,6 +44,26 @@ func (m MontoSnapshot) CortoPlazo() decimal.Decimal { return m.cortoPlazo }
 // Contado returns the cash price snapshot.
 func (m MontoSnapshot) Contado() decimal.Decimal { return m.contado }
 
+// validateMontoTierOrder enforces contado ≤ corto plazo ≤ anual.
+//
+// The three tiers are the same goods priced by how long the customer takes
+// to pay, so cash is always the cheapest and the yearly plan the dearest.
+// Any other order cannot be a real price list; it is a capture mistake.
+//
+// The rule deliberately does NOT live in NewMontoSnapshot: that constructor
+// also builds header totals, and it is bypassed entirely by the combo path,
+// which reaches the domain through HydrateMontoSnapshot. The two entity
+// constructors are the choke point every captured line actually crosses.
+//
+// violation is the error to return, so a line-level breach stays
+// distinguishable from a header-level one in the failed-intent screen.
+func validateMontoTierOrder(m MontoSnapshot, violation error) error {
+	if m.contado.GreaterThan(m.cortoPlazo) || m.cortoPlazo.GreaterThan(m.anual) {
+		return violation
+	}
+	return nil
+}
+
 // Equals reports whether two MontoSnapshot values are equal.
 func (m MontoSnapshot) Equals(other MontoSnapshot) bool {
 	return m.anual.Equal(other.anual) &&

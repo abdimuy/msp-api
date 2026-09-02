@@ -143,7 +143,9 @@ func CrearVenta(p CrearVentaParams) (*Venta, error) {
 		imagenes:    nil,
 		audit:       audit.NewAuditable(p.Now, p.CreatedBy),
 	}
-	v.recomputarMontos()
+	if err := v.instalarLineas(combos, productos); err != nil {
+		return nil, err
+	}
 	v.pendingEvents = []Event{NewVentaCreadaEvent(v.id, v.tipoVenta, p.CreatedBy, p.Now)}
 	return v, nil
 }
@@ -836,8 +838,9 @@ func (v *Venta) ReemplazarProductos(p ReemplazarProductosParams) error {
 	if err := validateProductoComboReferences(productos, v.combos); err != nil {
 		return err
 	}
-	v.productos = productos
-	v.recomputarMontos()
+	if err := v.instalarLineas(v.combos, productos); err != nil {
+		return err
+	}
 	v.audit.MarkUpdated(p.By)
 	v.pendingEvents = append(v.pendingEvents, NewVentaProductosReemplazadosEvent(v.id, len(productos), p.By, p.Now))
 	return nil
@@ -865,8 +868,9 @@ func (v *Venta) ReemplazarCombos(p ReemplazarCombosParams) error {
 	if err := validateProductoComboReferences(v.productos, combos); err != nil {
 		return err
 	}
-	v.combos = combos
-	v.recomputarMontos()
+	if err := v.instalarLineas(combos, v.productos); err != nil {
+		return err
+	}
 	v.audit.MarkUpdated(p.By)
 	v.pendingEvents = append(v.pendingEvents, NewVentaCombosReemplazadosEvent(v.id, len(combos), p.By, p.Now))
 	return nil
@@ -920,9 +924,9 @@ func (v *Venta) ReemplazarLineas(p ReemplazarLineasParams) error {
 	if err := validateProductoComboReferences(productos, combos); err != nil {
 		return err
 	}
-	v.combos = combos
-	v.productos = productos
-	v.recomputarMontos()
+	if err := v.instalarLineas(combos, productos); err != nil {
+		return err
+	}
 	v.audit.MarkUpdated(p.By)
 	v.pendingEvents = append(v.pendingEvents,
 		NewVentaCombosReemplazadosEvent(v.id, len(combos), p.By, p.Now),
@@ -989,6 +993,28 @@ func (v *Venta) recomputarMontos() {
 		contado = contado.Add(c.Precios().Contado().Mul(qty))
 	}
 	v.montos = HydrateMontoSnapshot(anual.Round(2), cortoPlazo.Round(2), contado.Round(2))
+}
+
+// instalarLineas installs both line collections, recomputes the header
+// totals, and rejects a result whose tiers are not ordered
+// contado ≤ corto plazo ≤ anual.
+//
+// The previous collections and totals are restored when the check fails, so
+// a rejected mutation leaves the aggregate exactly as it was — the caller
+// gets an error, not a half-applied venta.
+//
+// Freshly built lines already passed the same rule in newProducto/newCombo,
+// so this fires only over lines that came from persistence unvalidated: a
+// venta captured before the rule existed and edited afterwards.
+func (v *Venta) instalarLineas(combos []*Combo, productos []*Producto) error {
+	prevCombos, prevProductos, prevMontos := v.combos, v.productos, v.montos
+	v.combos, v.productos = combos, productos
+	v.recomputarMontos()
+	if err := validateMontoTierOrder(v.montos, ErrMontoTierOrderInvalid); err != nil {
+		v.combos, v.productos, v.montos = prevCombos, prevProductos, prevMontos
+		return err
+	}
+	return nil
 }
 
 // ─── Events buffer ─────────────────────────────────────────────────────────

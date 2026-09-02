@@ -399,9 +399,11 @@ func TestRecomputarMontos_Property_SumInvariant(t *testing.T) {
 		standaloneDTOs := make([]domain.CrearVentaProductoInput, numStandalone)
 		orig, dest := 1, 2
 		for i := range numStandalone {
-			a := rapid.Int64Range(0, 99_999_999).Draw(rt, "sa_a")
-			c := rapid.Int64Range(0, 99_999_999).Draw(rt, "sa_c")
-			k := rapid.Int64Range(0, 99_999_999).Draw(rt, "sa_k")
+			a, c, k := descendingTiers(
+				rapid.Int64Range(0, 99_999_999).Draw(rt, "sa_a"),
+				rapid.Int64Range(0, 99_999_999).Draw(rt, "sa_c"),
+				rapid.Int64Range(0, 99_999_999).Draw(rt, "sa_k"),
+			)
 			q := rapid.Int64Range(1, 10_000).Draw(rt, "sa_q")
 			anual := decimal.New(a, -2) // e.g. 123456 → 1234.56
 			corto := decimal.New(c, -2)
@@ -422,9 +424,11 @@ func TestRecomputarMontos_Property_SumInvariant(t *testing.T) {
 		var childDTOs []domain.CrearVentaProductoInput
 		comboIDs := make([]uuid.UUID, numCombos)
 		for i := range numCombos {
-			ca := rapid.Int64Range(0, 99_999_999).Draw(rt, "co_a")
-			cc := rapid.Int64Range(0, 99_999_999).Draw(rt, "co_c")
-			ck := rapid.Int64Range(0, 99_999_999).Draw(rt, "co_k")
+			ca, cc, ck := descendingTiers(
+				rapid.Int64Range(0, 99_999_999).Draw(rt, "co_a"),
+				rapid.Int64Range(0, 99_999_999).Draw(rt, "co_c"),
+				rapid.Int64Range(0, 99_999_999).Draw(rt, "co_k"),
+			)
 			cq := rapid.Int64Range(1, 10_000).Draw(rt, "co_q")
 			anual := decimal.New(ca, -2)
 			corto := decimal.New(cc, -2)

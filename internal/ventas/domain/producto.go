@@ -62,6 +62,9 @@ func newProducto(p NewProductoParams) (*Producto, error) {
 	if err := validateMontoSnapshotScale(p.Precios); err != nil {
 		return nil, err
 	}
+	if err := validateMontoTierOrder(p.Precios, ErrPrecioTierOrderInvalid); err != nil {
+		return nil, err
+	}
 	if err := validateProductoAlmacenes(p.ComboID, p.AlmacenOrigen, p.AlmacenDestino); err != nil {
 		return nil, err
 	}
