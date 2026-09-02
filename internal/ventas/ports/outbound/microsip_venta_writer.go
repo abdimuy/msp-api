@@ -78,4 +78,21 @@ type MicrosipVentaWriter interface {
 	// for CREDITO ventas — inserts LIBRES_CARGOS_CC and optionally the enganche
 	// document. It must join the caller's transaction via GetQuerier(ctx, pool).
 	Aplicar(ctx context.Context, in MicrosipVentaInput) (MicrosipVentaResult, error)
+
+	// ValidarCabe rejects a venta whose captured values do not fit the Microsip
+	// columns Aplicar binds them into, so the rejection happens BEFORE anything
+	// is written.
+	//
+	// It is separate from Aplicar because of where the failure would otherwise
+	// land: Aplicar flips APLICADO='S' and fires Microsip's trigger cascade
+	// before it reaches the LIBRES_CARGOS_CC insert, and the caller may have
+	// auto-created the cliente before calling Aplicar at all. A value that
+	// overflows one of those columns would therefore be caught only after
+	// several generators have been burned that the rollback does not give
+	// back, and as a driver error that names neither the column nor the value.
+	//
+	// The widths themselves stay in the adapter: they are properties of
+	// Microsip's legacy tables, and neither the domain nor the application
+	// command has any business knowing that LIBRES_CARGOS_CC exists.
+	ValidarCabe(v *domain.Venta) error
 }
