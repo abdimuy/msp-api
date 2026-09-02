@@ -532,18 +532,39 @@ func handle(cfg Config, next http.Handler, w http.ResponseWriter, r *http.Reques
 // is captured by the in-chain instance first, and this one yields to it — see
 // custodyClaimed.
 //
-// WHAT IS DELIBERATELY LEFT OUT, and why. This set is NOT everything authn can
-// answer. The same position in the chain also produces 5xx: the usuario lookup
-// and the permisos load both propagate their own error when Firebird is down,
-// times out, or the pool is exhausted, and those requests are lost with no
-// trace either.
+// WHAT IS DELIBERATELY LEFT OUT, and why. This set is NOT everything the auth
+// position can answer, and the reasons differ per case.
 //
-// They are not here because capture could not help them. The Store this
-// middleware writes to is Firebird — the same database whose failure produced
-// the 5xx. Adding those statuses would buy an extra failing write per lost
-// pago and no evidence. The gap is real and stays open on purpose; closing it
-// needs a store that does not share fate with the one that failed, which is a
-// different design, not a longer list.
+// Nothing from Firebase itself is missing: classifyVerifyError maps every
+// verification failure — expired, revoked, malformed, and even a failed
+// certificate fetch — to 401, so a Firebase outage arrives as a status this
+// set already owns.
+//
+//   - 5xx from Firebird. The usuario lookup and the permisos load both
+//     propagate their own error when the database is down, times out, or the
+//     pool is exhausted. Capture could not help them: the Store this
+//     middleware writes to IS Firebird, the same database whose failure
+//     produced the 5xx, so adding those statuses would buy an extra failing
+//     write per lost pago and no evidence. Closing this one needs a store that
+//     does not share fate with the one that failed — a different design, not a
+//     longer list.
+//
+//   - 422 from the lazy provisioner. The composition root wires a provisioner
+//     (see cmd/api), so a valid Firebase user with no MSP_USUARIOS row is
+//     enrolled from the token right here; if NewEmail or NewNombre reject what
+//     the token carries, the answer is a validation 422 from this same
+//     position. The in-chain instance never sees it, and — unlike the 5xx
+//     above — Firebird is healthy, so capture WOULD leave evidence.
+//
+//     It is left out because the status is a poor proxy for what makes this
+//     case special, which is who emitted it, not the number. Adding 422 would
+//     put this instance in front of every input-validation rejection of all
+//     three captured modules — by far the most common 4xx they answer — to
+//     reach one narrow case never observed in production. The split it would
+//     break is deliberate and already pinned by test ("422 belongs to the
+//     in-chain instance"). Closing this one properly means giving the
+//     provisioner's own rejection a distinguishable identity, not widening the
+//     set.
 var StatusesOutsideAuth = []int{http.StatusUnauthorized, http.StatusForbidden}
 
 // statusFiltered reports whether cfg restricts capture to a fixed set of
