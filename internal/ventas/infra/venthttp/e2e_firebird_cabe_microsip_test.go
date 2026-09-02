@@ -27,11 +27,23 @@ import (
 // And that it rejects BEFORE writing: the point of validating up front is that
 // phase 6 has not yet flipped APLICADO='S' nor burned any generator.
 
-// aplicarConPlanCredito drives a CREDITO venta through the full lifecycle —
-// create → revisar → aprobar → aplicar — and returns the response of the last
-// step. The plan and the nota are the levers each subtest moves.
-func aplicarConPlanCredito(
-	t *testing.T, r http.Handler, usuarioID uuid.UUID, parcialidad string, nota *string,
+// ventaCabeOpts are the levers each subtest moves. Everything else — zona,
+// artículo, almacenes — is fixed so the only difference between subtests is
+// the value under test.
+type ventaCabeOpts struct {
+	// Contado switches the venta to CONTADO, which never reaches
+	// LIBRES_CARGOS_CC and therefore must not be measured against its widths.
+	Contado bool
+	// Parcialidad is ignored when Contado is set.
+	Parcialidad string
+	Nota        *string
+	Aval        *string
+}
+
+// aplicarVentaCabe drives a venta through the full lifecycle — create →
+// revisar → aprobar → aplicar — and returns the response of the last step.
+func aplicarVentaCabe(
+	t *testing.T, r http.Handler, usuarioID uuid.UUID, opts ventaCabeOpts,
 ) (*httptest.ResponseRecorder, string) {
 	t.Helper()
 
@@ -46,16 +58,24 @@ func aplicarConPlanCredito(
 
 	body := validCreateBody()
 	body.Vendedores[0].UsuarioID = usuarioID.String()
-	body.TipoVenta = "CREDITO"
-	body.PlanCredito = &venthttp.PlanCreditoDTO{
-		PlazoMeses: 12, Enganche: "100.00", Parcialidad: parcialidad, FrecPago: "SEMANAL",
+	if opts.Contado {
+		body.TipoVenta = "CONTADO"
+	} else {
+		body.TipoVenta = "CREDITO"
+		body.PlanCredito = &venthttp.PlanCreditoDTO{
+			PlazoMeses: 12, Enganche: "100.00", Parcialidad: opts.Parcialidad, FrecPago: "SEMANAL",
+		}
+		semana := "LUNES"
+		body.DiaCobranza = &venthttp.DiaCobranzaDTO{Semana: &semana}
 	}
-	semana := "LUNES"
-	body.DiaCobranza = &venthttp.DiaCobranzaDTO{Semana: &semana}
-	body.Nota = nota
+	body.Nota = opts.Nota
+	// Un nombre distinto por subtest: los que sí aplican auto-crean el
+	// cliente en Microsip, y dos clientes con el mismo nombre chocan contra la
+	// unicidad del padrón dentro de la misma transacción de prueba.
 	body.Cliente = venthttp.ClienteSnapshotDTO{
-		Nombre:   "CLIENTE PRUEBA CABE MICROSIP",
+		Nombre:   "MARISOL AGUILAR " + strings.ToUpper(uuid.NewString()[:8]),
 		Telefono: &tel,
+		Aval:     opts.Aval,
 	}
 	body.Direccion = venthttp.DireccionDTO{
 		ZonaClienteID:  intPtr(cabeZonaID),
@@ -119,7 +139,7 @@ func TestE2E_AplicarVenta_RechazaLoQueNoCabeEnLibresCargosCC(t *testing.T) {
 		venthttp.MountRouter(r, svc)
 
 		t.Run("la parcialidad que el SMALLINT no aguanta", func(t *testing.T) {
-			rec, ventaID := aplicarConPlanCredito(t, r, usuarioID, "33000.00", nil)
+			rec, ventaID := aplicarVentaCabe(t, r, usuarioID, ventaCabeOpts{Parcialidad: "33000.00"})
 
 			require.Equal(t, http.StatusUnprocessableEntity, rec.Code,
 				"aplicar debe rechazar, no reventar en el INSERT: %s", rec.Body.String())
@@ -132,7 +152,8 @@ func TestE2E_AplicarVenta_RechazaLoQueNoCabeEnLibresCargosCC(t *testing.T) {
 			// 230 caracteres: el largo exacto de la nota que ya existe en una
 			// venta CREDITO en borrador de la base de desarrollo.
 			nota := strings.Repeat("A", 230)
-			rec, ventaID := aplicarConPlanCredito(t, r, usuarioID, "150.00", &nota)
+			rec, ventaID := aplicarVentaCabe(t, r, usuarioID,
+				ventaCabeOpts{Parcialidad: "150.00", Nota: &nota})
 
 			require.Equal(t, http.StatusUnprocessableEntity, rec.Code,
 				"aplicar debe rechazar, no reventar en el INSERT: %s", rec.Body.String())
@@ -141,9 +162,41 @@ func TestE2E_AplicarVenta_RechazaLoQueNoCabeEnLibresCargosCC(t *testing.T) {
 			requireSigueSinAplicar(t, r, ventaID)
 		})
 
+		t.Run("el aval mas largo que AVAL_O_RESPONSABLE", func(t *testing.T) {
+			// 60 caracteres: por debajo de los 200 que admite el dominio
+			// (maxAvalLength) y por encima de los 50 de la columna, que es
+			// justo el hueco que nadie cerraba.
+			aval := strings.Repeat("B", 60)
+			rec, ventaID := aplicarVentaCabe(t, r, usuarioID,
+				ventaCabeOpts{Parcialidad: "150.00", Aval: &aval})
+
+			require.Equal(t, http.StatusUnprocessableEntity, rec.Code,
+				"aplicar debe rechazar, no reventar en el INSERT: %s", rec.Body.String())
+			assert.Contains(t, rec.Body.String(), "aval_exceeds_microsip_max")
+			assert.Contains(t, rec.Body.String(), "60", "el mensaje lleva el tamaño recibido")
+			requireSigueSinAplicar(t, r, ventaID)
+		})
+
+		// TestE2E… /la venta de contado no se mide contra LIBRES_CARGOS_CC
+		// fija la EXENCIÓN, no la guarda. Sin este caso, quitar el
+		// `if v.TipoVenta() != domain.TipoVentaCredito` de ValidarCabe deja
+		// todo en verde, y una venta de contado empezaría a rechazarse por el
+		// ancho de una columna a la que su nota jamás llega: CONTADO no
+		// escribe LIBRES_CARGOS_CC.
+		t.Run("la venta de contado no se mide contra LIBRES_CARGOS_CC", func(t *testing.T) {
+			nota := strings.Repeat("A", 230)
+			rec, _ := aplicarVentaCabe(t, r, usuarioID,
+				ventaCabeOpts{Contado: true, Nota: &nota})
+
+			require.Equal(t, http.StatusOK, rec.Code,
+				"una venta de contado con nota de 230 debe aplicar: su nota no "+
+					"llega a OBSERVACIONES: %s", rec.Body.String())
+		})
+
 		t.Run("control positivo: la misma venta con valores que caben si aplica", func(t *testing.T) {
 			nota := strings.Repeat("A", 99)
-			rec, _ := aplicarConPlanCredito(t, r, usuarioID, "150.00", &nota)
+			rec, _ := aplicarVentaCabe(t, r, usuarioID,
+				ventaCabeOpts{Parcialidad: "150.00", Nota: &nota})
 
 			require.Equal(t, http.StatusOK, rec.Code,
 				"sin este caso las dos pruebas de arriba pasarían aunque aplicar "+
