@@ -668,6 +668,45 @@ func (w *VentaWriter) insertComponente(
 	return nil
 }
 
+// maxParcialidadMicrosip is the largest parcialidad LIBRES_CARGOS_CC can hold.
+//
+// The column is declared NUMERIC(4,0), but Firebird stores it in a SMALLINT and
+// enforces the STORAGE range, not the declared precision — so the ceiling is
+// 32,767, not 9,999. The declared precision misleads in BOTH directions: in the
+// same row MONTO_A_CORTO_PLAZO is declared NUMERIC(5,0) and already holds
+// 127,000, which is why this number was measured against the catalog instead of
+// read off the DDL.
+//
+// And it is close. The largest parcialidad on record is 31,950, with five rows
+// already above 30,000. One price increase and the INSERT starts failing.
+const maxParcialidadMicrosip = 32767
+
+// checkParcialidadFits rejects a parcialidad the column cannot hold, BEFORE the
+// INSERT is attempted.
+//
+// It lives here, in the Microsip adapter, and not in the domain: the ceiling is
+// a property of a legacy Microsip column, and the ventas aggregate has no
+// business knowing that LIBRES_CARGOS_CC exists. Letting the INSERT fail instead
+// is what makes this worth guarding — the rejection takes the whole aplicar down
+// (the venta never lands in Microsip) with a driver error that names neither the
+// column nor the value, and the operator reads it on the failed-intent screen
+// with nothing to act on.
+//
+// The message therefore carries both numbers: what was sent and what fits.
+func checkParcialidadFits(parcialidad decimal.Decimal) error {
+	if parcialidad.LessThanOrEqual(decimal.NewFromInt(maxParcialidadMicrosip)) {
+		return nil
+	}
+	return apperror.NewValidation(
+		"parcialidad_exceeds_microsip_max",
+		fmt.Sprintf(
+			"la parcialidad de %s excede el máximo de %d que microsip puede guardar; "+
+				"baje la parcialidad o alargue el plazo",
+			parcialidad.StringFixed(2), maxParcialidadMicrosip,
+		),
+	)
+}
+
 // insertDatosCredito handles Phase 7 (LIBRES_CARGOS_CC + optional enganche).
 //
 //nolint:funlen // multi-step credit-only block; kept together for traceability.
@@ -697,6 +736,13 @@ func (w *VentaWriter) insertDatosCredito(
 	}
 	if v.Nota() != nil {
 		obs = *v.Nota()
+	}
+
+	// Before the INSERT, not after: a parcialidad the column cannot hold takes
+	// the whole aplicar down, and the driver's error names neither the column
+	// nor the value.
+	if err := checkParcialidadFits(plan.Parcialidad()); err != nil {
+		return err
 	}
 
 	if _, err := q.ExecContext(ctx, insertLibresCargosCC,
