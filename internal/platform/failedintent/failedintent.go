@@ -557,14 +557,20 @@ func handle(cfg Config, next http.Handler, w http.ResponseWriter, r *http.Reques
 //     above — Firebird is healthy, so capture WOULD leave evidence.
 //
 //     It is left out because the status is a poor proxy for what makes this
-//     case special, which is who emitted it, not the number. Adding 422 would
-//     put this instance in front of every input-validation rejection of all
-//     three captured modules — by far the most common 4xx they answer — to
-//     reach one narrow case never observed in production. The split it would
-//     break is deliberate and already pinned by test ("422 belongs to the
-//     in-chain instance"). Closing this one properly means giving the
-//     provisioner's own rejection a distinguishable identity, not widening the
-//     set.
+//     case special, which is who emitted it, not the number.
+//
+//     What widening to 422 actually costs was measured, not argued: it breaks
+//     exactly one test — the unit case that pins the declared split, "422
+//     belongs to the in-chain instance" — and it does NOT break the real
+//     chain. cmd/api stays green, including the authenticated-422 test that
+//     asserts one row per request, because InsideAuth is mounted deeper
+//     (OutsideAuth, authn, InsideAuth): it processes the response first and
+//     claims custody before this instance ever evaluates its filter.
+//
+//     So the cost is not double rows in production. It is declaring a split
+//     that this set would no longer keep, for one narrow case never observed.
+//     Closing it properly means giving the provisioner's own rejection a
+//     distinguishable identity, not widening the set.
 var StatusesOutsideAuth = []int{http.StatusUnauthorized, http.StatusForbidden}
 
 // statusFiltered reports whether cfg restricts capture to a fixed set of
