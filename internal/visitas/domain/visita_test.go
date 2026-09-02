@@ -26,7 +26,7 @@ func validParams() domain.CrearVisitaParams {
 		Lat:            19.0414,
 		Lng:            -98.2063,
 		Nota:           "salió, vuelvo mañana",
-		TipoVisita:     "cobro",
+		TipoVisita:     string(domain.TipoVisitaNoSeEncontraba),
 		ZonaClienteID:  12,
 		ClienteID:      24037,
 		ImpteDoctoCCID: &impte,
@@ -68,7 +68,7 @@ func TestNewVisita_ValidConstructionRoundTripsThroughGetters(t *testing.T) {
 	if got := v.Nota(); got != p.Nota {
 		t.Errorf("Nota() = %q, want %q", got, p.Nota)
 	}
-	if got := v.TipoVisita(); got != p.TipoVisita {
+	if got := v.TipoVisita(); got.String() != p.TipoVisita {
 		t.Errorf("TipoVisita() = %q, want %q", got, p.TipoVisita)
 	}
 	if got := v.ZonaClienteID(); got != p.ZonaClienteID {
@@ -436,7 +436,7 @@ func TestRehydrateVisita_RoundTripsFieldsAndZeroesAudit(t *testing.T) {
 	if got := v.Nota(); got != p.Nota {
 		t.Errorf("Nota() = %q, want %q", got, p.Nota)
 	}
-	if got := v.TipoVisita(); got != p.TipoVisita {
+	if got := v.TipoVisita(); got.String() != p.TipoVisita {
 		t.Errorf("TipoVisita() = %q, want %q", got, p.TipoVisita)
 	}
 	if got := v.ZonaClienteID(); got != p.ZonaClienteID {
@@ -489,17 +489,19 @@ func TestNewVisita_CamposEnElLimiteExacto_Aceptados(t *testing.T) {
 		}
 	})
 
-	t.Run("tipo_visita con exactamente 100 caracteres se acepta", func(t *testing.T) {
+	// Before the catalogue closed, a 100-character tipo_visita was accepted —
+	// the only rule was the column width. It is rejected now, and by the
+	// CATALOGUE rule, not the length rule: 100 chars is still within
+	// maxTipoVisitaLength, so reaching ErrVisitaTipoInvalido proves the
+	// length check passed and ParseTipoVisita is what turned it away.
+	t.Run("tipo_visita de 100 caracteres dentro del límite ahora lo rechaza el catálogo", func(t *testing.T) {
 		t.Parallel()
 
 		p := validParams()
 		p.TipoVisita = strings.Repeat("b", 100)
-		v, err := domain.NewVisita(p)
-		if err != nil {
-			t.Fatalf("NewVisita() unexpected error at tipo_visita length boundary: %v", err)
-		}
-		if got := v.TipoVisita(); got != p.TipoVisita {
-			t.Errorf("TipoVisita() = %q (len %d), want len 100", got, len(got))
+		_, err := domain.NewVisita(p)
+		if !errors.Is(err, domain.ErrVisitaTipoInvalido) {
+			t.Fatalf("NewVisita() error = %v, want ErrVisitaTipoInvalido", err)
 		}
 	})
 

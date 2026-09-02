@@ -85,6 +85,46 @@ func (h *Handlers) CrearVisita(ctx context.Context, in *CrearVisitaInput) (*Crea
 	return &CrearVisitaOutput{Body: toVisitaDTO(visita)}, nil
 }
 
+// ObtenerVisita handles GET /visitas/{id}.
+//
+// Loads a single visita from MSP_VISITAS by UUID. Returns 404
+// (visita_not_found) when no row matches, and 422 when the path segment is
+// not a UUID — never a 500.
+//
+// Requires the same permission as the write side (cobranza:ver_pagos): a
+// cobrador who may record a visita may read it back.
+//
+// Reads are catalogue-agnostic. A row whose TIPO_VISITA predates the closed
+// catalogue — a retired literal, or the empty string on the 200 oldest rows —
+// loads and serializes normally, because the repo rehydrates without
+// validating (domain.RehydrateVisita). Enforcing the catalogue here would
+// break exactly the legacy rows this endpoint exists to expose.
+func (h *Handlers) ObtenerVisita(ctx context.Context, in *ObtenerVisitaInput) (*ObtenerVisitaOutput, error) {
+	cu, err := currentUserOrError(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := requirePerm(cu, auth.PermCobranzaVerPagos); err != nil {
+		return nil, err
+	}
+
+	visitaID, err := uuid.Parse(in.ID)
+	if err != nil {
+		return nil, mapAppError(
+			apperror.NewValidation("visita_id_invalido", "el id de la visita no es un UUID válido").WithError(err),
+		)
+	}
+
+	visita, err := h.svc.ObtenerVisita(ctx, visitaID)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+	return &ObtenerVisitaOutput{Body: toVisitaDTO(visita)}, nil
+}
+
 // ─── Compile-time handler signature checks ────────────────────────────────────
 
-var _ func(context.Context, *CrearVisitaInput) (*CrearVisitaOutput, error) = (*Handlers)(nil).CrearVisita
+var (
+	_ func(context.Context, *CrearVisitaInput) (*CrearVisitaOutput, error)     = (*Handlers)(nil).CrearVisita
+	_ func(context.Context, *ObtenerVisitaInput) (*ObtenerVisitaOutput, error) = (*Handlers)(nil).ObtenerVisita
+)

@@ -81,7 +81,7 @@ func (r *Repo) Insert(ctx context.Context, v *domain.Visita) error {
 			v.Lat(),
 			v.Lng(),
 			nullableString(v.Nota()),
-			v.TipoVisita(),
+			v.TipoVisita().String(),
 			v.ZonaClienteID(),
 			v.ClienteID(),
 			nullableInt(v.ImpteDoctoCCID()),

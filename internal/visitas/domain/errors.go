@@ -55,6 +55,19 @@ var (
 		"el tipo de visita es demasiado largo",
 	)
 
+	// ErrVisitaTipoInvalido is returned by ParseTipoVisita — and therefore by
+	// NewVisita, the WRITE path — when tipoVisita is not in the closed
+	// catalogue declared in tipo_visita.go. It is a validation error, so it
+	// surfaces as a 422 with a distinguishable code and never as a 500: a
+	// client sending an unknown literal gets an actionable answer.
+	//
+	// The READ path never produces this. RehydrateVisita does not validate, so
+	// a legacy row holding a value outside the catalogue still loads cleanly.
+	ErrVisitaTipoInvalido = apperror.NewValidation(
+		"visita_tipo_invalido",
+		"el tipo de visita no está en el catálogo permitido",
+	)
+
 	// ErrVisitaNotaDemasiadoLarga is returned when nota exceeds
 	// MSP_VISITAS.NOTA's column width (VARCHAR(10000)).
 	ErrVisitaNotaDemasiadoLarga = apperror.NewValidation(

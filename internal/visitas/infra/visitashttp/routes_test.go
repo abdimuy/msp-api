@@ -39,13 +39,23 @@ func TestMountRouter_FinalPathIsV2Visitas(t *testing.T) {
 	visitaID := uuid.New()
 	fecha := fixedNow.Add(-time.Hour).Format(time.RFC3339)
 
-	// The double-prefixed path must 404 (route does not exist there).
+	// The double-prefixed path must not serve the create operation.
+	//
+	// This used to assert 404. It asserts 405 since GET /v2/visitas/{id}
+	// exists: chi now matches "/v2/visitas/visitas" against that pattern
+	// (binding id="visitas") and answers "Method Not Allowed" to a POST
+	// rather than "Not Found". The status changed; the guarantee did not, and
+	// the guarantee is what this test is for — so it also asserts, on the
+	// repo itself, that nothing was written. That assertion survives any
+	// future status-code drift, which a bare 404/405 check would not.
 	badReq := httptest.NewRequest(http.MethodPost, "/v2/visitas/visitas", bytes.NewBufferString(visitaBodyJSON(visitaID.String(), fecha)))
 	badReq.Header.Set("Content-Type", "application/json")
 	badReq.Header.Set("Idempotency-Key", visitaID.String())
 	badRec := httptest.NewRecorder()
 	root.ServeHTTP(badRec, badReq)
-	assert.Equal(t, http.StatusNotFound, badRec.Code, "double-prefixed path must not exist")
+	assert.Equal(t, http.StatusMethodNotAllowed, badRec.Code,
+		"the create operation must not be reachable at the doubled prefix; body: %s", badRec.Body.String())
+	assert.Empty(t, repo.byID, "no visita may be persisted from the doubled-prefix path")
 
 	// The exact expected path must serve the operation.
 	goodReq := httptest.NewRequest(http.MethodPost, "/v2/visitas", bytes.NewBufferString(visitaBodyJSON(visitaID.String(), fecha)))

@@ -41,7 +41,7 @@ func toVisitaDTO(v *domain.Visita) VisitaDTO {
 		Lat:            v.Lat(),
 		Lng:            v.Lng(),
 		Nota:           v.Nota(),
-		TipoVisita:     v.TipoVisita(),
+		TipoVisita:     v.TipoVisita().String(),
 		ZonaClienteID:  v.ZonaClienteID(),
 		ImpteDoctoCCID: v.ImpteDoctoCCID(),
 		Fecha:          v.Fecha().UTC().Format(time.RFC3339),
@@ -77,5 +77,23 @@ type CrearVisitaInput struct {
 
 // CrearVisitaOutput wraps a 201 Created response.
 type CrearVisitaOutput struct {
+	Body VisitaDTO
+}
+
+// ObtenerVisitaInput is the path parameter for GET /visitas/{id}. Huma
+// enforces format:"uuid" from the schema, so a non-UUID path segment is
+// rejected with a 422 before the handler runs; the handler parses again
+// anyway rather than trusting the transport (mirrors cobranza's
+// ObtenerPagoInput).
+type ObtenerVisitaInput struct {
+	ID string `path:"id" format:"uuid"`
+}
+
+// ObtenerVisitaOutput wraps a single VisitaDTO for GET /visitas/{id}.
+//
+// The tipo_visita it carries is whatever the row holds — including a retired
+// literal or the empty string on the oldest rows. The closed catalogue is a
+// write-path rule; see domain.RehydrateVisita.
+type ObtenerVisitaOutput struct {
 	Body VisitaDTO
 }

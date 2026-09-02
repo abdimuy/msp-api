@@ -19,10 +19,10 @@ const securitySchemeName = "bearerAuth"
 // chi router is expected to have ALREADY applied the authentication chi
 // middleware so handlers can read auth.CurrentUser from the request context.
 //
-// registerOperations declares the operation at bare path "/visitas" — mount
-// this on a bare chi Group (like rutas/clientes/config), NOT via
-// r.Route("/visitas"), which would double the prefix to /v2/visitas/visitas.
-// Final path: POST /v2/visitas.
+// registerOperations declares operations at the bare paths "/visitas" and
+// "/visitas/{id}" — mount this on a bare chi Group (like rutas/clientes/
+// config), NOT via r.Route("/visitas"), which would double the prefix to
+// /v2/visitas/visitas. Final paths: POST /v2/visitas and GET /v2/visitas/{id}.
 func MountRouter(r chi.Router, svc *visitasapp.Service) huma.API {
 	config := huma.DefaultConfig("MSP API · Visitas", "v2")
 	config.DocsRenderer = huma.DocsRendererScalar
@@ -63,4 +63,14 @@ func registerOperations(api huma.API, h *Handlers) {
 		Security:      security,
 		DefaultStatus: http.StatusCreated,
 	}, h.CrearVisita)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "obtener-visita",
+		Method:      http.MethodGet,
+		Path:        "/visitas/{id}",
+		Summary:     "Obtener visita por id",
+		Description: "Devuelve una visita de MSP_VISITAS por UUID. Lee filas legacy tal cual: el tipo_visita devuelto puede quedar fuera del catálogo cerrado que valida la escritura.",
+		Tags:        tags,
+		Security:    security,
+	}, h.ObtenerVisita)
 }

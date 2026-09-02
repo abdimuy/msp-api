@@ -79,7 +79,7 @@ func validInput() app.RegistrarVisitaInput {
 		Lat:           19.432608,
 		Lng:           -99.133209,
 		Nota:          "María salió, vuelve mañana",
-		TipoVisita:    "cobro",
+		TipoVisita:    string(domain.TipoVisitaNoSeEncontraba),
 		ZonaClienteID: 7,
 		ClienteID:     11486,
 	}
@@ -108,7 +108,7 @@ func TestRegistrarVisita_HappyPath(t *testing.T) {
 	assert.InDelta(t, in.Lat, got.Lat(), 0)
 	assert.InDelta(t, in.Lng, got.Lng(), 0)
 	assert.Equal(t, in.Nota, got.Nota())
-	assert.Equal(t, in.TipoVisita, got.TipoVisita())
+	assert.Equal(t, in.TipoVisita, got.TipoVisita().String())
 	assert.Equal(t, in.ZonaClienteID, got.ZonaClienteID())
 	assert.Equal(t, in.ClienteID, got.ClienteID())
 	assert.Nil(t, got.ImpteDoctoCCID())
