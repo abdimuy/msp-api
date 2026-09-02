@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,10 +22,11 @@ import (
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
-// newCrearConImagenesSvc wires every fake the new CrearPagoConImagenes flow
-// touches. Pass writer=nil to leave AplicarPago in the legacy "best-effort
-// fails, pago stays pendiente" mode; pass a real fake to exercise the
-// full happy-path including Microsip apply.
+// newCrearConImagenesSvc wires every fake the CrearPagoConImagenes flow
+// touches. writer=nil means "Microsip accepts the pago" and wires a fake that
+// succeeds — it used to mean "no writer at all", which made the apply fail
+// and let the pago be persisted anyway. A test that wants a rejection now
+// passes a failing writer explicitly.
 func newCrearConImagenesSvc(
 	t *testing.T,
 	now time.Time,
@@ -36,6 +38,9 @@ func newCrearConImagenesSvc(
 	writer outbound.MicrosipPagoWriter,
 ) *app.Service {
 	t.Helper()
+	if writer == nil {
+		writer = &fakeMicrosipPagoWriter{result: validWriterResult()}
+	}
 	return app.NewService(
 		saldos,
 		newFakePagosRepo(),
@@ -214,22 +219,62 @@ func TestCrearPagoConImagenes_RollbackOnInsertPagoFails(t *testing.T) {
 	assert.Empty(t, storage.objects, "no blobs remain in storage")
 }
 
-// snapshottingTxRunner snapshots the fake repos before fn runs and restores
-// them on error — modeling real Firebird tx rollback. Used by atomicity tests
-// so an InsertImagen failure mid-loop leaves no trace in either repo.
+// snapshottingTxRunner is THE rollback double for this package: it snapshots
+// the fake repos before fn runs and restores them on error, modeling a real
+// Firebird transaction rollback.
+//
+// Pagos are cloned in DEPTH, not by pointer. The fake repo stores the very
+// aggregate the service mutates, so a shallow map copy would restore the map
+// while leaving a RegistrarFallo (or a MarcarAplicada) applied — a rollback
+// double that gives green to production code that never rolled anything back.
+// That is the whole class of defect this package exists to catch, so there is
+// exactly one runner and it clones.
+//
+// txCount counts transactions actually opened; a test that cares WHERE a
+// write landed (inside the rolled-back tx or in one of its own) asserts on it.
+// beforeTx, when set, runs before each closure with the 1-indexed transaction
+// number — the hook for simulating another caller committing in between.
+//
+// CONCURRENCY: mu serializes whole transactions, snapshot and restore
+// included. Two properties depend on that and neither is optional:
+//
+//   - txCount++ and the snapshot maps are plain fields. Under parallel
+//     callers they are a data race, and -race would fail the run.
+//   - a snapshot taken while ANOTHER transaction is mid-flight would, on
+//     rollback, restore that transaction's rows away too — a double that
+//     invents lost writes and then blames production for them.
+//
+// The cost is stated plainly: this runner does not model two transactions
+// interleaving. It models a database that runs them one at a time. Row-level
+// contention between overlapping transactions is only reachable against real
+// Firebird — see internal/cobranza/infra/ventfb/pagos_recibidos_concurrency_test.go.
 type snapshottingTxRunner struct {
+	mu       sync.Mutex
 	pagos    *fakePagosRecibidosRepo
 	imagenes *fakePagosImagenesRepo
+	txCount  int
+	beforeTx func(txN int)
 }
 
 func newSnapshottingTxRunner(p *fakePagosRecibidosRepo, i *fakePagosImagenesRepo) *snapshottingTxRunner {
 	return &snapshottingTxRunner{pagos: p, imagenes: i}
 }
 
+// HasTx satisfies app.TxRunner. The double never leaves a transaction on the
+// context, so nested calls are always genuinely new — which is exactly what
+// firebird.runInTx does with its call-local context key.
+func (r *snapshottingTxRunner) HasTx(context.Context) bool { return false }
+
 func (r *snapshottingTxRunner) RunInTx(ctx context.Context, fn func(context.Context) error) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.txCount++
+	if r.beforeTx != nil {
+		r.beforeTx(r.txCount)
+	}
 	pagoSnap := make(map[uuid.UUID]*domain.PagoRecibido, len(r.pagos.rows))
 	for k, v := range r.pagos.rows {
-		pagoSnap[k] = v
+		pagoSnap[k] = clonePagoRecibido(v)
 	}
 	imgSnap := make(map[uuid.UUID]*domain.Imagen, len(r.imagenes.images))
 	for k, v := range r.imagenes.images {
@@ -249,6 +294,39 @@ func (r *snapshottingTxRunner) RunInTx(ctx context.Context, fn func(context.Cont
 		r.imagenes.byPago = byPagoSnap
 	}
 	return err
+}
+
+// clonePagoRecibido deep-copies a pago through the hydration constructor.
+// Lives next to the runner that needs it: without it a "rollback" would only
+// swap map entries and leave the aggregate mutated.
+func clonePagoRecibido(p *domain.PagoRecibido) *domain.PagoRecibido {
+	aud := p.Audit()
+	return domain.HydratePagoRecibido(domain.HydratePagoRecibidoParams{
+		ID:             p.ID(),
+		CargoDoctoCCID: p.CargoDoctoCCID(),
+		ClienteID:      p.ClienteID(),
+		CobradorID:     p.CobradorID(),
+		Cobrador:       p.Cobrador(),
+		Importe:        p.Importe(),
+		FormaCobroID:   p.FormaCobroID(),
+		ConceptoCCID:   p.ConceptoCCID(),
+		FechaHoraPago:  p.FechaHoraPago(),
+		Lat:            p.Lat(),
+		Lon:            p.Lon(),
+		Sincronizacion: p.Sincronizacion(),
+		Intentos:       p.Intentos(),
+		UltimoError:    p.UltimoError(),
+		DoctoCCID:      p.DoctoCCID(),
+		ImpteDoctoCCID: p.ImpteDoctoCCID(),
+		Folio:          p.Folio(),
+		ReceivedAt:     p.ReceivedAt(),
+		AplicadoAt:     p.AplicadoAt(),
+		CreatedAt:      aud.CreatedAt(),
+		UpdatedAt:      aud.UpdatedAt(),
+		CreatedBy:      aud.CreatedBy(),
+		UpdatedBy:      aud.UpdatedBy(),
+		Imagenes:       p.ImagenesForRepo(),
+	})
 }
 
 func TestCrearPagoConImagenes_RollbackOnInsertImagenFails_LastImgErrors(t *testing.T) {
@@ -272,7 +350,7 @@ func TestCrearPagoConImagenes_RollbackOnInsertImagenFails_LastImgErrors(t *testi
 		fixedClock{T: now},
 		pagosRepo,
 		imgRepo,
-		nil,
+		&fakeMicrosipPagoWriter{result: validWriterResult()},
 		store,
 		nil, // imageProc not needed for PDF
 		txRunner,
@@ -332,7 +410,7 @@ func TestCrearPagoConImagenes_StorageStoreFails_NoTxStarted(t *testing.T) {
 	}
 	svc := app.NewService(
 		saldos, newFakePagosRepo(), nil, fixedClock{T: now},
-		pagosRepo, imagenes, nil, store, nil, fakeTxRunner{},
+		pagosRepo, imagenes, &fakeMicrosipPagoWriter{result: validWriterResult()}, store, nil, fakeTxRunner{},
 	)
 
 	in := baseCrearInput(now)
@@ -532,7 +610,8 @@ func TestCrearPagoConImagenes_DepsMissing_PagosRecibidos(t *testing.T) {
 	svc := app.NewService(
 		saldos, newFakePagosRepo(), nil, fixedClock{T: now},
 		nil, // pagosRecibidos
-		newFakePagosImagenesRepo(), nil, newFakeStorageProvider(), nil, fakeTxRunner{},
+		newFakePagosImagenesRepo(), &fakeMicrosipPagoWriter{result: validWriterResult()},
+		newFakeStorageProvider(), nil, fakeTxRunner{},
 	)
 	_, err := svc.CrearPagoConImagenes(context.Background(), baseCrearInput(now), nil, uuid.New())
 	require.Error(t, err)
@@ -546,7 +625,8 @@ func TestCrearPagoConImagenes_DepsMissing_PagosImagenes(t *testing.T) {
 		saldos, newFakePagosRepo(), nil, fixedClock{T: now},
 		newFakePagosRecibidosRepo(),
 		nil, // pagosImagenes
-		nil, newFakeStorageProvider(), nil, fakeTxRunner{},
+		&fakeMicrosipPagoWriter{result: validWriterResult()},
+		newFakeStorageProvider(), nil, fakeTxRunner{},
 	)
 	in := baseCrearInput(now)
 	img := baseImagenUpload(in.ID, domain.MimePDF, []byte("x"))
@@ -561,7 +641,8 @@ func TestCrearPagoConImagenes_DepsMissing_Storage(t *testing.T) {
 	saldos := seedCargoSaldo(t)
 	svc := app.NewService(
 		saldos, newFakePagosRepo(), nil, fixedClock{T: now},
-		newFakePagosRecibidosRepo(), newFakePagosImagenesRepo(), nil,
+		newFakePagosRecibidosRepo(), newFakePagosImagenesRepo(),
+		&fakeMicrosipPagoWriter{result: validWriterResult()},
 		nil, // storage
 		nil, fakeTxRunner{},
 	)
@@ -578,7 +659,8 @@ func TestCrearPagoConImagenes_DepsMissing_TxRunner(t *testing.T) {
 	saldos := seedCargoSaldo(t)
 	svc := app.NewService(
 		saldos, newFakePagosRepo(), nil, fixedClock{T: now},
-		newFakePagosRecibidosRepo(), newFakePagosImagenesRepo(), nil, newFakeStorageProvider(), nil,
+		newFakePagosRecibidosRepo(), newFakePagosImagenesRepo(),
+		&fakeMicrosipPagoWriter{result: validWriterResult()}, newFakeStorageProvider(), nil,
 		nil, // txMgr
 	)
 	in := baseCrearInput(now)

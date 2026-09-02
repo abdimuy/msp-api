@@ -20,7 +20,6 @@ import (
 	"github.com/abdimuy/msp-api/internal/auth/infra/authhttp"
 	"github.com/abdimuy/msp-api/internal/auth/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/config"
-	"github.com/abdimuy/msp-api/internal/platform/failedintent"
 	failedintenthttp "github.com/abdimuy/msp-api/internal/platform/failedintent/http"
 	"github.com/abdimuy/msp-api/internal/platform/healthcheck"
 	"github.com/abdimuy/msp-api/internal/platform/idempotency"
@@ -221,12 +220,14 @@ func provideRootHandler(
 		Methods:    []string{http.MethodPost, http.MethodPatch},
 		RequireKey: false,
 	})
-	// Las tres configuraciones de captura (ventas/cobranza/visitas) se
-	// declaran una sola vez en failedIntentCapturas (cmd/api/failedintent_wiring.go);
-	// aquí sólo se instancian los middlewares.
-	capture := failedintent.CaptureMiddleware(fiCapturas.Ventas)
-	cobranzaCapture := failedintent.CaptureMiddleware(fiCapturas.Cobranza)
-	visitasCapture := failedintent.CaptureMiddleware(fiCapturas.Visitas)
+	// The three capture configs (ventas/cobranza/visitas) are declared once
+	// in failedIntentCapturas (cmd/api/failedintent_wiring.go); here they
+	// only become middlewares. Each module gets a PAIR — one outside the
+	// auth chain for the 401 authn answers on its own, one inside it for
+	// everything else. See captureAroundAuth for why one is not enough.
+	ventasCapture := captureAroundAuth(fiCapturas.Ventas)
+	cobranzaCapture := captureAroundAuth(fiCapturas.Cobranza)
+	visitasCapture := captureAroundAuth(fiCapturas.Visitas)
 
 	// API surface. Module routers mount under /v2.
 	r.Route("/v2", func(r chi.Router) {
@@ -243,7 +244,15 @@ func provideRootHandler(
 			// same key) escapes capture entirely. Capture skips its own work
 			// when idem responds with the Idempotent-Replay header, which
 			// signals "this 4xx/5xx was already captured on the original call".
-			r.Use(skipAuthForPublicDocs(authn.Handler), capture, idem)
+			// OutsideAuth sits before the auth handler because that is the
+			// only place from which a rejected-at-the-boundary POST is
+			// observable at all; it captures nothing else.
+			r.Use(
+				ventasCapture.OutsideAuth,
+				skipAuthForPublicDocs(authn.Handler),
+				ventasCapture.InsideAuth,
+				idem,
+			)
 			venthttp.MountRouter(r, ventasSvc)
 		})
 
@@ -345,7 +354,9 @@ func provideRootHandler(
 		// r.Route("/visitas"), which would double the prefix to
 		// /v2/visitas/visitas. Final path: POST /v2/visitas.
 		r.Group(func(r chi.Router) {
-			r.Use(authn.Handler, visitasCapture)
+			// Same split as ventas and cobranza: one instance outside
+			// authn, one inside it.
+			r.Use(visitasCapture.OutsideAuth, authn.Handler, visitasCapture.InsideAuth)
 			visitashttp.MountRouter(r, visitasSvc)
 		})
 
@@ -355,10 +366,13 @@ func provideRootHandler(
 		// the canonical key (the repo INSERT trips DUPLICATE_KEY on retry and
 		// the handler falls back to the idempotent fast-path).
 		r.Route("/cobranza", func(r chi.Router) {
-			// cobranzaCapture runs INSIDE authn so the captured intent carries
-			// the planted CurrentUser (UsuarioID) — required for /me scoping and
+			// InsideAuth runs after authn so the captured intent carries the
+			// planted CurrentUser (UsuarioID) — required for /me scoping and
 			// for /replay-with-multipart to rebuild the original requester.
-			r.Use(authn.Handler, cobranzaCapture)
+			// OutsideAuth runs before it for the rejection that never reaches
+			// the inside: a pago sent with an expired session used to answer
+			// 401 and leave nothing behind.
+			r.Use(cobranzaCapture.OutsideAuth, authn.Handler, cobranzaCapture.InsideAuth)
 			cobranzahttp.MountReadRouter(
 				r, cobranzaSvc, cobranzaBus, cfg.Cobranza, logger,
 				cobranzaPagosRepo, cobranzaVentasRepo, cobranzaClock,

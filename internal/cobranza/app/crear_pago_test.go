@@ -29,6 +29,12 @@ type fakePagosRecibidosRepo struct {
 	updateErr error // if set, Update returns this error always
 	listErr   error // if set, ListPendientes returns this error always
 	updateCnt int   // counts how many times Update has been called
+	// lockCnt counts LockByID calls. Without it a test can only pin the
+	// RESULT of the apply flow, never the pessimistic lock that produces it:
+	// an implementation that re-read the row WITHOUT taking the lock would
+	// satisfy every state assertion and still allow the lost update that
+	// resurrects an applied pago and charges the client twice.
+	lockCnt int
 }
 
 func newFakePagosRecibidosRepo() *fakePagosRecibidosRepo {
@@ -71,6 +77,7 @@ func (f *fakePagosRecibidosRepo) FindByID(_ context.Context, id uuid.UUID) (*dom
 }
 
 func (f *fakePagosRecibidosRepo) LockByID(_ context.Context, id uuid.UUID) error {
+	f.lockCnt++
 	if f.lockErr != nil {
 		return f.lockErr
 	}
@@ -128,6 +135,16 @@ func (f fakeTxRunner) RunInTx(ctx context.Context, fn func(context.Context) erro
 	return fn(ctx)
 }
 
+// HasTx satisfies app.TxRunner. The double never plants a transaction on the
+// context; tests that need "already inside a tx" use insideTxRunner.
+func (f fakeTxRunner) HasTx(context.Context) bool { return false }
+
+// insideTxRunner reports that the context already carries a transaction —
+// the shape a caller has when it wraps the service in its own RunInTx.
+type insideTxRunner struct{ fakeTxRunner }
+
+func (insideTxRunner) HasTx(context.Context) bool { return true }
+
 // newAplicarSvc wires a Service with the given fakes specifically for
 // AplicarPago unit tests. saldos and pagos repos are set to no-op fakes
 // (AplicarPago does not use them). The caller supplies the TxRunner, the
@@ -136,7 +153,10 @@ func newAplicarSvc(
 	t *testing.T,
 	txRunner app.TxRunner,
 	pagosRecibidos *fakePagosRecibidosRepo,
-	writer *fakeMicrosipPagoWriter,
+	// writer is the port, not the concrete fake: the chaos tests need doubles
+	// that model things fakeMicrosipPagoWriter does not (a lock conflict, the
+	// shape of the context the writer is handed).
+	writer outbound.MicrosipPagoWriter,
 	now time.Time,
 ) *app.Service {
 	t.Helper()
@@ -187,10 +207,13 @@ func makeSaldoForCargo(doctoCCID int, saldo decimal.Decimal, cancelado bool) dom
 }
 
 // newWriteSvc wires a Service with the given fakes for write-side tests.
-// txMgr is always nil — AplicarPago fast-path will fail with errWriteDepsMissing,
-// which is the expected behavior for unit tests (integration tests cover the
-// full AplicarPago flow). CrearPago still succeeds: it persists the row and
-// then logs the apply warning.
+//
+// A nil writer means "Microsip accepts the pago": the writer is wired to a
+// fake that succeeds. It used to mean the opposite — the helper left both the
+// writer and the txMgr nil, so the apply always failed and the tests asserted,
+// by omission, that a pago Microsip never accepted was persisted anyway. That
+// silent contract is exactly the defect these tests now forbid, so a test
+// that wants a rejection must ask for it explicitly with a failing writer.
 func newWriteSvc(
 	t *testing.T,
 	now time.Time,
@@ -199,6 +222,9 @@ func newWriteSvc(
 	writer *fakeMicrosipPagoWriter,
 ) *app.Service {
 	t.Helper()
+	if writer == nil {
+		writer = &fakeMicrosipPagoWriter{result: validWriterResult()}
+	}
 	return app.NewService(
 		saldosRepo,
 		newFakePagosRepo(),
@@ -209,7 +235,7 @@ func newWriteSvc(
 		writer,
 		nil, // storage
 		nil, // imageProc
-		nil, // txMgr — nil intentionally; AplicarPago fast-path will return errWriteDepsMissing
+		fakeTxRunner{},
 	)
 }
 
@@ -292,11 +318,12 @@ func TestCrearPago_TimestampLateUpload_Accepted(t *testing.T) {
 			in := baseInput(t, now)
 			in.FechaHoraPago = tc.fechaHoraPago
 
-			// We expect no timestamp error; the row will be persisted as pendiente
-			// (because txMgr=nil causes the fast-path apply to fail).
+			// We expect no timestamp error; the pago goes through the whole
+			// flow, Microsip included, and comes back aplicada.
 			pago, err := svc.CrearPago(context.Background(), in, by)
 			require.NoError(t, err)
-			assert.NotNil(t, pago)
+			require.NotNil(t, pago)
+			assert.True(t, pago.IsAplicada())
 		})
 	}
 }
@@ -351,9 +378,9 @@ func TestCrearPago_CargoValidations(t *testing.T) {
 // ─── TestCrearPago_PersistsAndReturns ────────────────────────────────────────
 
 // TestCrearPago_PersistsAndReturns verifies that CrearPago inserts a row and
-// returns a valid pago. Because txMgr is nil the fast-path AplicarPago will
-// fail, so the returned pago will be pendiente — but the row must be present in
-// the repo.
+// returns a valid pago. Microsip accepts it, so the row is present AND
+// aplicada — a row that persists without Microsip having accepted it is the
+// state this flow no longer produces.
 func TestCrearPago_PersistsAndReturns(t *testing.T) {
 	t.Parallel()
 
@@ -381,6 +408,8 @@ func TestCrearPago_PersistsAndReturns(t *testing.T) {
 	stored, findErr := pagosRepo.FindByID(context.Background(), in.ID)
 	require.NoError(t, findErr)
 	assert.Equal(t, in.ID, stored.ID())
+	assert.True(t, stored.IsAplicada(),
+		"la fila sólo existe porque Microsip aceptó el pago")
 }
 
 // ─── TestCrearPago_Idempotency ────────────────────────────────────────────────
@@ -440,72 +469,6 @@ func TestCrearPago_ConceptoDerivation(t *testing.T) {
 
 	assert.Equal(t, 27969, pago.ConceptoCCID(),
 		"formaCobroID 137026 debe derivar conceptoCCID 27969 (abono mostrador)")
-}
-
-// ─── TestCrearPago_ReloadAfterApplyFailed_FindError ──────────────────────────
-
-// TestCrearPago_ReloadAfterApplyFailed_FindError verifies the nilerr path at
-// L114 of crear_pago.go: after Insert succeeds and AplicarPago fails (txMgr
-// is nil → errWriteDepsMissing), the code tries to reload the pago via
-// FindByID. When FindByID also fails, the function must return the
-// freshly-built pago (non-nil) with NO error.
-//
-// The CONDITIONALS_NEGATION mutant (`if findErr != nil` → `if findErr == nil`)
-// would swap the paths and return (nil, findErr) instead.
-func TestCrearPago_ReloadAfterApplyFailed_FindError(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
-	by := uuid.New()
-	pagoID := uuid.New()
-
-	saldos := newFakeSaldosRepo()
-	s := makeSaldoForCargo(5000, decimal.NewFromInt(5000), false)
-	saldos.byCargo[5000] = &s
-
-	pagosRepo := newFakePagosRecibidosRepo()
-	// Set findErr so FindByID always fails. Insert still works normally
-	// (checks the map key existence, not findErr).
-	pagosRepo.findErr = domain.ErrPagoNoEncontrado
-
-	svc := newWriteSvc(t, now, saldos, pagosRepo, nil)
-
-	in := baseInput(t, now)
-	in.ID = pagoID
-
-	// AplicarPago will fail (txMgr=nil → errWriteDepsMissing).
-	// Then FindByID fails (findErr is set).
-	// Expect: freshly-built pago returned, no error.
-	pago, err := svc.CrearPago(context.Background(), in, by)
-	require.NoError(t, err, "nilerr path: FindByID failure must NOT surface as error")
-	require.NotNil(t, pago, "freshly-built pago must be returned when reload fails")
-	assert.Equal(t, pagoID, pago.ID(),
-		"returned pago must carry the requested UUID (freshly-built, not reloaded)")
-}
-
-// TestCrearPago_ReloadAfterApplyFailed_FindSuccess verifies the happy path of
-// the reload block: after AplicarPago fails, FindByID succeeds and returns the
-// (potentially updated) pago from the repo.
-func TestCrearPago_ReloadAfterApplyFailed_FindSuccess(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
-	by := uuid.New()
-
-	saldos := newFakeSaldosRepo()
-	s := makeSaldoForCargo(5000, decimal.NewFromInt(5000), false)
-	saldos.byCargo[5000] = &s
-
-	pagosRepo := newFakePagosRecibidosRepo()
-	// findErr is nil — FindByID will succeed (reads from the in-memory map).
-
-	svc := newWriteSvc(t, now, saldos, pagosRepo, nil)
-
-	in := baseInput(t, now)
-	pago, err := svc.CrearPago(context.Background(), in, by)
-	require.NoError(t, err)
-	require.NotNil(t, pago)
-	assert.Equal(t, in.ID, pago.ID())
 }
 
 // TestCrearPago_IdempotencyFindSuccess verifies the happy-path of the
@@ -588,7 +551,7 @@ func TestCrearPago_MaxAtrasoAceptable_Boundary(t *testing.T) {
 
 			_, err := svc.CrearPago(context.Background(), in, by)
 			if tc.wantErr == nil {
-				// The row will be inserted (AplicarPago will fail because txMgr=nil).
+				// The row is inserted and pushed to Microsip in one act.
 				require.NoError(t, err)
 			} else {
 				require.ErrorIs(t, err, tc.wantErr)

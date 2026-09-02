@@ -123,7 +123,9 @@ type CrearPagoInput struct {
 	RawBody        huma.MultipartFormFiles[CrearPagoMultipartFields] `doc:"multipart/form-data: datos (JSON) + N imagen (archivos) + opcionales id_<n>/descripcion_<n>"`
 }
 
-// CrearPagoOutput wraps a 201 Created response.
+// CrearPagoOutput wraps the created pago. The status is 200, not 201: the
+// operation inherits DefaultStatus from op() in routes.go and pins no Status
+// of its own. The phone's client asserts 200, and so do the E2E tests.
 type CrearPagoOutput struct {
 	Body PagoRecibidoDTO
 }

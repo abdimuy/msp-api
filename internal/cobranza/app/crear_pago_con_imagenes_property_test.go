@@ -34,6 +34,10 @@ func TestProperty_CrearPagoConImagenes_AtomicityInvariant(t *testing.T) {
 		faultNone fault = iota
 		faultStore
 		faultInsertImagen
+		// faultMicrosip is the Microsip writer rejecting the pago. It is the
+		// LAST step inside the transaction, so it is the fault that proves the
+		// invariant still holds when everything before it succeeded.
+		faultMicrosip
 	)
 
 	cases := []struct {
@@ -51,6 +55,9 @@ func TestProperty_CrearPagoConImagenes_AtomicityInvariant(t *testing.T) {
 		{"5img_insertimagen_fails_first", 5, 1, faultInsertImagen, 0},
 		{"5img_insertimagen_fails_middle", 5, 3, faultInsertImagen, 0},
 		{"5img_insertimagen_fails_last", 5, 5, faultInsertImagen, 0},
+		{"0img_microsip_rejects", 0, 0, faultMicrosip, 0},
+		{"1img_microsip_rejects", 1, 0, faultMicrosip, 0},
+		{"5img_microsip_rejects", 5, 0, faultMicrosip, 0},
 	}
 
 	for _, tc := range cases {
@@ -63,8 +70,14 @@ func TestProperty_CrearPagoConImagenes_AtomicityInvariant(t *testing.T) {
 			imgRepo := newFakePagosImagenesRepo()
 			store := newFakeStorageProvider()
 
+			// The writer succeeds unless the case induces a Microsip fault.
+			// A pago that Microsip never accepted must never be persisted, so
+			// "no writer" is no longer a neutral default.
+			writer := &fakeMicrosipPagoWriter{result: validWriterResult()}
+
 			var svc *app.Service
-			if tc.faultStage == faultStore && tc.failAt > 0 {
+			switch {
+			case tc.faultStage == faultStore && tc.failAt > 0:
 				flaky := &flakyStorage{
 					fakeStorageProvider: store,
 					failOnCall:          tc.failAt,
@@ -72,9 +85,9 @@ func TestProperty_CrearPagoConImagenes_AtomicityInvariant(t *testing.T) {
 				}
 				svc = app.NewService(
 					saldos, newFakePagosRepo(), nil, fixedClock{T: now},
-					pagosRepo, imgRepo, nil, flaky, nil, fakeTxRunner{},
+					pagosRepo, imgRepo, writer, flaky, nil, fakeTxRunner{},
 				)
-			} else if tc.faultStage == faultInsertImagen && tc.failAt > 0 {
+			case tc.faultStage == faultInsertImagen && tc.failAt > 0:
 				counting := &countingImagenRepo{
 					fakePagosImagenesRepo: imgRepo,
 					failOnCall:            tc.failAt,
@@ -83,12 +96,19 @@ func TestProperty_CrearPagoConImagenes_AtomicityInvariant(t *testing.T) {
 				txRunner := newSnapshottingTxRunner(pagosRepo, imgRepo)
 				svc = app.NewService(
 					saldos, newFakePagosRepo(), nil, fixedClock{T: now},
-					pagosRepo, counting, nil, store, nil, txRunner,
+					pagosRepo, counting, writer, store, nil, txRunner,
 				)
-			} else {
+			case tc.faultStage == faultMicrosip:
+				writer.err = errors.New("induced_microsip_rejection")
+				txRunner := newSnapshottingTxRunner(pagosRepo, imgRepo)
 				svc = app.NewService(
 					saldos, newFakePagosRepo(), nil, fixedClock{T: now},
-					pagosRepo, imgRepo, nil, store, nil, fakeTxRunner{},
+					pagosRepo, imgRepo, writer, store, nil, txRunner,
+				)
+			default:
+				svc = app.NewService(
+					saldos, newFakePagosRepo(), nil, fixedClock{T: now},
+					pagosRepo, imgRepo, writer, store, nil, fakeTxRunner{},
 				)
 			}
 
@@ -141,7 +161,8 @@ func TestConcurrent_CrearPagoConImagenes_SameUUID_OnePagoOneImagenSet(t *testing
 	store := newConcurrentSafeStorage()
 	svc := app.NewService(
 		saldos, newFakePagosRepo(), nil, fixedClock{T: now},
-		pagosRepo, imgRepo, nil, store, nil, fakeTxRunner{},
+		pagosRepo, imgRepo, &fakeMicrosipPagoWriter{result: validWriterResult()},
+		store, nil, fakeTxRunner{},
 	)
 
 	in := baseCrearInput(now)
@@ -276,6 +297,34 @@ func (r *concurrentSafePagosRecibidosRepo) FindByID(ctx context.Context, id uuid
 	return r.fakePagosRecibidosRepo.FindByID(ctx, id)
 }
 
+// Update must take the same mutex as Insert/FindByID: the goroutine that wins
+// the Insert race now also marks the pago aplicada inside the transaction,
+// while the losers are still reading the map on their idempotent replay.
+func (r *concurrentSafePagosRecibidosRepo) Update(ctx context.Context, p *domain.PagoRecibido) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.fakePagosRecibidosRepo.Update(ctx, p)
+}
+
+// LockByID must take the mutex too. It mutates lockCnt on the wrapped fake,
+// so leaving it promoted un-guarded would be a data race waiting for the
+// first parallel test that exercises the AplicarPago path.
+func (r *concurrentSafePagosRecibidosRepo) LockByID(ctx context.Context, id uuid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.fakePagosRecibidosRepo.LockByID(ctx, id)
+}
+
 func (r *concurrentSafePagosRecibidosRepo) count() int {
 	return int(r.n.Load())
+}
+
+// rowCount reports how many rows are actually in the map. It is NOT count():
+// count tallies successful Inserts and never decrements, so once a rollback
+// is in play — which is the whole point of the chaos tests — only rowCount
+// answers "what survived".
+func (r *concurrentSafePagosRecibidosRepo) rowCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.rows)
 }

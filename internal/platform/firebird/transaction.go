@@ -41,6 +41,13 @@ func (m *TxManager) RunInTx(ctx context.Context, fn func(ctx context.Context) er
 	return RunInTx(ctx, m.db, fn)
 }
 
+// HasTx reports whether ctx already carries an active transaction. Method
+// form of the free function [HasTx] so callers that only hold a *TxManager —
+// module services that deliberately depend on a narrow interface instead of
+// importing this package — can ask the question without breaking their
+// vertical slice.
+func (m *TxManager) HasTx(ctx context.Context) bool { return HasTx(ctx) }
+
 // RunInTxNoWait runs fn at READ COMMITTED NO WAIT — the Firebird flavor where
 // a lock conflict returns immediately instead of blocking. Use for hot paths
 // where the caller would rather retry than wait (traspasos contention, etc.).

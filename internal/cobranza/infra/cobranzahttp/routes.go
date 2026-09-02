@@ -216,8 +216,9 @@ func registerPagoWriteOperations(api huma.API, h *Handlers) {
 		"Crear pago de cobranza",
 		"multipart/form-data: campo `datos` (JSON con el pago) + N campos `imagen` (archivos) "+
 			"+ opcionales `id_<n>` / `descripcion_<n>` por imagen. Persiste pago + comprobantes "+
-			"en una sola tx Firebird; aplica a Microsip best-effort después del commit. ID del "+
-			"cliente (datos.id) es la idempotency key end-to-end."), h.CrearPago)
+			"en una sola tx Firebird; el registro en Microsip es el último paso de esa misma tx "+
+			"y su rechazo revierte la creación. ID del cliente (datos.id) es la idempotency key "+
+			"end-to-end."), h.CrearPago)
 
 	huma.Register(api, op(tag, "cobranza-obtener-pago-recibido", http.MethodGet, "/pagos/{id}",
 		"Obtener pago",
