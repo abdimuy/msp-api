@@ -56,10 +56,17 @@ func TestContrato_PreciosDeLineaSeDocumentanComoUnitarios(t *testing.T) {
 
 	for schemaName, schema := range schemas {
 		for _, campo := range campos {
-			desc := schema.Properties[campo].Value.Description
+			desc := strings.ToLower(schema.Properties[campo].Value.Description)
 			assert.NotEmpty(t, desc, "%s.%s must be documented", schemaName, campo)
-			assert.Contains(t, strings.ToLower(desc), "unitario",
-				"%s.%s must say it is a unit price, not a line total", schemaName, campo)
+			// Two phrases, both discriminating. "unitario" alone is not: the
+			// montos block also contains the word, negated ("No es un precio
+			// unitario"), so asserting on it passes with the two texts SWAPPED
+			// — that is, with the exact confusion that caused Z00002678
+			// published as the contract.
+			assert.Containsf(t, desc, "precio unitario",
+				"%s.%s must state it is a unit price; got %q", schemaName, campo, desc)
+			assert.Containsf(t, desc, "no el total de la línea",
+				"%s.%s must rule out the line total explicitly; got %q", schemaName, campo, desc)
 		}
 	}
 }
@@ -76,10 +83,16 @@ func TestContrato_MontosDeEncabezadoSeDocumentanComoTotales(t *testing.T) {
 
 	for schemaName, schema := range schemas {
 		for _, campo := range campos {
-			desc := schema.Properties[campo].Value.Description
+			desc := strings.ToLower(schema.Properties[campo].Value.Description)
 			assert.NotEmpty(t, desc, "%s.%s must be documented", schemaName, campo)
-			assert.Contains(t, strings.ToLower(desc), "total",
-				"%s.%s must say it is a venta total, not a price", schemaName, campo)
+			// "total" alone is not discriminating either: the line texts carry
+			// it too, negated ("no el total de la línea"). What only a header
+			// total can say is how it is derived.
+			assert.Containsf(t, desc, "suma de",
+				"%s.%s must state it is a sum over the lines; got %q", schemaName, campo, desc)
+			assert.NotContainsf(t, desc, "lo que cuesta",
+				"%s.%s reads like a unit price; that phrase belongs to the line fields, got %q",
+				schemaName, campo, desc)
 		}
 	}
 }
