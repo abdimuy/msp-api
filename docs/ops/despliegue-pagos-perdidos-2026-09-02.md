@@ -16,10 +16,18 @@ archivos.
 | | |
 |---|---|
 | Fusión | `fix/pago-rechazado-visible` → `main`, luego `fix/precios-y-captura-401` |
-| Commit de `main` | **`a0a16c9`** |
+| Commit de `main` | **`47e4494`** |
 | Binario | `bin/api.exe` |
-| Tamaño | **48 904 704** bytes |
-| sha256 | `c4522f95b0f8b85bd4dfb0afcefd64a540abd86cacc23b1c2f75927c520ee639` |
+| Tamaño | **48 904 704** bytes |
+| sha256 | `813bedd8ecdfe002caebaf6e518928af8266eab3724930c2a7fdff4d56efd6f8` |
+
+> **La Parte 2 tiene ahora control positivo.** La ráfaga (50 pagos
+> concurrentes de clientes distintos) sigue sin reproducir el fallo, pero ya se
+> demostró que **sí vería** uno: metiéndole contención real falla exactamente
+> el pago bloqueado, con `firebird_timeout`. Así que su cero significa algo
+> acotado y verdadero — sin una sesión ajena estorbando no hay contención entre
+> clientes distintos — y deja a **Cxc.exe escribiendo al mismo tiempo** como la
+> sospecha principal. Ver el paso «qué vigilar».
 
 Compuertas corridas sobre `main` ya fusionado, todas en verde:
 
@@ -98,7 +106,7 @@ scp ${=KEY} -P $PUERTO bin/api.exe Administrador@$HOST:C:/msp-api/msp-api.new.ex
 ssh ${=KEY} -p $PUERTO Administrador@$HOST 'dir C:\msp-api\msp-api.new.exe'
 #   → tiene que decir 48,904,704 EXACTO. «Casi igual» es un scp truncado.
 ssh ${=KEY} -p $PUERTO Administrador@$HOST 'cmd /c "C:\msp-api\msp-api.new.exe version"'
-#   → msp-api a0a16c9 (built …)   ← no arranca el servidor, se puede correr con el viejo sirviendo
+#   → msp-api 47e4494 (built …)   ← no arranca el servidor, se puede correr con el viejo sirviendo
 
 # §4 — respaldar el log ANTES de reiniciar: run.bat lo TRUNCA en cada arranque
 curl -s https://apidev.loclx.io/version          # ← anota el HASH_SALIENTE
@@ -119,7 +127,7 @@ donde corre `msp-api.exe` y ejecutando el `.bat` del escritorio, que termina en
 1. `http: listening addr=0.0.0.0:3011` y los `lifecycle: started` en el log
    nuevo. Un `api.log` **vacío** con el proceso muerto es `fx.NopLogger`
    tragándose un error de arranque, no un log que falta.
-2. `curl -s https://apidev.loclx.io/version` → **`a0a16c9`**.
+2. `curl -s https://apidev.loclx.io/version` → **`47e4494`**.
 3. Cruzar el PID: `netstat -ano | findstr ":3011" | findstr LISTENING`.
 
 ---
@@ -209,8 +217,8 @@ Cuando estén las Partes 2 y 3. No en este viaje.
 
 ```bash
 ssh ${=KEY} -p $PUERTO Administrador@$HOST \
-  'copy /Y C:\msp-api\api.log C:\msp-api\api.log.fallido-a0a16c9'
-ssh ${=KEY} -p $PUERTO Administrador@$HOST 'cmd /c "move /Y C:\msp-api\msp-api.exe C:\msp-api\msp-api.bak-a0a16c9.exe & move /Y C:\msp-api\msp-api.bak-<HASH_SALIENTE>.exe C:\msp-api\msp-api.exe"'
+  'copy /Y C:\msp-api\api.log C:\msp-api\api.log.fallido-47e4494'
+ssh ${=KEY} -p $PUERTO Administrador@$HOST 'cmd /c "move /Y C:\msp-api\msp-api.exe C:\msp-api\msp-api.bak-47e4494.exe & move /Y C:\msp-api\msp-api.bak-<HASH_SALIENTE>.exe C:\msp-api\msp-api.exe"'
 # reiniciar EN LA CONSOLA, y confirmar:
 curl -s https://apidev.loclx.io/version   # → <HASH_SALIENTE>
 ```
@@ -222,11 +230,33 @@ puede revertir solo** sin tocar el resto.
 
 ## Qué vigilar la primera semana
 
-- **Filas nuevas con `ESTADO='P'`** — cada una es un pago que antes se perdía en
-  silencio y ahora se ve. Son la materia prima de la Parte 2, que **no logró
-  reproducir el fallo en desarrollo**: 50 pagos concurrentes de clientes
-  distintos, con pool de 10 y de 50, cero fallos las dos veces. El motivo real
-  lo van a escribir estas filas.
+- **Filas nuevas con `ESTADO='P'`, y su `ULTIMO_ERROR`.** Cada una es un pago
+  que antes se perdía en silencio.
+
+  **La firma que hay que buscar es `firebird_timeout`** — o
+  `firebird_lock_conflict`. Eso ya no es una corazonada: el control positivo de
+  la ráfaga lo midió. Basta con que **una** sesión ajena sostenga la fila de
+  `SALDOS_CC` de un cliente para que el pago de ese cliente muera con
+  `firebird_timeout`, mientras los demás pasan intactos. Y `SALDOS_CC` es por
+  cliente y **mes**, así que una caja cobrando le estorba a cualquier pago del
+  mismo cliente.
+
+  Ojo con una diferencia al leer los motivos: en la prueba el corte lo dio el
+  **techo del servidor**, puesto a 2 s a propósito. En producción el techo por
+  omisión es de **diez minutos** (`FB_STATEMENT_TIMEOUT`, `config.go:379`), así
+  que ahí corta primero el lado del llamador y entra al mismo código por la
+  **otra** rama de `MapError` (`context.Canceled` / `DeadlineExceeded`,
+  `errors.go:41-46`). Mismo código, distinto productor — no confundir uno con
+  otro al diagnosticar.
+
+  Si en cambio los motivos NO son de contención, la sospecha de la ráfaga cae
+  entera y hay que volver a empezar con lo que digan. Que es para lo que sirve
+  desplegar.
+
+```sql
+SELECT ID, CARGO_DOCTO_CC_ID, CLIENTE_ID, INTENTOS, ULTIMO_ERROR, RECEIVED_AT
+FROM MSP_PAGOS_RECIBIDOS WHERE ESTADO = 'P' ORDER BY RECEIVED_AT DESC;
+```
 - **La pantalla de intentos fallidos** — un rechazo nuevo debe aparecer con su
   motivo.
 - **El directorio de blobs** — la captura del 401 escribe el cuerpo por cada
