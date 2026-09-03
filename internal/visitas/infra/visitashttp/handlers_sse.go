@@ -80,10 +80,20 @@ func newSSEHandler(bus *eventbus.Bus, cfg config.Visitas, logger *slog.Logger) *
 // pending visits issues no by-ids request at all — only phones that actually
 // have something to reconcile generate traffic.
 func (h *sseHandler) streamVisitas(w http.ResponseWriter, r *http.Request) {
-	flusher, zonaID, ok := h.authorizeSSE(w, r)
+	flusher, zonaID, ok := h.authorize(w, r)
 	if !ok {
 		return
 	}
+
+	// Subscribe BEFORE the 200 goes out. The client treats the response head
+	// as "I am now listening", so an event published between the flush and the
+	// Subscribe would be delivered to nobody while the phone believed it was
+	// connected. Nothing is lost permanently — the periodic trigger covers it
+	// — but the window is real and closing it is a reorder, not a mechanism.
+	ch, unsubscribe := h.bus.Subscribe(TopicVisitasConfirmadas)
+	defer unsubscribe()
+
+	writeSSEHeaders(w, flusher)
 
 	// Disable the *http.Server WriteTimeout for this connection. Without it
 	// the server closes the TCP socket on schedule and the app sees a drop
@@ -98,18 +108,19 @@ func (h *sseHandler) streamVisitas(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ch, unsubscribe := h.bus.Subscribe(TopicVisitasConfirmadas)
-	defer unsubscribe()
-
 	h.logger.InfoContext(r.Context(), "visitas.sse_connected", slog.Int("zona_id", zonaID))
 	defer h.logger.InfoContext(r.Context(), "visitas.sse_disconnected", slog.Int("zona_id", zonaID))
 
 	h.streamLoop(w, r, flusher, ch, zonaID)
 }
 
-// authorizeSSE validates the feature flag, auth, permission, zona_id and
-// flusher support, then writes the SSE response headers. On any failure it
-// writes an error response and returns ok=false.
+// authorize validates the feature flag, auth, permission, zona_id and flusher
+// support. On any failure it writes an error response and returns ok=false.
+//
+// It deliberately does NOT write the 200: the caller subscribes to the bus
+// first and only then announces the stream is open, so no event can fall into
+// the gap between "client told it is connected" and "server actually
+// listening". See writeSSEHeaders.
 //
 // Permission is PermCobranzaVerPagos — the same one the rest of the visitas
 // module requires (see VisitasExistentesPorIDs). A cobrador who may record a
@@ -120,7 +131,7 @@ func (h *sseHandler) streamVisitas(w http.ResponseWriter, r *http.Request) {
 // the bus topic is global. It is a client-scoping and observability parameter,
 // not an authorization boundary — and it carries no leak, because the event
 // carries no data.
-func (h *sseHandler) authorizeSSE(w http.ResponseWriter, r *http.Request) (http.Flusher, int, bool) {
+func (h *sseHandler) authorize(w http.ResponseWriter, r *http.Request) (http.Flusher, int, bool) {
 	if !h.cfg.SSEEnabled {
 		writePlainErrorVisitas(w, http.StatusServiceUnavailable, "sse_deshabilitado",
 			"SSE no está habilitado en este servidor")
@@ -150,6 +161,12 @@ func (h *sseHandler) authorizeSSE(w http.ResponseWriter, r *http.Request) (http.
 		return nil, 0, false
 	}
 
+	return flusher, zonaID, true
+}
+
+// writeSSEHeaders announces the open stream. Called only after the handler has
+// already subscribed to the bus.
+func writeSSEHeaders(w http.ResponseWriter, flusher http.Flusher) {
 	// Headers must be set before WriteHeader.
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -158,8 +175,6 @@ func (h *sseHandler) authorizeSSE(w http.ResponseWriter, r *http.Request) (http.
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
-
-	return flusher, zonaID, true
 }
 
 // streamLoop writes events and keep-alive pings until the client disconnects

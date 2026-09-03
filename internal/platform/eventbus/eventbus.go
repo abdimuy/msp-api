@@ -9,7 +9,7 @@
 // (a payload-free wakeup on the "visitas_confirmadas" topic). It was moved here
 // from internal/cobranza/app/eventbus when visitas needed it: depguard's
 // no-cross-module-internals rule (.golangci.yml) denies importing another
-// module'"'"'s app package, and the right answer to that rule is to move shared
+// module's app package, and the right answer to that rule is to move shared
 // infrastructure to platform, never to relax the rule.
 package eventbus
 
