@@ -55,15 +55,32 @@ import (
 // reproducción a ser una guarda: si alguien mete contención en este camino,
 // se entera aquí.
 //
-// NO SE INVENTA UN ARREGLO CON ESTO. Que no reproduzca no prueba que el
-// camino esté sano; prueba que el fallo necesita algo que esta prueba no
-// tiene. Lo que le falta, y no puede tener, está medido y es concreto:
+// EL VERDE SÍ SIGNIFICA ALGO, Y ESO ESTÁ DEMOSTRADO APARTE. Un experimento que
+// no se ha probado capaz de fallar no dice nada al pasar, así que la
+// sensibilidad de esta ráfaga se mide en pago_writer_rafaga_control_test.go:
+// metiéndole un fallo a propósito, la ráfaga lo ve, lo cuenta y lo atribuye a
+// la goroutine correcta. Medido en los dos controles:
 //
-//   - EN PRODUCCIÓN CXC.EXE ESCRIBE AL MISMO TIEMPO. Las cajas tienen tomadas
-//     SALDOS_CC y MSP_SALDOS_VENTAS mientras el cobrador sube su bandeja. Esa
-//     forma sí está medida, pero en otro archivo y de a una:
-//     TestE2E_ContencionDeFila_LaEsperaSeCortaComoTimeoutNoComoConflicto.
-//     Aquí no hay una segunda sesión.
+//	un pago inválido   → 1 de 6 falla, firebird_error (exception 7)
+//	un pago bloqueado  → 1 de 6 falla, firebird_timeout
+//
+// El segundo es el que cuenta: es contención REAL —otra sesión sostiene la
+// fila de SALDOS_CC del cliente de ese pago— y la ráfaga la ve. Así que este
+// cero de fallos no es ceguera del arnés: con las mismas 50 escrituras y sin
+// una sesión ajena estorbando, no hay contención entre clientes distintos.
+//
+// NO SE INVENTA UN ARREGLO CON ESTO. Lo que el cero descarta es que el camino
+// se atore SOLO. No descarta el fallo de producción, porque allá sí hay una
+// sesión ajena escribiendo. Lo que le falta a esta prueba, y no puede tener,
+// está medido y es concreto:
+//
+//   - EN PRODUCCIÓN CXC.EXE ESCRIBE AL MISMO TIEMPO, y ésta es ahora la
+//     sospecha principal, no una más de la lista. El control positivo del
+//     bloqueo demuestra que basta UNA sesión ajena sosteniendo SALDOS_CC para
+//     que el pago de ese cliente muera; y SALDOS_CC es por cliente y MES
+//     (CLIENTE_ID, ANO, MES, CARGOS_CXC, CREDITOS_CXC…), así que una caja
+//     cobrando le estorba a cualquier pago del mismo cliente. Aquí no hay una
+//     segunda sesión, y por eso no falló nada.
 //   - LA BASE NO ES LA MISMA. Ésta es el clon de desarrollo sobre Docker en
 //     una Mac; producción es Windows Server 2016 con la base en uso.
 //   - EL CAMINO ES MÁS CORTO. Esto ejerce PagoWriter.Aplicar. La petición real
@@ -71,9 +88,16 @@ import (
 //     final dentro de LA MISMA transacción, así que sostiene sus bloqueos
 //     bastante más tiempo del que se sostienen aquí.
 //
-// El paso siguiente no es adivinar cuál de los tres es: es desplegar el
-// arreglo que hace visible el rechazo y leer los motivos que las filas nuevas
-// con ESTADO='P' van a dejar escritos. Con eso se vuelve, y se mide.
+// El paso siguiente sigue siendo desplegar y leer los motivos reales, pero ya
+// no a ciegas: LA FIRMA QUE HAY QUE BUSCAR EN ULTIMO_ERROR ES firebird_timeout
+// —o firebird_lock_conflict—, que es lo que la contención produce.
+//
+// Ojo con una diferencia al leer producción: aquí el timeout lo produjo el
+// TECHO DEL SERVIDOR, porque la prueba le pone dos segundos. En producción el
+// techo por omisión es de diez minutos (FB_STATEMENT_TIMEOUT, config.go:379),
+// así que lo que corta primero es el lado del llamador, y ése entra a
+// firebird_timeout por la OTRA rama de MapError —context.Canceled o
+// DeadlineExceeded, errors.go:41-46—. Mismo código, distinto productor.
 //
 // QUÉ SE DESCARTÓ, Y CÓMO. GEN_FOLIO_TEMP era el sospechoso natural por ser
 // lo único que todos los pagos tocan sin importar el cliente. No es: su
