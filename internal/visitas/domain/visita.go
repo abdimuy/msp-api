@@ -57,6 +57,12 @@ type Visita struct {
 	clienteID      int
 	impteDoctoCCID *int
 
+	// imagenes are the photos attached to this visita in the SAME request
+	// that created it (see AdjuntarImagen). The collection is only ever
+	// populated on the write path: RehydrateVisita leaves it nil because
+	// GET /v2/visitas/{id} does not project images.
+	imagenes []*Imagen
+
 	audit audit.Auditable
 }
 

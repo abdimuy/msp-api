@@ -113,4 +113,69 @@ var (
 		"visita_not_found",
 		"no se encontró la visita",
 	)
+
+	// ─── Imagen (hija de Visita) ───────────────────────────────────────────.
+
+	// ErrImagenIDRequerido is returned when the imagen UUID is the zero value.
+	// Every imagen carries an id because that id is what makes a retry
+	// idempotent per image: the phone sends the same UUID again and the row is
+	// recognized instead of duplicated.
+	ErrImagenIDRequerido = apperror.NewValidation(
+		"visita_imagen_id_requerido",
+		"el id de la imagen es obligatorio",
+	)
+
+	// ErrImagenMimeNoPermitido is returned for a MIME outside the whitelist
+	// declared in imagen_storage.go (image/jpeg, image/png, image/gif,
+	// image/webp, application/pdf). A validation error, so a phone sending an
+	// unexpected type gets a distinguishable 4xx and never a 500.
+	ErrImagenMimeNoPermitido = apperror.NewValidation(
+		"visita_imagen_mime_no_permitido",
+		"tipo de archivo no permitido",
+	)
+
+	// ErrImagenSizeBytesNegativo is returned for a negative declared size.
+	// There is deliberately NO upper bound — see AdjuntarImagenParams.
+	ErrImagenSizeBytesNegativo = apperror.NewValidation(
+		"visita_imagen_size_bytes_negativo",
+		"tamaño de archivo inválido",
+	)
+
+	// ErrImagenDescripcionDemasiadoLarga is returned when the per-image note
+	// exceeds MSP_VISITAS_IMAGENES.DESCRIPCION's width (200 runes).
+	ErrImagenDescripcionDemasiadoLarga = apperror.NewValidation(
+		"visita_imagen_descripcion_demasiado_larga", //nolint:misspell // Spanish error code by project convention.
+		"la descripción de la imagen es demasiado larga",
+	)
+
+	// ErrImagenStorageKindInvalido is returned for an unrecognized StorageKind.
+	ErrImagenStorageKindInvalido = apperror.NewValidation(
+		"visita_imagen_storage_kind_invalido",
+		"tipo de almacenamiento inválido",
+	)
+
+	// ErrImagenStorageKeyInvalida is returned when the storage key is empty,
+	// too long, or carries one of the structural patterns that would let it
+	// escape STORAGE_DIR (NUL, leading slash, backslash, "..").
+	ErrImagenStorageKeyInvalida = apperror.NewValidation(
+		"visita_imagen_storage_key_invalida",
+		"clave de almacenamiento inválida",
+	)
+
+	// ErrImagenIDDuplicado is returned when a single request carries the same
+	// imagen UUID more than once. The client must deduplicate before retrying;
+	// silently collapsing them would hide a bug in the uploader.
+	ErrImagenIDDuplicado = apperror.NewValidation(
+		"visita_imagen_id_duplicado",
+		"el id de imagen aparece más de una vez en la solicitud",
+	)
+
+	// ErrImagenYaExiste is returned by InsertImagen when the imagen UUID is
+	// already stored. Like ErrVisitaYaExiste it is a CONFLICT the caller
+	// absorbs rather than surfaces: a retry that carries the same image ids
+	// simply finds them present and answers success.
+	ErrImagenYaExiste = apperror.NewConflict(
+		"visita_imagen_ya_existe",
+		"la imagen con ese id ya existe",
+	)
 )
