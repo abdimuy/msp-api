@@ -421,11 +421,17 @@ func TestHTTP_CrearVisita_Multipart_ReintentoConFotoNuevaLaAdjunta(t *testing.T)
 	assert.Equal(t, 0, f.store.deleteCalls)
 }
 
-func TestHTTP_CrearVisita_Multipart_SinIDDeImagenElServidorLoGenera(t *testing.T) {
+// TestHTTP_CrearVisita_Multipart_SinIDDeImagenEsRechazado pins the contract
+// that makes a retry safe BY CONSTRUCTION rather than by client discipline.
+//
+// id_<n> used to be optional, with the server minting a UUID when it was
+// absent. Because the storage key is derived from the imagen id, a retry
+// without an id got a FRESH one and stored the same photo a second time — a
+// second blob and a second row. That gave away the entire reason for putting
+// images inside the create request, so the id is now required.
+func TestHTTP_CrearVisita_Multipart_SinIDDeImagenEsRechazado(t *testing.T) {
 	t.Parallel()
 
-	// A client that omits id_<n> still gets its photo stored — it just loses
-	// per-image replay safety, which the DTO doc spells out.
 	f := newMultipartFixture(t)
 	id := uuid.New()
 	fecha := fixedNow.Add(-time.Hour).Format(time.RFC3339)
@@ -434,10 +440,33 @@ func TestHTTP_CrearVisita_Multipart_SinIDDeImagenElServidorLoGenera(t *testing.T
 
 	rec := postMultipart(t, f, body, ct, id.String())
 
-	require.Equal(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
-	assert.Equal(t, 1, f.imgRepo.count(id))
-	require.Len(t, f.store.keys(), 1)
-	assert.Regexp(t, `^visitas/`+id.String()+`/[0-9a-f-]{36}\.jpg$`, f.store.keys()[0])
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "imagen_id_requerido")
+	assert.Empty(t, f.store.keys(), "nothing reached the disk")
+	assert.Empty(t, f.repo.byID, "and the visita was not written either")
+}
+
+// TestHTTP_CrearVisita_Multipart_ReintentoSinIDNoPuedeDuplicar is the
+// consequence of the rule above, stated as the behaviour it buys: the shape
+// of request that WOULD have stored two blobs across a retry is refused
+// outright, so the duplicate is unreachable.
+func TestHTTP_CrearVisita_Multipart_ReintentoSinIDNoPuedeDuplicar(t *testing.T) {
+	t.Parallel()
+
+	f := newMultipartFixture(t)
+	id := uuid.New()
+	fecha := fixedNow.Add(-time.Hour).Format(time.RFC3339)
+	body, ct := buildMultipart(t, visitaBodyJSON(id.String(), fecha),
+		[]testImagen{jpeg("", "")})
+
+	first := postMultipart(t, f, body, ct, id.String())
+	second := postMultipart(t, f, body, ct, id.String())
+
+	assert.Equal(t, http.StatusUnprocessableEntity, first.Code)
+	assert.Equal(t, http.StatusUnprocessableEntity, second.Code)
+	assert.Empty(t, f.store.keys(),
+		"zero blobs after two attempts — with an optional id this was 2")
+	assert.Equal(t, 0, f.imgRepo.count(id))
 }
 
 // ─── Whitelist ─────────────────────────────────────────────────────────────
@@ -647,7 +676,10 @@ func TestHTTP_CrearVisita_Multipart_IdempotencyKeyQueNoCoincide(t *testing.T) {
 func TestHTTP_CrearVisita_ContentTypeNoSoportado_Returns415(t *testing.T) {
 	t.Parallel()
 
-	for _, ct := range []string{"", "text/plain", "application/xml", "application/x-www-form-urlencoded"} {
+	// NOTE: the empty string is deliberately NOT in this table. An absent
+	// Content-Type is JSON, not an error — see
+	// TestHTTP_CrearVisita_SinContentType_SigueSiendo201.
+	for _, ct := range []string{"text/plain", "application/xml", "application/x-www-form-urlencoded", "application/vnd.msp+json"} {
 		t.Run("ct="+ct, func(t *testing.T) {
 			t.Parallel()
 
@@ -657,9 +689,7 @@ func TestHTTP_CrearVisita_ContentTypeNoSoportado_Returns415(t *testing.T) {
 
 			req := httptest.NewRequest(http.MethodPost, "/visitas",
 				bytes.NewBufferString(visitaBodyJSON(id.String(), fecha)))
-			if ct != "" {
-				req.Header.Set("Content-Type", ct)
-			}
+			req.Header.Set("Content-Type", ct)
 			rec := httptest.NewRecorder()
 			mountWithUser(visitaUser(), f.svc).ServeHTTP(rec, req)
 
@@ -695,4 +725,214 @@ func TestOpenAPI_CrearVisita_DeclaraLosDosContentTypes(t *testing.T) {
 	require.Contains(t, content, "multipart/form-data")
 	assert.NotContains(t, content, "application/octet-stream",
 		"the opaque body Huma infers for a []byte RawBody must not leak into the contract")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE LEGACY JSON CONTRACT, PINNED FIELD BY FIELD
+//
+// The coexistence test above proves one well-formed shape works. These pin
+// the edges of the shape a phone in the field may actually send, because
+// "the JSON path still works" is only worth as much as the range of bodies
+// it was checked against.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// postJSON sends a raw body with the given Content-Type. An empty ct sets NO
+// header at all, which is the case this group exists for.
+func postJSON(t *testing.T, f multipartFixture, body, ct string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/visitas", bytes.NewBufferString(body))
+	if ct != "" {
+		req.Header.Set("Content-Type", ct)
+	}
+	rec := httptest.NewRecorder()
+	mountWithUser(visitaUser(), f.svc).ServeHTTP(rec, req)
+	return rec
+}
+
+// TestHTTP_CrearVisita_SinContentType_SigueSiendo201 is the regression test
+// for the one thing this whole task exists to prevent.
+//
+// Huma defaults an absent Content-Type to application/json (huma.go:998-1006,
+// and again in api.Unmarshal at api.go:338-341), so a client that posts a
+// JSON body without the header got a 201 before this route read its own body.
+// A first version of that read sent it to 415 — silently breaking exactly the
+// caller the coexistence requirement was written for.
+func TestHTTP_CrearVisita_SinContentType_SigueSiendo201(t *testing.T) {
+	t.Parallel()
+
+	f := newMultipartFixture(t)
+	id := uuid.New()
+	fecha := fixedNow.Add(-time.Hour).Format(time.RFC3339)
+
+	rec := postJSON(t, f, visitaBodyJSON(id.String(), fecha), "")
+
+	require.Equal(t, http.StatusCreated, rec.Code,
+		"a JSON body with NO Content-Type header must still be accepted; body=%s", rec.Body.String())
+	var dto visitashttp.VisitaDTO
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dto))
+	assert.Equal(t, id.String(), dto.ID)
+	assert.Len(t, f.repo.byID, 1, "and it must really have been stored, not just answered")
+}
+
+// TestHTTP_CrearVisita_ContentTypeJSONBare_SigueSiendo201 covers the other
+// spelling Huma accepted: a bare "json", which is a key in
+// huma.DefaultFormats alongside "application/json".
+func TestHTTP_CrearVisita_ContentTypeJSONBare_SigueSiendo201(t *testing.T) {
+	t.Parallel()
+
+	f := newMultipartFixture(t)
+	id := uuid.New()
+	fecha := fixedNow.Add(-time.Hour).Format(time.RFC3339)
+
+	rec := postJSON(t, f, visitaBodyJSON(id.String(), fecha), "json")
+
+	require.Equal(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+	assert.Len(t, f.repo.byID, 1)
+}
+
+// TestHTTP_CrearVisita_JSON_CamposOpcionalesOmitidos accepts a body that
+// leaves out every field the domain treats as optional.
+//
+// Huma used to require all ten non-omitempty fields, so this body was a 422
+// before. It is a 201 now — a deliberate relaxation toward what the domain
+// actually considers optional, and a widening rather than a break: no body
+// that worked stopped working. lat/lng are NOT among them; they are pinned
+// separately below.
+func TestHTTP_CrearVisita_JSON_CamposOpcionalesOmitidos(t *testing.T) {
+	t.Parallel()
+
+	f := newMultipartFixture(t)
+	id := uuid.New()
+	fecha := fixedNow.Add(-time.Hour).Format(time.RFC3339)
+
+	body := `{` +
+		`"id":"` + id.String() + `",` +
+		`"cliente_id":11486,` +
+		`"cobrador":"Ramírez García, Jorge",` +
+		`"lat":19.432608,` +
+		`"lng":-99.133209,` +
+		`"tipo_visita":"No se encontraba",` +
+		`"fecha":"` + fecha + `"` +
+		`}`
+
+	rec := postJSON(t, f, body, "application/json")
+
+	require.Equal(t, http.StatusCreated, rec.Code,
+		"cobrador_id, forma_cobro_id, zona_cliente_id, nota and impte_docto_cc_id are "+
+			"optional in the domain; body=%s", rec.Body.String())
+	var dto visitashttp.VisitaDTO
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dto))
+	assert.Equal(t, 0, dto.CobradorID, "an omitted optional int is zero, as the domain allows")
+	assert.Nil(t, dto.ImpteDoctoCCID)
+}
+
+// TestHTTP_CrearVisita_JSON_CampoDesconocido_Returns422 pins that a typo in a
+// key is reported rather than silently dropped — the decoder runs with
+// DisallowUnknownFields.
+func TestHTTP_CrearVisita_JSON_CampoDesconocido_Returns422(t *testing.T) {
+	t.Parallel()
+
+	f := newMultipartFixture(t)
+	id := uuid.New()
+	fecha := fixedNow.Add(-time.Hour).Format(time.RFC3339)
+	body := strings.Replace(visitaBodyJSON(id.String(), fecha), `"nota"`, `"nota_"`, 1)
+
+	rec := postJSON(t, f, body, "application/json")
+
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "visita_body_json_invalido")
+	assert.Empty(t, f.repo.byID)
+}
+
+// ─── lat / lng: presence required, value unconstrained ─────────────────────
+
+// TestHTTP_CrearVisita_CoordenadasAusentes_Returns422 restores the
+// pre-change contract for the two fields whose zero value is
+// indistinguishable from a real measurement. Without this, a client that
+// omits lat records the visit at 0,0 — Null Island — as data rather than as
+// an error.
+func TestHTTP_CrearVisita_CoordenadasAusentes_Returns422(t *testing.T) {
+	t.Parallel()
+
+	fecha := fixedNow.Add(-time.Hour).Format(time.RFC3339)
+
+	cases := map[string]struct {
+		mutate   func(string) string
+		wantCode string
+	}{
+		"lat omitida": {
+			mutate:   func(b string) string { return strings.Replace(b, `"lat":19.432608,`, ``, 1) },
+			wantCode: "visita_lat_requerida",
+		},
+		"lat nula": {
+			mutate:   func(b string) string { return strings.Replace(b, `"lat":19.432608`, `"lat":null`, 1) },
+			wantCode: "visita_lat_requerida",
+		},
+		"lng omitida": {
+			mutate:   func(b string) string { return strings.Replace(b, `"lng":-99.133209,`, ``, 1) },
+			wantCode: "visita_lng_requerida",
+		},
+		"lng nula": {
+			mutate:   func(b string) string { return strings.Replace(b, `"lng":-99.133209`, `"lng":null`, 1) },
+			wantCode: "visita_lng_requerida",
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newMultipartFixture(t)
+			id := uuid.New()
+			rec := postJSON(t, f, tc.mutate(visitaBodyJSON(id.String(), fecha)), "application/json")
+
+			require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body=%s", rec.Body.String())
+			assert.Contains(t, rec.Body.String(), tc.wantCode)
+			assert.Empty(t, f.repo.byID, "no visit is recorded at a coordinate nobody measured")
+		})
+	}
+}
+
+// TestHTTP_CrearVisita_CoordenadasEnCero_SigueSiendo201 is the other half of
+// the ruling, and the reason it is about PRESENCE and not about range: a
+// cobrador whose phone has no GPS fix sends 0,0 deliberately, and that visit
+// must still be registered. Constraining the value would lose visits.
+func TestHTTP_CrearVisita_CoordenadasEnCero_SigueSiendo201(t *testing.T) {
+	t.Parallel()
+
+	f := newMultipartFixture(t)
+	id := uuid.New()
+	fecha := fixedNow.Add(-time.Hour).Format(time.RFC3339)
+	body := strings.NewReplacer(
+		`"lat":19.432608`, `"lat":0`,
+		`"lng":-99.133209`, `"lng":0`,
+	).Replace(visitaBodyJSON(id.String(), fecha))
+
+	rec := postJSON(t, f, body, "application/json")
+
+	require.Equal(t, http.StatusCreated, rec.Code,
+		"0 is a coordinate a phone with no fix really sends; body=%s", rec.Body.String())
+	var dto visitashttp.VisitaDTO
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dto))
+	assert.InDelta(t, 0.0, dto.Lat, 0)
+	assert.InDelta(t, 0.0, dto.Lng, 0)
+}
+
+// TestHTTP_CrearVisita_Multipart_CoordenadasAusentes_Returns422 proves the
+// rule holds on BOTH wire formats — the whole point of one handler is that a
+// contract cannot be enforced on one path and forgotten on the other.
+func TestHTTP_CrearVisita_Multipart_CoordenadasAusentes_Returns422(t *testing.T) {
+	t.Parallel()
+
+	f := newMultipartFixture(t)
+	id := uuid.New()
+	fecha := fixedNow.Add(-time.Hour).Format(time.RFC3339)
+	datos := strings.Replace(visitaBodyJSON(id.String(), fecha), `"lat":19.432608,`, ``, 1)
+	body, ct := buildMultipart(t, datos, []testImagen{jpeg(uuid.NewString(), "")})
+
+	rec := postMultipart(t, f, body, ct, id.String())
+
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "visita_lat_requerida")
+	assert.Empty(t, f.store.keys(), "and no blob was left behind by the rejection")
 }

@@ -100,14 +100,19 @@ func (h *Handlers) CrearVisita(ctx context.Context, in *CrearVisitaInput) (*Crea
 		)
 	}
 
+	lat, lng, err := requireCoordenadas(decoded.Body)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+
 	appIn := visitasapp.RegistrarVisitaInput{
 		ID:             visitaID,
 		Cobrador:       decoded.Body.Cobrador,
 		CobradorID:     decoded.Body.CobradorID,
 		Fecha:          fecha.UTC(),
 		FormaCobroID:   decoded.Body.FormaCobroID,
-		Lat:            decoded.Body.Lat,
-		Lng:            decoded.Body.Lng,
+		Lat:            lat,
+		Lng:            lng,
 		Nota:           decoded.Body.Nota,
 		TipoVisita:     decoded.Body.TipoVisita,
 		ZonaClienteID:  decoded.Body.ZonaClienteID,
@@ -120,6 +125,33 @@ func (h *Handlers) CrearVisita(ctx context.Context, in *CrearVisitaInput) (*Crea
 		return nil, mapAppError(err)
 	}
 	return &CrearVisitaOutput{Body: toVisitaDTO(visita)}, nil
+}
+
+// requireCoordenadas enforces that lat and lng were SENT — present in the
+// document and not null — and returns their values.
+//
+// It checks presence only. The values themselves are unconstrained: 0,0 is a
+// legitimate reading, and a cobrador whose phone has no fix must still be
+// able to register the visit. Rejecting the value would lose visits; rejecting
+// the omission catches the client bug that would otherwise be stored as a
+// coordinate nobody ever measured.
+//
+// This restores the pre-change contract exactly. Huma used to require every
+// field lacking an `omitempty` tag, lat and lng among them; reading the body
+// by hand dropped that, and this puts it back for the two fields where the
+// zero value is indistinguishable from a real measurement.
+func requireCoordenadas(body CrearVisitaBody) (float64, float64, error) {
+	if body.Lat == nil {
+		return 0, 0, apperror.NewValidation(
+			"visita_lat_requerida", "la latitud de la visita es obligatoria",
+		)
+	}
+	if body.Lng == nil {
+		return 0, 0, apperror.NewValidation(
+			"visita_lng_requerida", "la longitud de la visita es obligatoria",
+		)
+	}
+	return *body.Lat, *body.Lng, nil
 }
 
 // ObtenerVisita handles GET /visitas/{id}.

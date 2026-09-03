@@ -20,12 +20,26 @@ import (
 	"github.com/abdimuy/msp-api/internal/visitas/domain"
 )
 
-// The two media types POST /visitas accepts. Anything else — including an
-// absent Content-Type — is a 415, which is exactly what Huma answered before
-// this route learned to read its body itself. The transport contract for a
-// legacy JSON client is therefore unchanged, not merely compatible.
+// The media types POST /visitas accepts, chosen to reproduce EXACTLY what
+// Huma accepted before this route learned to read its own body.
+//
+// Verified against huma v2.37.3, not assumed:
+//
+//   - An ABSENT Content-Type is JSON. huma.go:998-1006 falls back to
+//     "application/json" when the header is empty, and api.go:338-341 does it
+//     again inside Unmarshal. A client that posts a JSON body without the
+//     header got a 201 before and must keep getting one — this is precisely
+//     the phone-in-the-field case this whole change exists to protect.
+//   - A bare "json" is JSON: it is a key in huma.DefaultFormats
+//     (defaults.go:32-35) alongside "application/json".
+//   - "application/vnd.x+json" and friends are NOT accepted, and were not
+//     accepted before either: Unmarshal does an EXACT map lookup
+//     (api.go:343) with no "+json" suffix handling on the request path. They
+//     answered ErrUnknownContentType then and answer 415 now. Leaving them
+//     rejected preserves the contract; accepting them would widen it.
 const (
 	mediaTypeJSON      = "application/json"
+	mediaTypeJSONShort = "json"
 	mediaTypeMultipart = "multipart/form-data"
 )
 
@@ -51,7 +65,7 @@ type decodedRequest struct {
 // mistake, and a 500 on this route would look like the server losing visits.
 func decodeCrearVisitaRequest(contentType string, raw []byte) (decodedRequest, error) {
 	switch mediaTypeOf(contentType) {
-	case mediaTypeJSON:
+	case mediaTypeJSON, mediaTypeJSONShort:
 		body, err := decodeCrearVisitaJSON(raw)
 		return decodedRequest{Body: body}, err
 	case mediaTypeMultipart:
@@ -62,11 +76,16 @@ func decodeCrearVisitaRequest(contentType string, raw []byte) (decodedRequest, e
 }
 
 // mediaTypeOf extracts the bare media type, lower-cased and without
-// parameters, so "application/json; charset=utf-8" is recognized. An absent
-// or unparseable header yields "" and lands on the 415 branch.
+// parameters, so "application/json; charset=utf-8" is recognized.
+//
+// An ABSENT header resolves to application/json — see the const block for why
+// that is a restoration of Huma's behavior and not a convenience. A header
+// present but unparseable resolves to "" and lands on the 415 branch: the
+// client stated something and stated it wrong, which is different from saying
+// nothing at all.
 func mediaTypeOf(contentType string) string {
-	if contentType == "" {
-		return ""
+	if strings.TrimSpace(contentType) == "" {
+		return mediaTypeJSON
 	}
 	mediaType, _, err := mime.ParseMediaType(contentType)
 	if err != nil {
@@ -268,14 +287,26 @@ func parseVisitaID(raw string) (uuid.UUID, error) {
 	return id, nil
 }
 
-// parsePositionalImagenID reads `id_<n>` from the form. Absent means the
-// server mints one — and the client loses per-image replay safety, because
-// a retry then carries a different id and the photo is stored twice. Present
-// but not a UUID is a validation error, never a silent fallback.
+// parsePositionalImagenID reads `id_<n>` from the form. It is REQUIRED for
+// every `imagen` part.
+//
+// It used to be optional, with the server minting a UUID when it was absent.
+// That made retry safety depend on client discipline: the storage key is
+// derived from the imagen id, so a retry carrying no id got a fresh one and
+// stored the same photo a SECOND time — a second blob and a second row. The
+// entire argument for putting images inside the create request is that a
+// retry is safe BY CONSTRUCTION, and an optional id gave that away.
+//
+// Requiring it costs nothing today: no client sends images yet, this wire
+// format is new in this change. The Android side (Task 23) must send a stable
+// UUID per photo — the same one across retries of the same capture.
 func parsePositionalImagenID(form *multipart.Form, index int) (uuid.UUID, error) {
 	raw := positionalFormValue(form, "id_", index)
 	if raw == "" {
-		return uuid.New(), nil
+		return uuid.Nil, apperror.NewValidation(
+			"imagen_id_requerido",
+			"cada imagen debe venir acompañada de su id_<n>",
+		).WithField("posicion", strconv.Itoa(index))
 	}
 	id, err := uuid.Parse(raw)
 	if err != nil {

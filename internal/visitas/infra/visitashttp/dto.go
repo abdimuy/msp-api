@@ -54,19 +54,35 @@ func toVisitaDTO(v *domain.Visita) VisitaDTO {
 // CrearVisitaBody is the JSON document for POST /visitas. The mobile app
 // generates ID offline; it doubles as the idempotency key end-to-end (see
 // app.Service.RegistrarVisita).
+//
+// Lat and Lng are POINTERS so their absence is distinguishable from a zero.
+// Before this route read its own body, Huma required every field without an
+// `omitempty` json tag, so omitting `lat` was a 422. Reading the body by hand
+// lost that for free, and losing it here is not free: a missing `lat` would
+// decode to 0.0 and the visit would be recorded at Null Island as data rather
+// than rejected as an error.
+//
+// What is required is PRESENCE, not a range. A cobrador genuinely may have no
+// GPS fix, and a deliberate 0 stays valid — see requireCoordenadas.
+//
+// Note on key matching: encoding/json matches object keys
+// case-INSENSITIVELY, so `"Lat"` now decodes into this field where Huma's
+// schema required the exact lower-case `lat`. That is a widening, examined
+// and deliberately left alone: it accepts strictly more of what a client
+// might send and rejects nothing that used to work.
 type CrearVisitaBody struct {
-	ID             string  `json:"id"               doc:"UUID generado por el cliente; clave de idempotencia"`
-	ClienteID      int     `json:"cliente_id"       doc:"ID del cliente Microsip visitado"`
-	CobradorID     int     `json:"cobrador_id"      doc:"ID del cobrador Microsip"`
-	Cobrador       string  `json:"cobrador"         doc:"Nombre del cobrador"`
-	FormaCobroID   int     `json:"forma_cobro_id"   doc:"ID de la forma de cobro Microsip; 0 si la visita no generó pago"`
-	Lat            float64 `json:"lat"              doc:"Latitud donde se capturó la visita"`
-	Lng            float64 `json:"lng"              doc:"Longitud donde se capturó la visita"`
-	Nota           string  `json:"nota,omitempty"   doc:"Nota libre del cobrador"`
-	TipoVisita     string  `json:"tipo_visita"      doc:"Tipo de visita (p.ej. cobro, no_encontrado)"`
-	ZonaClienteID  int     `json:"zona_cliente_id"  doc:"Zona del cliente al momento de la visita"`
-	ImpteDoctoCCID *int    `json:"impte_docto_cc_id,omitempty" doc:"IMPORTES_DOCTOS_CC.IMPTE_DOCTO_CC_ID vinculado al pago de esta visita; nulo si no aplica"`
-	Fecha          string  `json:"fecha"            doc:"Fecha-hora de la visita, RFC3339 UTC"`
+	ID             string   `json:"id"               doc:"UUID generado por el cliente; clave de idempotencia"`
+	ClienteID      int      `json:"cliente_id"       doc:"ID del cliente Microsip visitado"`
+	CobradorID     int      `json:"cobrador_id"      doc:"ID del cobrador Microsip"`
+	Cobrador       string   `json:"cobrador"         doc:"Nombre del cobrador"`
+	FormaCobroID   int      `json:"forma_cobro_id"   doc:"ID de la forma de cobro Microsip; 0 si la visita no generó pago"`
+	Lat            *float64 `json:"lat"             doc:"Latitud donde se capturó la visita. Obligatorio: debe venir presente y no nulo. El VALOR no se restringe — 0 es una coordenada legítima."`
+	Lng            *float64 `json:"lng"             doc:"Longitud donde se capturó la visita. Obligatorio: debe venir presente y no nulo. El VALOR no se restringe — 0 es una coordenada legítima."`
+	Nota           string   `json:"nota,omitempty"   doc:"Nota libre del cobrador"`
+	TipoVisita     string   `json:"tipo_visita"      doc:"Tipo de visita (p.ej. cobro, no_encontrado)"`
+	ZonaClienteID  int      `json:"zona_cliente_id"  doc:"Zona del cliente al momento de la visita"`
+	ImpteDoctoCCID *int     `json:"impte_docto_cc_id,omitempty" doc:"IMPORTES_DOCTOS_CC.IMPTE_DOCTO_CC_ID vinculado al pago de esta visita; nulo si no aplica"`
+	Fecha          string   `json:"fecha"            doc:"Fecha-hora de la visita, RFC3339 UTC"`
 }
 
 // CrearVisitaInput is the HTTP input for POST /visitas.
