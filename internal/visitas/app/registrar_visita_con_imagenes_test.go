@@ -353,6 +353,42 @@ func TestRegistrarVisitaConImagenes_ReintentoIdenticoNoDuplicaNiHuerfana(t *test
 		"and it must not delete anything either — that is how the blob would be orphaned")
 	assert.Equal(t, []string{key}, f.store.keys(), "the one blob is still there")
 	assert.Equal(t, "FOTO", string(f.store.blobs[key]), "with its original bytes")
+	assert.Equal(t, 1, f.tx.calls,
+		"and the replay opened no transaction at all — the pre-flight read answered everything")
+}
+
+func TestRegistrarVisitaConImagenes_DependenciasAMedioCablearTambienFallan(t *testing.T) {
+	t.Parallel()
+
+	// WithImagenes takes the three dependencies together so a half-wired
+	// service cannot be built by accident — but nothing stops a caller
+	// passing a nil among them, and each one alone must still be caught.
+	// Anything else would let a request with photos run against a missing
+	// storage or a missing transaction manager.
+	repo := newFakeVisitasRepo()
+	imgRepo := newFakeImagenesRepo()
+	store := newFakeStorage()
+	tx := &fakeTxRunner{}
+
+	cases := map[string]app.Option{
+		"sin repo de imágenes": app.WithImagenes(nil, store, tx),
+		"sin storage":          app.WithImagenes(imgRepo, nil, tx),
+		"sin transacción":      app.WithImagenes(imgRepo, store, nil),
+	}
+	for name, opt := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			svc := app.NewService(repo, &fakeClock{t: fixedNow}, opt)
+			id := uuid.New()
+
+			_, err := svc.RegistrarVisitaConImagenes(context.Background(), imagenesInput(id),
+				[]app.ImagenUploadInput{upload(id, uuid.New(), "x")}, uuid.New())
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "visitas_imagenes_no_configurado")
+		})
+	}
 }
 
 func TestRegistrarVisitaConImagenes_ReintentoConFotoNuevaLaAdjuntaALaVisitaExistente(t *testing.T) {
