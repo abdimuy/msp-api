@@ -36,7 +36,25 @@ type RegistrarVisitaInput struct {
 // a retried request and its original both resolve to the same success
 // response.
 func (s *Service) RegistrarVisita(ctx context.Context, in RegistrarVisitaInput, by uuid.UUID) (*domain.Visita, error) {
-	v, err := domain.NewVisita(domain.CrearVisitaParams{
+	v, err := domain.NewVisita(crearVisitaParams(in, by, s.clock.Now()))
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.repo.Insert(ctx, v); err != nil {
+		if errors.Is(err, domain.ErrVisitaYaExiste) {
+			return s.repo.FindByID(ctx, in.ID)
+		}
+		return nil, err
+	}
+	return v, nil
+}
+
+// crearVisitaParams maps the app-level input onto the domain constructor's
+// params. Shared by RegistrarVisita and RegistrarVisitaConImagenes so the two
+// entry points can never drift into validating different things.
+func crearVisitaParams(in RegistrarVisitaInput, by uuid.UUID, now time.Time) domain.CrearVisitaParams {
+	return domain.CrearVisitaParams{
 		ID:             in.ID,
 		Cobrador:       in.Cobrador,
 		CobradorID:     in.CobradorID,
@@ -50,17 +68,6 @@ func (s *Service) RegistrarVisita(ctx context.Context, in RegistrarVisitaInput, 
 		ClienteID:      in.ClienteID,
 		ImpteDoctoCCID: in.ImpteDoctoCCID,
 		CreatedBy:      by,
-		Now:            s.clock.Now(),
-	})
-	if err != nil {
-		return nil, err
+		Now:            now,
 	}
-
-	if err := s.repo.Insert(ctx, v); err != nil {
-		if errors.Is(err, domain.ErrVisitaYaExiste) {
-			return s.repo.FindByID(ctx, in.ID)
-		}
-		return nil, err
-	}
-	return v, nil
 }
