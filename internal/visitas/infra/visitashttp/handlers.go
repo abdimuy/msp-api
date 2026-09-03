@@ -5,8 +5,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/abdimuy/msp-api/internal/auth"
 	"github.com/abdimuy/msp-api/internal/platform/apperror"
 	"github.com/abdimuy/msp-api/internal/platform/httpdispatch"
@@ -23,17 +21,44 @@ func NewHandlers(svc *visitasapp.Service) *Handlers {
 	return &Handlers{svc: svc}
 }
 
-// CrearVisita handles POST /visitas.
+// CrearVisita handles POST /visitas in BOTH supported wire formats.
 //
-// Idempotency: the client-generated UUID in body.id is the idempotency key
-// end-to-end (see visitasapp.Service.RegistrarVisita) — a retried request
-// with the same id returns the already-stored visita instead of an error.
+// # Coexistence
 //
-// The Idempotency-Key header must match body.id for real clients (the
+// The route accepts application/json — the shape the phones already in the
+// field send — and multipart/form-data, which carries that same JSON in a
+// `datos` field plus 0..N `imagen` parts. Both land here, take the same
+// validation path, and reach the same service call. A build that predates
+// photos keeps working with no change and no feature flag; see
+// [CrearVisitaInput] for why the body is read as raw bytes to make that
+// possible.
+//
+// This is NOT how cobranza handled its own JSON→multipart move. There the
+// change was a deliberate breaking one — POST /cobranza/pagos rejects a JSON
+// Content-Type outright, and a test pins that rejection — which was
+// affordable because that endpoint had no production consumers. Visitas does
+// not get that luxury, so the coexistence is built here rather than copied.
+//
+// # Idempotency
+//
+// The client-generated UUID in the body is the idempotency key end-to-end
+// (see visitasapp.Service.RegistrarVisitaConImagenes). A retried request with
+// the same id returns the already-stored visita — 201, not 409 — and, when it
+// carries photos, neither duplicates them nor orphans their blobs.
+//
+// The Idempotency-Key header must match the body id for real clients (the
 // mobile app sets both to the visita UUID). An internal replay — a desk
-// operator re-applying a captured request via the failed-intent replay
-// path — mints a fresh transport key by design, so the cross-check is
-// skipped for those (mirrors cobranza's CrearPago).
+// operator re-applying a captured request via the failed-intent replay path —
+// mints a fresh transport key by design, so the cross-check is skipped for
+// those (mirrors cobranza's CrearPago).
+//
+// # Failure modes
+//
+// Everything a client can get wrong — a malformed multipart envelope, a
+// missing boundary, an image type outside the whitelist, a tipo_visita
+// outside the closed catalogue — answers a 4xx with its own code. None of it
+// reaches a 500: on this route a 500 would look like the server silently
+// losing a cobrador's visit.
 func (h *Handlers) CrearVisita(ctx context.Context, in *CrearVisitaInput) (*CrearVisitaOutput, error) {
 	cu, err := currentUserOrError(ctx)
 	if err != nil {
@@ -43,20 +68,32 @@ func (h *Handlers) CrearVisita(ctx context.Context, in *CrearVisitaInput) (*Crea
 		return nil, err
 	}
 
-	visitaID, err := uuid.Parse(in.Body.ID)
-	if err != nil {
-		return nil, mapAppError(
-			apperror.NewValidation("visita_id_invalido", "el id de la visita no es un UUID válido").WithError(err),
-		)
+	decoded, decodeErr := decodeCrearVisitaRequest(in.ContentType, in.RawBody)
+	// Closing every part the decoder opened is not optional: without it the
+	// request leaks a file descriptor per image, which only surfaces under
+	// load. The defer is registered BEFORE the error check on purpose — a
+	// decode that failed halfway still returns the handles it opened.
+	defer func() {
+		for _, c := range decoded.Closers {
+			_ = c.Close()
+		}
+	}()
+	if decodeErr != nil {
+		return nil, mapAppError(decodeErr)
 	}
 
-	if in.IdempotencyKey != "" && in.IdempotencyKey != in.Body.ID && !httpdispatch.IsInternal(ctx) {
+	visitaID, err := parseVisitaID(decoded.Body.ID)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+
+	if in.IdempotencyKey != "" && in.IdempotencyKey != decoded.Body.ID && !httpdispatch.IsInternal(ctx) {
 		return nil, mapAppError(
 			apperror.NewValidation("idempotency_key_mismatch", "Idempotency-Key debe coincidir con body.id"),
 		)
 	}
 
-	fecha, err := time.Parse(time.RFC3339, in.Body.Fecha)
+	fecha, err := time.Parse(time.RFC3339, decoded.Body.Fecha)
 	if err != nil {
 		return nil, mapAppError(
 			apperror.NewValidation("visita_fecha_invalida", "fecha no es una fecha-hora RFC3339 válida").WithError(err),
@@ -65,20 +102,20 @@ func (h *Handlers) CrearVisita(ctx context.Context, in *CrearVisitaInput) (*Crea
 
 	appIn := visitasapp.RegistrarVisitaInput{
 		ID:             visitaID,
-		Cobrador:       in.Body.Cobrador,
-		CobradorID:     in.Body.CobradorID,
+		Cobrador:       decoded.Body.Cobrador,
+		CobradorID:     decoded.Body.CobradorID,
 		Fecha:          fecha.UTC(),
-		FormaCobroID:   in.Body.FormaCobroID,
-		Lat:            in.Body.Lat,
-		Lng:            in.Body.Lng,
-		Nota:           in.Body.Nota,
-		TipoVisita:     in.Body.TipoVisita,
-		ZonaClienteID:  in.Body.ZonaClienteID,
-		ClienteID:      in.Body.ClienteID,
-		ImpteDoctoCCID: in.Body.ImpteDoctoCCID,
+		FormaCobroID:   decoded.Body.FormaCobroID,
+		Lat:            decoded.Body.Lat,
+		Lng:            decoded.Body.Lng,
+		Nota:           decoded.Body.Nota,
+		TipoVisita:     decoded.Body.TipoVisita,
+		ZonaClienteID:  decoded.Body.ZonaClienteID,
+		ClienteID:      decoded.Body.ClienteID,
+		ImpteDoctoCCID: decoded.Body.ImpteDoctoCCID,
 	}
 
-	visita, err := h.svc.RegistrarVisita(ctx, appIn, cu.ID)
+	visita, err := h.svc.RegistrarVisitaConImagenes(ctx, appIn, decoded.Uploads, cu.ID)
 	if err != nil {
 		return nil, mapAppError(err)
 	}
@@ -108,11 +145,9 @@ func (h *Handlers) ObtenerVisita(ctx context.Context, in *ObtenerVisitaInput) (*
 		return nil, err
 	}
 
-	visitaID, err := uuid.Parse(in.ID)
+	visitaID, err := parseVisitaID(in.ID)
 	if err != nil {
-		return nil, mapAppError(
-			apperror.NewValidation("visita_id_invalido", "el id de la visita no es un UUID válido").WithError(err),
-		)
+		return nil, mapAppError(err)
 	}
 
 	visita, err := h.svc.ObtenerVisita(ctx, visitaID)

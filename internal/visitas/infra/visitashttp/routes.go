@@ -3,13 +3,16 @@ package visitashttp
 
 import (
 	"net/http"
+	"reflect"
 	"strconv"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 
 	visitasapp "github.com/abdimuy/msp-api/internal/visitas/app"
+	"github.com/abdimuy/msp-api/internal/visitas/domain"
 )
 
 // securitySchemeName is the OpenAPI security-scheme identifier referenced
@@ -54,7 +57,84 @@ func MountRouter(r chi.Router, svc *visitasapp.Service) huma.API {
 	api := humachi.New(r, config)
 	handlers := NewHandlers(svc)
 	registerOperations(api, handlers)
+	describeCrearVisitaBody(api)
 	return api
+}
+
+// describeCrearVisitaBody rewrites POST /visitas' documented request body.
+//
+// The handler reads raw bytes so it can serve application/json and
+// multipart/form-data on the same route (see CrearVisitaInput). Huma cannot
+// infer that: a []byte RawBody makes it publish a single opaque
+// application/octet-stream binary body, which would tell every reader of the
+// spec the wrong thing about both formats.
+//
+// So the operation is patched after registration with the two media types it
+// actually accepts — the JSON document generated from CrearVisitaBody, and
+// the multipart envelope that wraps that same document in `datos` alongside
+// the repeated `imagen` parts. Doing it here, rather than hand-maintaining a
+// literal schema, keeps the JSON half generated from the Go struct: add a
+// field to CrearVisitaBody and the published contract follows.
+func describeCrearVisitaBody(api huma.API) {
+	spec := api.OpenAPI()
+	if spec == nil || spec.Paths == nil {
+		return
+	}
+	item := spec.Paths["/visitas"]
+	if item == nil || item.Post == nil {
+		return
+	}
+	registry := spec.Components.Schemas
+	jsonSchema := registry.Schema(reflect.TypeOf(CrearVisitaBody{}), true, "CrearVisitaBody")
+
+	item.Post.RequestBody = &huma.RequestBody{
+		Required: true,
+		Description: "Dos formatos sobre la misma ruta. `application/json` es el contrato " +
+			"legacy y sigue vigente sin cambios. `multipart/form-data` lleva ese mismo " +
+			"documento JSON en el campo `datos`, más 0..N archivos `imagen` y, por cada " +
+			"uno, los opcionales `id_<n>` (UUID estable, necesario para que un reintento " +
+			"no duplique la foto) y `descripcion_<n>`.",
+		Content: map[string]*huma.MediaType{
+			mediaTypeJSON:      {Schema: jsonSchema},
+			mediaTypeMultipart: {Schema: crearVisitaMultipartSchema()},
+		},
+	}
+}
+
+// crearVisitaMultipartSchema describes the multipart envelope: `datos` is the
+// JSON document as a string, `imagen` is 0..N binary parts. The per-image
+// `id_<n>` / `descripcion_<n>` fields cannot be expressed in JSON Schema —
+// their names depend on position — so they live in the request body's
+// description instead.
+func crearVisitaMultipartSchema() *huma.Schema {
+	return &huma.Schema{
+		Type:     "object",
+		Required: []string{"datos"},
+		Properties: map[string]*huma.Schema{
+			"datos": {
+				Type: "string",
+				Description: "El documento JSON de la visita — los mismos campos que el cuerpo " +
+					"application/json de esta misma ruta, serializados como texto.",
+			},
+			"imagen": {
+				Type: "array",
+				Description: "0..N fotos. Cada parte DEBE declarar su propio Content-Type, y solo " +
+					"se aceptan: " + strings.Join(mimesPermitidos(), ", ") + ".",
+				Items: &huma.Schema{
+					Type:   "string",
+					Format: "binary",
+				},
+			},
+		},
+	}
+}
+
+// mimesPermitidos lists the accepted image MIME types, read from the domain
+// so the published contract and the runtime check cannot drift.
+func mimesPermitidos() []string {
+	return []string{
+		domain.MimeJPEG, domain.MimePNG, domain.MimeGIF, domain.MimeWebP, domain.MimePDF,
+	}
 }
 
 // registerOperations declares every Huma operation the visitas module exposes.
@@ -63,11 +143,15 @@ func registerOperations(api huma.API, h *Handlers) {
 	tags := []string{"visitas"}
 
 	huma.Register(api, huma.Operation{
-		OperationID:   "crear-visita",
-		Method:        http.MethodPost,
-		Path:          "/visitas",
-		Summary:       "Registrar visita de cobranza",
-		Description:   "Registra que un cobrador visitó a un cliente en su ruta, haya generado pago o no. Idempotente en el id enviado por el cliente.",
+		OperationID: "crear-visita",
+		Method:      http.MethodPost,
+		Path:        "/visitas",
+		Summary:     "Registrar visita de cobranza",
+		Description: "Registra que un cobrador visitó a un cliente en su ruta, haya generado pago o no. " +
+			"Idempotente en el id enviado por el cliente, incluso cuando la request trae fotos. " +
+			"Acepta application/json (contrato legacy, sin cambios) y multipart/form-data " +
+			"(el mismo JSON en `datos` más 0..N `imagen`); visita e imágenes se persisten en " +
+			"una sola transacción, de modo que nunca queda una foto huérfana ni una visita a medias.",
 		Tags:          tags,
 		Security:      security,
 		DefaultStatus: http.StatusCreated,

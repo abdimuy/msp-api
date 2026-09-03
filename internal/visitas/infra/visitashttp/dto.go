@@ -70,9 +70,40 @@ type CrearVisitaBody struct {
 }
 
 // CrearVisitaInput is the HTTP input for POST /visitas.
+//
+// # Why RawBody []byte and not a typed Body
+//
+// This route accepts TWO wire formats on the same path and method:
+//
+//   - application/json — the body IS a CrearVisitaBody. This is the format
+//     the phones in the field already send and it must keep working
+//     unchanged; a build that predates the photo feature has no idea
+//     multipart exists.
+//   - multipart/form-data — a `datos` field carrying that same JSON document
+//     verbatim, plus 0..N repeated `imagen` file parts and their optional
+//     positional `id_<n>` / `descripcion_<n>` companions.
+//
+// Huma cannot express that with a typed body. `Body CrearVisitaBody` parses
+// JSON unconditionally and `huma.MultipartFormFiles[T]` parses multipart
+// unconditionally — its decoder calls readForm without ever consulting
+// Content-Type, so a JSON body against it is a 422 with no way to intervene.
+// Declaring RawBody as []byte puts Huma in pass-through mode (rawBodyType
+// "other"): it reads the bytes, bounded by the global BodyLimit, and hands
+// them over undecoded. [Handlers.CrearVisita] then branches on ContentType.
+//
+// What that costs is Huma's automatic body validation, which this route never
+// relied on: CrearVisitaBody declares no `required` and no `format`, and every
+// field is parsed and validated by hand precisely so each failure gets its
+// own apperror code. What it buys is that both formats reach the same
+// handler, the same service call, and the same idempotency guarantee.
+//
+// The OpenAPI request body is rewritten after registration (see
+// describeCrearVisitaBody in routes.go) so the published contract shows both
+// media types instead of the opaque octet-stream Huma would infer.
 type CrearVisitaInput struct {
-	IdempotencyKey string `header:"Idempotency-Key" doc:"Opcional. Si presente, debe coincidir con body.id"`
-	Body           CrearVisitaBody
+	ContentType    string `header:"Content-Type"    doc:"application/json (contrato legacy) o multipart/form-data (con fotos)"`
+	IdempotencyKey string `header:"Idempotency-Key" doc:"Opcional. Si presente, debe coincidir con el id del cuerpo"`
+	RawBody        []byte
 }
 
 // CrearVisitaOutput wraps a 201 Created response.

@@ -44,9 +44,19 @@ func requirePerm(cu auth.CurrentUser, perms ...auth.Permission) error {
 
 // mapAppError translates a typed apperror.Error into a huma.StatusError. Non-
 // apperror errors fall through as 500.
+//
+// An error that ALREADY carries an HTTP status passes through untouched. The
+// transport layer produces a couple of those directly — a 415 for an
+// unsupported Content-Type, for one — because apperror has no kind for them,
+// and turning a deliberate 415 into a 500 on the way out would be worse than
+// the gap it papers over.
 func mapAppError(err error) error {
 	if err == nil {
 		return nil
+	}
+	var se huma.StatusError
+	if errors.As(err, &se) {
+		return err
 	}
 	var ae *apperror.Error
 	if !errors.As(err, &ae) {

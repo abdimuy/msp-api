@@ -140,9 +140,16 @@ func TestSecurity_Visitas_MissingPermission_Returns403(t *testing.T) {
 // TestSecurity_Visitas_MalformedOrOversizedInput asserts a table of
 // malformed/oversized/path-injection-flavored requests all resolve to a
 // clean 4xx (never 500, never a panic) for an authenticated, fully-permitted
-// caller — proving Huma's schema validation and the handler's own parsing
-// (uuid.Parse / time.Parse / domain bounds) reject bad input before ever
-// reaching the (nil) service.
+// caller.
+//
+// It runs against the REAL service router, not the nil-service one. It used
+// to run against the nil service and pass, but only by accident: Huma treats
+// every field of a typed Body as required unless the json tag says
+// omitempty, so each of these bodies was rejected at the schema level for
+// omitting cobrador_id / lat / lng, never for the flaw the case is named
+// after. Now that the route reads its own body (both Content-Types share one
+// handler), those flaws are caught where they belong — uuid.Parse,
+// time.Parse and the domain bounds — which needs a service that exists.
 func TestSecurity_Visitas_MalformedOrOversizedInput(t *testing.T) {
 	t.Parallel()
 
@@ -193,7 +200,7 @@ func TestSecurity_Visitas_MalformedOrOversizedInput(t *testing.T) {
 			req := secVisitasRequest(http.MethodPost, tc.body, "")
 			rec := httptest.NewRecorder()
 
-			secVisitasRouter(&cu).ServeHTTP(rec, req)
+			secVisitasRealRouter(cu).ServeHTTP(rec, req)
 
 			assert.GreaterOrEqual(t, rec.Code, 400, "body=%s", rec.Body.String())
 			assert.Less(t, rec.Code, 500, "must not be a 5xx (no panic/internal error); body=%s", rec.Body.String())
@@ -486,4 +493,164 @@ func TestSecurity_VisitasExistentesPorIDs_UnknownIDs_Never500(t *testing.T) {
 	var got []string
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
 	assert.Empty(t, got, "none of these ids were ever seeded")
+}
+
+// ─── POST /v2/visitas · multipart ───────────────────────────────────────────
+//
+// The route now accepts a second wire format, so the security sweep is
+// repeated over it. A route that is locked down in JSON and wide open in
+// multipart would be no better than one that was never locked down.
+
+// secVisitasMultipart builds a minimal, well-formed multipart body: a `datos`
+// field carrying a valid visita plus one JPEG part.
+// The fecha is anchored to fixedNow, the instant the multipart fixture's
+// clock reports, so the positive control below is not rejected as a
+// future-dated visit.
+func secVisitasMultipart(t *testing.T) ([]byte, string) {
+	t.Helper()
+	id := uuid.New()
+	fecha := fixedNow.Add(-time.Hour).Format(time.RFC3339)
+	return buildMultipart(t, visitaBodyJSON(id.String(), fecha),
+		[]testImagen{jpeg(uuid.NewString(), "puerta")})
+}
+
+// secVisitasMultipartRequest wraps a multipart body in a POST /visitas.
+func secVisitasMultipartRequest(body []byte, contentType string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/visitas", bytes.NewReader(body))
+	req.Header.Set("Content-Type", contentType)
+	return req
+}
+
+// TestSecurity_Visitas_Multipart_NoAuth_Returns401 verifies an
+// unauthenticated multipart upload is refused before the (nil) service is
+// touched — and before a single byte reaches storage.
+func TestSecurity_Visitas_Multipart_NoAuth_Returns401(t *testing.T) {
+	t.Parallel()
+
+	body, ct := secVisitasMultipart(t)
+	rec := httptest.NewRecorder()
+
+	secVisitasRouter(nil).ServeHTTP(rec, secVisitasMultipartRequest(body, ct))
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code, "body=%s", rec.Body.String())
+}
+
+// TestSecurity_Visitas_Multipart_CadaPermisoMenosElCorrecto_Returns403 walks
+// the whole permission catalogue and asserts that holding ANY of them —
+// except cobranza:ver_pagos — is a 403 on the multipart route.
+//
+// The positive control is the last subtest: the same request with exactly
+// cobranza:ver_pagos answers 201. Without it, a handler that returned 403
+// unconditionally would pass every other row.
+func TestSecurity_Visitas_Multipart_CadaPermisoMenosElCorrecto_Returns403(t *testing.T) {
+	t.Parallel()
+
+	otros := []auth.Permission{
+		auth.PermUsuariosListar,
+		auth.PermUsuariosVer,
+		auth.PermUsuariosCrear,
+		auth.PermRolesListar,
+		auth.PermPermisosListar,
+		auth.PermVentasListar,
+		auth.PermVentasCrear,
+		auth.PermVentasSubirImagenes,
+		auth.PermFailedIntentsVer,
+		auth.PermCobranzaVerSaldos,
+		auth.PermCobranzaReconciliar,
+	}
+
+	for _, perm := range otros {
+		t.Run(string(perm), func(t *testing.T) {
+			t.Parallel()
+
+			cu := secVisitasNoPermUser()
+			cu.Permisos = []string{string(perm)}
+
+			body, ct := secVisitasMultipart(t)
+			rec := httptest.NewRecorder()
+			secVisitasRouter(&cu).ServeHTTP(rec, secVisitasMultipartRequest(body, ct))
+
+			assert.Equal(t, http.StatusForbidden, rec.Code,
+				"holding only %s must not open the multipart route; body=%s", perm, rec.Body.String())
+		})
+	}
+
+	t.Run("control positivo: cobranza:ver_pagos sí entra", func(t *testing.T) {
+		t.Parallel()
+
+		f := newMultipartFixture(t)
+		body, ct := secVisitasMultipart(t)
+		rec := postMultipart(t, f, body, ct, "")
+
+		require.Equal(t, http.StatusCreated, rec.Code,
+			"the sweep above only means something if the right permission DOES work; body=%s",
+			rec.Body.String())
+	})
+}
+
+// TestSecurity_Visitas_Multipart_MalformedNeverReturns500 asserts that no
+// shape of broken multipart envelope produces a 5xx. On this route a 500
+// reads to a cobrador as "the server lost my visit", so every one of these
+// has to come back as a clean, actionable 4xx.
+func TestSecurity_Visitas_Multipart_MalformedNeverReturns500(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	fecha := fixedNow.Add(-time.Hour).Format(time.RFC3339)
+	valid := visitaBodyJSON(id.String(), fecha)
+
+	cases := []struct {
+		name        string
+		body        []byte
+		contentType string
+	}{
+		{
+			name:        "boundary sin declarar",
+			body:        []byte("--x\r\n\r\n--x--\r\n"),
+			contentType: "multipart/form-data",
+		},
+		{
+			name:        "boundary con caracteres de control",
+			body:        []byte("--x\r\n\r\n--x--\r\n"),
+			contentType: "multipart/form-data; boundary=\"a\x00b\"",
+		},
+		{
+			name:        "cabecera de parte truncada",
+			body:        []byte("--b1\r\nContent-Disposition: form-data; name=\"da"),
+			contentType: "multipart/form-data; boundary=b1",
+		},
+		{
+			name:        "parte sin terminador de cierre",
+			body:        []byte("--b1\r\nContent-Disposition: form-data; name=\"datos\"\r\n\r\n" + valid + "\r\n"),
+			contentType: "multipart/form-data; boundary=b1",
+		},
+		{
+			name:        "datos con un JSON anidado hasta el absurdo",
+			body:        []byte("--b1\r\nContent-Disposition: form-data; name=\"datos\"\r\n\r\n" + strings.Repeat("[", 5000) + "\r\n--b1--\r\n"),
+			contentType: "multipart/form-data; boundary=b1",
+		},
+		{
+			name:        "nombre de archivo con path traversal",
+			body:        []byte("--b1\r\nContent-Disposition: form-data; name=\"imagen\"; filename=\"../../etc/passwd\"\r\nContent-Type: image/jpeg\r\n\r\nx\r\n--b1\r\nContent-Disposition: form-data; name=\"datos\"\r\n\r\n" + valid + "\r\n--b1--\r\n"),
+			contentType: "multipart/form-data; boundary=b1",
+		},
+		{
+			name:        "campo datos repetido",
+			body:        []byte("--b1\r\nContent-Disposition: form-data; name=\"datos\"\r\n\r\n" + valid + "\r\n--b1\r\nContent-Disposition: form-data; name=\"datos\"\r\n\r\nbasura\r\n--b1--\r\n"),
+			contentType: "multipart/form-data; boundary=b1",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newMultipartFixture(t)
+			rec := postMultipart(t, f, tc.body, tc.contentType, "")
+
+			assert.Less(t, rec.Code, 500,
+				"must never be a 5xx (no panic, no internal error); code=%d body=%s",
+				rec.Code, rec.Body.String())
+		})
+	}
 }
