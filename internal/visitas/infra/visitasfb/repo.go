@@ -12,6 +12,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -111,6 +112,56 @@ func (r *Repo) FindByID(ctx context.Context, id uuid.UUID) (*domain.Visita, erro
 			return serr
 		}
 		result = v
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// FindExistingIDs returns the subset of ids that already exist in
+// MSP_VISITAS. A single SELECT ID ... WHERE ID IN (...) round-trip — no
+// chunking: the caller (visitashttp) caps ids at maxIDsPorRequest (100,
+// see that constant's doc), which is far under Firebird's own bound-
+// parameter ceiling per statement, so one query always suffices (mirrors
+// internal/ventas/infra/ventfb.VentaRepo.FindByIDs, which does the same for
+// its own — much larger, unbounded internally — caller-side batches).
+func (r *Repo) FindExistingIDs(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
+	if len(ids) == 0 {
+		return []uuid.UUID{}, nil
+	}
+	var result []uuid.UUID
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+		query := "SELECT ID FROM MSP_VISITAS WHERE ID IN (" + placeholders + ")"
+		args := make([]any, len(ids))
+		for i, id := range ids {
+			args[i] = id.String()
+		}
+		rows, qerr := q.QueryContext(ctx, query, args...)
+		if qerr != nil {
+			return firebird.MapError(qerr)
+		}
+		defer func() { _ = rows.Close() }()
+
+		out := make([]uuid.UUID, 0, len(ids))
+		for rows.Next() {
+			var raw string
+			if serr := rows.Scan(&raw); serr != nil {
+				return firebird.MapError(serr)
+			}
+			id, perr := uuid.Parse(raw)
+			if perr != nil {
+				return apperror.NewInternal("visita_id_invalido", "id de visita inválido en la base de datos").WithError(perr)
+			}
+			out = append(out, id)
+		}
+		if rerr := rows.Err(); rerr != nil {
+			return firebird.MapError(rerr)
+		}
+		result = out
 		return nil
 	})
 	if err != nil {

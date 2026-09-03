@@ -97,3 +97,30 @@ type ObtenerVisitaInput struct {
 type ObtenerVisitaOutput struct {
 	Body VisitaDTO
 }
+
+// VisitasExistentesPorIDsInput is the query parameter for
+// GET /visitas/by-ids. ids is a required, comma-separated list of UUIDs; see
+// parseIDsParam (handlers_visitas_existentes_por_ids.go) for the exact
+// parsing/validation rules and maxIDsPorRequest for the cap.
+//
+// Declared as a plain string, not `query:"ids" required:"true"`: an absent
+// or empty ids must answer the module's own ids_required apperror (422,
+// distinguishable code), not Huma's generic required-field 422 — so
+// required-ness is enforced by the handler, not by the Huma schema.
+type VisitasExistentesPorIDsInput struct {
+	IDs string `query:"ids" doc:"UUIDs separados por coma; ids que el servidor no conoce simplemente no aparecen en la respuesta"`
+}
+
+// VisitasExistentesPorIDsOutput wraps the flat JSON array of existing UUIDs
+// (as strings) for GET /visitas/by-ids — no envelope. The reconciler this
+// endpoint serves never downloads visits, only confirms which of the ids it
+// uploaded already exist, so the response carries ids, not VisitaDTOs.
+//
+// A bare array as a Huma response body is a supported, native shape — Huma
+// treats a GET operation whose Body is a slice as a "list" operation (see
+// huma.GenerateOperationID) — so this endpoint stays inside Huma rather than
+// dropping to a raw chi handler the way cobranza's by-ids channel does (see
+// this handler's package doc comment for the full reasoning).
+type VisitasExistentesPorIDsOutput struct {
+	Body []string
+}

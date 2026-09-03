@@ -68,6 +68,29 @@ func (r *fakeVisitasRepo) FindByID(_ context.Context, id uuid.UUID) (*domain.Vis
 	return v, nil
 }
 
+// FindExistingIDs mirrors visitasfb.Repo.FindExistingIDs: only ids present
+// in the in-memory store are returned, in no particular order, deduplicated
+// (a SQL "WHERE ID IN (...)" answers once per matching row regardless of how
+// many times a value repeats in the list). An empty ids slice short-circuits
+// to an empty slice, matching the real repo's contract.
+func (r *fakeVisitasRepo) FindExistingIDs(_ context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
+	if len(ids) == 0 {
+		return []uuid.UUID{}, nil
+	}
+	seen := make(map[uuid.UUID]bool, len(ids))
+	out := make([]uuid.UUID, 0, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		if _, ok := r.byID[id]; ok {
+			out = append(out, id)
+			seen[id] = true
+		}
+	}
+	return out, nil
+}
+
 // ─── CurrentUser fixtures ───────────────────────────────────────────────────
 
 // visitaUser builds a CurrentUser holding auth.PermCobranzaVerPagos, the

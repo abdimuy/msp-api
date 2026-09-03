@@ -3,6 +3,7 @@ package visitashttp_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/abdimuy/msp-api/internal/visitas/app"
 	"github.com/abdimuy/msp-api/internal/visitas/infra/visitashttp"
@@ -93,4 +95,41 @@ func TestMountRouter_UnauthenticatedAtV2Visitas(t *testing.T) {
 	root.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusUnauthorized, rec.Code, "body: %s", rec.Body.String())
+}
+
+// TestMountRouter_ByIDsDoesNotShadowObtenerVisita pins down the routing
+// question raised in registerOperations's doc comment: "by-ids" is a
+// literal path segment sibling to the "{id}" parameter at
+// GET /visitas/{id}. chi must resolve GET /visitas/by-ids to
+// VisitasExistentesPorIDs — never to ObtenerVisita with id="by-ids", which
+// would fail uuid.Parse and return a generic 422 that could be mistaken for
+// this endpoint working by accident.
+func TestMountRouter_ByIDsDoesNotShadowObtenerVisita(t *testing.T) {
+	t.Parallel()
+
+	repo := newFakeVisitasRepo()
+	svc := app.NewService(repo, &fakeClock{t: fixedNow})
+	known := uuid.New()
+	seedVisitaDirect(t, repo, known)
+
+	root := chi.NewRouter()
+	root.Route("/v2", func(r chi.Router) {
+		r.Group(func(r chi.Router) {
+			r.Use(planter(visitaUser()))
+			visitashttp.MountRouter(r, svc)
+		})
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/v2/visitas/by-ids?ids="+known.String(), nil)
+	rec := httptest.NewRecorder()
+	root.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code,
+		"GET /visitas/by-ids must resolve to VisitasExistentesPorIDs, not to ObtenerVisita "+
+			"with id=\"by-ids\" (which would answer visita_id_invalido); body: %s", rec.Body.String())
+
+	var got []string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.Equal(t, []string{known.String()}, got)
+	assert.NotContains(t, rec.Body.String(), "visita_id_invalido")
 }

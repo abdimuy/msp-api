@@ -384,3 +384,106 @@ func TestSecurity_CrearVisita_TipoFueraDelCatalogoNoEs500(t *testing.T) {
 		})
 	}
 }
+
+// ─── GET /v2/visitas/by-ids ─────────────────────────────────────────────────
+
+// TestSecurity_VisitasExistentesPorIDs_NoAuth_Returns401 — axis 1: no
+// credentials. The nil service is never dereferenced.
+func TestSecurity_VisitasExistentesPorIDs_NoAuth_Returns401(t *testing.T) {
+	t.Parallel()
+
+	rec := httptest.NewRecorder()
+	secVisitasRouter(nil).ServeHTTP(rec, byIDsRequest(uuid.New().String()))
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code, "body=%s", rec.Body.String())
+}
+
+// TestSecurity_VisitasExistentesPorIDs_MissingPermission_Returns403 — axis
+// 2, in both its forms: a principal with no permissions at all, and a
+// principal holding every permission except the one that matters.
+func TestSecurity_VisitasExistentesPorIDs_MissingPermission_Returns403(t *testing.T) {
+	t.Parallel()
+
+	todosMenos := secVisitasTodosMenosVerPagos(t)
+
+	cases := []struct {
+		name string
+		cu   auth.CurrentUser
+	}{
+		{"no permissions at all", secVisitasNoPermUser()},
+		{"every permission except cobranza:ver_pagos", todosMenos},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := httptest.NewRecorder()
+			secVisitasRouter(&tc.cu).ServeHTTP(rec, byIDsRequest(uuid.New().String()))
+
+			assert.Equal(t, http.StatusForbidden, rec.Code, "body=%s", rec.Body.String())
+		})
+	}
+}
+
+// TestSecurity_VisitasExistentesPorIDs_MalformedOrOversizedInput — axis 3:
+// a table of malformed/oversized ids values, all of which must resolve to a
+// clean 4xx (never 500, never a panic) before the (nil) service is ever
+// dereferenced — every case here is rejected by parseIDsParam itself
+// (ids_required / ids_too_many / ids_invalid), which runs strictly before
+// h.svc.VisitasExistentesPorIDs is called.
+func TestSecurity_VisitasExistentesPorIDs_MalformedOrOversizedInput(t *testing.T) {
+	t.Parallel()
+
+	cu := visitaUser() // holds PermCobranzaVerPagos (defined in handlers_test.go)
+
+	cases := []struct {
+		name string
+		req  *http.Request
+	}{
+		{"no ids param at all", byIDsRequestNoParam()},
+		{"empty ids param", byIDsRequest("")},
+		{"sql-injection-flavored id", byIDsRequest("'; DROP TABLE MSP_VISITAS; --")},
+		{"path-traversal-flavored id", byIDsRequest("../../../etc/passwd")},
+		{"control characters embedded in id", byIDsRequest("abc\x01def")},
+		{"nul byte", byIDsRequest("abc\x00def")},
+		{"unicode", byIDsRequest("María-García-ñ")},
+		{"one malformed id among 99 valid ones", byIDsRequest(strings.Join(append(nIDs(99), "no-soy-un-uuid"), ","))},
+		{"absurdly long single segment (5000 chars)", byIDsRequest(strings.Repeat("a", 5000))},
+		{"cap + 1 well-formed uuids", byIDsRequest(strings.Join(nIDs(101), ","))},
+		{"cap + 1 garbage segments", byIDsRequest(strings.Repeat("x,", 600))},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := httptest.NewRecorder()
+			secVisitasRouter(&cu).ServeHTTP(rec, tc.req)
+
+			assert.GreaterOrEqual(t, rec.Code, 400, "body=%s", rec.Body.String())
+			assert.Less(t, rec.Code, 500, "must not be a 5xx (no panic/internal error); body=%s", rec.Body.String())
+		})
+	}
+}
+
+// TestSecurity_VisitasExistentesPorIDs_UnknownIDs_Never500 proves that a
+// well-formed but entirely unknown id set reaches the (real) service and
+// answers 200 with an empty array — never a 500 — using the same
+// real-service router pattern as
+// TestSecurity_ObtenerVisita_MalformedPathParam, because a nil service
+// would panic on a request that legitimately reaches it.
+func TestSecurity_VisitasExistentesPorIDs_UnknownIDs_Never500(t *testing.T) {
+	t.Parallel()
+
+	cu := visitaUser()
+	router := secVisitasRealRouter(cu)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, byIDsRequest(strings.Join(nIDs(10), ",")))
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var got []string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.Empty(t, got, "none of these ids were ever seeded")
+}
