@@ -19,10 +19,10 @@ import (
 
 	"github.com/abdimuy/msp-api/internal/auth"
 	authdomain "github.com/abdimuy/msp-api/internal/auth/domain"
-	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
 	"github.com/abdimuy/msp-api/internal/cobranza/infra/cobranzahttp"
 	"github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/config"
+	"github.com/abdimuy/msp-api/internal/platform/eventbus"
 )
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

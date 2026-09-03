@@ -1,7 +1,16 @@
 // Package eventbus provides a pure-Go, in-process fan-out bus that carries
-// an IDs payload. It is used to bridge the Firebird POST_EVENT listener with
-// SSE handlers: the listener calls Publish with the IDs that changed and SSE
-// handlers block on subscribed channels to emit those IDs to clients.
+// an IDs payload. It is used to bridge event producers with SSE handlers: the
+// producer calls Publish with the IDs that changed and SSE handlers block on
+// subscribed channels to emit those IDs to clients.
+//
+// It lives under internal/platform because it is shared transport, not any one
+// module's business logic. Two modules publish to it today — cobranza (from
+// the Firebird POST_EVENT listener, carrying the ids that changed) and visitas
+// (a payload-free wakeup on the "visitas_confirmadas" topic). It was moved here
+// from internal/cobranza/app/eventbus when visitas needed it: depguard's
+// no-cross-module-internals rule (.golangci.yml) denies importing another
+// module'"'"'s app package, and the right answer to that rule is to move shared
+// infrastructure to platform, never to relax the rule.
 package eventbus
 
 import (

@@ -7,6 +7,7 @@ package app
 import (
 	"context"
 
+	"github.com/abdimuy/msp-api/internal/platform/eventbus"
 	"github.com/abdimuy/msp-api/internal/visitas/ports/outbound"
 )
 
@@ -34,6 +35,7 @@ type Service struct {
 	imagenes outbound.VisitasImagenesRepo
 	storage  outbound.StorageProvider
 	tx       TxRunner
+	bus      *eventbus.Bus
 }
 
 // Option customizes a Service at construction time.
@@ -52,6 +54,23 @@ func WithImagenes(
 		s.imagenes = imagenes
 		s.storage = storage
 		s.tx = tx
+	}
+}
+
+// WithEventBus wires the push bus the SSE stream reads from. Optional and nil
+// by default: a Service without it registers visits exactly the same way, it
+// just announces nothing, and the reconciler's other three triggers still pick
+// the visit up. Push is a latency optimization, never a correctness
+// dependency, and the wiring reflects that.
+//
+// The bus is used directly rather than behind a port. A port here would have
+// exactly one implementation and would not cross a module boundary — the
+// repo's own YAGNI rule calls that a defect — and *eventbus.Bus is a pure
+// in-process value with no I/O, so tests subscribe to the real bus and assert
+// on what actually arrives instead of trusting a hand-written double.
+func WithEventBus(bus *eventbus.Bus) Option {
+	return func(s *Service) {
+		s.bus = bus
 	}
 }
 
@@ -76,3 +95,34 @@ func (s *Service) runInTx(ctx context.Context, fn func(context.Context) error) e
 	}
 	return s.tx.RunInTx(ctx, fn)
 }
+
+// anunciarVisitaConfirmada publishes the payload-free wakeup that the visitas
+// SSE stream turns into an `event: visitas_confirmadas` for connected phones.
+//
+// Called ONLY after the write is durable — after the transaction commits on
+// the photo path, after Insert returns on the plain one. Announcing from
+// inside a transaction would let a rolled-back visita tell the fleet it
+// exists.
+//
+// It is also called on the idempotent-replay paths, and that is deliberate
+// rather than sloppy: the case this whole push channel exists for is a phone
+// whose upload succeeded but whose RESPONSE was lost. That phone retries, the
+// retry resolves to a replay, and if the replay stayed silent the phone would
+// wait for the 15-minute periodic tick to learn what the server already knew.
+//
+// The published payload is an empty []int — the event carries no visit ids
+// because it carries no authority. It wakes the reconciler; the reconciler
+// confirms through by-ids. Publish is non-blocking and a no-op when no bus is
+// wired, so this can never fail a write that already succeeded.
+func (s *Service) anunciarVisitaConfirmada() {
+	if s.bus == nil {
+		return
+	}
+	s.bus.Publish(eventbusTopicVisitasConfirmadas, []int{})
+}
+
+// eventbusTopicVisitasConfirmadas mirrors visitashttp.TopicVisitasConfirmadas.
+// The constant is duplicated rather than imported because app must not depend
+// on infra (depguard's app-no-infra rule); TestTopicoDePublicacionCoincideConElDelStream
+// in the infra package pins the two together so they cannot drift.
+const eventbusTopicVisitasConfirmadas = "visitas_confirmadas"

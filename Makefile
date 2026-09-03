@@ -367,8 +367,8 @@ test-mutation-cobranza-domain: ## Run mutation testing on cobranza/domain only (
 test-mutation-cobranza-app: ## Run mutation testing on cobranza/app only (gate 80%)
 	TMPDIR=/Volumes/M2-1TB/.go-cache/tmp gremlins unleash --threshold-efficacy 80 ./internal/cobranza/app
 
-test-mutation-cobranza-eventbus: ## Run mutation testing on cobranza/app/eventbus only (gate 80%)
-	TMPDIR=/Volumes/M2-1TB/.go-cache/tmp gremlins unleash --threshold-efficacy 80 ./internal/cobranza/app/eventbus
+test-mutation-cobranza-eventbus: ## Run mutation testing on platform/eventbus only (gate 80%)
+	TMPDIR=/Volumes/M2-1TB/.go-cache/tmp gremlins unleash --threshold-efficacy 80 ./internal/platform/eventbus
 
 test-mutation-visitas: test-mutation-visitas-domain test-mutation-visitas-app ## Run mutation testing on the visitas module (domain + app) with 80% kill-ratio gate
 

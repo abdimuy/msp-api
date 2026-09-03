@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 
+	"github.com/abdimuy/msp-api/internal/platform/eventbus"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 	ventasoutbound "github.com/abdimuy/msp-api/internal/ventas/ports/outbound"
 	visitasapp "github.com/abdimuy/msp-api/internal/visitas/app"
@@ -45,14 +46,23 @@ func provideVisitasStorage(ventasStorage ventasoutbound.StorageProvider) visitas
 // provideVisitasService assembles the visitas command service, including the
 // photo path. The transaction manager is the shared *firebird.TxManager,
 // which satisfies visitasapp.TxRunner implicitly.
+// The bus is the SAME process-wide *eventbus.Bus cobranza publishes to — one
+// bus, distinct topics. It moved to internal/platform when visitas needed it,
+// because depguard forbids importing another module's app package and the
+// answer to that rule is to relocate shared infrastructure, not to weaken it.
 func provideVisitasService(
 	repo visitasoutbound.VisitasRepo,
 	imagenes visitasoutbound.VisitasImagenesRepo,
 	storage visitasoutbound.StorageProvider,
 	txMgr *firebird.TxManager,
 	clock visitasoutbound.Clock,
+	bus *eventbus.Bus,
 ) *visitasapp.Service {
-	return visitasapp.NewService(repo, clock, visitasapp.WithImagenes(imagenes, storage, txMgr))
+	return visitasapp.NewService(
+		repo, clock,
+		visitasapp.WithImagenes(imagenes, storage, txMgr),
+		visitasapp.WithEventBus(bus),
+	)
 }
 
 // visitasStorageAdapter re-packs a ventas StorageProvider as a visitas one.

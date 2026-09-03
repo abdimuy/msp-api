@@ -18,10 +18,10 @@ import (
 	"github.com/abdimuy/msp-api/internal/auth"
 	authdomain "github.com/abdimuy/msp-api/internal/auth/domain"
 	cobranzaapp "github.com/abdimuy/msp-api/internal/cobranza/app"
-	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
 	"github.com/abdimuy/msp-api/internal/cobranza/infra/cobranzahttp"
 	"github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/config"
+	"github.com/abdimuy/msp-api/internal/platform/eventbus"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"

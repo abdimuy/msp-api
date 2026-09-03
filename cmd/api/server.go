@@ -29,9 +29,9 @@ import (
 	"github.com/abdimuy/msp-api/internal/ventas/infra/venthttp"
 
 	cobranzaapp "github.com/abdimuy/msp-api/internal/cobranza/app"
-	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
 	"github.com/abdimuy/msp-api/internal/cobranza/infra/cobranzahttp"
 	cobranzaoutbound "github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
+	"github.com/abdimuy/msp-api/internal/platform/eventbus"
 
 	microsipapp "github.com/abdimuy/msp-api/internal/microsip/app"
 	"github.com/abdimuy/msp-api/internal/microsip/infra/microsiphttp"
@@ -171,7 +171,7 @@ func provideRootHandler(
 	cobranzaSvc *cobranzaapp.Service,
 	cobranzaReconciler *cobranzaapp.Reconciler,
 	cobranzaErrors cobranzaoutbound.ErrorsRepo,
-	cobranzaBus *eventbus.Bus,
+	eventBus *eventbus.Bus,
 	cobranzaPagosRepo cobranzaoutbound.PagosRepo,
 	cobranzaVentasRepo cobranzaoutbound.VentasRepo,
 	cobranzaClock cobranzaoutbound.Clock,
@@ -346,7 +346,15 @@ func provideRootHandler(
 		// /v2/visitas/visitas. Final path: POST /v2/visitas.
 		r.Group(func(r chi.Router) {
 			r.Use(authn.Handler, visitasCapture)
-			visitashttp.MountRouter(r, visitasSvc)
+			// WithSSE also mounts GET
+			// /v2/visitas/sync/visitas/zona/{zona_id}/stream — a route of its
+			// own rather than a second event type on cobranza's streams. The
+			// shipped client decides an event's meaning from which socket it
+			// arrived on and ignores the event name, so multiplexing would
+			// make every old phone re-sync cobranza on every visit; a separate
+			// path they never open makes their exposure zero by construction.
+			visitashttp.MountRouter(r, visitasSvc,
+				visitashttp.WithSSE(eventBus, cfg.Visitas, logger))
 		})
 
 		// Cobranza endpoints — authn only. Read (saldos, pagos, sync) plus
@@ -360,7 +368,7 @@ func provideRootHandler(
 			// for /replay-with-multipart to rebuild the original requester.
 			r.Use(authn.Handler, cobranzaCapture)
 			cobranzahttp.MountReadRouter(
-				r, cobranzaSvc, cobranzaBus, cfg.Cobranza, logger,
+				r, cobranzaSvc, eventBus, cfg.Cobranza, logger,
 				cobranzaPagosRepo, cobranzaVentasRepo, cobranzaClock,
 			)
 		})

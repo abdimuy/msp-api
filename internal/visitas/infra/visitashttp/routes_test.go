@@ -3,7 +3,10 @@ package visitashttp_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,6 +17,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/abdimuy/msp-api/internal/platform/config"
+	"github.com/abdimuy/msp-api/internal/platform/eventbus"
 	"github.com/abdimuy/msp-api/internal/visitas/app"
 	"github.com/abdimuy/msp-api/internal/visitas/infra/visitashttp"
 )
@@ -132,4 +137,105 @@ func TestMountRouter_ByIDsDoesNotShadowObtenerVisita(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
 	assert.Equal(t, []string{known.String()}, got)
 	assert.NotContains(t, rec.Body.String(), "visita_id_invalido")
+}
+
+// TestMountRouter_SSERouteEstaMontada is the composition test for the new
+// route. It replicates the composition root's mount shape and asserts the
+// stream is reachable at exactly
+// GET /v2/visitas/sync/visitas/zona/{zona_id}/stream.
+//
+// The "/stream" suffix is not cosmetic and is worth a composition test rather
+// than a unit one: middleware.isStreamingPath exempts exactly that suffix from
+// the request Timeout middleware, so a route renamed to anything else would be
+// cancelled on schedule mid-stream — a failure that only appears in production
+// after the timeout elapses.
+func TestMountRouter_SSERouteEstaMontada(t *testing.T) {
+	t.Parallel()
+
+	repo := newFakeVisitasRepo()
+	svc := app.NewService(repo, &fakeClock{t: fixedNow})
+
+	root := chi.NewRouter()
+	root.Route("/v2", func(r chi.Router) {
+		r.Group(func(r chi.Router) {
+			r.Use(planter(visitaUser()))
+			visitashttp.MountRouter(r, svc, visitashttp.WithSSE(
+				eventbus.New(),
+				config.Visitas{SSEEnabled: false, SSEPingEvery: time.Hour},
+				slog.New(slog.NewTextHandler(io.Discard, nil)),
+			))
+		})
+	})
+
+	// The flag is off, so the handler answers 503 immediately and the test
+	// never has to hold a live stream open. 503 rather than 404 is itself the
+	// proof the route resolved to the SSE handler.
+	req := httptest.NewRequest(http.MethodGet, "/v2/visitas/sync/visitas/zona/7/stream", nil)
+	rec := httptest.NewRecorder()
+	root.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code,
+		"the SSE route must be mounted at the v2 path; body: %s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "sse_deshabilitado")
+}
+
+// TestMountRouter_SinWithSSENoMontaElStream — the option is what mounts it.
+// Without a bus there is no stream, rather than a route that would panic on
+// the first connection.
+func TestMountRouter_SinWithSSENoMontaElStream(t *testing.T) {
+	t.Parallel()
+
+	repo := newFakeVisitasRepo()
+	svc := app.NewService(repo, &fakeClock{t: fixedNow})
+
+	root := chi.NewRouter()
+	root.Route("/v2", func(r chi.Router) {
+		r.Group(func(r chi.Router) {
+			r.Use(planter(visitaUser()))
+			visitashttp.MountRouter(r, svc) // no WithSSE
+		})
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/v2/visitas/sync/visitas/zona/7/stream", nil)
+	rec := httptest.NewRecorder()
+	root.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+// TestTopicoDePublicacionCoincideConElDelStream pins the constant the app
+// layer publishes on against the one the stream subscribes to.
+//
+// They are separate literals because depguard's app-no-infra rule forbids the
+// app package from importing visitashttp. That duplication is the only place
+// this feature can silently break in a way no other test would catch: the
+// service would publish, the stream would subscribe, and nothing would ever be
+// delivered — a push channel that is simply, quietly dead.
+func TestTopicoDePublicacionCoincideConElDelStream(t *testing.T) {
+	t.Parallel()
+
+	bus := eventbus.New()
+	ch, unsubscribe := bus.Subscribe(visitashttp.TopicVisitasConfirmadas)
+	t.Cleanup(unsubscribe)
+
+	repo := newFakeVisitasRepo()
+	svc := app.NewService(repo, &fakeClock{t: fixedNow}, app.WithEventBus(bus))
+	_, err := svc.RegistrarVisita(context.Background(), app.RegistrarVisitaInput{
+		ID:            uuid.New(),
+		Cobrador:      "Ramírez García, Jorge",
+		CobradorID:    42,
+		ClienteID:     11486,
+		FormaCobroID:  87327,
+		TipoVisita:    "No se encontraba",
+		ZonaClienteID: 7,
+		Fecha:         fixedNow.Add(-time.Hour),
+	}, uuid.New())
+	require.NoError(t, err)
+
+	select {
+	case <-ch:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("the app layer publishes on a topic the stream does not subscribe to — " +
+			"the push channel would be silently dead in production")
+	}
 }

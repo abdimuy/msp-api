@@ -14,7 +14,10 @@ package visitashttp_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -29,6 +32,8 @@ import (
 
 	"github.com/abdimuy/msp-api/internal/auth"
 	authdomain "github.com/abdimuy/msp-api/internal/auth/domain"
+	"github.com/abdimuy/msp-api/internal/platform/config"
+	"github.com/abdimuy/msp-api/internal/platform/eventbus"
 	visitasapp "github.com/abdimuy/msp-api/internal/visitas/app"
 	"github.com/abdimuy/msp-api/internal/visitas/infra/visitashttp"
 )
@@ -652,5 +657,149 @@ func TestSecurity_Visitas_Multipart_MalformedNeverReturns500(t *testing.T) {
 				"must never be a 5xx (no panic, no internal error); code=%d body=%s",
 				rec.Code, rec.Body.String())
 		})
+	}
+}
+
+// ─── Security sweep: the SSE stream route ───────────────────────────────────
+
+// secVisitasSSERouter mounts the router with the stream wired and the flag ON,
+// so authz is what decides — not the killswitch. cu == nil skips the planter,
+// simulating an unauthenticated caller.
+//
+// The service is real but never reached: every case below is rejected in
+// authorizeSSE before the handler subscribes to anything.
+func secVisitasSSERouter(cu *auth.CurrentUser) http.Handler {
+	r := chi.NewRouter()
+	if cu != nil {
+		r.Use(planter(*cu))
+	}
+	repo := newFakeVisitasRepo()
+	svc := visitasapp.NewService(repo, &fakeClock{t: time.Now().UTC()})
+	visitashttp.MountRouter(r, svc, visitashttp.WithSSE(
+		eventbus.New(),
+		config.Visitas{SSEEnabled: true, SSEPingEvery: time.Hour},
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	))
+	return r
+}
+
+// TestSecurity_VisitasSSE_NoAuth_Returns401 — an unauthenticated caller must
+// not be able to hold a server-push connection open.
+func TestSecurity_VisitasSSE_NoAuth_Returns401(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "/visitas/sync/visitas/zona/7/stream", nil)
+	rec := httptest.NewRecorder()
+
+	secVisitasSSERouter(nil).ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code, "body=%s", rec.Body.String())
+}
+
+// TestSecurity_VisitasSSE_MissingPermission_Returns403 — authenticated but
+// unprivileged is still rejected, and rejected as authorization (403), not
+// authentication.
+func TestSecurity_VisitasSSE_MissingPermission_Returns403(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "/visitas/sync/visitas/zona/7/stream", nil)
+	rec := httptest.NewRecorder()
+
+	cu := secVisitasNoPermUser()
+	secVisitasSSERouter(&cu).ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusForbidden, rec.Code, "body=%s", rec.Body.String())
+}
+
+// TestSecurity_VisitasSSE_MalformedZona asserts a table of hostile zona_id
+// path segments all resolve to a clean 4xx — never a 500, never a panic, and
+// never an open stream.
+//
+// zona_id is a path parameter on a route that, unlike the rest of the module,
+// answers with an open socket rather than a document. A parse failure that
+// fell through to the stream loop would hand an unauthenticated-shaped request
+// a live connection.
+func TestSecurity_VisitasSSE_MalformedZona(t *testing.T) {
+	t.Parallel()
+
+	cu := visitaUser() // holds PermCobranzaVerPagos
+
+	cases := []struct {
+		name string
+		zona string
+	}{
+		{name: "no numerica", zona: "abc"},
+		{name: "cero", zona: "0"},
+		{name: "negativa", zona: "-5"},
+		{name: "sql-injection flavored", zona: url.PathEscape("1; DROP TABLE MSP_VISITAS")},
+		{name: "path traversal flavored", zona: url.PathEscape("../../etc/passwd")},
+		{name: "desbordamiento de int", zona: "99999999999999999999"},
+		{name: "vacia con espacio", zona: url.PathEscape(" ")},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := httptest.NewRequest(http.MethodGet,
+				"/visitas/sync/visitas/zona/"+tc.zona+"/stream", nil)
+			rec := httptest.NewRecorder()
+
+			secVisitasSSERouter(&cu).ServeHTTP(rec, req)
+
+			assert.GreaterOrEqual(t, rec.Code, 400, "body=%s", rec.Body.String())
+			assert.Less(t, rec.Code, 500,
+				"a malformed zona_id must be a client error, never a 500; body=%s", rec.Body.String())
+			assert.NotContains(t, rec.Body.String(), "text/event-stream",
+				"a rejected request must never be upgraded to a stream")
+		})
+	}
+}
+
+// TestSecurity_VisitasSSE_EventoNoFiltraDatosDeNegocio is the LFPDPPP-shaped
+// guarantee for the push channel.
+//
+// The event body is built by the handler, not by user input, and carries only
+// a timestamp. Nothing about a cliente — no name, no phone, no address, no
+// amount — can reach a connected socket, which is what makes the stream's
+// coarse authz (any principal with the perm may stream any zona) acceptable.
+func TestSecurity_VisitasSSE_EventoNoFiltraDatosDeNegocio(t *testing.T) {
+	t.Parallel()
+
+	bus := eventbus.New()
+	cu := visitaUser()
+	r := chi.NewRouter()
+	r.Use(planter(cu))
+	repo := newFakeVisitasRepo()
+	svc := visitasapp.NewService(repo, &fakeClock{t: time.Now().UTC()})
+	visitashttp.MountRouter(r, svc, visitashttp.WithSSE(
+		bus,
+		config.Visitas{SSEEnabled: true, SSEPingEvery: time.Hour},
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	))
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		srv.URL+"/visitas/sync/visitas/zona/7/stream", nil)
+	require.NoError(t, err)
+	resp, err := srv.Client().Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	bus.Publish(visitashttp.TopicVisitasConfirmadas, []int{})
+
+	buf := make([]byte, 512)
+	n, err := resp.Body.Read(buf)
+	require.NoError(t, err)
+	block := string(buf[:n])
+
+	assert.Contains(t, block, "visitas_confirmadas")
+	for _, forbidden := range []string{"cliente", "cobrador", "nota", "lat", "lng", "ids"} {
+		assert.NotContains(t, block, forbidden,
+			"the event must carry no business data whatsoever, found %q in %q", forbidden, block)
 	}
 }

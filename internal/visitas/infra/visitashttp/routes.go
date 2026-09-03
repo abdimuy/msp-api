@@ -2,6 +2,7 @@
 package visitashttp
 
 import (
+	"log/slog"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -11,6 +12,8 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 
+	"github.com/abdimuy/msp-api/internal/platform/config"
+	"github.com/abdimuy/msp-api/internal/platform/eventbus"
 	visitasapp "github.com/abdimuy/msp-api/internal/visitas/app"
 	"github.com/abdimuy/msp-api/internal/visitas/domain"
 )
@@ -18,6 +21,35 @@ import (
 // securitySchemeName is the OpenAPI security-scheme identifier referenced
 // by every operation that requires a Firebase bearer token.
 const securitySchemeName = "bearerAuth"
+
+// MountOption customizes what MountRouter mounts.
+//
+// Variadic rather than positional parameters so the eighteen existing call
+// sites — almost all of them tests that have no interest in streaming — keep
+// compiling untouched. It mirrors visitasapp.Option, the same shape the
+// module already uses for its own optional dependencies.
+type MountOption func(*mountConfig)
+
+type mountConfig struct {
+	bus    *eventbus.Bus
+	sseCfg config.Visitas
+	logger *slog.Logger
+}
+
+// WithSSE mounts the visitas SSE stream at
+// GET /visitas/sync/visitas/zona/{zona_id}/stream.
+//
+// Supplying a nil bus is treated as "no SSE" rather than mounting a route that
+// would panic on the first connection: a half-wired stream must not be
+// representable. The composition root always supplies it; see
+// TestMountRouter_SSERouteEstaMontada for the test that keeps it that way.
+func WithSSE(bus *eventbus.Bus, sseCfg config.Visitas, logger *slog.Logger) MountOption {
+	return func(c *mountConfig) {
+		c.bus = bus
+		c.sseCfg = sseCfg
+		c.logger = logger
+	}
+}
 
 // MountRouter mounts the visitas module's HTTP routes onto r. The supplied
 // chi router is expected to have ALREADY applied the authentication chi
@@ -35,29 +67,45 @@ const securitySchemeName = "bearerAuth"
 // resolves to VisitasExistentesPorIDs, never to ObtenerVisita with id=
 // "by-ids" — TestMountRouter_ByIDsDoesNotShadowObtenerVisita in routes_test.go
 // pins this down explicitly.
-func MountRouter(r chi.Router, svc *visitasapp.Service) huma.API {
-	config := huma.DefaultConfig("MSP API · Visitas", "v2")
-	config.DocsRenderer = huma.DocsRendererScalar
-	if config.Components == nil {
-		config.Components = &huma.Components{}
+func MountRouter(r chi.Router, svc *visitasapp.Service, opts ...MountOption) huma.API {
+	var mc mountConfig
+	for _, opt := range opts {
+		opt(&mc)
 	}
-	if config.Components.SecuritySchemes == nil {
-		config.Components.SecuritySchemes = map[string]*huma.SecurityScheme{}
+	humaCfg := huma.DefaultConfig("MSP API · Visitas", "v2")
+	humaCfg.DocsRenderer = huma.DocsRendererScalar
+	if humaCfg.Components == nil {
+		humaCfg.Components = &huma.Components{}
 	}
-	config.Components.SecuritySchemes[securitySchemeName] = &huma.SecurityScheme{
+	if humaCfg.Components.SecuritySchemes == nil {
+		humaCfg.Components.SecuritySchemes = map[string]*huma.SecurityScheme{}
+	}
+	humaCfg.Components.SecuritySchemes[securitySchemeName] = &huma.SecurityScheme{
 		Type:         "http",
 		Scheme:       "bearer",
 		BearerFormat: "JWT",
 		Description:  "Token de Firebase ID propagado al backend como Bearer.",
 	}
-	if config.OpenAPI != nil {
-		config.Servers = append(config.Servers, &huma.Server{URL: "/v2"})
+	if humaCfg.OpenAPI != nil {
+		humaCfg.Servers = append(humaCfg.Servers, &huma.Server{URL: "/v2"})
 	}
 
-	api := humachi.New(r, config)
+	api := humachi.New(r, humaCfg)
 	handlers := NewHandlers(svc)
 	registerOperations(api, handlers)
 	describeCrearVisitaBody(api)
+	// SSE push endpoint — raw chi, because Huma has no streaming response
+	// model. Registered unconditionally when a bus is wired: the feature flag
+	// is checked INSIDE the handler so a disabled stream answers 503 rather
+	// than 404, which is what lets the client latch "off" and stop retrying
+	// instead of backing off against a route it thinks is missing.
+	if mc.bus != nil {
+		logger := mc.logger
+		if logger == nil {
+			logger = slog.Default()
+		}
+		mountVisitasSSE(r, newSSEHandler(mc.bus, mc.sseCfg, logger))
+	}
 	return api
 }
 

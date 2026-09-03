@@ -14,9 +14,9 @@ import (
 	"go.uber.org/goleak"
 	"pgregory.net/rapid"
 
-	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
 	"github.com/abdimuy/msp-api/internal/cobranza/infra/ventfb"
 	"github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
+	"github.com/abdimuy/msp-api/internal/platform/eventbus"
 )
 
 // ─── fake clock ──────────────────────────────────────────────────────────────

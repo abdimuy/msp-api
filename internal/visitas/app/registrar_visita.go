@@ -43,10 +43,18 @@ func (s *Service) RegistrarVisita(ctx context.Context, in RegistrarVisitaInput, 
 
 	if err := s.repo.Insert(ctx, v); err != nil {
 		if errors.Is(err, domain.ErrVisitaYaExiste) {
-			return s.repo.FindByID(ctx, in.ID)
+			existing, findErr := s.repo.FindByID(ctx, in.ID)
+			if findErr != nil {
+				return nil, findErr
+			}
+			// Replay of an upload whose response the phone may never have
+			// seen — announce it too. See anunciarVisitaConfirmada.
+			s.anunciarVisitaConfirmada()
+			return existing, nil
 		}
 		return nil, err
 	}
+	s.anunciarVisitaConfirmada()
 	return v, nil
 }
 

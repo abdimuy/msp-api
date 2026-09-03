@@ -72,6 +72,7 @@ type Config struct {
 	MicrosipVenta  MicrosipVenta
 	FailedIntent   FailedIntent
 	Inventario     Inventario
+	Visitas        Visitas
 	Reactivacion   Reactivacion
 	Flota          Flota
 	WhatsApp       WhatsApp
@@ -235,6 +236,29 @@ type Cobranza struct {
 	// comment. Clients and proxies silently drop the ping; it only exists to
 	// keep the TCP connection alive through idle timeouts.
 	SSEPingEvery time.Duration `env:"COBRANZA_SSE_PING_INTERVAL" envDefault:"25s"`
+}
+
+// Visitas holds visitas-module-specific runtime knobs.
+//
+// The SSE knobs deliberately mirror Cobranza's rather than reusing them. The
+// two push channels are independent by design: the visitas stream is a
+// separate route with its own topic, and an ops emergency on one (proxy
+// buffering, a connection leak) must be switchable without taking the other
+// down with it. One shared flag would fuse the two blast radii — a cobranza
+// incident would silently kill the visits reconciler's fastest trigger, and
+// a visits incident would kill the push channel that moves money.
+type Visitas struct {
+	// SSEEnabled gates GET /v2/visitas/sync/visitas/zona/{zona_id}/stream.
+	// Default true: SSE is only the FASTEST of the visits reconciler's four
+	// triggers, never the only one — app-open, the 15-minute periodic worker
+	// and connectivity-restored all still run when this is off, so flipping
+	// it costs latency, never correctness. Clients fall through to those
+	// three when the endpoint returns 503.
+	SSEEnabled bool `env:"VISITAS_SSE_ENABLED" envDefault:"true"`
+	// SSEPingEvery controls how often the server writes an SSE keep-alive
+	// comment. Clients and proxies silently drop the ping; it only exists to
+	// keep the TCP connection alive through idle timeouts.
+	SSEPingEvery time.Duration `env:"VISITAS_SSE_PING_INTERVAL" envDefault:"25s"`
 }
 
 // Reactivacion holds runtime knobs for the reactivación (R7) module's canal

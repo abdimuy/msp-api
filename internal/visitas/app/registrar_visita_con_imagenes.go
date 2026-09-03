@@ -109,7 +109,10 @@ func (s *Service) RegistrarVisitaConImagenes(
 	}
 	if existing != nil && len(pendientes) == 0 {
 		// Pure replay: the visita and every one of its photos are already
-		// stored. Nothing to write and, crucially, nothing to clean up.
+		// stored. Nothing to write and, crucially, nothing to clean up —
+		// but still worth announcing, since the phone retrying here is the
+		// phone that never saw the original response.
+		s.anunciarVisitaConfirmada()
 		return existing, nil
 	}
 
@@ -124,6 +127,8 @@ func (s *Service) RegistrarVisitaConImagenes(
 		s.cleanupBlobs(ctx, storedKeys)
 		return nil, err
 	}
+	// After the transaction has committed, never inside it.
+	s.anunciarVisitaConfirmada()
 	return result, nil
 }
 
