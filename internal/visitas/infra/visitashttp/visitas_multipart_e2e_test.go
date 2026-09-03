@@ -37,6 +37,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/abdimuy/msp-api/internal/auth"
+	"github.com/abdimuy/msp-api/internal/platform/failedintent"
+	"github.com/abdimuy/msp-api/internal/platform/failedintent/blobfs"
+	failedintentfb "github.com/abdimuy/msp-api/internal/platform/failedintent/firebird"
 	"github.com/abdimuy/msp-api/internal/platform/fbtestutil"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 	"github.com/abdimuy/msp-api/internal/ventas/infra/storage"
@@ -296,5 +299,101 @@ func TestE2E_VisitasMultipart_VisitaInvalidaNoDejaBlobHuerfano(t *testing.T) {
 		if err == nil {
 			assert.Empty(t, entries, "no blob directory should have been created")
 		}
+	})
+}
+
+// ─── The failed-intent safety net over the NEW wire format ─────────────────
+
+// TestE2E_VisitasMultipart_UnaVisitaRechazadaConFotoSeCaptura closes the hole
+// the multipart contract opened in the desk-correction net.
+//
+// failedintent.shouldCapture returns FALSE for a multipart request when no
+// Blob storage is wired (failedintent.go:819-823), and the visitas capture
+// config used to leave Blob nil with a comment claiming visitas was
+// "JSON-only … a visita has no comprobante attachments" — a statement this
+// change falsified. The effect was silent and bad: a rejected visit that
+// carried a photo left NO durable row and could never be replayed, and it
+// would only ever happen to the requests that cost a cobrador the most work.
+//
+// The test wires the config the way cmd/api now does — Blob +
+// MaxMultipartBytes, exactly as cobranza — and asserts the row exists.
+//
+// The positive control is the second half: the same router, the same
+// multipart shape, but VALID, must NOT be captured. Without it, a capture
+// middleware that stored everything would pass the first half.
+//
+//nolint:paralleltest // serial: shares rollback-only tx.
+func TestE2E_VisitasMultipart_UnaVisitaRechazadaConFotoSeCaptura(t *testing.T) {
+	visitasE2ERequireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		q := firebird.GetQuerier(ctx, pool.DB)
+		clienteID := visitasE2EClienteID(t, q)
+		cu := visitasE2EFullUser()
+
+		fiStore := failedintentfb.New(pool)
+		blob, err := blobfs.New(t.TempDir())
+		require.NoError(t, err)
+
+		// Exactly the shape cmd/api/failedintent_wiring.go builds for visitas.
+		capture := failedintent.CaptureMiddleware(failedintent.Config{
+			Store:             fiStore,
+			Blob:              blob,
+			MaxMultipartBytes: 10 << 20,
+			PathPrefixes:      []string{"/v2/visitas"},
+			Methods:           []string{http.MethodPost},
+		})
+
+		dir := t.TempDir()
+		fsProvider, err := storage.NewFilesystemProvider(dir)
+		require.NoError(t, err)
+		repo := visitasfb.New(pool)
+		svc := app.NewService(repo, visitasoutbound.ProductionClock{},
+			app.WithImagenes(repo, &visitasE2EStorageAdapter{inner: fsProvider}, firebird.NewTxManager(pool.DB)))
+
+		root := chi.NewRouter()
+		root.Route("/v2", func(r chi.Router) {
+			r.Group(func(r chi.Router) {
+				r.Use(visitasTxInjector(ctx), planter(cu), capture)
+				visitashttp.MountRouter(r, svc)
+			})
+		})
+
+		post := func(datos string) *httptest.ResponseRecorder {
+			body, ct := buildMultipart(t, datos, []testImagen{jpeg(uuid.NewString(), "puerta")})
+			req := httptest.NewRequest(http.MethodPost, "/v2/visitas", bytes.NewReader(body))
+			req.Header.Set("Content-Type", ct)
+			rec := httptest.NewRecorder()
+			root.ServeHTTP(rec, req)
+			return rec
+		}
+
+		// ── Rejected multipart visit → a durable row exists ───────────────
+		rechazadaID := uuid.New()
+		mala := strings.Replace(e2eVisitaJSON(rechazadaID, clienteID),
+			`"tipo_visita":"No se encontraba"`, `"tipo_visita":"inventado por el cliente"`, 1)
+
+		rec := post(mala)
+		require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body=%s", rec.Body.String())
+		assert.Equal(t, 0, countVisitas(ctx, t, pool, rechazadaID))
+
+		list, err := fiStore.List(ctx, failedintent.ListParams{UsuarioID: &cu.ID})
+		require.NoError(t, err)
+		require.Len(t, list.Items, 1,
+			"a rejected multipart visita MUST leave a durable row — with Blob nil it left none")
+		assert.Equal(t, http.MethodPost, list.Items[0].Method)
+		assert.Equal(t, "/v2/visitas", list.Items[0].Path)
+
+		// ── Positive control: a valid one is not captured ─────────────────
+		buenaID := uuid.New()
+		recOK := post(e2eVisitaJSON(buenaID, clienteID))
+		require.Equal(t, http.StatusCreated, recOK.Code, "body=%s", recOK.Body.String())
+		assert.Equal(t, 1, countVisitas(ctx, t, pool, buenaID))
+
+		after, err := fiStore.List(ctx, failedintent.ListParams{UsuarioID: &cu.ID})
+		require.NoError(t, err)
+		assert.Len(t, after.Items, 1,
+			"still one — a 2xx multipart visita must never be captured")
 	})
 }
