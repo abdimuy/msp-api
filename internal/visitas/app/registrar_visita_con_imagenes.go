@@ -212,7 +212,33 @@ func (s *Service) storeAllBlobs(
 // idempotent by contract, so a key that never made it to disk is harmless.
 // Errors are swallowed on purpose: the caller is already returning a failure
 // and a cleanup error must not replace it.
+//
+// # Why the context is detached
+//
+// The most common reason to be here is that the request was cancelled or
+// timed out — and on THAT context every Delete would return immediately
+// without deleting anything, leaving exactly the orphans this function
+// exists to prevent. The failure mode was silent: cleanup appearing to run
+// while doing nothing. context.WithoutCancel keeps the values (tracing,
+// the ambient transaction) and drops the cancellation.
+//
+// # The window this does NOT close
+//
+// Blobs are written BEFORE the transaction opens, because a Firebird
+// transaction cannot enclose a filesystem write. If the process dies between
+// storeAllBlobs and the commit — a panic, a kill, the machine losing power —
+// nothing runs this function and the blobs stay on disk with no row pointing
+// at them. That window is inherent to writing to two stores without a
+// distributed transaction; it cannot be closed here, only swept later.
+//
+// It is a leak of disk space, never of correctness: an orphan is unreachable
+// (nothing references its key) and a retry of the same request overwrites it
+// at the same deterministic key rather than adding another. If those bytes
+// ever matter, the fix is a janitor that lists STORAGE_DIR/visitas/ and
+// deletes keys absent from MSP_VISITAS_IMAGENES — not more logic in this
+// path.
 func (s *Service) cleanupBlobs(ctx context.Context, keys []string) {
+	ctx = context.WithoutCancel(ctx)
 	for _, k := range keys {
 		_ = s.storage.Delete(ctx, k)
 	}
