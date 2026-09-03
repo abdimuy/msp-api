@@ -72,7 +72,7 @@ func setStatementTimeout(d time.Duration) string {
 // la misma conexión n veces y las otras n-1 se quedarían sin techo — y como el
 // pago bloqueado podría caer justo en una de ésas, la prueba colgaría diez
 // minutos en vez de fallar en dos segundos.
-func poolConTechoCorto(t *testing.T, n int) *firebird.Pool {
+func poolConTechoCorto(t *testing.T, n int, techo time.Duration) *firebird.Pool {
 	t.Helper()
 	cfg := fbtestutil.TestFirebirdConfig(t)
 	cfg.PoolSize = n
@@ -89,7 +89,7 @@ func poolConTechoCorto(t *testing.T, n int) *firebird.Pool {
 	for range n {
 		c, connErr := pool.Conn(context.Background())
 		require.NoError(t, connErr, "sacando las n conexiones a la vez")
-		_, execErr := c.ExecContext(context.Background(), setStatementTimeout(rafagaStatementTimeout))
+		_, execErr := c.ExecContext(context.Background(), setStatementTimeout(techo))
 		require.NoError(t, execErr, "aplicando el techo corto")
 		conns = append(conns, c)
 	}
@@ -225,7 +225,7 @@ func TestE2E_PagoWriter_Rafaga_ControlPositivo_UnPagoBloqueado(t *testing.T) {
 
 	// El pool de la ráfaga: n conexiones, todas con el techo corto, para que
 	// el bloqueado se corte en dos segundos y no en diez minutos.
-	pool := poolConTechoCorto(t, numPagos)
+	pool := poolConTechoCorto(t, numPagos, rafagaStatementTimeout)
 	h := &e2eHarness{
 		pool:   pool,
 		txMgr:  firebird.NewTxManager(pool.DB),
