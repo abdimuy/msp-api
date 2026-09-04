@@ -68,6 +68,15 @@ func setStatementTimeout(d time.Duration) string {
 // driver registrado y todos los pools posteriores lo heredan en silencio,
 // diga lo que diga su config. El techo se aplica entonces por conexión.
 //
+// EL TECHO CORTO NO DEBE TOCAR NI LA SIEMBRA NI LA LIMPIEZA. Este pool es
+// SÓLO para la ráfaga que se mide. Sembrar o limpiar por aquí es un defecto,
+// no una comodidad: bajo carga un DELETE de limpieza tarda más que el techo,
+// el servidor lo corta con "Attachment level timeout expired" y las filas se
+// quedan en la base compartida — que es justo lo que el §7 del CLAUDE.md
+// prohíbe. Medido: pasó en la corrida del hook de pre-push, con la limpieza de
+// MSP_PAGOS_VENTAS cancelada. Corriendo la prueba sola no aparece, porque el
+// DELETE es rápido.
+//
 // POR QUÉ LAS n SE SACAN A LA VEZ: sacándolas de una en una el pool devolvería
 // la misma conexión n veces y las otras n-1 se quedarían sin techo — y como el
 // pago bloqueado podría caer justo en una de ésas, la prueba colgaría diez
@@ -223,8 +232,10 @@ func TestE2E_PagoWriter_Rafaga_ControlPositivo_UnPagoBloqueado(t *testing.T) {
 	const numPagos = 6
 	const elBloqueado = 3
 
-	// El pool de la ráfaga: n conexiones, todas con el techo corto, para que
-	// el bloqueado se corte en dos segundos y no en diez minutos.
+	// DOS arneses, y la separación es el punto. `hSoporte` va sobre el pool
+	// compartido, con el techo normal, y es el que siembra y limpia. `h` lleva
+	// el techo corto y SÓLO se usa para la ráfaga que se mide.
+	hSoporte := newE2EHarness(t)
 	pool := poolConTechoCorto(t, numPagos, rafagaStatementTimeout)
 	h := &e2eHarness{
 		pool:   pool,
@@ -236,8 +247,8 @@ func TestE2E_PagoWriter_Rafaga_ControlPositivo_UnPagoBloqueado(t *testing.T) {
 	cargos := make([]int, numPagos)
 	clientes := make([]int, numPagos)
 	for i := range numPagos {
-		clienteID := seedCliente(t, ctx, h.pool, h.txMgr)
-		cargo := seedCargo(t, ctx, h.pool, h.txMgr, clienteID, decimal.NewFromInt(1000))
+		clienteID := seedCliente(t, ctx, hSoporte.pool, hSoporte.txMgr)
+		cargo := seedCargo(t, ctx, hSoporte.pool, hSoporte.txMgr, clienteID, decimal.NewFromInt(1000))
 		cargos[i], clientes[i] = cargo.doctoCCID, clienteID
 		entradas[i] = outbound.MicrosipPagoInput{
 			CargoDoctoCCID: cargo.doctoCCID, ClienteID: clienteID,
@@ -277,7 +288,9 @@ func TestE2E_PagoWriter_Rafaga_ControlPositivo_UnPagoBloqueado(t *testing.T) {
 		hecho <- dispararRafaga(h, entradas, func(idx int, res outbound.MicrosipPagoResult) {
 			mu.Lock()
 			defer mu.Unlock()
-			h.registerAplicarCleanup(t, res, cargos[idx])
+			// La limpieza va por el arnés de soporte: el techo corto de `h`
+			// cancelaría el DELETE bajo carga y dejaría la fila en la base.
+			hSoporte.registerAplicarCleanup(t, res, cargos[idx])
 		})
 	}()
 

@@ -58,6 +58,11 @@ func rafagaMismoCliente(t *testing.T, numPagos int, cargosDistintos bool) ([]err
 	requireFBEnv(t)
 	ctx := context.Background()
 
+	// El arnés de soporte, sobre el pool compartido, es el que siembra y
+	// limpia. El del techo corto sólo mide. Mezclarlos deja filas en la base
+	// compartida cuando el DELETE de limpieza excede el techo bajo carga —
+	// ver poolConTechoCorto.
+	hSoporte := newE2EHarness(t)
 	pool := poolConTechoCorto(t, numPagos, mismoClienteTecho)
 	h := &e2eHarness{
 		pool:   pool,
@@ -65,7 +70,7 @@ func rafagaMismoCliente(t *testing.T, numPagos int, cargosDistintos bool) ([]err
 		writer: microsip.NewPagoWriter(pool),
 	}
 
-	clienteID := seedCliente(t, ctx, h.pool, h.txMgr)
+	clienteID := seedCliente(t, ctx, hSoporte.pool, hSoporte.txMgr)
 
 	// El cargo lleva saldo de sobra: lo que se mide es la concurrencia, no el
 	// tope del saldo. Un EX_SALDO_CARGO_EXCEDIDO aquí sería un fallo por la
@@ -77,10 +82,10 @@ func rafagaMismoCliente(t *testing.T, numPagos int, cargosDistintos bool) ([]err
 	cargos := make([]int, numPagos)
 	if cargosDistintos {
 		for i := range numPagos {
-			cargos[i] = seedCargo(t, ctx, h.pool, h.txMgr, clienteID, saldoCargo).doctoCCID
+			cargos[i] = seedCargo(t, ctx, hSoporte.pool, hSoporte.txMgr, clienteID, saldoCargo).doctoCCID
 		}
 	} else {
-		unico := seedCargo(t, ctx, h.pool, h.txMgr, clienteID, saldoCargo).doctoCCID
+		unico := seedCargo(t, ctx, hSoporte.pool, hSoporte.txMgr, clienteID, saldoCargo).doctoCCID
 		for i := range numPagos {
 			cargos[i] = unico
 		}
@@ -103,7 +108,7 @@ func rafagaMismoCliente(t *testing.T, numPagos int, cargosDistintos bool) ([]err
 	go func() {
 		hecho <- dispararRafaga(h, entradas, func(idx int, res outbound.MicrosipPagoResult) {
 			<-mu
-			h.registerAplicarCleanup(t, res, cargos[idx])
+			hSoporte.registerAplicarCleanup(t, res, cargos[idx])
 			mu <- struct{}{}
 		})
 	}()
