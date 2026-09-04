@@ -16,10 +16,10 @@ archivos.
 | | |
 |---|---|
 | Fusión | `fix/pago-rechazado-visible` → `main`, luego `fix/precios-y-captura-401` |
-| Commit de `main` | **`591a7e2`** |
+| Commit de `main` | **`6576032`** |
 | Binario | `bin/api.exe` |
 | Tamaño | **48 904 704** bytes |
-| sha256 | `baf6c8c81abece816d1d3e7bda1de0f71acd08f2dd642ea5675b48e7e0899b42` |
+| sha256 | `52335e39ccd7410ec0cdb8768aa227db74ea06723a6daa49581a9ae40b3a5687` |
 
 > **La Parte 2 tiene ahora control positivo.** La ráfaga (50 pagos
 > concurrentes de clientes distintos) sigue sin reproducir el fallo, pero ya se
@@ -37,13 +37,7 @@ go test -race -short ./...     → sin fallos
 make test-firebird-all         → EXIT=0, 20 paquetes ok, 0 FAIL
 ```
 
-**Falta empujar `main` al remoto.** No se hizo: es una acción hacia afuera y la
-decisión es del dueño del repositorio. El despliegue compila de local, así que
-no bloquea nada.
-
-```bash
-git push origin main
-```
+`main` ya está empujado (`origin/main`), en los tres repositorios.
 
 ---
 
@@ -106,7 +100,7 @@ scp ${=KEY} -P $PUERTO bin/api.exe Administrador@$HOST:C:/msp-api/msp-api.new.ex
 ssh ${=KEY} -p $PUERTO Administrador@$HOST 'dir C:\msp-api\msp-api.new.exe'
 #   → tiene que decir 48,904,704 EXACTO. «Casi igual» es un scp truncado.
 ssh ${=KEY} -p $PUERTO Administrador@$HOST 'cmd /c "C:\msp-api\msp-api.new.exe version"'
-#   → msp-api 591a7e2 (built …)   ← no arranca el servidor, se puede correr con el viejo sirviendo
+#   → msp-api 6576032 (built …)   ← no arranca el servidor, se puede correr con el viejo sirviendo
 
 # §4 — respaldar el log ANTES de reiniciar: run.bat lo TRUNCA en cada arranque
 curl -s https://apidev.loclx.io/version          # ← anota el HASH_SALIENTE
@@ -127,7 +121,7 @@ donde corre `msp-api.exe` y ejecutando el `.bat` del escritorio, que termina en
 1. `http: listening addr=0.0.0.0:3011` y los `lifecycle: started` en el log
    nuevo. Un `api.log` **vacío** con el proceso muerto es `fx.NopLogger`
    tragándose un error de arranque, no un log que falta.
-2. `curl -s https://apidev.loclx.io/version` → **`591a7e2`**.
+2. `curl -s https://apidev.loclx.io/version` → **`6576032`**.
 3. Cruzar el PID: `netstat -ano | findstr ":3011" | findstr LISTENING`.
 
 ---
@@ -217,8 +211,8 @@ Cuando estén las Partes 2 y 3. No en este viaje.
 
 ```bash
 ssh ${=KEY} -p $PUERTO Administrador@$HOST \
-  'copy /Y C:\msp-api\api.log C:\msp-api\api.log.fallido-591a7e2'
-ssh ${=KEY} -p $PUERTO Administrador@$HOST 'cmd /c "move /Y C:\msp-api\msp-api.exe C:\msp-api\msp-api.bak-591a7e2.exe & move /Y C:\msp-api\msp-api.bak-<HASH_SALIENTE>.exe C:\msp-api\msp-api.exe"'
+  'copy /Y C:\msp-api\api.log C:\msp-api\api.log.fallido-6576032'
+ssh ${=KEY} -p $PUERTO Administrador@$HOST 'cmd /c "move /Y C:\msp-api\msp-api.exe C:\msp-api\msp-api.bak-6576032.exe & move /Y C:\msp-api\msp-api.bak-<HASH_SALIENTE>.exe C:\msp-api\msp-api.exe"'
 # reiniciar EN LA CONSOLA, y confirmar:
 curl -s https://apidev.loclx.io/version   # → <HASH_SALIENTE>
 ```
