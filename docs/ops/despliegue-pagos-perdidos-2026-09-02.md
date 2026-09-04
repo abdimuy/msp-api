@@ -16,10 +16,10 @@ archivos.
 | | |
 |---|---|
 | Fusión | `fix/pago-rechazado-visible` → `main`, luego `fix/precios-y-captura-401` |
-| Commit de `main` | **`47e4494`** |
+| Commit de `main` | **`591a7e2`** |
 | Binario | `bin/api.exe` |
 | Tamaño | **48 904 704** bytes |
-| sha256 | `813bedd8ecdfe002caebaf6e518928af8266eab3724930c2a7fdff4d56efd6f8` |
+| sha256 | `baf6c8c81abece816d1d3e7bda1de0f71acd08f2dd642ea5675b48e7e0899b42` |
 
 > **La Parte 2 tiene ahora control positivo.** La ráfaga (50 pagos
 > concurrentes de clientes distintos) sigue sin reproducir el fallo, pero ya se
@@ -106,7 +106,7 @@ scp ${=KEY} -P $PUERTO bin/api.exe Administrador@$HOST:C:/msp-api/msp-api.new.ex
 ssh ${=KEY} -p $PUERTO Administrador@$HOST 'dir C:\msp-api\msp-api.new.exe'
 #   → tiene que decir 48,904,704 EXACTO. «Casi igual» es un scp truncado.
 ssh ${=KEY} -p $PUERTO Administrador@$HOST 'cmd /c "C:\msp-api\msp-api.new.exe version"'
-#   → msp-api 47e4494 (built …)   ← no arranca el servidor, se puede correr con el viejo sirviendo
+#   → msp-api 591a7e2 (built …)   ← no arranca el servidor, se puede correr con el viejo sirviendo
 
 # §4 — respaldar el log ANTES de reiniciar: run.bat lo TRUNCA en cada arranque
 curl -s https://apidev.loclx.io/version          # ← anota el HASH_SALIENTE
@@ -127,7 +127,7 @@ donde corre `msp-api.exe` y ejecutando el `.bat` del escritorio, que termina en
 1. `http: listening addr=0.0.0.0:3011` y los `lifecycle: started` en el log
    nuevo. Un `api.log` **vacío** con el proceso muerto es `fx.NopLogger`
    tragándose un error de arranque, no un log que falta.
-2. `curl -s https://apidev.loclx.io/version` → **`47e4494`**.
+2. `curl -s https://apidev.loclx.io/version` → **`591a7e2`**.
 3. Cruzar el PID: `netstat -ano | findstr ":3011" | findstr LISTENING`.
 
 ---
@@ -217,8 +217,8 @@ Cuando estén las Partes 2 y 3. No en este viaje.
 
 ```bash
 ssh ${=KEY} -p $PUERTO Administrador@$HOST \
-  'copy /Y C:\msp-api\api.log C:\msp-api\api.log.fallido-47e4494'
-ssh ${=KEY} -p $PUERTO Administrador@$HOST 'cmd /c "move /Y C:\msp-api\msp-api.exe C:\msp-api\msp-api.bak-47e4494.exe & move /Y C:\msp-api\msp-api.bak-<HASH_SALIENTE>.exe C:\msp-api\msp-api.exe"'
+  'copy /Y C:\msp-api\api.log C:\msp-api\api.log.fallido-591a7e2'
+ssh ${=KEY} -p $PUERTO Administrador@$HOST 'cmd /c "move /Y C:\msp-api\msp-api.exe C:\msp-api\msp-api.bak-591a7e2.exe & move /Y C:\msp-api\msp-api.bak-<HASH_SALIENTE>.exe C:\msp-api\msp-api.exe"'
 # reiniciar EN LA CONSOLA, y confirmar:
 curl -s https://apidev.loclx.io/version   # → <HASH_SALIENTE>
 ```
