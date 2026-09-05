@@ -38,11 +38,31 @@ type UsuarioLookup interface {
 	BuildCurrentUserByID(ctx context.Context, id uuid.UUID) (auth.CurrentUser, error)
 }
 
+// ClienteLookup resuelve nombres de cliente por id, en lote.
+//
+// Existe porque el cuerpo de un PAGO no trae el nombre —medido: trae
+// cliente_id, el id del cargo y el nombre del cobrador— así que el listado lo
+// muestra como "RUTA 27 - ALEJANDRO CHAVARRIA", que dice quién lo capturó y
+// no de quién es el dinero. En ventas no hace falta: ahí el nombre sí viaja en
+// el cuerpo.
+//
+// EN LOTE, Y NO POR RENGLÓN. El comentario de ResumenDTO advierte que sacar el
+// nombre por fila convierte la ruta más caliente de la pantalla en un N+1;
+// esto resuelve una página entera con UNA consulta.
+//
+// Es opcional: sin implementación el listado se comporta como antes.
+type ClienteLookup interface {
+	// NombresPorID devuelve el nombre de cada id encontrado. Los ids que no
+	// existen simplemente no aparecen en el mapa — no es un error.
+	NombresPorID(ctx context.Context, ids []int) (map[int]string, error)
+}
+
 // Service bundles dependencies for the four admin handlers.
 type Service struct {
 	store          failedintent.Store
 	dispatcher     failedintent.ReplayDispatcher
 	usuarios       UsuarioLookup
+	clientes       ClienteLookup
 	blobs          failedintent.BlobStorage
 	partsInspector *failedintent.BlobPartsInspector
 	clock          func() time.Time
@@ -202,7 +222,59 @@ func (s *Service) Listar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response.JSON(w, r, http.StatusOK, buildListResponse(page))
+	resp := buildListResponse(page)
+	s.resolverNombresDeCliente(r.Context(), resp.Items)
+	response.JSON(w, r, http.StatusOK, resp)
+}
+
+// resolverNombresDeCliente llena Resumen.Cliente de los renglones cuyo resumen
+// trae un cliente_id, con UNA sola consulta para toda la página.
+//
+// Es best-effort a propósito: si la consulta falla, los renglones se quedan
+// sin nombre y el listado se sirve igual. Un nombre es un adorno útil; que la
+// pantalla de intentos fallidos deje de cargar por no poder adornarla sería un
+// intercambio pésimo, justo en la pantalla a la que se acude cuando algo ya
+// salió mal.
+func (s *Service) resolverNombresDeCliente(ctx context.Context, items []IntentDTO) {
+	if s.clientes == nil || len(items) == 0 {
+		return
+	}
+	porID := make(map[int][]*ResumenDTO)
+	for i := range items {
+		r := items[i].Resumen
+		if r == nil || r.clienteID == nil {
+			continue
+		}
+		porID[*r.clienteID] = append(porID[*r.clienteID], r)
+	}
+	if len(porID) == 0 {
+		return
+	}
+	ids := make([]int, 0, len(porID))
+	for id := range porID {
+		ids = append(ids, id)
+	}
+	nombres, err := s.clientes.NombresPorID(ctx, ids)
+	if err != nil {
+		return
+	}
+	for id, destinos := range porID {
+		nombre := strings.TrimSpace(nombres[id])
+		if nombre == "" {
+			continue
+		}
+		for _, d := range destinos {
+			d.Cliente = nombre
+		}
+	}
+}
+
+// ConClientes instala el resolvedor de nombres de cliente y devuelve el mismo
+// Service, para encadenar desde la raíz de composición. Sin él, el listado no
+// resuelve nombres y se comporta exactamente como antes.
+func (s *Service) ConClientes(l ClienteLookup) *Service {
+	s.clientes = l
+	return s
 }
 
 // MeListar handles GET /me/failed-intents — lists only the intents owned by

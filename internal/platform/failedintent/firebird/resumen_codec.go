@@ -28,6 +28,10 @@ type resumenFila struct {
 	Titulo     string `json:"titulo,omitempty"`
 	Monto      string `json:"monto,omitempty"`
 	Referencia string `json:"referencia,omitempty"`
+	// ClienteID va aparte de Referencia a propósito: ver Resumen.ClienteID.
+	// `omitempty` sobre un puntero omite el nil, no el cero — que aquí no
+	// puede llegar porque el extractor descarta el cero como ausente.
+	ClienteID *int `json:"cliente_id,omitempty"`
 }
 
 // codificarResumen serializa el resumen para la columna. Devuelve nil cuando
@@ -40,6 +44,7 @@ func codificarResumen(r *failedintent.Resumen) (any, error) {
 	fila := resumenFila{
 		Titulo:     strings.TrimSpace(r.Titulo),
 		Referencia: strings.TrimSpace(r.Referencia),
+		ClienteID:  r.ClienteID,
 	}
 	if r.Monto != nil {
 		fila.Monto = r.Monto.String()
@@ -75,6 +80,7 @@ func decodificarResumen(raw []byte, modulo string) *failedintent.Resumen {
 		Modulo:     modulo,
 		Titulo:     fila.Titulo,
 		Referencia: fila.Referencia,
+		ClienteID:  fila.ClienteID,
 	}
 	if fila.Monto != "" {
 		if d, err := decimal.NewFromString(fila.Monto); err == nil {

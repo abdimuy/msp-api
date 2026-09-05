@@ -77,6 +77,20 @@ type ResumenDTO struct {
 	// Referencia es el ancla para encontrar el trabajo: el id de la venta, el
 	// del cliente en un pago.
 	Referencia string `json:"referencia,omitempty"`
+	// Cliente es el nombre resuelto contra CLIENTES, y sólo aparece cuando el
+	// título NO es ya el del cliente — es decir, en pagos.
+	//
+	// Va aparte de Titulo en vez de pisarlo porque las dos cosas importan y
+	// responden preguntas distintas: de quién es el dinero, y quién lo
+	// capturó. Vacío cuando no se pudo resolver, y entonces la pantalla se
+	// comporta como antes.
+	Cliente string `json:"cliente,omitempty"`
+
+	// clienteID no viaja: es el insumo con el que el listado resuelve
+	// Cliente. Va sin exportar para que no se filtre al contrato — un id de
+	// Microsip en la respuesta invitaría al frontend a consultarlo por
+	// renglón, que es justo el N+1 que este diseño evita.
+	clienteID *int
 }
 
 // ListResponse is the cursor-paginated envelope returned by the list endpoint.
@@ -182,7 +196,7 @@ func resumenToDTO(r *failedintent.Resumen) *ResumenDTO {
 	if r.Vacio() {
 		return nil
 	}
-	dto := &ResumenDTO{Titulo: r.Titulo, Referencia: r.Referencia}
+	dto := &ResumenDTO{Titulo: r.Titulo, Referencia: r.Referencia, clienteID: r.ClienteID}
 	if r.Monto != nil {
 		dto.Monto = r.Monto.String()
 	}

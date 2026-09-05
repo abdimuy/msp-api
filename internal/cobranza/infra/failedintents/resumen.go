@@ -72,7 +72,22 @@ func (e *ResumenExtractor) Extraer(_ string, body []byte, _ string) *failedinten
 		Titulo:     cobrador,
 		Monto:      importe,
 		Referencia: referencia,
+		ClienteID:  clienteIDDePago(p),
 	}
+}
+
+// clienteIDDePago devuelve el id del cliente SÓLO cuando el cuerpo lo trae.
+//
+// Existe aparte de referenciaDePago porque ésa cae al id del cargo cuando no
+// hay cliente, y las dos cosas son indistinguibles una vez guardadas. El
+// listado usa este campo para buscar el nombre en CLIENTES: con la referencia
+// acabaría mostrando, de vez en cuando, el nombre de otro cliente.
+func clienteIDDePago(p cuerpoPago) *int {
+	if p.ClienteID <= 0 {
+		return nil
+	}
+	id := p.ClienteID
+	return &id
 }
 
 // referenciaDePago ancla el renglón al cliente cuando se puede, y al cargo

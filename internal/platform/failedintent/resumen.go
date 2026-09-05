@@ -39,6 +39,17 @@ type Resumen struct {
 	Monto *decimal.Decimal
 	// Referencia es el ancla para encontrar el trabajo en otro sistema.
 	Referencia string
+	// ClienteID identifica al cliente SIN ambigüedad, para que el listado
+	// pueda resolver su nombre.
+	//
+	// No se deriva de Referencia y por eso existe. En pagos, Referencia lleva
+	// el id del cliente cuando lo hay y el del CARGO cuando no, sin marcar
+	// cuál de los dos es — así que buscar en CLIENTES con ella devolvería a
+	// veces el nombre de OTRO cliente, que es peor que no mostrar ninguno.
+	//
+	// Nil cuando el cuerpo no traía un id de cliente reconocible. Cero no es
+	// un id: es el campo ausente.
+	ClienteID *int
 }
 
 // Vacio reporta si el resumen no trae ningún dato de negocio.

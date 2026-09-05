@@ -68,6 +68,6 @@ func TestFailedIntentHTTPService_RecibeLasRutasRaiz(t *testing.T) {
 
 	capturas := provideFailedIntentCapturas(nil, nil, nil, &config.Config{})
 	var store failedintent.Store
-	svc := provideFailedIntentHTTPService(store, nil, nil, nil, capturas)
+	svc := provideFailedIntentHTTPService(store, nil, nil, nil, capturas, nil)
 	require.NotNil(t, svc)
 }

@@ -169,3 +169,57 @@ func FuzzResumenExtractor(f *testing.F) {
 		}
 	})
 }
+
+// ─── el cliente_id explícito ────────────────────────────────────────────────
+//
+// El listado resuelve el nombre del cliente contra CLIENTES usando ESTE campo,
+// no la Referencia. La diferencia importa: la Referencia cae al id del CARGO
+// cuando no hay cliente, y las dos son indistinguibles una vez guardadas, así
+// que buscar con ella mostraría de vez en cuando el nombre de OTRO cliente.
+
+// TestResumenExtractor_GuardaElClienteIDAparteDeLaReferencia es lo que hace
+// que el nombre del cliente pueda resolverse. Sin ella, anular el campo en el
+// extractor dejaba toda la suite en verde — medido con mutación dirigida.
+func TestResumenExtractor_GuardaElClienteIDAparteDeLaReferencia(t *testing.T) {
+	t.Parallel()
+
+	got := failedintents.NewResumenExtractor().Extraer(
+		"/v2/cobranza/pagos",
+		[]byte(`{"cargo_docto_cc_id":13458179,"cliente_id":2344886,`+
+			`"cobrador":"RUTA 27 - ALEJANDRO CHAVARRIA","importe":"200.00"}`), "",
+	)
+
+	require.NotNil(t, got)
+	require.NotNil(t, got.ClienteID, "sin este campo el listado no puede resolver el nombre")
+	require.Equal(t, 2344886, *got.ClienteID)
+	require.Equal(t, "2344886", got.Referencia, "aquí coinciden, y por eso hace falta la prueba de abajo")
+}
+
+// TestResumenExtractor_SinClienteElIDQuedaNiloAunqueLaReferenciaNoLoEste es la
+// mitad que separa los dos campos. La referencia cae al cargo; el cliente_id
+// NO puede caer con ella, o el listado buscaría el cargo 887766 en CLIENTES.
+func TestResumenExtractor_SinClienteElIDQuedaNiloAunqueLaReferenciaNoLoEste(t *testing.T) {
+	t.Parallel()
+
+	got := failedintents.NewResumenExtractor().Extraer(
+		"/v2/cobranza/pagos",
+		[]byte(`{"cargo_docto_cc_id":887766,"cobrador":"Ana","importe":"100"}`), "",
+	)
+
+	require.NotNil(t, got)
+	require.Equal(t, "887766", got.Referencia, "la referencia sí ancla al cargo")
+	require.Nil(t, got.ClienteID, "pero el cargo NO es un cliente")
+}
+
+// Un cero tampoco es un cliente.
+func TestResumenExtractor_ClienteIDEnCeroEsAusente(t *testing.T) {
+	t.Parallel()
+
+	got := failedintents.NewResumenExtractor().Extraer(
+		"/v2/cobranza/pagos",
+		[]byte(`{"cliente_id":0,"cargo_docto_cc_id":887766,"cobrador":"Ana","importe":"100"}`), "",
+	)
+
+	require.NotNil(t, got)
+	require.Nil(t, got.ClienteID)
+}

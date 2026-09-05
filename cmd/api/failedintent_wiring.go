@@ -7,6 +7,8 @@ import (
 	"slices"
 	"sync/atomic"
 
+	failedintentclientesfb "github.com/abdimuy/msp-api/internal/platform/failedintent/clientesfb"
+
 	"github.com/google/uuid"
 	"go.uber.org/fx"
 
@@ -311,8 +313,20 @@ func provideFailedIntentHTTPService(
 	usuarios failedintenthttp.UsuarioLookup,
 	blobs failedintent.BlobStorage,
 	capturas failedIntentCapturas,
+	pool *firebird.Pool,
 ) *failedintenthttp.Service {
-	return failedintenthttp.NewService(store, dispatcher, usuarios, blobs, nil, nil, capturas.RutasRaiz())
+	svc := failedintenthttp.NewService(store, dispatcher, usuarios, blobs, nil, nil, capturas.RutasRaiz())
+	// ConClientes resuelve el nombre del cliente en los renglones de PAGO,
+	// cuyo cuerpo no lo trae. Es opcional: sin él el listado se comporta igual
+	// que antes, sólo que mostrando el cobrador.
+	//
+	// El pool nil no es hipotético: las pruebas de cableado construyen el
+	// Service sin base. Instalar un Lookup sobre un pool nil cambiaría un
+	// listado sin nombres por un panic en la primera petición.
+	if pool != nil {
+		svc = svc.ConClientes(failedintentclientesfb.New(pool))
+	}
+	return svc
 }
 
 // provideFailedIntentResolutionChecker conecta el puerto invertido de

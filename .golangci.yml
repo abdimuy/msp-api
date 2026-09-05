@@ -230,6 +230,8 @@ linters:
           alias: failedintenthttp
         - pkg: github.com/abdimuy/msp-api/internal/platform/failedintent/blobfs
           alias: failedintentblobfs
+        - pkg: github.com/abdimuy/msp-api/internal/platform/failedintent/clientesfb
+          alias: failedintentclientesfb
         - pkg: github.com/abdimuy/msp-api/internal/platform/whatsapp
           alias: platformwhatsapp
         - pkg: github.com/abdimuy/msp-api/internal/auth/ports/outbound
