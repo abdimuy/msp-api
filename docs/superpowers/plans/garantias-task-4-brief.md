@@ -207,4 +207,6 @@ make check-sealed MODULE=garantias
 
 Los empujones de rama de los días 1 y 2 **no son entregas** y no llevan mensaje: nadie los va a revisar ni te va a contestar. Están para que el trabajo exista fuera de tu máquina, que es lo único que lo salva el día que la máquina falle.
 
-**Lo que sí interrumpe:** si alguna de las nueve decisiones no te cuadra con el spec, dilo **antes** de escribir las pruebas — corregir un diseño con el archivo en la mano cuesta minutos; después de sesenta casos de prueba, cuesta rehacerlos. Y si te atoras más de dos horas en una sola cosa, avisa. Esas dos son las únicas razones para escribir antes del día 3.
+**Que la entrega sea una sola no significa que trabajes incomunicado. Cuando necesites ayuda, dímelo** — no hay que justificar nada ni esperar a un día concreto.
+
+Sobre el momento, y es consejo, no permiso: si alguna de las nueve decisiones no te cuadra con el spec, conviene decirlo **antes** de escribir las pruebas. Corregir un diseño con el archivo en la mano cuesta minutos; después de sesenta casos de prueba, cuesta rehacerlos.
