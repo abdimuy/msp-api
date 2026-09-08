@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/shopspring/decimal"
 
@@ -753,7 +754,70 @@ const (
 	maxAvalMicrosip = 50
 )
 
+// marcaDeCorte cierra un texto truncado para que quien lo lea en Microsip sepa
+// que hay más. Un byte, para no gastar el presupuesto que ya escasea.
+const marcaDeCorte = "\u2026" // …
+
+// recortarACaben devuelve s recortado para que quepa en tope BYTES, cerrado con
+// la marca de corte cuando hubo que cortar.
+//
+// CORTA EN FRONTERA DE CARÁCTER, y ésa es la razón de que exista en vez de un
+// s[:max]. Las dos columnas son CHARACTER SET NONE y lo que viaja es UTF-8, así
+// que cortar por byte parte una "ó" a la mitad y manda bytes que no son UTF-8
+// válido. Ese es exactamente el defecto que en cobranza produce
+// "-303 Malformed string" y deja la fila sin motivo: no lo reintroduzcamos aquí.
+//
+// El texto completo NO se pierde: vive en MSP_VENTAS.NOTA, que admite 500
+// caracteres. Lo de LIBRES_CARGOS_CC es la copia que Microsip enseña en su
+// pantalla, y para eso 99 bytes con marca de corte sirven; bloquear una venta
+// de $27,000 por un comentario que sobra no.
+func recortarACaben(s string, tope int) string {
+	if len(s) <= tope {
+		return s
+	}
+	presupuesto := tope - len(marcaDeCorte)
+	if presupuesto <= 0 {
+		// La marca no cabe: se devuelve el prefijo válido más largo, sin ella.
+		return recortarEnFrontera(s, tope)
+	}
+	return recortarEnFrontera(s, presupuesto) + marcaDeCorte
+}
+
+// recortarEnFrontera devuelve el prefijo de s de a lo más tope bytes que termina
+// en un carácter completo.
+func recortarEnFrontera(s string, tope int) string {
+	if len(s) <= tope {
+		return s
+	}
+	corte := tope
+	// utf8.RuneStart identifica el primer byte de un carácter; se retrocede
+	// hasta uno, y desde ahí el prefijo es válido.
+	for corte > 0 && !utf8.RuneStart(s[corte]) {
+		corte--
+	}
+	return s[:corte]
+}
+
+// observacionesParaMicrosip devuelve lo que se bindea a OBSERVACIONES: la nota
+// recortada, o nil cuando no hay nota.
+//
+// Existe como función aparte del sitio del bind para que el recorte sea
+// comprobable. Medido: quitando el recorte del bind, ninguna prueba se ponía
+// roja — las de recortarACaben lo ejercen en aislamiento y no dicen nada sobre
+// si el escritor lo usa.
+func observacionesParaMicrosip(nota *string) any {
+	if nota == nil {
+		return nil
+	}
+	return recortarACaben(*nota, maxNotaMicrosip)
+}
+
 // checkNotaFits rejects a nota that OBSERVACIONES cannot hold.
+//
+// SIGUE EXISTIENDO AUNQUE EL ESCRITOR YA TRUNCA, y no es redundante: es la red
+// por si el truncado deja de aplicarse en algún camino. Lo que cambió es quién
+// la llama — ValidarCabe ya no la usa para la nota, porque rechazar una venta
+// entera por un comentario que sobra es desproporcionado.
 func checkNotaFits(nota string) error {
 	if len(nota) <= maxNotaMicrosip {
 		return nil
@@ -806,11 +870,7 @@ func (w *VentaWriter) ValidarCabe(v *domain.Venta) error {
 			return err
 		}
 	}
-	if nota := v.Nota(); nota != nil {
-		if err := checkNotaFits(*nota); err != nil {
-			return err
-		}
-	}
+	// La nota NO se valida aquí: se trunca al escribir. Ver recortarACaben.
 	if aval := v.Cliente().Aval(); aval != nil {
 		if err := checkAvalFits(aval.Value()); err != nil {
 			return err
@@ -842,13 +902,11 @@ func (w *VentaWriter) insertDatosCredito(
 
 	plan := v.PlanCredito()
 	// 7b — INSERT LIBRES_CARGOS_CC.
-	var aval, obs any
+	var aval any
 	if v.Cliente().Aval() != nil {
 		aval = v.Cliente().Aval().Value()
 	}
-	if v.Nota() != nil {
-		obs = *v.Nota()
-	}
+	obs := observacionesParaMicrosip(v.Nota())
 
 	// The width checks for parcialidad, nota and aval do NOT run here. By this
 	// point phase 6 has already fired the cascade, so a rejection would burn
