@@ -148,18 +148,26 @@ func TestE2E_AplicarVenta_RechazaLoQueNoCabeEnLibresCargosCC(t *testing.T) {
 			requireSigueSinAplicar(t, r, ventaID)
 		})
 
-		t.Run("la nota mas larga que OBSERVACIONES", func(t *testing.T) {
-			// 230 caracteres: el largo exacto de la nota que ya existe en una
+		// LA NOTA YA NO RECHAZA: SE RECORTA. Rechazar la venta entera por un
+		// comentario que sobra es desproporcionado, y no hay nada que perder:
+		// la nota completa vive en MSP_VENTAS.NOTA, y lo de LIBRES_CARGOS_CC
+		// es la copia que Microsip enseña en su pantalla.
+		//
+		// Que el 200 sea la prueba del recorte no es indirecto: Firebird NO
+		// trunca el sobrante, RECHAZA la sentencia con SQLSTATE 22001. Si la
+		// nota viajara entera, la fase 7 reventaría y esto no sería 200.
+		t.Run("la nota mas larga que OBSERVACIONES se recorta y la venta aplica", func(t *testing.T) {
+			// 230 caracteres: el largo exacto de la nota que ya existía en una
 			// venta CREDITO en borrador de la base de desarrollo.
 			nota := strings.Repeat("A", 230)
-			rec, ventaID := aplicarVentaCabe(t, r, usuarioID,
+			rec, _ := aplicarVentaCabe(t, r, usuarioID,
 				ventaCabeOpts{Parcialidad: "150.00", Nota: &nota})
 
-			require.Equal(t, http.StatusUnprocessableEntity, rec.Code,
-				"aplicar debe rechazar, no reventar en el INSERT: %s", rec.Body.String())
-			assert.Contains(t, rec.Body.String(), "nota_exceeds_microsip_max")
-			assert.Contains(t, rec.Body.String(), "230", "el mensaje lleva el tamaño recibido")
-			requireSigueSinAplicar(t, r, ventaID)
+			require.Equal(t, http.StatusOK, rec.Code,
+				"una nota larga ya no bloquea la venta: se recorta al escribir. "+
+					"Un 422 aquí significa que ValidarCabe volvió a rechazarla; "+
+					"un error de base, que el recorte no se aplicó: %s", rec.Body.String())
+			assert.NotContains(t, rec.Body.String(), "nota_exceeds_microsip_max")
 		})
 
 		t.Run("el aval mas largo que AVAL_O_RESPONSABLE", func(t *testing.T) {
