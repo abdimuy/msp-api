@@ -3,7 +3,7 @@
 > **Rama:** crea `feat/garantias-dominio` desde `main`. La `feat/garantias-base` de la entrega anterior ya se fusionó y se borró; no la busques.
 > **Spec:** [`2026-07-27-garantias-design.md`](../specs/2026-07-27-garantias-design.md)
 > **Tanda:** 0.3c — cierra el paquete `domain/`
-> **Plazo:** entrega el **miércoles 16 de septiembre**, al final de tu jornada. Única, no por partes. Calendario al final.
+> **Plazo:** entrega el **martes 15 de septiembre**, al final de tu jornada. Única, no por partes. Calendario al final.
 
 ## Por qué esta tarea y por qué ahora
 
@@ -198,16 +198,24 @@ make check-sealed MODULE=garantias
 ## Calendario y entrega
 
 Trabajas medias jornadas, así que los tres días de trabajo que cuesta esta
-tarea caen en seis días hábiles.
+tarea caen en cinco días hábiles. Está apretado a propósito.
 
 | Cuándo | Qué |
 |---|---|
 | Martes 8 (hoy) | Arranque: lectura del brief y del spec. |
-| Miércoles 9 a martes 15 | Empuja la rama al final de cada jornada. No es entrega y no lleva mensaje. |
-| **Miércoles 16, fin de tu jornada** | **Entrega.** Los cinco archivos, sus pruebas y el reporte, de una sola vez. |
+| Miércoles 9 a lunes 14 | Empuja la rama al final de cada jornada. No es entrega y no lleva mensaje. |
+| **Martes 15, fin de tu jornada** | **Entrega.** Los cinco archivos, sus pruebas y el reporte, de una sola vez. |
 
 **La entrega es una sola, al final.** No entregues por partes: revisar en pedazos cuesta más tiempo del que ahorra, y una entidad sin sus pruebas no se puede juzgar.
 
 Los empujones diarios de rama **no son entregas** y no llevan mensaje: nadie los va a revisar ni te va a contestar. Están para que el trabajo exista fuera de tu máquina, que es lo único que lo salva el día que la máquina falle.
+
+## Qué significa "terminado"
+
+No es que compile. Es que **los siete comandos de Verification devuelvan 0 y la cobertura no baje de 99%**.
+
+Eso importa para cómo repartes los días: de las ~3,000 líneas, unas 2,000 son las pruebas, y son lo lento. Recortarlas no adelanta la entrega — la fila rebota en revisión y cuesta más tiempo del que ahorró. Son además lo que prueba la invariante del §4.4, que es la razón de ser de la tarea.
+
+Si el lunes 14 ves que no llegas, dímelo el lunes, no el martes.
 
 Si necesitas algo, dime.
