@@ -3,7 +3,7 @@
 > **Rama:** crea `feat/garantias-dominio` desde `main`. La `feat/garantias-base` de la entrega anterior ya se fusionó y se borró; no la busques.
 > **Spec:** [`2026-07-27-garantias-design.md`](../specs/2026-07-27-garantias-design.md)
 > **Tanda:** 0.3c — cierra el paquete `domain/`
-> **Plazo:** tres días de jornada. Punto de control obligatorio al **final del día 1**. Calendario al final.
+> **Plazo:** tres días de jornada. **Entrega única al final**, no por partes. Calendario al final.
 
 ## Por qué esta tarea y por qué ahora
 
@@ -195,14 +195,16 @@ make check-sealed MODULE=garantias
 
 ---
 
-## Calendario y puntos de control
+## Calendario y entrega
 
 | Cuándo | Qué |
 |---|---|
-| **Día 1, fin de jornada** | **Punto de control: `garantia.go` y `articulo.go` escritos, antes de sus pruebas.** Mándamelos. |
-| Día 2 | `evento.go`, `folio.go`, `tipo_evento.go` y los centinelas. |
-| **Día 3, fin de jornada** | **Entrega:** los cinco archivos, sus pruebas y el reporte. |
+| Final del día 1 | **Empuja la rama** con lo que lleves. No mandes nada ni esperes respuesta. |
+| Final del día 2 | Igual: empuja y sigue. |
+| **Final del día 3** | **Entrega.** Los cinco archivos, sus pruebas y el reporte, de una sola vez. |
 
-**El punto de control del día 1 no es opcional, y va antes que en la tarea anterior a propósito.** Es donde salen las preguntas, y contestarlas con el archivo en la mano cuesta minutos; después de sesenta casos de prueba, cuesta rehacerlos. Entras frío a este módulo y ahí es donde eso se paga o se ahorra.
+**La entrega es una sola, al final.** No entregues por partes: revisar en pedazos cuesta más tiempo del que ahorra, y una entidad sin sus pruebas no se puede juzgar.
 
-Si te atoras más de dos horas en una sola cosa, avisa. Y si alguna de las nueve decisiones no te cuadra con el spec, dilo antes de escribir las pruebas — están cerradas para ahorrarte tiempo, no porque sean infalibles.
+Los empujones de rama de los días 1 y 2 **no son entregas** y no llevan mensaje: nadie los va a revisar ni te va a contestar. Están para que el trabajo exista fuera de tu máquina, que es lo único que lo salva el día que la máquina falle.
+
+**Lo que sí interrumpe:** si alguna de las nueve decisiones no te cuadra con el spec, dilo **antes** de escribir las pruebas — corregir un diseño con el archivo en la mano cuesta minutos; después de sesenta casos de prueba, cuesta rehacerlos. Y si te atoras más de dos horas en una sola cosa, avisa. Esas dos son las únicas razones para escribir antes del día 3.
