@@ -32,6 +32,16 @@ LDFLAGS       := -s -w -X main.version=$(shell git rev-parse --short HEAD 2>/dev
 #    disciplina de módulo sellado es **falsa**, no "pendiente de medir".
 #    Sellarlo pide mover la dependencia de `internal/auth` fuera del módulo, que
 #    es tarea propia y no la de este arreglo.
+#
+# 3. Esta variable tiene un ESPEJO ESCRITO A MANO en `.golangci.yml`: un bloque
+#    `<modulo>-sealed` de depguard por cada entrada de acá (`:459 asistencia-sealed`,
+#    y sus hermanos de garantias/flota/canal). El comentario de arriba ya lo
+#    admite —"adding a module here without its matching depguard rule leaves half
+#    the gate"— o sea que la sincronización es manual y nadie la verifica. Y ya
+#    divergió del mundo real por el mismo lado que esta lista: `asistencia-sealed`
+#    protege un módulo que no existe, y `.golangci.yml:438` sigue listando
+#    `internal/asistencia/domain` entre los imports permitidos. Documentado y no
+#    tocado: qué módulos sella el ADR 0009 es política, no andamiaje.
 SEALED_MODULES := asistencia garantias flota canal
 
 # Load .env if present (FB_* and other vars consumed by Go binaries + targets).

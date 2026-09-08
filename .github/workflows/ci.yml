@@ -276,12 +276,27 @@ jobs:
       - name: Suite de integración
         run: go test ./... -race -p 1 -count=1 -timeout 1800s
 
-      # `make coverage-visitas` no lo corría NADIE: ni CI ni el hook. Un piso
-      # que nada ejecuta es un piso que no existe, que es el defecto que ese
-      # script vino a cerrar — habría sido ridículo dejarlo sin cablear.
-      # Va en ESTE job y no en `quality` porque exige `FB_DATABASE`, y este job
-      # ya la exporta: sin la base, `infra/visitasfb` mide 0.0% contra un piso
-      # de 80% y el comando dice `ok`.
+      # `make coverage-visitas` no lo corre NADIE todavía, y hay que decirlo con
+      # todas las letras: este paso está en el lugar correcto pero **hoy es
+      # inalcanzable**.
+      #
+      #   1. El job entero está detrás de `if: vars.INTEGRACION_FIREBIRD_LISTA
+      #      == 'true'`.
+      #   2. Aunque esa variable estuviera puesta, el paso "Obtener y restaurar
+      #      la base de pruebas", 26 líneas más arriba, es un placeholder que
+      #      termina en `exit 1` a propósito: nadie decidió todavía de dónde
+      #      saca CI la base (ver las opciones A/B/C en la cabecera del job).
+      #
+      # Va en ESTE job y no en `quality` porque exige `FB_DATABASE` y éste es el
+      # único que la exporta: sin la base, `infra/visitasfb` mide 0.0% contra un
+      # piso de 80% y el comando dice `ok` — que es justo el defecto que el
+      # script cierra. Dejarlo cableado acá es lo correcto: el día que se
+      # resuelva de dónde viene la base, el piso empieza a correr solo. Hasta
+      # entonces, quien lo ejecuta es una persona con `make coverage-visitas`.
+      #
+      # Resolver (1) y (2) es infraestructura de despliegue con datos personales
+      # de clientes de por medio: es tarea propia y la decide el dueño del repo,
+      # no este arreglo.
       - name: Piso de cobertura de visitas
         run: make coverage-visitas
 
