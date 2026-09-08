@@ -1,30 +1,35 @@
 # Garantías — Tarea 4: entidades del dominio y el agregado
 
-> **Rama:** `feat/garantias-base` (la misma, encima de lo que ya entregaste). Rebasea sobre `main` en cuanto entre el PR #10.
+> **Rama:** crea `feat/garantias-dominio` desde `main`. La `feat/garantias-base` de la entrega anterior ya se fusionó y se borró; no la busques.
 > **Spec:** [`2026-07-27-garantias-design.md`](../specs/2026-07-27-garantias-design.md)
 > **Tanda:** 0.3c — cierra el paquete `domain/`
-> **Plazo:** entrega el **lunes 24 al final de tu jornada**. Ver el calendario al final.
+> **Plazo:** tres días de jornada. Punto de control obligatorio al **final del día 1**. Calendario al final.
 
-## Dónde encaja
+## Por qué esta tarea y por qué ahora
 
-Los diez value objects y la tabla de transiciones que entregaste son las piezas. Esto es lo que las usa y lo que las obliga a servir para algo.
+El módulo de garantías lleva parado desde el 12 de agosto, y está parado **exactamente aquí**. El paquete `domain/` tiene ya trece value objects y la tabla de transiciones —etapa, ubicación, desenlace, dictamen, ruta, los estados del folio— pero **no tiene ni una entidad**. Son las piezas sin la cosa que las usa.
+
+Detrás de esta tarea sólo queda `GA 0.4` (puertos y contratos), y con eso se abren **cinco tareas en paralelo**. Cada día que esto tarda no cuesta un día: cuesta un día multiplicado por lo que mantiene bloqueado.
 
 `Garantia` es el folio vivo en memoria: la raíz del agregado. `Articulo` es la cosa física bajo custodia, con su propio ciclo de vida. `Evento` es la línea de tiempo, y es lo que hace que el expediente sirva como evidencia si el cliente reclama.
 
-Después de esto sólo queda `GA 0.4` (puertos y contratos) y se abre la tanda 1 completa — cinco tareas en paralelo. Hoy el módulo entero está esperando esta pieza.
-
 ---
 
-## Lo primero, y es exactamente lo que acabas de aprender al revés
+## La regla de forma que más se equivoca
 
-**Para las entidades, `New`/`Hydrate` sí es el patrón correcto.**
+En este repo conviven **dos** patrones de construcción, y aplicar el de una capa en la otra es el error más común al entrar:
 
-Hace dos semanas te hice reconvertir siete value objects para quitarles `New`/`Hydrate`/`Value`/`Equals`/`IsZero`, y estuvo bien: eran enums cerrados y les tocaba `Parse`/`IsValid`/`String`. **No apliques esa lección aquí.** `docs/module-standards/AGGREGATE_PATTERNS.md` es explícito para entidades:
+| Qué es | Patrón |
+|---|---|
+| **Enum cerrado** (un valor de un catálogo fijo) | `Parse` / `IsValid` / `String` |
+| **Entidad, o VO de varios campos** | `New` / `Hydrate` |
+
+Los value objects que ya están en `domain/` son enums y por eso **no** tienen `New`/`Hydrate`. **No copies esa forma aquí.** `docs/module-standards/AGGREGATE_PATTERNS.md` es explícito para entidades:
 
 > - **`NewX(...)` / `CrearX(p XParams)`** valida cada entrada y devuelve `(*X, error)`.
 > - **`HydrateX(p HydrateXParams) *X`** omite la validación. Sólo lo usa el repositorio al reconstruir desde filas persistidas.
 
-La regla corta: **enums cerrados → `Parse`/`IsValid`/`String`; entidades y VOs multi-campo → `New`/`Hydrate`.** Son dos capas distintas del estándar, cada una con su forma.
+Si te encuentras escribiendo `Parse` para `Garantia`, párate: te equivocaste de capa.
 
 ---
 
@@ -32,26 +37,26 @@ La regla corta: **enums cerrados → `Parse`/`IsValid`/`String`; entidades y VOs
 
 1. **`docs/module-standards/AGGREGATE_PATTERNS.md`** — completo. Es el documento que gobierna esta tarea: dos constructores, campos privados, un getter por campo, sin setters, constructores package-private para las hijas, `iter.Seq` para las colecciones.
 2. **`internal/ventas/domain/venta.go`** — el agregado de referencia del repositorio: raíz con cuatro colecciones hijas, constructores package-private, iteradores de sólo lectura. Como referencia de **forma**, no de contenido.
-3. **El spec, secciones §3.1 a §3.5, §4.1, §4.4 y §5.** El §4.4 es la invariante que gobierna todo el diseño de esta tarea; el §5 dice qué espera el repositorio del agregado.
-4. **Tu propio `transiciones.go` y `estado_folio.go`.** Las entidades se apoyan en `CanTransitionTo`; **no dupliques ninguna máquina de estados dentro de las entidades.**
-5. **`migrations-firebird/000050_create_msp_ga_garantias.up.sql`** — la tuya. Cada campo privado sale de una columna, y los `NOT NULL` de ahí son los que la entidad tiene que hacer imposibles de violar.
+3. **El spec, secciones §3.1 a §3.5, §4.1, §4.4 y §5.** El §4.4 es la invariante que gobierna todo el diseño; el §5 dice qué espera el repositorio del agregado.
+4. **`internal/garantias/domain/transiciones.go` y `estado_folio.go`.** Las entidades se apoyan en `CanTransitionTo`; **no dupliques ninguna máquina de estados dentro de las entidades.**
+5. **`migrations-firebird/000050_create_msp_ga_garantias.up.sql`** y **`000057_add_reemplaza_a_msp_ga_articulo.up.sql`**. Cada campo privado sale de una columna, y los `NOT NULL` de ahí son los que la entidad tiene que hacer imposibles de violar. Las dos ya están aplicadas: **tú no tocas ninguna migración.**
 
 ---
 
 ## Las nueve decisiones ya tomadas — no las adivines
 
-El brief anterior te pedía avisar cuando algo del diagrama no cerrara, y con razón: se te fue una y costó una revisión. Esta vez las cerré yo de antemano. Si alguna te parece equivocada, dilo **antes** de escribir las pruebas, no después.
+Están cerradas de antemano para que no gastes tiempo en diseño. Si alguna te parece equivocada, dilo **antes** de escribir las pruebas, no después.
 
 1. **Entran tres entidades:** `Garantia`, `Articulo` y `Evento`. **`Imagen` no entra** — cuelga del evento, tiene su propio puerto (`ImagenRepo`) y su propia tarea.
 2. **Los métodos de transición entran en esta tarea.** Una entidad sin ellos no hace nada y las pruebas no probarían nada.
-3. **El buffer de eventos se persiste en la misma transacción.** Ojo con el nombre: en `ventas`, `pendingEvents` son eventos de dominio que se drenan **después** del commit, hacia el outbox. **Aquí no es eso.** `MSP_GA_EVENTO` es una tabla del expediente y el §4.4 exige que la fila se guarde junto con el cambio de etapa. Un solo buffer, `eventosPendientes []*Evento`, que `GarantiaRepo.Guardar` persistirá en la misma transacción. **Garantías no publica al outbox.** No copies el patrón de `ventas` por inercia.
-4. **El estado del folio se mueve explícito, no derivado.** El comando pide la transición y el agregado la **rechaza** si los artículos no la permiten. La máquina del folio es la de tu `estado_folio.go`: `abierto → en_proceso → listo_entrega → entregado → cerrado`, con `cancelado` colgando de los dos primeros.
+3. **El buffer de eventos se persiste en la misma transacción.** *Ojo con el nombre, y es la trampa más cara de esta tarea:* en `ventas`, `pendingEvents` son eventos de dominio que se drenan **después** del commit, hacia el outbox. **Aquí no es eso.** `MSP_GA_EVENTO` es una tabla del expediente y el §4.4 exige que la fila se guarde junto con el cambio de etapa. Un solo buffer, `eventosPendientes []*Evento`, que `GarantiaRepo.Guardar` persistirá en la misma transacción. **Garantías no publica al outbox.** Vas a estar leyendo `venta.go` como referencia de forma: no te lleves esto por inercia.
+4. **El estado del folio se mueve explícito, no derivado.** El comando pide la transición y el agregado la **rechaza** si los artículos no la permiten. La máquina del folio es la de `estado_folio.go`: `abierto → en_proceso → listo_entrega → entregado → cerrado`, con `cancelado` colgando de los dos primeros.
    La guardia que importa está en **`listo_entrega`**: sólo se permite cuando **cada artículo del folio está en `listo_entrega`, en `standby`, o en una etapa terminal**. Ni uno puede quedar en el camino del cliente. Eso es exactamente lo que permite el requisito del §3.2 —folio `cerrado` con el original todavía en `standby`— sin dejar que el folio cierre con un artículo olvidado en el taller.
 5. **`origen = piso`** ⇒ `clienteID`, `ventaID`, `estadoCuenta` y domicilio **nil, y se rechazan si vienen**. **`origen = cliente`** ⇒ los cuatro obligatorios; GPS opcional. Un folio de cliente siempre nace de una venta identificada.
 6. **El folio lo formatea el dominio.** Un VO `Folio` en `folio.go`: recibe el **entero** que dará `FolioGenerator.Siguiente()` y formatea `GA-%06d`; `ParseFolio(s)` valida el formato para hidratar. El puerto todavía no existe (`GA 2.4`) — tú recibes el entero como parámetro.
 7. **El agregado no carga la línea de tiempo histórica.** Sólo acumula los eventos nuevos. El histórico se lee por `EventoRepo.ListarPorGarantia`, que es un puerto aparte de sólo lectura. Un folio con cuarenta eventos no debe cargarse entero para avanzar una etapa.
 8. **`claveIdempotencia` y `deviceCreatedAt` son parámetros obligatorios de quien crea el evento.** El dominio **no** los inventa: la clave la genera el teléfono y es lo que hace viable el offline-first. Cuando el evento nace en el servidor, la capa de aplicación pasa un UUID nuevo y `now` — pero eso lo decide ella, no la entidad.
-9. **Un artículo puede reemplazarse más de una vez.** El reemplazo también puede salir malo. Por eso `Articulo` lleva `reemplazaA *uuid.UUID` (nil en los originales). La columna `REEMPLAZA_A` llega en la migración `000057`, que escribo yo — **tú no toques ninguna migración**, sólo el campo en la entidad.
+9. **Un artículo puede reemplazarse más de una vez.** El reemplazo también puede salir malo. Por eso `Articulo` lleva `reemplazaA *uuid.UUID` (nil en los originales). La columna `REEMPLAZA_A` ya existe, en la migración `000057`.
 
 ---
 
@@ -122,7 +127,7 @@ Entidad hija, **inmutable**: sin setters, sin `UPDATED_AT`, sin borrado. Se crea
 
 Campos: `id`, `garantiaID`, `articuloRef` (`*uuid.UUID`), `tipo` (`TipoEvento`), `descripcion`, `etapaDesde`/`etapaHasta` (`*Etapa`), `usuario`, `rolDecisor` (`*RolDecisor`), `gpsLat`/`gpsLon`, `createdAt`, `deviceCreatedAt`, `claveIdempotencia`. **No embebe `audit.*`**: la tabla sólo tiene `CREATED_AT`, así que ni `Timestamped` aplica.
 
-**Además, un catálogo nuevo: `TipoEvento`** en `tipo_evento.go`, Enum VO con la forma de siempre. Trece valores, uno por hecho registrable:
+**Además, un catálogo nuevo: `TipoEvento`** en `tipo_evento.go`, enum con la forma `Parse`/`IsValid`/`String` — aquí sí, porque es un enum cerrado. Copia la forma de `etapa.go`, que ya está en el paquete. Trece valores, uno por hecho registrable:
 
 ```
 folio_abierto · articulo_agregado · etapa_avanzada · diagnostico_registrado ·
@@ -137,7 +142,7 @@ El más largo es `diagnostico_registrado` (22) y la columna es `VARCHAR(28)`: ca
 
 ## Pruebas
 
-En `package domain_test`, caja negra, tabla-driven, con el mismo rigor que las que ya entregaste.
+En `package domain_test`, caja negra, tabla-driven.
 
 - `AbrirGarantia` con entradas válidas y **cada validación rechazada con su centinela**, verificado con `errors.Is`. Incluye los dos orígenes y los campos que cada uno prohíbe.
 - **Cada método de transición desde cada estado**: el válido que funciona, y los inválidos que devuelven centinela **sin mutar nada**. Comprueba las dos mitades: que `Estado()` siga igual **y que no se haya encolado un evento**. Esa segunda mitad es la que prueba la invariante del §4.4.
@@ -145,7 +150,7 @@ En `package domain_test`, caja negra, tabla-driven, con el mismo rigor que las q
 - La guardia de la decisión 4, en `MarcarListoEntrega`: un folio con el original en `standby` y el reemplazo en `listo_entrega` **sí** pasa; el mismo folio con un tercer artículo en `en_taller` **no**, y al rechazarlo no debe quedar ni el estado movido ni el evento encolado.
 - Que `HydrateGarantia` reconstruya sin validar, con un caso de basura a propósito.
 
-**Cobertura ≥ 99%** en `internal/garantias/domain`. Hoy está en 100%; no la bajes.
+**Cobertura ≥ 99%** en `internal/garantias/domain`. Hoy está en **100.0%**, medido; no la bajes.
 
 ---
 
@@ -162,7 +167,7 @@ internal/garantias/domain/errors.go          (sólo agregar centinelas)
 docs/superpowers/plans/garantias-task-4-report.md
 ```
 
-**Cualquier cambio fuera de esa lista se rechaza sin revisar.** En particular: **ninguna migración**, ni la `000050` ni la `000057`; no toques los value objects ya entregados, ni `transiciones.go`, ni `.golangci.yml`.
+**Cualquier cambio fuera de esa lista se rechaza sin revisar.** En particular: **ninguna migración**; no toques los value objects ya entregados, ni `transiciones.go`, ni `.golangci.yml`.
 
 ---
 
@@ -186,7 +191,7 @@ make check-sealed MODULE=garantias
 
 ## Reporte
 
-`docs/superpowers/plans/garantias-task-4-report.md`, con la salida **literal** de esos comandos pegada y una sección que describa lo que entregaste de verdad. Si el reporte no coincide con el código, gana el código: corrige el reporte. Y revisa los números antes de mandarlo — en el anterior quedó un "25" donde había 24.
+`docs/superpowers/plans/garantias-task-4-report.md`, con la salida **literal** de esos comandos pegada y una sección que describa lo que entregaste de verdad. Si el reporte no coincide con el código, gana el código: corrige el reporte. Y revisa los números antes de mandarlo: un conteo que no cuadra con el código hace dudar de todo lo demás del reporte.
 
 ---
 
@@ -194,10 +199,10 @@ make check-sealed MODULE=garantias
 
 | Cuándo | Qué |
 |---|---|
-| **Jueves 20, fin de jornada** | **Punto de control: `garantia.go` y `articulo.go` escritos, antes de sus pruebas.** Mándamelos. Es donde salen las preguntas, y contestarlas con el archivo en la mano cuesta minutos; después de sesenta casos de prueba, cuesta rehacerlos. |
-| Viernes 21 | `evento.go`, `folio.go`, `tipo_evento.go` y los centinelas. |
-| **Lunes 24, fin de jornada** | **Entrega.** |
+| **Día 1, fin de jornada** | **Punto de control: `garantia.go` y `articulo.go` escritos, antes de sus pruebas.** Mándamelos. |
+| Día 2 | `evento.go`, `folio.go`, `tipo_evento.go` y los centinelas. |
+| **Día 3, fin de jornada** | **Entrega:** los cinco archivos, sus pruebas y el reporte. |
 
-El plazo sale de tu propio ritmo: los catálogos más el mapa te tomaron tres días. Esto es más grande, y por eso el punto de control va al segundo día y no al tercero.
+**El punto de control del día 1 no es opcional, y va antes que en la tarea anterior a propósito.** Es donde salen las preguntas, y contestarlas con el archivo en la mano cuesta minutos; después de sesenta casos de prueba, cuesta rehacerlos. Entras frío a este módulo y ahí es donde eso se paga o se ahorra.
 
-Si te atoras más de dos horas en una sola cosa, avisa. Y si alguna de las nueve decisiones de arriba no te cuadra con el spec, dilo antes de escribir las pruebas — esta vez las cerré yo, pero eso no las vuelve correctas.
+Si te atoras más de dos horas en una sola cosa, avisa. Y si alguna de las nueve decisiones no te cuadra con el spec, dilo antes de escribir las pruebas — están cerradas para ahorrarte tiempo, no porque sean infalibles.
