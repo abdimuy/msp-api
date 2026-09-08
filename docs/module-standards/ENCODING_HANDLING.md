@@ -378,3 +378,55 @@ Si crees que tienes que cambiarlo:
 - ¿Para compatibilidad con un cliente que no entiende UTF-8? Ese cliente está roto. UTF-8 es ASCII-compatible.
 
 Si después de todo eso sigues creyendo que hay que cambiar el modelo, abre un ADR y discute con el equipo antes de tocar código.
+
+---
+
+## El texto de un error ajeno también es texto
+
+Todo lo de arriba habla de **datos de negocio**: lo que leemos de Microsip y lo
+que le escribimos. Falta el camino que costó un defecto en producción.
+
+**Cuando Microsip lanza una `EXCEPTION`, el mensaje que devuelve Firebird viene
+en Windows-1252.** La «é» de *crédito* llega como `0xE9`. Ese texto acaba, vía
+`apperror.Error()`, escrito en columnas **nuestras** que son `CHARACTER SET
+UTF8` — `MSP_PAGOS_RECIBIDOS.ULTIMO_ERROR`, `MSP_OUTBOX_EVENTS.LAST_ERROR` — y
+ahí Firebird lo rechaza:
+
+```
+Dynamic SQL Error / SQL error code = -303 / Malformed string
+```
+
+y **deshace la transacción entera**. Medido el 2026-09-04: el registro del fallo
+se caía completo, así que la fila quedaba con `ULTIMO_ERROR` nulo **y** con
+`INTENTOS` en 0 — sin motivo que leer y sin backoff, de modo que el worker la
+reintentaba cada 60 segundos sin rendirse jamás.
+
+### La regla
+
+> **El saneo va en `firebird.MapError`, no en cada sitio que guarda un motivo.**
+
+`MapError` es la frontera por la que los bytes ajenos entran a nuestro mundo, y
+es el equivalente para errores del adapter que esta guía exige para los datos.
+Envuelve el error con `saneadoError`, cuyo `Error()` devuelve UTF-8 válido y
+cuyo `Unwrap()` conserva el original — así `errors.Is` y `errors.As` siguen
+funcionando, y con ellos las ramas de reintento que dependen de los GDS.
+
+No repita el saneo en el consumidor: una guarda que ninguna prueba puede
+distinguir de su ausencia no protege nada, sólo hace creer que sí.
+
+### Por qué tardó en verse
+
+`PagoRecibido.RegistrarFallo` trunca a 500 caracteres con `string(runes[:n])`, y
+ese round-trip por `[]rune` **sanea por accidente**: convierte cada byte
+inválido en U+FFFD. Así que un error **largo** se guardaba —mutilado, pero se
+guardaba— y uno **corto** reventaba. El de producción medía ~150 caracteres.
+
+Un defecto que depende del largo del mensaje no se reproduce leyendo el código.
+
+### Lo que el saneo NO hace
+
+No trunca. El ancho de la columna es problema de quien escribe, y mezclar las dos
+cosas escondería un desbordamiento detrás de un saneado. Ojo con
+`MSP_RX_MENSAJES.ERROR`: es `VARCHAR(500)` **sin charset declarado** —o sea
+`NONE`, que cuenta bytes— y `MarcarFallido` no acota nada. No da `-303`, pero un
+error de más de 500 bytes rompe el `UPDATE` igual.
