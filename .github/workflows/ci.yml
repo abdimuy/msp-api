@@ -276,6 +276,15 @@ jobs:
       - name: Suite de integración
         run: go test ./... -race -p 1 -count=1 -timeout 1800s
 
+      # `make coverage-visitas` no lo corría NADIE: ni CI ni el hook. Un piso
+      # que nada ejecuta es un piso que no existe, que es el defecto que ese
+      # script vino a cerrar — habría sido ridículo dejarlo sin cablear.
+      # Va en ESTE job y no en `quality` porque exige `FB_DATABASE`, y este job
+      # ya la exporta: sin la base, `infra/visitasfb` mide 0.0% contra un piso
+      # de 80% y el comando dice `ok`.
+      - name: Piso de cobertura de visitas
+        run: make coverage-visitas
+
       - name: Diagnóstico de Firebird si algo falló
         if: failure()
         run: docker logs mueblera-firebird --tail 100

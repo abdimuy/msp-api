@@ -13,6 +13,25 @@ LDFLAGS       := -s -w -X main.version=$(shell git rev-parse --short HEAD 2>/dev
 # internal/platform — not even another module's contracts. Verified by
 # `make check-sealed`; also enforced statically by depguard in .golangci.yml.
 # Adding a module here without its matching depguard rule leaves half the gate.
+#
+# ── Dos hechos medidos el 2026-09-08 (Arreglo B), sin cambiar comportamiento ──
+#
+# 1. `internal/asistencia` NO EXISTE. El target lo saltea imprimiendo
+#    "· internal/asistencia does not exist yet — skipped" y sigue en verde: una
+#    cuarta parte de esta lista no verifica nada y nadie se entera. Es la misma
+#    forma que las compuertas vacías que el Arreglo B cerró; se documenta y no
+#    se toca porque quitar un módulo de la lista de ADR 0009 es una decisión de
+#    política, no de andamiaje.
+#
+# 2. `visitas` no está en la lista, y **si se lo agrega, FALLA**:
+#       $ make check-sealed MODULE=visitas
+#       ✘ visitas is no longer sealed — it depends on (ADR 0009):
+#           github.com/abdimuy/msp-api/internal/auth
+#           github.com/abdimuy/msp-api/internal/auth/domain
+#    O sea que la afirmación del plan `pagos-y-visitas` de que visitas cumple la
+#    disciplina de módulo sellado es **falsa**, no "pendiente de medir".
+#    Sellarlo pide mover la dependencia de `internal/auth` fuera del módulo, que
+#    es tarea propia y no la de este arreglo.
 SEALED_MODULES := asistencia garantias flota canal
 
 # Load .env if present (FB_* and other vars consumed by Go binaries + targets).
