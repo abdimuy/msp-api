@@ -49,6 +49,8 @@ type Venta struct {
 	audit              audit.Auditable
 	cancelacion        *Cancelacion
 	aprobacion         *Aprobacion
+	version            int // current/effective version — what the next write will persist.
+	persistedVersion   int // version this aggregate believes is currently on disk — the CAS precondition.
 	pendingEvents      []Event
 }
 
@@ -344,6 +346,7 @@ type HydrateVentaParams struct {
 	Imagenes           []*Imagen
 	Cancelacion        *Cancelacion
 	Aprobacion         *Aprobacion
+	Version            int
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 	CreatedBy          uuid.UUID
@@ -377,6 +380,8 @@ func HydrateVenta(p HydrateVentaParams) *Venta {
 		audit:              audit.HydrateAuditable(p.CreatedAt, p.UpdatedAt, p.CreatedBy, p.UpdatedBy),
 		cancelacion:        p.Cancelacion,
 		aprobacion:         p.Aprobacion,
+		version:            p.Version,
+		persistedVersion:   p.Version,
 	}
 }
 
@@ -460,6 +465,31 @@ func (v *Venta) Cancelacion() *Cancelacion { return v.cancelacion }
 // Aprobacion returns the approval record or nil when not approved.
 func (v *Venta) Aprobacion() *Aprobacion { return v.aprobacion }
 
+// Version returns the current/effective optimistic-concurrency counter: it
+// starts at 0 for a freshly created venta (or at the persisted value for a
+// hydrated one) and increments by exactly 1 on every mutation that routes
+// through markUpdated (every edit mutator and every lifecycle transition).
+// This is the value the next INSERT/UPDATE will write.
+func (v *Venta) Version() int { return v.version }
+
+// PersistedVersion returns the version this aggregate currently believes is
+// on disk — the compare-and-swap precondition the repository binds into the
+// WHERE clause of its INSERT/UPDATE. It equals Version() right after
+// construction (CrearVenta: 0; HydrateVenta: the value read from the row) and
+// stays pinned there across any number of in-memory mutations until
+// MarkVersionPersisted confirms a write actually landed. This split — rather
+// than deriving the precondition as Version()-1 — is what lets a single
+// aggregate survive (a) several mutators applied before its first Save, and
+// (b) several real Update calls in a row without an intervening FindByID:
+// both are exercised by this module's own repository tests.
+func (v *Venta) PersistedVersion() int { return v.persistedVersion }
+
+// MarkVersionPersisted confirms that the aggregate's current Version() was
+// just written to MSP_VENTAS.VERSION successfully, syncing PersistedVersion
+// to match. Called by the repository — never by domain or app code — after
+// every successful Save/Update/UpdateHeader/UpdateCliente/touchHeader.
+func (v *Venta) MarkVersionPersisted() { v.persistedVersion = v.version }
+
 // IsCanceled reports whether the venta has been canceled.
 func (v *Venta) IsCanceled() bool { return v.situacion == SituacionCancelada }
 
@@ -468,6 +498,25 @@ func (v *Venta) IsCanceled() bool { return v.situacion == SituacionCancelada }
 // cancelada are terminal for the purposes of mutation.
 func (v *Venta) puedeEditarse() bool {
 	return v.estado == EstadoActive && v.situacion == SituacionBorrador
+}
+
+// markUpdated stamps the audit trail AND bumps the optimistic-concurrency
+// counter in the same place, so the two can never drift apart: every write
+// this aggregate will ever persist is both audited and versioned. Every edit
+// mutator and every lifecycle transition routes its "I just changed this
+// venta" moment through this single helper instead of calling
+// v.audit.MarkUpdated directly.
+//
+// Any number of calls may accumulate before the aggregate is ever persisted
+// (Version() simply keeps climbing) — the repository's compare-and-swap does
+// not assume "exactly one call per write"; see PersistedVersion and
+// MarkVersionPersisted. Methods that mutate the in-memory aggregate without
+// ever reaching a repository UPDATE on MSP_VENTAS — AdjuntarImagen,
+// EliminarImagen, AsignarClienteMicrosip — deliberately do NOT call this
+// helper; they keep calling v.audit.MarkUpdated directly, unchanged.
+func (v *Venta) markUpdated(by uuid.UUID) {
+	v.audit.MarkUpdated(by)
+	v.version++
 }
 
 // ─── Read-only child iterators ─────────────────────────────────────────────
@@ -629,7 +678,7 @@ func (v *Venta) Cancelar(reason string, by uuid.UUID, now time.Time) error {
 	}
 	v.cancelacion = &c
 	v.situacion = SituacionCancelada
-	v.audit.MarkUpdated(by)
+	v.markUpdated(by)
 	v.pendingEvents = append(v.pendingEvents, NewVentaCanceladaEvent(v.id, by, strings.TrimSpace(reason), now))
 	return nil
 }
@@ -641,7 +690,7 @@ func (v *Venta) EnviarARevision(by uuid.UUID, now time.Time) error {
 		return ErrVentaNoEnviableARevision
 	}
 	v.situacion = SituacionRevisada
-	v.audit.MarkUpdated(by)
+	v.markUpdated(by)
 	v.pendingEvents = append(v.pendingEvents, NewVentaEnviadaARevisionEvent(v.id, by, now))
 	return nil
 }
@@ -658,7 +707,7 @@ func (v *Venta) Aprobar(by uuid.UUID, now time.Time) error {
 	}
 	v.aprobacion = &a
 	v.situacion = SituacionAprobada
-	v.audit.MarkUpdated(by)
+	v.markUpdated(by)
 	v.pendingEvents = append(v.pendingEvents, NewVentaAprobadaEvent(v.id, by, now))
 	return nil
 }
@@ -674,7 +723,7 @@ func (v *Venta) RegresarABorrador(by uuid.UUID, now time.Time) error {
 	}
 	v.situacion = SituacionBorrador
 	v.aprobacion = nil
-	v.audit.MarkUpdated(by)
+	v.markUpdated(by)
 	v.pendingEvents = append(v.pendingEvents, NewVentaRegresadaABorradorEvent(v.id, by, now))
 	return nil
 }
@@ -697,7 +746,7 @@ func (v *Venta) MarcarAplicada(doctoID int, folio string, at time.Time, by uuid.
 	v.microsipDoctoPVID = &doctoID
 	v.microsipFolio = &folio
 	v.microsipAplicadaAt = &atCopy
-	v.audit.MarkUpdated(by)
+	v.markUpdated(by)
 	v.pendingEvents = append(v.pendingEvents, NewVentaAplicadaEvent(v.id, doctoID, folio, by, at))
 	return nil
 }
@@ -761,7 +810,7 @@ func (v *Venta) ActualizarHeader(p ActualizarHeaderParams) error {
 	v.planCredito = p.PlanCredito
 	v.diaCobranza = p.DiaCobranza
 	v.nota = nota
-	v.audit.MarkUpdated(p.By)
+	v.markUpdated(p.By)
 	v.pendingEvents = append(v.pendingEvents, NewVentaHeaderActualizadoEvent(v.id, p.By, p.Now))
 	return nil
 }
@@ -807,7 +856,7 @@ func (v *Venta) ActualizarCliente(p ActualizarClienteParams) error {
 	}
 	v.clienteID = p.ClienteID
 	v.cliente = p.Cliente
-	v.audit.MarkUpdated(p.By)
+	v.markUpdated(p.By)
 	v.pendingEvents = append(v.pendingEvents, NewVentaClienteActualizadoEvent(v.id, p.By, p.Now))
 	return nil
 }
@@ -841,7 +890,7 @@ func (v *Venta) ReemplazarProductos(p ReemplazarProductosParams) error {
 	if err := v.instalarLineas(v.combos, productos); err != nil {
 		return err
 	}
-	v.audit.MarkUpdated(p.By)
+	v.markUpdated(p.By)
 	v.pendingEvents = append(v.pendingEvents, NewVentaProductosReemplazadosEvent(v.id, len(productos), p.By, p.Now))
 	return nil
 }
@@ -871,7 +920,7 @@ func (v *Venta) ReemplazarCombos(p ReemplazarCombosParams) error {
 	if err := v.instalarLineas(combos, v.productos); err != nil {
 		return err
 	}
-	v.audit.MarkUpdated(p.By)
+	v.markUpdated(p.By)
 	v.pendingEvents = append(v.pendingEvents, NewVentaCombosReemplazadosEvent(v.id, len(combos), p.By, p.Now))
 	return nil
 }
@@ -927,7 +976,7 @@ func (v *Venta) ReemplazarLineas(p ReemplazarLineasParams) error {
 	if err := v.instalarLineas(combos, productos); err != nil {
 		return err
 	}
-	v.audit.MarkUpdated(p.By)
+	v.markUpdated(p.By)
 	v.pendingEvents = append(v.pendingEvents,
 		NewVentaCombosReemplazadosEvent(v.id, len(combos), p.By, p.Now),
 		NewVentaProductosReemplazadosEvent(v.id, len(productos), p.By, p.Now),
@@ -955,7 +1004,7 @@ func (v *Venta) ReemplazarVendedores(p ReemplazarVendedoresParams) error {
 		return err
 	}
 	v.vendedores = vendedores
-	v.audit.MarkUpdated(p.By)
+	v.markUpdated(p.By)
 	v.pendingEvents = append(v.pendingEvents, NewVentaVendedoresReemplazadosEvent(v.id, len(vendedores), p.By, p.Now))
 	return nil
 }

@@ -16,7 +16,7 @@ const ventaColumns = `ID, NOMBRE_CLIENTE, TELEFONO, AVAL_O_RESPONSABLE,
     CLIENTE_ID, STATUS, APPROVED_AT, APPROVED_BY,
     SITUACION, SINCRONIZACION,
     MICROSIP_DOCTO_PV_ID, MICROSIP_FOLIO, MICROSIP_APLICADA_AT,
-    CLIENTE_REFERENCIA`
+    CLIENTE_REFERENCIA, VERSION`
 
 const insertVenta = `
 INSERT INTO MSP_VENTAS
@@ -33,9 +33,9 @@ INSERT INTO MSP_VENTAS
      CLIENTE_ID, STATUS, APPROVED_AT, APPROVED_BY,
      SITUACION, SINCRONIZACION,
      MICROSIP_DOCTO_PV_ID, MICROSIP_FOLIO, MICROSIP_APLICADA_AT,
-     CLIENTE_REFERENCIA)
+     CLIENTE_REFERENCIA, VERSION)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 // updateVentaHeader writes back the full state-machine surface of a venta:
 // the three lifecycle dimensions (STATUS/SITUACION/SINCRONIZACION), the
@@ -43,6 +43,13 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 // and the audit fields. Every transition command (Cancelar, EnviarARevision,
 // Aprobar, RegresarABorrador, AplicarVenta) persists through this statement.
 // Field-level edits go through the dedicated update statements below.
+//
+// VERSION is both the compare-and-swap guard (WHERE) and the value being
+// written (SET): the caller passes the version domain.Venta had BEFORE this
+// mutation (the row's currently-persisted version) as the guard and the
+// version AFTER (domain.Venta.Version(), already incremented by
+// markUpdated) as the new value. Zero rows affected means someone else wrote
+// first — see venta_repo.go's ensureVersionMatched.
 const updateVentaHeader = `
 UPDATE MSP_VENTAS
 SET STATUS               = ?,
@@ -57,11 +64,13 @@ SET STATUS               = ?,
     APPROVED_AT          = ?,
     APPROVED_BY          = ?,
     UPDATED_AT           = ?,
-    UPDATED_BY           = ?
-WHERE ID = ?`
+    UPDATED_BY           = ?,
+    VERSION              = ?
+WHERE ID = ? AND VERSION = ?`
 
 // updateVentaHeaderFull rewrites the editable header fields used by
 // ActualizarHeader. TIPO_VENTA, CLIENTE_ID and STATUS are NOT touched here.
+// See updateVentaHeader's doc comment for the VERSION CAS contract.
 const updateVentaHeaderFull = `
 UPDATE MSP_VENTAS
 SET CALLE                = ?,
@@ -84,10 +93,12 @@ SET CALLE                = ?,
     DIA_COBRANZA_MES     = ?,
     NOTA                 = ?,
     UPDATED_AT           = ?,
-    UPDATED_BY           = ?
-WHERE ID = ?`
+    UPDATED_BY           = ?,
+    VERSION              = ?
+WHERE ID = ? AND VERSION = ?`
 
-// updateVentaCliente updates the cliente snapshot + cliente_id link.
+// updateVentaCliente updates the cliente snapshot + cliente_id link. See
+// updateVentaHeader's doc comment for the VERSION CAS contract.
 const updateVentaCliente = `
 UPDATE MSP_VENTAS
 SET CLIENTE_ID          = ?,
@@ -96,8 +107,9 @@ SET CLIENTE_ID          = ?,
     AVAL_O_RESPONSABLE  = ?,
     CLIENTE_REFERENCIA  = ?,
     UPDATED_AT          = ?,
-    UPDATED_BY          = ?
-WHERE ID = ?`
+    UPDATED_BY          = ?,
+    VERSION             = ?
+WHERE ID = ? AND VERSION = ?`
 
 const selectVentaByID = `
 SELECT ` + ventaColumns + `
@@ -186,15 +198,17 @@ const deleteVendedoresByVenta = `DELETE FROM MSP_VENTAS_VENDEDORES WHERE VENTA_I
 // MSP_VENTAS after a child-collection replacement (productos, combos, or
 // vendedores). The three monto columns mirror the values recomputed by
 // domain.Venta.recomputarMontos() so the header row stays consistent with the
-// current child rows.
+// current child rows. See updateVentaHeader's doc comment for the VERSION
+// CAS contract.
 const touchVentaHeaderMontos = `
 UPDATE MSP_VENTAS
 SET MONTO_ANUAL        = ?,
     MONTO_CORTO_PLAZO  = ?,
     MONTO_CONTADO      = ?,
     UPDATED_AT         = ?,
-    UPDATED_BY         = ?
-WHERE ID = ?`
+    UPDATED_BY         = ?,
+    VERSION            = ?
+WHERE ID = ? AND VERSION = ?`
 
 // ─── Imagen ─────────────────────────────────────────────────────────────────
 

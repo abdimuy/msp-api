@@ -59,6 +59,10 @@ func TestVentaRepo_UpdateHeader_PersistsFields(t *testing.T) {
 	})
 }
 
+// TestVentaRepo_UpdateHeader_NotFound pins the same Task G1 behaviour change
+// as TestVentaRepo_Update_NotFound: UpdateHeader's UPDATE is guarded by
+// "WHERE ID = ? AND VERSION = ?" (updateVentaHeaderFull), so zero rows
+// affected is now reported as ErrVentaVersionConflicto.
 func TestVentaRepo_UpdateHeader_NotFound(t *testing.T) {
 	requireFBEnv(t)
 	t.Parallel()
@@ -71,7 +75,7 @@ func TestVentaRepo_UpdateHeader_NotFound(t *testing.T) {
 		})
 		// Do NOT Save. Just try to update.
 		err := repo.UpdateHeader(ctx, v)
-		require.ErrorIs(t, err, domain.ErrVentaNotFound)
+		require.ErrorIs(t, err, domain.ErrVentaVersionConflicto)
 	})
 }
 

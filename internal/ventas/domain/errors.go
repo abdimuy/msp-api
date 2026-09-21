@@ -38,6 +38,24 @@ var (
 		"venta_no_editable",
 		"la venta no se puede editar en su estado actual",
 	)
+	// ErrVentaVersionConflicto is returned when a write's compare-and-swap on
+	// MSP_VENTAS.VERSION affects zero rows: the row the writer read is not
+	// the row that is currently persisted — either a concurrent write landed
+	// first, or (at the repository layer, before Task G1's SQL guard is
+	// distinguishable from a genuine miss) the venta was never persisted at
+	// all. See internal/ventas/infra/ventfb/venta_repo.go.
+	//
+	// Uses apperror.NewConflict (409) for now. Task G2 introduces
+	// apperror.KindPreconditionFailed (412 Precondition Failed) in
+	// internal/platform/apperror/apperror.go — out of scope for this
+	// package's task — and re-Kinds this sentinel to it, since this
+	// surface's 409 already means three other things (venta_no_editable,
+	// venta_cancelada_inmutable, cliente_ya_asignado) that the phone needs
+	// to distinguish from "someone wrote first".
+	ErrVentaVersionConflicto = apperror.NewConflict(
+		"venta_version_conflicto",
+		"la venta cambió desde que la abriste",
+	)
 	// ErrClienteIDInvalido is returned when the supplied cliente_id does not
 	// resolve to a row in Microsip's CLIENTES table.
 	ErrClienteIDInvalido = apperror.NewValidation(
