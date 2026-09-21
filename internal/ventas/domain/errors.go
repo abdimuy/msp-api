@@ -45,14 +45,15 @@ var (
 	// distinguishable from a genuine miss) the venta was never persisted at
 	// all. See internal/ventas/infra/ventfb/venta_repo.go.
 	//
-	// Uses apperror.NewConflict (409) for now. Task G2 introduces
-	// apperror.KindPreconditionFailed (412 Precondition Failed) in
-	// internal/platform/apperror/apperror.go — out of scope for this
-	// package's task — and re-Kinds this sentinel to it, since this
+	// Uses apperror.NewPreconditionFailed (412), not NewConflict (409): this
 	// surface's 409 already means three other things (venta_no_editable,
 	// venta_cancelada_inmutable, cliente_ya_asignado) that the phone needs
-	// to distinguish from "someone wrote first".
-	ErrVentaVersionConflicto = apperror.NewConflict(
+	// to distinguish, by status code alone, from "someone wrote first". The
+	// state guard (puedeEditarse, 409) runs before the version guard (412)
+	// in every mutator — a venta that already left borrador must answer 409
+	// even with a stale If-Match, or the phone would retry a write that can
+	// never succeed.
+	ErrVentaVersionConflicto = apperror.NewPreconditionFailed(
 		"venta_version_conflicto",
 		"la venta cambió desde que la abriste",
 	)

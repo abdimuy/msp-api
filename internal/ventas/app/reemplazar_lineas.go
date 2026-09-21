@@ -15,6 +15,9 @@ type ReemplazarLineasInput struct {
 	VentaID   uuid.UUID
 	Combos    []CrearVentaComboInput
 	Productos []CrearVentaProductoInput
+	// ExpectedVersion is the optional If-Match precondition. Nil means "no
+	// precondition sent" — see domain.Venta.checkVersion.
+	ExpectedVersion *int
 }
 
 // ReemplazarLineas replaces the venta's combos AND productos in a single
@@ -50,10 +53,11 @@ func (s *Service) ReemplazarLineas(ctx context.Context, in ReemplazarLineasInput
 		return nil, err
 	}
 	if err := venta.ReemplazarLineas(domain.ReemplazarLineasParams{
-		Combos:    buildComboInputs(in.Combos),
-		Productos: productos,
-		By:        by,
-		Now:       now,
+		Combos:          buildComboInputs(in.Combos),
+		Productos:       productos,
+		By:              by,
+		Now:             now,
+		ExpectedVersion: in.ExpectedVersion,
 	}); err != nil {
 		return nil, err
 	}

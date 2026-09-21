@@ -500,6 +500,35 @@ func (v *Venta) puedeEditarse() bool {
 	return v.estado == EstadoActive && v.situacion == SituacionBorrador
 }
 
+// checkVersion enforces the optional optimistic-concurrency precondition an
+// HTTP caller supplies via If-Match. A nil expected means "no precondition
+// sent" and always passes — this is deliberate, not a gap: the desktop app
+// does not send If-Match today and must keep working unchanged, so an
+// absent precondition can never be treated as "expected version 0" or as a
+// blind-write rejection. See
+// docs/superpowers/plans/2026-09-21-editar-venta-nivel-2.md, Eje 3.
+//
+// Compares against PersistedVersion(), not Version(): PersistedVersion is
+// what the caller actually read (see its doc comment) and stays pinned
+// across any in-memory mutations that have not yet reached a repository
+// write, which is exactly the basis an If-Match precondition is checked
+// against.
+//
+// Callers must run this AFTER puedeEditarse() returns ErrVentaNoEditable,
+// never before: a venta that already left borrador must answer 409, even
+// against a stale If-Match, or the caller would retry a write that can
+// never succeed once the state guard evaluates. See
+// TestVenta_ExpectedVersion_GuardOrder_EstadoAntesQueVersion.
+func (v *Venta) checkVersion(expected *int) error {
+	if expected == nil {
+		return nil
+	}
+	if *expected != v.persistedVersion {
+		return ErrVentaVersionConflicto
+	}
+	return nil
+}
+
 // markUpdated stamps the audit trail AND bumps the optimistic-concurrency
 // counter in the same place, so the two can never drift apart: every write
 // this aggregate will ever persist is both audited and versioned. Every edit
@@ -778,14 +807,15 @@ func (v *Venta) AsignarClienteMicrosip(id int, by uuid.UUID) error {
 // Montos is intentionally absent — header totals are derived from line items
 // via recomputarMontos; ActualizarHeader never mutates montos directly.
 type ActualizarHeaderParams struct {
-	Direccion   Direccion
-	GPS         GPSCoords
-	FechaVenta  time.Time
-	PlanCredito *PlanCredito
-	DiaCobranza *DiaCobranza
-	Nota        *string
-	By          uuid.UUID
-	Now         time.Time
+	Direccion       Direccion
+	GPS             GPSCoords
+	FechaVenta      time.Time
+	PlanCredito     *PlanCredito
+	DiaCobranza     *DiaCobranza
+	Nota            *string
+	By              uuid.UUID
+	Now             time.Time
+	ExpectedVersion *int
 }
 
 // ActualizarHeader mutates the venta's header fields. Only valid while the
@@ -793,6 +823,9 @@ type ActualizarHeaderParams struct {
 func (v *Venta) ActualizarHeader(p ActualizarHeaderParams) error {
 	if !v.puedeEditarse() {
 		return ErrVentaNoEditable
+	}
+	if err := v.checkVersion(p.ExpectedVersion); err != nil {
+		return err
 	}
 	if p.FechaVenta.IsZero() {
 		return ErrFechaVentaZero
@@ -839,10 +872,11 @@ func validateCreditoCoherenciaForTipo(tipo TipoVenta, plan *PlanCredito, dia *Di
 
 // ActualizarClienteParams carries the editable cliente fields.
 type ActualizarClienteParams struct {
-	ClienteID *int
-	Cliente   ClienteSnapshot
-	By        uuid.UUID
-	Now       time.Time
+	ClienteID       *int
+	Cliente         ClienteSnapshot
+	By              uuid.UUID
+	Now             time.Time
+	ExpectedVersion *int
 }
 
 // ActualizarCliente mutates the venta's cliente snapshot and optional
@@ -850,6 +884,9 @@ type ActualizarClienteParams struct {
 func (v *Venta) ActualizarCliente(p ActualizarClienteParams) error {
 	if !v.puedeEditarse() {
 		return ErrVentaNoEditable
+	}
+	if err := v.checkVersion(p.ExpectedVersion); err != nil {
+		return err
 	}
 	if p.Cliente.Nombre().IsZero() {
 		return ErrNombreClienteRequerido
@@ -865,9 +902,10 @@ func (v *Venta) ActualizarCliente(p ActualizarClienteParams) error {
 // productos may reference combos via combo_id, both collections must be
 // replaced atomically.
 type ReemplazarProductosParams struct {
-	Productos []CrearVentaProductoInput
-	By        uuid.UUID
-	Now       time.Time
+	Productos       []CrearVentaProductoInput
+	By              uuid.UUID
+	Now             time.Time
+	ExpectedVersion *int
 }
 
 // ReemplazarProductos replaces the productos collection wholesale. The
@@ -876,6 +914,9 @@ type ReemplazarProductosParams struct {
 func (v *Venta) ReemplazarProductos(p ReemplazarProductosParams) error {
 	if !v.puedeEditarse() {
 		return ErrVentaNoEditable
+	}
+	if err := v.checkVersion(p.ExpectedVersion); err != nil {
+		return err
 	}
 	if len(p.Productos) == 0 {
 		return ErrVentaProductosVacios
@@ -897,9 +938,10 @@ func (v *Venta) ReemplazarProductos(p ReemplazarProductosParams) error {
 
 // ReemplazarCombosParams carries the new combos collection.
 type ReemplazarCombosParams struct {
-	Combos []CrearVentaComboInput
-	By     uuid.UUID
-	Now    time.Time
+	Combos          []CrearVentaComboInput
+	By              uuid.UUID
+	Now             time.Time
+	ExpectedVersion *int
 }
 
 // ReemplazarCombos replaces the combos collection wholesale. Productos that
@@ -909,6 +951,9 @@ type ReemplazarCombosParams struct {
 func (v *Venta) ReemplazarCombos(p ReemplazarCombosParams) error {
 	if !v.puedeEditarse() {
 		return ErrVentaNoEditable
+	}
+	if err := v.checkVersion(p.ExpectedVersion); err != nil {
+		return err
 	}
 	combos, err := buildCombos(p.Combos, p.By, p.Now)
 	if err != nil {
@@ -928,10 +973,11 @@ func (v *Venta) ReemplazarCombos(p ReemplazarCombosParams) error {
 // ReemplazarLineasParams carries BOTH line-item collections of a venta so
 // they can be replaced as one unit.
 type ReemplazarLineasParams struct {
-	Combos    []CrearVentaComboInput
-	Productos []CrearVentaProductoInput
-	By        uuid.UUID
-	Now       time.Time
+	Combos          []CrearVentaComboInput
+	Productos       []CrearVentaProductoInput
+	By              uuid.UUID
+	Now             time.Time
+	ExpectedVersion *int
 }
 
 // ReemplazarLineas replaces the combos AND productos collections wholesale in
@@ -956,6 +1002,9 @@ type ReemplazarLineasParams struct {
 func (v *Venta) ReemplazarLineas(p ReemplazarLineasParams) error {
 	if !v.puedeEditarse() {
 		return ErrVentaNoEditable
+	}
+	if err := v.checkVersion(p.ExpectedVersion); err != nil {
+		return err
 	}
 	if len(p.Productos) == 0 {
 		return ErrVentaProductosVacios
@@ -986,15 +1035,19 @@ func (v *Venta) ReemplazarLineas(p ReemplazarLineasParams) error {
 
 // ReemplazarVendedoresParams carries the new vendedores collection.
 type ReemplazarVendedoresParams struct {
-	Vendedores []CrearVentaVendedorInput
-	By         uuid.UUID
-	Now        time.Time
+	Vendedores      []CrearVentaVendedorInput
+	By              uuid.UUID
+	Now             time.Time
+	ExpectedVersion *int
 }
 
 // ReemplazarVendedores replaces the vendedores collection wholesale.
 func (v *Venta) ReemplazarVendedores(p ReemplazarVendedoresParams) error {
 	if !v.puedeEditarse() {
 		return ErrVentaNoEditable
+	}
+	if err := v.checkVersion(p.ExpectedVersion); err != nil {
+		return err
 	}
 	if len(p.Vendedores) == 0 {
 		return ErrVentaVendedoresVacios

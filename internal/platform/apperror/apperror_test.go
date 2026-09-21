@@ -28,6 +28,7 @@ func TestKind_HTTPStatus(t *testing.T) {
 		{"unknown", apperror.KindUnknown, http.StatusInternalServerError},
 		{"service_unavailable", apperror.KindServiceUnavailable, http.StatusServiceUnavailable},
 		{"too_many_requests", apperror.KindTooManyRequests, http.StatusTooManyRequests},
+		{"precondition_failed", apperror.KindPreconditionFailed, http.StatusPreconditionFailed},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -55,6 +56,7 @@ func TestConstructors_KindAndCodeAndMessage(t *testing.T) {
 		{"internal", apperror.NewInternal("c", "m"), apperror.KindInternal, 500, "c", "m"},
 		{"service_unavailable", apperror.NewServiceUnavailable("c", "m"), apperror.KindServiceUnavailable, 503, "c", "m"},
 		{"too_many_requests", apperror.NewTooManyRequests("c", "m"), apperror.KindTooManyRequests, 429, "c", "m"},
+		{"precondition_failed", apperror.NewPreconditionFailed("c", "m"), apperror.KindPreconditionFailed, 412, "c", "m"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -17,6 +17,9 @@ type ActualizarClienteInput struct {
 	ClienteNombre string
 	ClienteTel    *string
 	ClienteAval   *string
+	// ExpectedVersion is the optional If-Match precondition. Nil means "no
+	// precondition sent" — see domain.Venta.checkVersion.
+	ExpectedVersion *int
 }
 
 // ActualizarCliente edits the cliente snapshot + cliente_id link of a venta
@@ -38,10 +41,11 @@ func (s *Service) ActualizarCliente(ctx context.Context, in ActualizarClienteInp
 		return nil, err
 	}
 	if err := venta.ActualizarCliente(domain.ActualizarClienteParams{
-		ClienteID: in.ClienteID,
-		Cliente:   cliente,
-		By:        by,
-		Now:       s.clock.Now(),
+		ClienteID:       in.ClienteID,
+		Cliente:         cliente,
+		By:              by,
+		Now:             s.clock.Now(),
+		ExpectedVersion: in.ExpectedVersion,
 	}); err != nil {
 		return nil, err
 	}
