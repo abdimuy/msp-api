@@ -225,7 +225,12 @@ func TestAbrirGarantia_ClienteRejections(t *testing.T) {
 		{"cliente_nil", func(p *domain.AbrirGarantiaParams) { p.ClienteID = nil }, domain.ErrClienteIDObligatorio},
 		{"venta_nil", func(p *domain.AbrirGarantiaParams) { p.VentaID = nil }, domain.ErrVentaIDObligatorio},
 		{"estado_cuenta_nil", func(p *domain.AbrirGarantiaParams) { p.EstadoCuenta = nil }, domain.ErrEstadoCuentaObligatorio},
-		{"domicilio_vacio", func(p *domain.AbrirGarantiaParams) { p.Calle = "  " }, domain.ErrDomicilioObligatorio},
+		{"domicilio_calle_vacia", func(p *domain.AbrirGarantiaParams) { p.Calle = "  " }, domain.ErrDomicilioObligatorio},
+		{"domicilio_numero_vacio", func(p *domain.AbrirGarantiaParams) { p.NumeroExterior = "  " }, domain.ErrDomicilioObligatorio},
+		{"domicilio_colonia_vacia", func(p *domain.AbrirGarantiaParams) { p.Colonia = "  " }, domain.ErrDomicilioObligatorio},
+		{"domicilio_localidad_vacia", func(p *domain.AbrirGarantiaParams) { p.Localidad = "  " }, domain.ErrDomicilioObligatorio},
+		{"domicilio_ciudad_vacia", func(p *domain.AbrirGarantiaParams) { p.Ciudad = "  " }, domain.ErrDomicilioObligatorio},
+		{"domicilio_cp_vacio", func(p *domain.AbrirGarantiaParams) { p.CodigoPostal = "  " }, domain.ErrDomicilioObligatorio},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -494,6 +499,86 @@ func TestAvanzarArticulo_RequiereRutaDesdeEnRevision(t *testing.T) {
 	}
 }
 
+func TestAvanzarArticulo_EtapasExclusivasSwap(t *testing.T) {
+	t.Parallel()
+	t.Run("desde_en_taller", func(t *testing.T) {
+		t.Parallel()
+		g := openPiso(t)
+		a := addArticle(t, g, "silla")
+		a = advance(t, g, a, domain.EtapaEnRevision)
+		a = diagnostico(t, g, a, domain.RutaReparacionTaller) // en_taller
+		pendientes := countPending(g)
+		for _, hasta := range []domain.Etapa{domain.EtapaCambioAutorizado, domain.EtapaStandby} {
+			err := g.AvanzarArticulo(a.ID(), hasta, actor("juan"), fixed)
+			if !errors.Is(err, domain.ErrTransicionEtapaNoPermitida) {
+				t.Fatalf("AvanzarArticulo(%s): want ErrTransicionEtapaNoPermitida, got %v", hasta, err)
+			}
+		}
+		if a.Etapa() != domain.EtapaEnTaller || countPending(g) != pendientes {
+			t.Fatalf("no mutation/event expected")
+		}
+	})
+	t.Run("desde_espera_respuesta", func(t *testing.T) {
+		t.Parallel()
+		g, a := supplierToVerdict(t)
+		a = dictamen(t, g, a, domain.DictamenSinFalla) // espera_respuesta_cliente
+		pendientes := countPending(g)
+		err := g.AvanzarArticulo(a.ID(), domain.EtapaStandby, actor("juan"), fixed)
+		if !errors.Is(err, domain.ErrTransicionEtapaNoPermitida) {
+			t.Fatalf("want ErrTransicionEtapaNoPermitida, got %v", err)
+		}
+		if a.Etapa() != domain.EtapaEsperaRespuestaCliente || countPending(g) != pendientes {
+			t.Fatalf("no mutation/event expected")
+		}
+	})
+}
+
+func TestArticulo_MutacionesActualizanUpdatedAt(t *testing.T) {
+	t.Parallel()
+	cambio := fixed.Add(time.Hour)
+	mut := domain.ActorParams{Usuario: "juan", ClaveIdempotencia: "clave-1", DeviceCreatedAt: cambio.Add(time.Hour)}
+
+	// ruta taller: avanzar, registrarDiagnostico, autorizarCambioFisico, registrarDesenlace.
+	// El artículo nace en fixed; cada mutador corre en cambio, así que UpdatedAt
+	// debe moverse en cada uno (fallaría si un mutador perdiera MarkUpdatedAt).
+	g := openPiso(t)
+	a := addArticle(t, g, "silla")
+	if err := g.AvanzarArticulo(a.ID(), domain.EtapaEnRevision, mut, cambio); err != nil {
+		t.Fatalf("AvanzarArticulo: %v", err)
+	}
+	if !a.UpdatedAt().Equal(cambio) {
+		t.Fatalf("UpdatedAt after avanzar = %v, want %v", a.UpdatedAt(), cambio)
+	}
+	if err := g.RegistrarDiagnostico(a.ID(), domain.RutaReparacionTaller, mut, cambio); err != nil {
+		t.Fatalf("RegistrarDiagnostico: %v", err)
+	}
+	if !a.UpdatedAt().Equal(cambio) {
+		t.Fatalf("UpdatedAt after diagnostico = %v, want %v", a.UpdatedAt(), cambio)
+	}
+	if err := g.AutorizarCambioFisico(a.ID(), mut, cambio); err != nil {
+		t.Fatalf("AutorizarCambioFisico: %v", err)
+	}
+	if !a.UpdatedAt().Equal(cambio) {
+		t.Fatalf("UpdatedAt after swap = %v, want %v", a.UpdatedAt(), cambio)
+	}
+	if err := g.RegistrarDesenlace(a.ID(), domain.DesenlaceSegundaMano, mut, cambio); err != nil {
+		t.Fatalf("RegistrarDesenlace: %v", err)
+	}
+	if !a.UpdatedAt().Equal(cambio) {
+		t.Fatalf("UpdatedAt after desenlace = %v, want %v", a.UpdatedAt(), cambio)
+	}
+
+	// ruta proveedor: registrarDictamen
+	g2, b := supplierToVerdict(t)
+	if err := g2.RegistrarDictamen(b.ID(), domain.DictamenAceptada, mut, cambio); err != nil {
+		t.Fatalf("RegistrarDictamen: %v", err)
+	}
+	b = articuloByID(t, g2, b.ID())
+	if !b.UpdatedAt().Equal(cambio) {
+		t.Fatalf("UpdatedAt after dictamen = %v, want %v", b.UpdatedAt(), cambio)
+	}
+}
+
 func TestAvanzarArticulo_NoEncontrado(t *testing.T) {
 	t.Parallel()
 	g := openPiso(t)
@@ -648,9 +733,13 @@ func TestRegistrarDictamen_Invalidos(t *testing.T) {
 	t.Run("dictamen_invalido", func(t *testing.T) {
 		t.Parallel()
 		g, a := supplierToVerdict(t)
+		pendientes := countPending(g)
 		err := g.RegistrarDictamen(a.ID(), domain.Dictamen("x"), actor("juan"), fixed)
 		if !errors.Is(err, domain.ErrDictamenInvalido) {
 			t.Fatalf("want ErrDictamenInvalido, got %v", err)
+		}
+		if a.Dictamen() != nil || countPending(g) != pendientes {
+			t.Fatalf("no mutation/event expected")
 		}
 	})
 	t.Run("etapa_incorrecta", func(t *testing.T) {
@@ -720,6 +809,33 @@ func TestAutorizarCambioFisico(t *testing.T) {
 		swap(t, g, a)
 		if articuloByID(t, g, a.ID()).Etapa() != domain.EtapaStandby {
 			t.Fatalf("etapa != standby after swap")
+		}
+	})
+	t.Run("reemplazo_falla_sin_mutacion", func(t *testing.T) {
+		t.Parallel()
+		gID := uuid.New()
+		artID := uuid.New()
+		g := domain.HydrateGarantia(domain.HydrateGarantiaParams{
+			ID: gID, Folio: "GA-000001", Origen: domain.OrigenFolioPiso,
+			Estado: domain.EstadoFolioAbierto, Description: "x", AbiertoPor: "juan",
+			CreatedAt: fixed, UpdatedAt: fixed,
+			Articulos: []*domain.Articulo{
+				domain.HydrateArticulo(domain.HydrateArticuloParams{
+					ID: artID, GarantiaID: gID, Rol: domain.RolArticuloOriginal,
+					Description: "", // fila que HydrateArticulo acepta y newArticulo rechaza
+					Etapa:       domain.EtapaEnTaller,
+					Ubicacion:   domain.UbicacionTaller,
+					CreatedAt:   fixed, UpdatedAt: fixed,
+				}),
+			},
+		})
+		err := g.AutorizarCambioFisico(artID, actor("juan"), fixed)
+		if !errors.Is(err, domain.ErrArticuloDescriptionObligatoria) {
+			t.Fatalf("want ErrArticuloDescriptionObligatoria, got %v", err)
+		}
+		if articuloByID(t, g, artID).Etapa() != domain.EtapaEnTaller ||
+			g.ArticulosCount() != 1 || countPending(g) != 0 {
+			t.Fatalf("no mutation/event expected")
 		}
 	})
 	t.Run("no_autorizable", func(t *testing.T) {
@@ -1190,9 +1306,13 @@ func TestMarcarListoEntrega_Guardia(t *testing.T) {
 	t.Run("estado_incorrecto", func(t *testing.T) {
 		t.Parallel()
 		g := openPiso(t) // abierto
+		pendientes := countPending(g)
 		err := g.MarcarListoEntrega(actor("juan"), fixed)
 		if !errors.Is(err, domain.ErrTransicionEstadoNoPermitida) {
 			t.Fatalf("want ErrTransicionEstadoNoPermitida, got %v", err)
+		}
+		if g.Estado() != domain.EstadoFolioAbierto || countPending(g) != pendientes {
+			t.Fatalf("no mutation/event expected")
 		}
 	})
 }
@@ -1251,12 +1371,13 @@ func TestFolio_EntregaYCierra(t *testing.T) {
 func TestCerrar_DesdeAbierto(t *testing.T) {
 	t.Parallel()
 	g := openPiso(t)
+	pendientes := countPending(g)
 	err := g.Cerrar(actor("juan"), fixed)
 	if !errors.Is(err, domain.ErrTransicionEstadoNoPermitida) {
 		t.Fatalf("want ErrTransicionEstadoNoPermitida, got %v", err)
 	}
-	if g.CerradoEn() != nil {
-		t.Fatalf("CerradoEn() = %v, want nil", g.CerradoEn())
+	if g.Estado() != domain.EstadoFolioAbierto || g.CerradoEn() != nil || countPending(g) != pendientes {
+		t.Fatalf("no mutation/event expected")
 	}
 }
 
@@ -1301,6 +1422,9 @@ func TestCancelar(t *testing.T) {
 		err := g.Cancelar("motivo", actor("juan"), fixed)
 		if !errors.Is(err, domain.ErrTransicionEstadoNoPermitida) {
 			t.Fatalf("want ErrTransicionEstadoNoPermitida, got %v", err)
+		}
+		if g.Estado() != domain.EstadoFolioCerrado || countPending(g) != 0 {
+			t.Fatalf("no mutation/event expected")
 		}
 	})
 }

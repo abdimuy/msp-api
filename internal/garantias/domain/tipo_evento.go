@@ -1,3 +1,4 @@
+//nolint:misspell // domain vocabulary is Spanish (correccion, etc.) per project convention.
 package domain
 
 // TipoEvento identifies what a folklore event records on the timeline. The
@@ -21,7 +22,7 @@ const (
 	TipoEventoFolioCerrado          TipoEvento = "folio_cerrado"
 	TipoEventoFolioCancelado        TipoEvento = "folio_cancelado"
 	TipoEventoEvidenciaAdjuntada    TipoEvento = "evidencia_adjuntada"
-	TipoEventoCorrection            TipoEvento = "correction"
+	TipoEventoCorrection            TipoEvento = "correccion"
 	TipoEventoNota                  TipoEvento = "nota"
 )
 

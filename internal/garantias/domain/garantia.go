@@ -2,6 +2,7 @@ package domain
 
 import (
 	"iter"
+	"slices"
 	"strings"
 	"time"
 
@@ -99,8 +100,10 @@ func validarOrigenPiso(p AbrirGarantiaParams) error {
 	return nil
 }
 
-// validarOrigenCliente requires client, sale, account state and address on a
-// cliente folio.
+// validarOrigenCliente requires client, sale, account state and the full home
+// address on a cliente folio. The domicilio is a single concept made of six
+// fields, the same block validarOrigenPiso forbids entirely on piso folios;
+// GPS stays optional (decision 5).
 func validarOrigenCliente(p AbrirGarantiaParams) error {
 	if !p.Origen.EsCliente() {
 		return nil
@@ -114,7 +117,12 @@ func validarOrigenCliente(p AbrirGarantiaParams) error {
 	if p.EstadoCuenta == nil {
 		return ErrEstadoCuentaObligatorio
 	}
-	if strings.TrimSpace(p.Calle) == "" {
+	if strings.TrimSpace(p.Calle) == "" ||
+		strings.TrimSpace(p.NumeroExterior) == "" ||
+		strings.TrimSpace(p.Colonia) == "" ||
+		strings.TrimSpace(p.Localidad) == "" ||
+		strings.TrimSpace(p.Ciudad) == "" ||
+		strings.TrimSpace(p.CodigoPostal) == "" {
 		return ErrDomicilioObligatorio
 	}
 	return nil
@@ -203,12 +211,13 @@ func (g *Garantia) findArticulo(id uuid.UUID) (*Articulo, error) {
 	return nil, ErrArticuloNoEncontrado
 }
 
-// AgregarArticuloParams carries the inputs to AgregarArticulo.
+// AgregarArticuloParams carries the inputs to AgregarArticulo. The event
+// provenance (user, idempotency key, device time) comes from ActorParams
+// (decision 8), not from here.
 type AgregarArticuloParams struct {
 	ArticuloID  *int
 	Clave       string
 	Description string
-	Usuario     string
 }
 
 // AgregarArticulo adds a child article to the folio. The article starts in
@@ -259,7 +268,7 @@ func (g *Garantia) AvanzarArticulo(articuloID uuid.UUID, hasta Etapa, actor Acto
 	if err != nil {
 		return err
 	}
-	if err := articulo.avanzar(hasta); err != nil {
+	if err := articulo.avanzar(hasta, now); err != nil {
 		return err
 	}
 	g.eventosPendientes = append(g.eventosPendientes, e)
@@ -283,7 +292,7 @@ func (g *Garantia) RegistrarDiagnostico(articuloID uuid.UUID, ruta RutaReparacio
 	if err != nil {
 		return err
 	}
-	if err := articulo.registrarDiagnostico(ruta); err != nil {
+	if err := articulo.registrarDiagnostico(ruta, now); err != nil {
 		return err
 	}
 	g.eventosPendientes = append(g.eventosPendientes, e)
@@ -308,7 +317,7 @@ func (g *Garantia) RegistrarDictamen(articuloID uuid.UUID, dictamen Dictamen, ac
 	if err != nil {
 		return err
 	}
-	if err := articulo.registrarDictamen(dictamen); err != nil {
+	if err := articulo.registrarDictamen(dictamen, now); err != nil {
 		return err
 	}
 	g.eventosPendientes = append(g.eventosPendientes, e)
@@ -317,9 +326,13 @@ func (g *Garantia) RegistrarDictamen(articuloID uuid.UUID, dictamen Dictamen, ac
 }
 
 // AutorizarCambioFisico moves the original article into standby and creates
-// the replacement row in listo_entrega/almacen_revision. The swap is only
-// reachable from en_taller or espera_respuesta_cliente via the
-// cambio_autorizado edge; a single cambio_autorizado event is emitted.
+// the replacement row in listo_entrega/almacen_revision. The replacement is
+// built before the original moves, so a NOT NULL violation (an empty
+// description on a hydrated row, for instance) fails with the aggregate
+// untouched. The swap is only reachable from en_taller or
+// espera_respuesta_cliente (en_taller walking the composed machine path
+// en_taller -> cambio_autorizado -> standby); a single cambio_autorizado
+// event is emitted carrying the swap from/to.
 func (g *Garantia) AutorizarCambioFisico(articuloID uuid.UUID, actor ActorParams, now time.Time) error {
 	articulo, err := g.findArticulo(articuloID)
 	if err != nil {
@@ -329,9 +342,6 @@ func (g *Garantia) AutorizarCambioFisico(articuloID uuid.UUID, actor ActorParams
 	hasta := EtapaStandby
 	e, err := g.buildEvent(actor, now, TipoEventoCambioAutorizado, &articuloID, "", &desde, &hasta)
 	if err != nil {
-		return err
-	}
-	if err := articulo.autorizarCambioFisico(); err != nil {
 		return err
 	}
 	reemplazo, err := newArticulo(NewArticuloParams{
@@ -345,6 +355,9 @@ func (g *Garantia) AutorizarCambioFisico(articuloID uuid.UUID, actor ActorParams
 		CreatedAt:   now,
 	})
 	if err != nil {
+		return err
+	}
+	if err := articulo.autorizarCambioFisico(now); err != nil {
 		return err
 	}
 	g.articulos = append(g.articulos, reemplazo)
@@ -369,7 +382,7 @@ func (g *Garantia) RegistrarDesenlace(articuloID uuid.UUID, desenlace Desenlace,
 	if err != nil {
 		return err
 	}
-	if err := articulo.registrarDesenlace(desenlace, hasta); err != nil {
+	if err := articulo.registrarDesenlace(desenlace, hasta, now); err != nil {
 		return err
 	}
 	g.eventosPendientes = append(g.eventosPendientes, e)
@@ -423,8 +436,9 @@ func stageListoParaEntrega(e Etapa) bool {
 	return e == EtapaListoEntrega || e == EtapaStandby || e.EsTerminal()
 }
 
-// Entregar marks the folio as delivered to the client. The folio moves only;
-// the article rows are already in their terminal final-outcome path.
+// Entregar marks the folio as delivered to the client. Only the folio state
+// moves; the article rows keep whatever MarcarListoEntrega validated:
+// listo_entrega, standby or a terminal outcome.
 func (g *Garantia) Entregar(actor ActorParams, now time.Time) error {
 	if !g.estado.CanTransitionTo(EstadoFolioEntregado) {
 		return ErrTransicionEstadoNoPermitida
@@ -608,8 +622,8 @@ func (g *Garantia) Articulos() iter.Seq[*Articulo] {
 // ArticulosCount returns the number of articles in the folio.
 func (g *Garantia) ArticulosCount() int { return len(g.articulos) }
 
-// ArticulosForRepo returns the live articles slice. Repo-only, do not mutate.
-func (g *Garantia) ArticulosForRepo() []*Articulo { return g.articulos }
+// ArticulosForRepo returns a copy of the articles slice for the repository.
+func (g *Garantia) ArticulosForRepo() []*Articulo { return slices.Clone(g.articulos) }
 
 // EventosPendientes returns an iterator over the timeline events the current
 // session has produced but has not persisted yet. The historical timeline is
@@ -628,6 +642,6 @@ func (g *Garantia) EventosPendientes() iter.Seq[*Evento] {
 // EventosPendientesCount returns the number of events pending persistence.
 func (g *Garantia) EventosPendientesCount() int { return len(g.eventosPendientes) }
 
-// EventosPendientesForRepo returns the live pending-events slice. Repo-only,
-// do not mutate.
-func (g *Garantia) EventosPendientesForRepo() []*Evento { return g.eventosPendientes }
+// EventosPendientesForRepo returns a copy of the pending events slice for the
+// repository.
+func (g *Garantia) EventosPendientesForRepo() []*Evento { return slices.Clone(g.eventosPendientes) }

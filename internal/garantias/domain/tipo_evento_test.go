@@ -24,7 +24,7 @@ func TestParseTipoEvento_HappyPath(t *testing.T) {
 		{"folio_cerrado", domain.TipoEventoFolioCerrado},
 		{"folio_cancelado", domain.TipoEventoFolioCancelado},
 		{"evidencia_adjuntada", domain.TipoEventoEvidenciaAdjuntada},
-		{"correction", domain.TipoEventoCorrection},
+		{"correccion", domain.TipoEventoCorrection},
 		{"nota", domain.TipoEventoNota},
 	}
 	for _, tc := range cases {

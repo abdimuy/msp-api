@@ -112,7 +112,13 @@ func HydrateArticulo(p HydrateArticuloParams) *Articulo {
 // avanzar moves the article stage to hasta. Leaving en_revision through a
 // repair route requires a defined route (cross-validation #3) regardless of
 // whether the move comes from the diagnosis command or a bare AvanzarArticulo.
-func (a *Articulo) avanzar(hasta Etapa) error {
+// The two swap-only stages are deliberately not reachable here:
+// cambio_autorizado and standby can only be entered through
+// AutorizarCambioFisico, which also creates the replacement row.
+func (a *Articulo) avanzar(hasta Etapa, now time.Time) error {
+	if hasta == EtapaStandby || hasta == EtapaCambioAutorizado {
+		return ErrTransicionEtapaNoPermitida
+	}
 	if a.etapa == EtapaEnRevision && a.ruta == nil &&
 		(hasta == EtapaOrdenGenerada || hasta == EtapaEnTaller) {
 		return ErrArticuloRutaRequerida
@@ -121,6 +127,7 @@ func (a *Articulo) avanzar(hasta Etapa) error {
 		return ErrTransicionEtapaNoPermitida
 	}
 	a.etapa = hasta
+	a.audit.MarkUpdatedAt(now)
 	return nil
 }
 
@@ -137,7 +144,7 @@ func diagnosticoTarget(r RutaReparacion) Etapa {
 // registrarDiagnostico fixes the repair route and, in the same call, advances
 // to the matching stage (en_taller for the workshop, orden_generada for the
 // supplier). DICTAMEN stays empty; it only applies to the supplier route.
-func (a *Articulo) registrarDiagnostico(r RutaReparacion) error {
+func (a *Articulo) registrarDiagnostico(r RutaReparacion, now time.Time) error {
 	hasta := diagnosticoTarget(r)
 	if !a.etapa.CanTransitionTo(hasta) {
 		return ErrTransicionEtapaNoPermitida
@@ -145,6 +152,7 @@ func (a *Articulo) registrarDiagnostico(r RutaReparacion) error {
 	ruta := r
 	a.ruta = &ruta
 	a.etapa = hasta
+	a.audit.MarkUpdatedAt(now)
 	return nil
 }
 
@@ -165,7 +173,7 @@ func dictamenTarget(d Dictamen) Etapa {
 // rechazada -> listo_entrega, sin_falla -> espera_respuesta_cliente). It is
 // only legal for the supplier route (cross-validation #1) and only from
 // dictamen_recibido.
-func (a *Articulo) registrarDictamen(d Dictamen) error {
+func (a *Articulo) registrarDictamen(d Dictamen, now time.Time) error {
 	if a.ruta == nil || !a.ruta.EsProveedor() {
 		return ErrArticuloDictamenSoloProveedor
 	}
@@ -176,22 +184,34 @@ func (a *Articulo) registrarDictamen(d Dictamen) error {
 	dictamen := d
 	a.dictamen = &dictamen
 	a.etapa = hasta
+	a.audit.MarkUpdatedAt(now)
 	return nil
 }
 
 // autorizarCambioFisico moves the article into standby, opening the parallel
-// replacement flow. The original article must be in en_taller or
-// espera_respuesta_cliente per the stage machine; a replacement born in
-// listo_entrega can also be swapped (decision 9: "el reemplazo también puede
-// salir malo"), since the machine gives listo_entrega no other exit. This
-// second case is the deliberate deviation the task report calls out.
-func (a *Articulo) autorizarCambioFisico() error {
-	if !a.rol.EsReemplazo() || a.etapa != EtapaListoEntrega {
-		if !a.etapa.CanTransitionTo(EtapaCambioAutorizado) {
-			return ErrTransicionEtapaNoPermitida
-		}
+// replacement flow. A replacement born in listo_entrega can be swapped too
+// (decision 9 carve-out), since the machine gives listo_entrega no other
+// exit; that carve-out is the deliberate deviation the task report calls
+// out.
+func (a *Articulo) autorizarCambioFisico(now time.Time) error {
+	if a.rol.EsReemplazo() && a.etapa == EtapaListoEntrega {
+		a.etapa = EtapaStandby
+		a.audit.MarkUpdatedAt(now)
+		return nil
+	}
+	// The applied edges are validated against the stage machine: for espera
+	// the direct espera -> standby edge, for en_taller its composed path
+	// en_taller -> cambio_autorizado -> standby, whose meaningful guard is the
+	// cambio_autorizado -> standby edge (the first hop is machine-guaranteed).
+	from := a.etapa
+	if from == EtapaEnTaller {
+		from = EtapaCambioAutorizado
+	}
+	if !from.CanTransitionTo(EtapaStandby) {
+		return ErrTransicionEtapaNoPermitida
 	}
 	a.etapa = EtapaStandby
+	a.audit.MarkUpdatedAt(now)
 	return nil
 }
 
@@ -216,13 +236,14 @@ func desenlaceTarget(d Desenlace) (Etapa, error) {
 
 // registrarDesenlace applies a parallel-flow outcome from standby and, in the
 // same call, advances to the stage chosen by desenlaceTarget.
-func (a *Articulo) registrarDesenlace(d Desenlace, hasta Etapa) error {
+func (a *Articulo) registrarDesenlace(d Desenlace, hasta Etapa, now time.Time) error {
 	if !a.etapa.CanTransitionTo(hasta) {
 		return ErrTransicionEtapaNoPermitida
 	}
 	desenlace := d
 	a.desenlace = &desenlace
 	a.etapa = hasta
+	a.audit.MarkUpdatedAt(now)
 	return nil
 }
 

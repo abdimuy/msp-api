@@ -78,8 +78,9 @@ func newEvento(p EventoParams) (*Evento, error) {
 	}, nil
 }
 
-// EventoParamsOut is the persisted shape used by the repository over Firebird.
-type EventoParamsOut struct {
+// HydrateEventoParams is the persisted shape used by the repository over
+// Firebird.
+type HydrateEventoParams struct {
 	ID                uuid.UUID
 	GarantiaID        uuid.UUID
 	ArticuloRef       *uuid.UUID
@@ -97,7 +98,7 @@ type EventoParamsOut struct {
 
 // HydrateEvento rebuilds an Evento from a persisted row without any
 // validation; the repository only calls it with rows it already wrote.
-func HydrateEvento(p EventoParamsOut) *Evento {
+func HydrateEvento(p HydrateEventoParams) *Evento {
 	return &Evento{
 		id:                p.ID,
 		garantiaID:        p.GarantiaID,

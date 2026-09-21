@@ -107,14 +107,14 @@ var (
 	// ErrClienteIDObligatorio is returned by AbrirGarantia for a cliente
 	// folio without a client.
 	ErrClienteIDObligatorio = apperror.NewValidation(
-		"warranty_cliente_required",
+		"warranty_customer_required",
 		"cliente id obligatorio para folio de cliente",
 	)
 
 	// ErrVentaIDObligatorio is returned by AbrirGarantia for a cliente
 	// folio without a sale.
 	ErrVentaIDObligatorio = apperror.NewValidation(
-		"warranty_venta_required",
+		"warranty_sale_required",
 		"venta id obligatoria para folio de cliente",
 	)
 
@@ -128,21 +128,21 @@ var (
 	// ErrDomicilioObligatorio is returned by AbrirGarantia for a cliente
 	// folio without a home address.
 	ErrDomicilioObligatorio = apperror.NewValidation(
-		"warranty_domicilio_required",
+		"warranty_address_required",
 		"domicilio obligatorio para folio de cliente",
 	)
 
 	// ErrClienteIDNoPermitido is returned by AbrirGarantia for a piso
 	// folio carrying client data.
 	ErrClienteIDNoPermitido = apperror.NewValidation(
-		"warranty_cliente_not_allowed",
+		"warranty_customer_not_allowed",
 		"cliente id no permitido en folio de piso",
 	)
 
 	// ErrVentaIDNoPermitido is returned by AbrirGarantia for a piso folio
 	// carrying sale data.
 	ErrVentaIDNoPermitido = apperror.NewValidation(
-		"warranty_venta_not_allowed",
+		"warranty_sale_not_allowed",
 		"venta id no permitida en folio de piso",
 	)
 
@@ -156,7 +156,7 @@ var (
 	// ErrDomicilioNoPermitido is returned by AbrirGarantia for a piso folio
 	// carrying a domicile or GPS data.
 	ErrDomicilioNoPermitido = apperror.NewValidation(
-		"warranty_domicilio_not_allowed",
+		"warranty_address_not_allowed",
 		"domicilio no permitido en folio de piso",
 	)
 

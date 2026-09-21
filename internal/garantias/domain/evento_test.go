@@ -23,7 +23,7 @@ func TestHydrateEvento_Garbage(t *testing.T) {
 	lat, lon := 19.427, -99.17
 	now := time.Date(2026, 8, 15, 10, 0, 0, 0, time.UTC)
 
-	e := domain.HydrateEvento(domain.EventoParamsOut{
+	e := domain.HydrateEvento(domain.HydrateEventoParams{
 		ID:                id,
 		GarantiaID:        garID,
 		ArticuloRef:       &articuloID,
@@ -86,7 +86,7 @@ func TestHydrateEvento_Garbage(t *testing.T) {
 
 func TestHydrateEvento_NilPointers(t *testing.T) {
 	t.Parallel()
-	e := domain.HydrateEvento(domain.EventoParamsOut{
+	e := domain.HydrateEvento(domain.HydrateEventoParams{
 		ID:         uuid.New(),
 		GarantiaID: uuid.New(),
 		Tipo:       domain.TipoEventoNota,
