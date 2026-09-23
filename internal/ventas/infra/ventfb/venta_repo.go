@@ -76,6 +76,10 @@ func (r *VentaRepo) insertHeader(ctx context.Context, q firebird.Querier, v *dom
 	if _, err := q.ExecContext(ctx, insertVenta, args...); err != nil {
 		return firebird.MapError(err)
 	}
+	// The row now holds v.Version() as its VERSION column (see
+	// headerInsertArgs) — confirm it so a later Update on this same
+	// in-memory aggregate computes the right CAS precondition.
+	v.MarkVersionPersisted()
 	return nil
 }
 
@@ -194,6 +198,7 @@ func headerInsertArgs(v *domain.Venta) []any {
 		nullableStringArg(v.MicrosipFolio()),
 		nullableWallClockArg(v.MicrosipAplicadaAt()),
 		nullableStringArg(v.Cliente().Referencia()),
+		v.Version(),
 	}
 }
 
@@ -307,12 +312,17 @@ func (r *VentaRepo) Update(ctx context.Context, v *domain.Venta) error {
 		canceledAt, canceledBy, cancelReason,
 		approvedAt, approvedBy,
 		firebird.ToWallClock(a.UpdatedAt()), a.UpdatedBy().String(),
-		v.ID().String(),
+		v.Version(),
+		v.ID().String(), v.PersistedVersion(),
 	)
 	if err != nil {
 		return firebird.MapError(err)
 	}
-	return ensureRowAffected(res, domain.ErrVentaNotFound)
+	if err := ensureVersionMatched(res); err != nil {
+		return err
+	}
+	v.MarkVersionPersisted()
+	return nil
 }
 
 // LockByID takes a pessimistic row lock (SELECT ... WITH LOCK) on the venta so
@@ -345,6 +355,25 @@ func ensureRowAffected(res sql.Result, notFound error) error {
 	return nil
 }
 
+// ensureVersionMatched maps a zero-rows-affected write on one of the four
+// VERSION-guarded UPDATE statements (updateVentaHeader, updateVentaHeaderFull,
+// updateVentaCliente, touchVentaHeaderMontos) to
+// domain.ErrVentaVersionConflicto instead of domain.ErrVentaNotFound.
+//
+// Every caller in this file loads the aggregate via FindByID before mutating
+// and writing it back, so in production a zero-rows write here always means
+// "someone else's write landed between my read and my write" — the case the
+// VERSION guard exists to catch. The only way to reach RowsAffected()==0
+// without a genuine prior write is calling Update/UpdateHeader/UpdateCliente
+// directly on a venta that was never Saved (as this package's own
+// TestVentaRepo_Update_NotFound-style tests do); that is now also reported
+// as ErrVentaVersionConflicto rather than ErrVentaNotFound — a deliberate
+// behaviour change for these specific write paths, not an oversight (see
+// Task G1's report for the reasoning).
+func ensureVersionMatched(res sql.Result) error {
+	return ensureRowAffected(res, domain.ErrVentaVersionConflicto)
+}
+
 // UpdateHeader rewrites the editable header fields of v. Used by
 // ActualizarHeader.
 func (r *VentaRepo) UpdateHeader(ctx context.Context, v *domain.Venta) error {
@@ -365,12 +394,17 @@ func (r *VentaRepo) UpdateHeader(ctx context.Context, v *domain.Venta) error {
 		semana, mes,
 		nullableStringArg(v.Nota()),
 		firebird.ToWallClock(a.UpdatedAt()), a.UpdatedBy().String(),
-		v.ID().String(),
+		v.Version(),
+		v.ID().String(), v.PersistedVersion(),
 	)
 	if err != nil {
 		return firebird.MapError(err)
 	}
-	return ensureRowAffected(res, domain.ErrVentaNotFound)
+	if err := ensureVersionMatched(res); err != nil {
+		return err
+	}
+	v.MarkVersionPersisted()
+	return nil
 }
 
 // UpdateCliente rewrites the cliente snapshot + cliente_id link.
@@ -384,12 +418,17 @@ func (r *VentaRepo) UpdateCliente(ctx context.Context, v *domain.Venta) error {
 		nullableTelefonoArg(v), nullableAvalArg(v),
 		nullableStringArg(v.Cliente().Referencia()),
 		firebird.ToWallClock(a.UpdatedAt()), a.UpdatedBy().String(),
-		v.ID().String(),
+		v.Version(),
+		v.ID().String(), v.PersistedVersion(),
 	)
 	if err != nil {
 		return firebird.MapError(err)
 	}
-	return ensureRowAffected(res, domain.ErrVentaNotFound)
+	if err := ensureVersionMatched(res); err != nil {
+		return err
+	}
+	v.MarkVersionPersisted()
+	return nil
 }
 
 // ReplaceProductos deletes existing producto rows for v and re-inserts the
@@ -472,12 +511,17 @@ func (r *VentaRepo) touchHeader(ctx context.Context, q firebird.Querier, v *doma
 	res, err := q.ExecContext(ctx, touchVentaHeaderMontos,
 		m.Anual(), m.CortoPlazo(), m.Contado(),
 		firebird.ToWallClock(a.UpdatedAt()), a.UpdatedBy().String(),
-		v.ID().String(),
+		v.Version(),
+		v.ID().String(), v.PersistedVersion(),
 	)
 	if err != nil {
 		return firebird.MapError(err)
 	}
-	return ensureRowAffected(res, domain.ErrVentaNotFound)
+	if err := ensureVersionMatched(res); err != nil {
+		return err
+	}
+	v.MarkVersionPersisted()
+	return nil
 }
 
 // FindByID loads a venta with its full children collection populated. It

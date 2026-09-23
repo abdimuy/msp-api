@@ -48,6 +48,7 @@ func toVentaDTO(
 	a := v.Audit()
 	dto := VentaDTO{
 		ID:                 v.ID().String(),
+		Version:            v.Version(),
 		Cliente:            toClienteSnapshotDTO(v.ClienteID(), v.Cliente()),
 		Direccion:          toDireccionDTO(v.Direccion(), zonas),
 		GPS:                toGPSDTO(v.GPS()),

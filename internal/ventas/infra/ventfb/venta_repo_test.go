@@ -130,6 +130,15 @@ func TestVentaRepo_Update_Cancel(t *testing.T) {
 	})
 }
 
+// TestVentaRepo_Update_NotFound pins a Task G1 behaviour change: Update's
+// zero-rows-affected outcome is now ErrVentaVersionConflicto, not
+// ErrVentaNotFound. Update's UPDATE statement is guarded by
+// "WHERE ID = ? AND VERSION = ?" (see queries.go's updateVentaHeader), so a
+// row that was never Saved is indistinguishable, at the SQL layer, from a
+// row whose version a concurrent writer already moved past — both report
+// zero rows affected. In production this path is unreachable with a genuine
+// "not found": every caller loads the aggregate via FindByID (which still
+// returns ErrVentaNotFound on a real miss) before ever calling Update.
 func TestVentaRepo_Update_NotFound(t *testing.T) {
 	requireFBEnv(t)
 	t.Parallel()
@@ -137,11 +146,11 @@ func TestVentaRepo_Update_NotFound(t *testing.T) {
 	repo := ventfb.NewVentaRepo(pool)
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		root := seedUsuarioRow(ctx, t, pool)
-		// Build a venta but never save it — Update must report NotFound.
+		// Build a venta but never save it.
 		ghost := buildVenta(t, newVentaInput{createdBy: root, vendedor: root})
 		err := repo.Update(ctx, ghost)
 		require.Error(t, err)
-		assert.ErrorIs(t, err, domain.ErrVentaNotFound)
+		assert.ErrorIs(t, err, domain.ErrVentaVersionConflicto)
 	})
 }
 

@@ -29,6 +29,11 @@ type ActualizarHeaderInput struct {
 	PlanCredito    *CrearVentaPlanCreditoInput
 	DiaCobranza    *CrearVentaDiaCobranzaInput
 	Nota           *string
+	// ExpectedVersion is the optional If-Match precondition: the version the
+	// caller last read. Nil means "no precondition sent" and the write is
+	// unconditional — the desktop app's behavior today. See
+	// domain.Venta.checkVersion for the compatibility contract.
+	ExpectedVersion *int
 }
 
 // ActualizarHeader edits the header fields of a venta in StatusBorrador.
@@ -80,13 +85,14 @@ func (in ActualizarHeaderInput) intoDomain(by uuid.UUID, now time.Time) (domain.
 		return domain.ActualizarHeaderParams{}, err
 	}
 	return domain.ActualizarHeaderParams{
-		Direccion:   dir,
-		GPS:         gps,
-		FechaVenta:  in.FechaVenta,
-		PlanCredito: plan,
-		DiaCobranza: dia,
-		Nota:        in.Nota,
-		By:          by,
-		Now:         now,
+		Direccion:       dir,
+		GPS:             gps,
+		FechaVenta:      in.FechaVenta,
+		PlanCredito:     plan,
+		DiaCobranza:     dia,
+		Nota:            in.Nota,
+		By:              by,
+		Now:             now,
+		ExpectedVersion: in.ExpectedVersion,
 	}, nil
 }

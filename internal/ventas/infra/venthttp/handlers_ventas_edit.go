@@ -3,12 +3,44 @@ package venthttp
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/google/uuid"
 
 	"github.com/abdimuy/msp-api/internal/auth"
+	"github.com/abdimuy/msp-api/internal/platform/apperror"
 	ventasapp "github.com/abdimuy/msp-api/internal/ventas/app"
 )
+
+// parseIfMatch parses an optional If-Match header into the optimistic-
+// concurrency precondition the domain expects: nil when the header is
+// absent — the compatibility contract the desktop app relies on, since it
+// never sends If-Match and must keep writing unconditionally — or the
+// version carried inside the entity-tag quotes ("<version>", RFC 7232).
+//
+// A malformed header (no quotes, non-integer content) is a client mistake,
+// not a version race, so it maps to 422 if_match_invalido, never 412: a
+// caller that cannot even form the precondition correctly has nothing to
+// retry against.
+func parseIfMatch(raw string) (*int, error) {
+	if raw == "" {
+		return nil, nil //nolint:nilnil // absent precondition is a valid, common case.
+	}
+	if len(raw) < 2 || raw[0] != '"' || raw[len(raw)-1] != '"' {
+		return nil, apperror.NewValidation(
+			"if_match_invalido",
+			"el encabezado if-match debe traer la versión entre comillas, por ejemplo \"3\"",
+		).WithField("header", "If-Match")
+	}
+	v, err := strconv.Atoi(raw[1 : len(raw)-1])
+	if err != nil {
+		return nil, apperror.NewValidation(
+			"if_match_invalido",
+			"el encabezado if-match debe traer la versión entre comillas, por ejemplo \"3\"",
+		).WithField("header", "If-Match").WithError(err)
+	}
+	return &v, nil
+}
 
 // ActualizarHeader handles PATCH /v2/ventas/{id}. Requires PermVentasEditar.
 func (h *Handlers) ActualizarHeader(ctx context.Context, in *ActualizarHeaderInput) (*ActualizarHeaderOutput, error) {
@@ -23,10 +55,15 @@ func (h *Handlers) ActualizarHeader(ctx context.Context, in *ActualizarHeaderInp
 	if err != nil {
 		return nil, mapAppError(err)
 	}
+	expectedVersion, err := parseIfMatch(in.IfMatch)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
 	input, err := actualizarHeaderBodyToAppInput(id, in.Body)
 	if err != nil {
 		return nil, mapAppError(err)
 	}
+	input.ExpectedVersion = expectedVersion
 	v, err := h.svc.ActualizarHeader(ctx, input, cu.ID)
 	if err != nil {
 		return nil, mapAppError(err)
@@ -47,12 +84,17 @@ func (h *Handlers) ActualizarCliente(ctx context.Context, in *ActualizarClienteI
 	if err != nil {
 		return nil, mapAppError(err)
 	}
+	expectedVersion, err := parseIfMatch(in.IfMatch)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
 	v, err := h.svc.ActualizarCliente(ctx, ventasapp.ActualizarClienteInput{
-		VentaID:       id,
-		ClienteID:     in.Body.Cliente.ClienteID,
-		ClienteNombre: in.Body.Cliente.Nombre,
-		ClienteTel:    in.Body.Cliente.Telefono,
-		ClienteAval:   in.Body.Cliente.Aval,
+		VentaID:         id,
+		ClienteID:       in.Body.Cliente.ClienteID,
+		ClienteNombre:   in.Body.Cliente.Nombre,
+		ClienteTel:      in.Body.Cliente.Telefono,
+		ClienteAval:     in.Body.Cliente.Aval,
+		ExpectedVersion: expectedVersion,
 	}, cu.ID)
 	if err != nil {
 		return nil, mapAppError(err)
@@ -127,6 +169,10 @@ func (h *Handlers) ReemplazarLineas(ctx context.Context, in *ReemplazarLineasInp
 	if err != nil {
 		return nil, mapAppError(err)
 	}
+	expectedVersion, err := parseIfMatch(in.IfMatch)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
 	combos, err := parseCombosDTO(in.Body.Combos)
 	if err != nil {
 		return nil, mapAppError(err)
@@ -137,6 +183,7 @@ func (h *Handlers) ReemplazarLineas(ctx context.Context, in *ReemplazarLineasInp
 	}
 	v, err := h.svc.ReemplazarLineas(ctx, ventasapp.ReemplazarLineasInput{
 		VentaID: id, Combos: combos, Productos: productos,
+		ExpectedVersion: expectedVersion,
 	}, cu.ID)
 	if err != nil {
 		return nil, mapAppError(err)
@@ -157,12 +204,17 @@ func (h *Handlers) ReemplazarVendedores(ctx context.Context, in *ReemplazarVende
 	if err != nil {
 		return nil, mapAppError(err)
 	}
+	expectedVersion, err := parseIfMatch(in.IfMatch)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
 	vendedores, err := parseVendedoresDTO(in.Body.Vendedores)
 	if err != nil {
 		return nil, mapAppError(err)
 	}
 	v, err := h.svc.ReemplazarVendedores(ctx, ventasapp.ReemplazarVendedoresInput{
 		VentaID: id, Vendedores: vendedores,
+		ExpectedVersion: expectedVersion,
 	}, cu.ID)
 	if err != nil {
 		return nil, mapAppError(err)

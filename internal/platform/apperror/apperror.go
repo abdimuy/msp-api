@@ -37,6 +37,16 @@ const (
 	// downstream dependency applied its own rate limit (e.g. WhatsApp's
 	// application-level 130429) and the caller should back off and retry.
 	KindTooManyRequests
+	// KindPreconditionFailed maps to 412 Precondition Failed. Used when a
+	// caller sends an If-Match precondition (an expected version) that no
+	// longer matches what is stored. Deliberately distinct from
+	// KindConflict (409), which this API already uses for "not editable in
+	// this state" and "already assigned" errors: the caller needs to tell
+	// "someone else wrote first" (safe to reload and retry) apart from
+	// "this record left the state where it can be written at all" (retry
+	// will never work) by status code alone, without parsing the error
+	// code out of the response body.
+	KindPreconditionFailed
 )
 
 // HTTPStatus returns the HTTP status code matching this kind.
@@ -56,6 +66,8 @@ func (k Kind) HTTPStatus() int {
 		return http.StatusServiceUnavailable
 	case KindTooManyRequests:
 		return http.StatusTooManyRequests
+	case KindPreconditionFailed:
+		return http.StatusPreconditionFailed
 	case KindInternal, KindUnknown:
 		return http.StatusInternalServerError
 	}
@@ -168,6 +180,12 @@ func NewServiceUnavailable(code, message string) *Error {
 // back off and retry.
 func NewTooManyRequests(code, message string) *Error {
 	return &Error{Kind: KindTooManyRequests, Code: code, Message: message}
+}
+
+// NewPreconditionFailed creates a precondition-failed error (412). Use when
+// an If-Match precondition (an expected version) no longer matches.
+func NewPreconditionFailed(code, message string) *Error {
+	return &Error{Kind: KindPreconditionFailed, Code: code, Message: message}
 }
 
 // As extracts an *Error from any error in the chain.
