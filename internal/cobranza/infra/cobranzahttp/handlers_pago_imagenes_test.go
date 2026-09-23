@@ -20,11 +20,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	cobranzaapp "github.com/abdimuy/msp-api/internal/cobranza/app"
-	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
 	"github.com/abdimuy/msp-api/internal/cobranza/domain"
 	"github.com/abdimuy/msp-api/internal/cobranza/infra/cobranzahttp"
 	"github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/config"
+	"github.com/abdimuy/msp-api/internal/platform/eventbus"
 )
 
 // ─── Multipart helper ─────────────────────────────────────────────────────────

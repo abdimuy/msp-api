@@ -1,4 +1,4 @@
-.PHONY: help setup build build-winback run dev test test-unit test-mutation test-mutation-domain test-mutation-app test-mutation-ventas test-mutation-ventas-domain test-mutation-ventas-app test-mutation-cobranza test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-cobranza-eventbus test-mutation-visitas test-mutation-visitas-domain test-mutation-visitas-app test-mutation-httpdispatch lint lint-fix check-sealed fmt generate clean test-firebird test-firebird-all test-firebird-ventas coverage-auth coverage-auth-full coverage-ventas coverage-ventas-full coverage-canal precommit-strict fb-migrate-up fb-migrate-down fb-migrate-status fb-seed-admin fb-snapshot fb-snapshot-list fb-restore fb-snapshot-delete fb-emu-up fb-emu-down fb-emu-logs meilisearch-up meilisearch-down test-meilisearch
+.PHONY: help setup build build-winback run dev test test-unit test-mutation test-mutation-domain test-mutation-app test-mutation-ventas test-mutation-ventas-domain test-mutation-ventas-app test-mutation-cobranza test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-cobranza-eventbus test-mutation-visitas test-mutation-visitas-domain test-mutation-visitas-app test-mutation-httpdispatch lint lint-fix check-sealed fmt generate clean test-firebird test-firebird-all test-firebird-ventas coverage-auth coverage-auth-full coverage-ventas coverage-ventas-full coverage-canal coverage-visitas precommit-strict fb-migrate-up fb-migrate-down fb-migrate-status fb-seed-admin fb-snapshot fb-snapshot-list fb-restore fb-snapshot-delete fb-emu-up fb-emu-down fb-emu-logs meilisearch-up meilisearch-down test-meilisearch
 
 # ── Config ───────────────────────────────────────────────────────────
 APP_NAME      := msp-api
@@ -13,6 +13,35 @@ LDFLAGS       := -s -w -X main.version=$(shell git rev-parse --short HEAD 2>/dev
 # internal/platform — not even another module's contracts. Verified by
 # `make check-sealed`; also enforced statically by depguard in .golangci.yml.
 # Adding a module here without its matching depguard rule leaves half the gate.
+#
+# ── Dos hechos medidos el 2026-09-08 (Arreglo B), sin cambiar comportamiento ──
+#
+# 1. `internal/asistencia` NO EXISTE. El target lo saltea imprimiendo
+#    "· internal/asistencia does not exist yet — skipped" y sigue en verde: una
+#    cuarta parte de esta lista no verifica nada y nadie se entera. Es la misma
+#    forma que las compuertas vacías que el Arreglo B cerró; se documenta y no
+#    se toca porque quitar un módulo de la lista de ADR 0009 es una decisión de
+#    política, no de andamiaje.
+#
+# 2. `visitas` no está en la lista, y **si se lo agrega, FALLA**:
+#       $ make check-sealed MODULE=visitas
+#       ✘ visitas is no longer sealed — it depends on (ADR 0009):
+#           github.com/abdimuy/msp-api/internal/auth
+#           github.com/abdimuy/msp-api/internal/auth/domain
+#    O sea que la afirmación del plan `pagos-y-visitas` de que visitas cumple la
+#    disciplina de módulo sellado es **falsa**, no "pendiente de medir".
+#    Sellarlo pide mover la dependencia de `internal/auth` fuera del módulo, que
+#    es tarea propia y no la de este arreglo.
+#
+# 3. Esta variable tiene un ESPEJO ESCRITO A MANO en `.golangci.yml`: un bloque
+#    `<modulo>-sealed` de depguard por cada entrada de acá (`:459 asistencia-sealed`,
+#    y sus hermanos de garantias/flota/canal). El comentario de arriba ya lo
+#    admite —"adding a module here without its matching depguard rule leaves half
+#    the gate"— o sea que la sincronización es manual y nadie la verifica. Y ya
+#    divergió del mundo real por el mismo lado que esta lista: `asistencia-sealed`
+#    protege un módulo que no existe, y `.golangci.yml:438` sigue listando
+#    `internal/asistencia/domain` entre los imports permitidos. Documentado y no
+#    tocado: qué módulos sella el ADR 0009 es política, no andamiaje.
 SEALED_MODULES := asistencia garantias flota canal
 
 # Load .env if present (FB_* and other vars consumed by Go binaries + targets).
@@ -318,6 +347,16 @@ coverage-ventas-full: ## Generate ventas coverage INCLUDING Firebird integration
 	$(GO) tool cover -html=coverage-ventas.out -o coverage-ventas.html
 	@echo "✔ Full coverage report: coverage-ventas.html"
 
+# ── Cobertura con piso de verdad (Arreglo B) ─────────────────────────
+# A diferencia de los `coverage-*` de arriba —que generan un reporte y NO
+# comparan nada—, este target FALLA. Y falla también si falta `FB_DATABASE`, en
+# vez de saltarse los tests de Firebird y decir `ok` con `visitasfb` en 0.0%
+# contra un piso de 80%, que es lo que hacía hasta hoy.
+#
+# Make carga `.env` solo, así que las FB_* llegan sin sourcear nada.
+coverage-visitas: ## Cobertura de internal/visitas CON pisos que fallan (requiere FB_DATABASE)
+	./scripts/go-cover-gate.sh ./internal/visitas/... scripts/cover-floors-visitas.txt
+
 coverage-canal: ## Generate per-package coverage report for the canal module (short mode)
 	$(GO) test ./internal/canal/... -count=1 -short -coverprofile=coverage-canal.out -covermode=atomic
 	$(GO) tool cover -func=coverage-canal.out | tail -20
@@ -337,21 +376,39 @@ precommit-strict: ## Full local quality gate before opening a PR — equivalent 
 # high business value (domain, app) where false negatives in tests are
 # most costly. Config in .gremlins.yaml. Install with:
 #   go install github.com/go-gremlins/gremlins/cmd/gremlins@latest
+#
+# TODOS los targets pasan por `scripts/gremlins-gate.sh`, y esa uniformidad es
+# el arreglo, no un refactor de estilo: `gremlins unleash --threshold-efficacy
+# N` **sale 0 pase lo que pase** (medido: eficacia 100% contra umbral 101 sale
+# 0, por flag y por config). Cada target que invoque el binario directo es un
+# target sin compuerta, y dejar cinco así garantizaba que el próximo naciera
+# igual. El script hace cumplir dos pisos: la eficacia Y la fracción de
+# mutantes EVALUADOS — sin el segundo, un paquete donde expiran 50 de 52
+# mutantes reporta 100.00% sobre los 2 que corrieron.
+#
+# Los pisos: <eficacia> <evaluados>. `auth` y `ventas` conservan el 75% de
+# eficacia que ya tenían por defecto (nadie decidió subírselos en este trabajo),
+# y su piso de evaluados es 80 — medido hoy bajo esta misma compuerta:
+# auth/domain 90%, auth/app 90%, ventas/domain 94%, ventas/app 90%. Ochenta y no
+# noventa para dejar margen; un piso pegado al número de hoy se vuelve rojo con
+# el primer refactor honesto y termina bajándose para pasar.
+GREMLINS_GATE := ./scripts/gremlins-gate.sh
+GREMLINS_TMPDIR := TMPDIR=/Volumes/M2-1TB/.go-cache/tmp
 test-mutation: test-mutation-domain test-mutation-app test-mutation-ventas-domain test-mutation-ventas-app test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-visitas-domain test-mutation-visitas-app test-mutation-httpdispatch ## Run mutation testing on critical packages
 
-test-mutation-domain: ## Run mutation testing on auth/domain only
-	gremlins unleash ./internal/auth/domain
+test-mutation-domain: ## Run mutation testing on auth/domain only (gate 75% eficacia + 80% evaluados)
+	$(GREMLINS_TMPDIR) $(GREMLINS_GATE) ./internal/auth/domain 75 80
 
-test-mutation-app: ## Run mutation testing on auth/app only
-	gremlins unleash ./internal/auth/app
+test-mutation-app: ## Run mutation testing on auth/app only (gate 75% eficacia + 80% evaluados)
+	$(GREMLINS_TMPDIR) $(GREMLINS_GATE) ./internal/auth/app 75 80
 
 test-mutation-ventas: test-mutation-ventas-domain test-mutation-ventas-app ## Run mutation testing on the ventas module (domain + app)
 
-test-mutation-ventas-domain: ## Run mutation testing on ventas/domain only
-	gremlins unleash ./internal/ventas/domain
+test-mutation-ventas-domain: ## Run mutation testing on ventas/domain only (gate 75% eficacia + 80% evaluados)
+	$(GREMLINS_TMPDIR) $(GREMLINS_GATE) ./internal/ventas/domain 75 80
 
-test-mutation-ventas-app: ## Run mutation testing on ventas/app only
-	gremlins unleash ./internal/ventas/app
+test-mutation-ventas-app: ## Run mutation testing on ventas/app only (gate 75% eficacia + 80% evaluados)
+	$(GREMLINS_TMPDIR) $(GREMLINS_GATE) ./internal/ventas/app 75 80
 
 test-mutation-cobranza: test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-cobranza-eventbus ## Run mutation testing on the cobranza module (domain + app + eventbus) with 80% kill-ratio gate
 
@@ -363,13 +420,13 @@ test-mutation-cobranza: test-mutation-cobranza-domain test-mutation-cobranza-app
 # TMPDIR, no GOTMPDIR. Sin esto, una corrida de cobranza/app llena ~24 GB
 # de /private/tmp y puede explotar el disco interno (jun 2026 incidente).
 test-mutation-cobranza-domain: ## Run mutation testing on cobranza/domain only (gate 80%)
-	TMPDIR=/Volumes/M2-1TB/.go-cache/tmp gremlins unleash --threshold-efficacy 80 ./internal/cobranza/domain
+	$(GREMLINS_TMPDIR) $(GREMLINS_GATE) ./internal/cobranza/domain 80 90
 
 test-mutation-cobranza-app: ## Run mutation testing on cobranza/app only (gate 80%)
-	TMPDIR=/Volumes/M2-1TB/.go-cache/tmp gremlins unleash --threshold-efficacy 80 ./internal/cobranza/app
+	$(GREMLINS_TMPDIR) $(GREMLINS_GATE) ./internal/cobranza/app 80 90
 
-test-mutation-cobranza-eventbus: ## Run mutation testing on cobranza/app/eventbus only (gate 80%)
-	TMPDIR=/Volumes/M2-1TB/.go-cache/tmp gremlins unleash --threshold-efficacy 80 ./internal/cobranza/app/eventbus
+test-mutation-cobranza-eventbus: ## Run mutation testing on platform/eventbus only (gate 80%)
+	$(GREMLINS_TMPDIR) $(GREMLINS_GATE) ./internal/platform/eventbus 80 90
 
 test-mutation-visitas: test-mutation-visitas-domain test-mutation-visitas-app ## Run mutation testing on the visitas module (domain + app) with 80% kill-ratio gate
 
@@ -379,14 +436,19 @@ test-mutation-visitas: test-mutation-visitas-domain test-mutation-visitas-app ##
 #
 # TMPDIR redirige los workdirs de gremlins al SSD externo (ver comentario en
 # test-mutation-cobranza-domain — mismo incidente, mismo fix).
-test-mutation-visitas-domain: ## Run mutation testing on visitas/domain only (gate 80%)
-	TMPDIR=/Volumes/M2-1TB/.go-cache/tmp gremlins unleash --threshold-efficacy 80 ./internal/visitas/domain
+test-mutation-visitas-domain: ## Run mutation testing on visitas/domain only (gate 80% eficacia + 90% evaluados)
+	$(GREMLINS_TMPDIR) $(GREMLINS_GATE) ./internal/visitas/domain 80 90
 
-test-mutation-visitas-app: ## Run mutation testing on visitas/app only (gate 80%)
-	TMPDIR=/Volumes/M2-1TB/.go-cache/tmp gremlins unleash --threshold-efficacy 80 ./internal/visitas/app
+test-mutation-visitas-app: ## Run mutation testing on visitas/app only (gate 80% eficacia + 90% evaluados)
+	$(GREMLINS_TMPDIR) $(GREMLINS_GATE) ./internal/visitas/app 80 90
 
-test-mutation-httpdispatch: ## Run mutation testing on platform/httpdispatch
-	gremlins unleash ./internal/platform/httpdispatch
+# NOMUTANTS y no un piso: este paquete es plomería de `context` (envuelve el
+# RouteContext de chi) y no tiene un solo operador mutable, así que gremlins
+# genera CERO mutantes. Este target venía saliendo 0 desde siempre midiendo
+# exactamente nada; ahora eso está declarado, y si el paquete gana código
+# mutable la compuerta falla pidiendo un piso de verdad.
+test-mutation-httpdispatch: ## Run mutation testing on platform/httpdispatch (cero mutantes, declarado)
+	$(GREMLINS_TMPDIR) $(GREMLINS_GATE) ./internal/platform/httpdispatch 75 NOMUTANTS
 
 # ── Meilisearch (dev) ────────────────────────────────────────────────
 meilisearch-up: ## Start Meilisearch dev container (http://localhost:7700)

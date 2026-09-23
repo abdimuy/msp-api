@@ -10,11 +10,11 @@ import (
 	"go.uber.org/fx"
 
 	cobranzaapp "github.com/abdimuy/msp-api/internal/cobranza/app"
-	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
 	cobranzamicrosip "github.com/abdimuy/msp-api/internal/cobranza/infra/microsip"
 	cobranzaventfb "github.com/abdimuy/msp-api/internal/cobranza/infra/ventfb"
 	cobranzaoutbound "github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/config"
+	"github.com/abdimuy/msp-api/internal/platform/eventbus"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 	"github.com/abdimuy/msp-api/internal/platform/lifecycle"
 	ventasoutbound "github.com/abdimuy/msp-api/internal/ventas/ports/outbound"

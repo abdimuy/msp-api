@@ -1,0 +1,27 @@
+# Pisos de cobertura de `internal/visitas`, para `scripts/go-cover-gate.sh`.
+#
+# Formato: `<paquete relativo al módulo>  <piso en % | NOSTMT>`, más un
+# `DEFAULT` que se aplica a **todo paquete sin entrada propia**. El DEFAULT es
+# lo que impide que un paquete nuevo escape: olvidarse de declararlo no lo
+# exime, lo mete al piso general.
+#
+# Los cuatro números vienen del plan `pagos-y-visitas` y están medidos contra
+# Firebird real (ver `task-25-report.md` §2.6): domain 100.0%, app 96.9%,
+# visitasfb 88.1%, visitashttp 90.4%. Los pisos quedan por debajo de lo medido
+# a propósito — un piso pegado al número de hoy se vuelve rojo con el primer
+# refactor honesto y termina bajándose para pasar, que es como un piso deja de
+# significar algo.
+
+DEFAULT                              70
+
+internal/visitas/domain              99
+internal/visitas/app                 90
+internal/visitas/infra/visitasfb     80
+internal/visitas/infra/visitashttp   70
+
+# El paquete de puertos, que NO es solo interfaces: `ProductionClock.Now` vive
+# aquí y estaba al 0.0%. El reporte de la Task 25 lo daba por "0.0% porque no
+# tiene sentencias"; la compuerta descubrió que sí tiene una, y sin cubrir. Se
+# le puso su test (`clock_test.go`) y el piso es 100 porque es UNA sentencia:
+# cualquier cosa por debajo significa que volvió a quedar sin cubrir.
+internal/visitas/ports/outbound      100

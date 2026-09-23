@@ -13,9 +13,9 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	cobranzaapp "github.com/abdimuy/msp-api/internal/cobranza/app"
-	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
 	"github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/config"
+	"github.com/abdimuy/msp-api/internal/platform/eventbus"
 )
 
 // securitySchemeName is the OpenAPI security-scheme identifier referenced by

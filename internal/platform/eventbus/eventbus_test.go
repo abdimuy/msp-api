@@ -12,7 +12,7 @@ import (
 	"go.uber.org/goleak"
 	"pgregory.net/rapid"
 
-	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
+	"github.com/abdimuy/msp-api/internal/platform/eventbus"
 )
 
 // ── SubscriberCount ───────────────────────────────────────────────────────────
@@ -347,7 +347,7 @@ func TestBus_PublishDoesNotAllocate(t *testing.T) {
 // BenchmarkBus_Publish reports the real cost of Publish as the subscriber count
 // grows. This is where performance questions belong: run it on purpose with
 //
-//	go test -bench=. -run=^$ ./internal/cobranza/app/eventbus/
+//	go test -bench=. -run=^$ ./internal/platform/eventbus/
 //
 // and compare runs with benchstat to catch regressions with statistical
 // confidence — something a single p99 sample inside a unit test never could.

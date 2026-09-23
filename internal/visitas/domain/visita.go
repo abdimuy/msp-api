@@ -52,10 +52,16 @@ type Visita struct {
 	lat            float64
 	lng            float64
 	nota           string
-	tipoVisita     string
+	tipoVisita     TipoVisita
 	zonaClienteID  int
 	clienteID      int
 	impteDoctoCCID *int
+
+	// imagenes are the photos attached to this visita in the SAME request
+	// that created it (see AdjuntarImagen). The collection is only ever
+	// populated on the write path: RehydrateVisita leaves it nil because
+	// GET /v2/visitas/{id} does not project images.
+	imagenes []*Imagen
 
 	audit audit.Auditable
 }
@@ -99,7 +105,18 @@ func NewVisita(p CrearVisitaParams) (*Visita, error) {
 	if err != nil {
 		return nil, err
 	}
-	tipoVisita, err := requireBounded(p.TipoVisita, maxTipoVisitaLength, ErrVisitaTipoRequerido, ErrVisitaTipoDemasiadoLargo)
+	tipoVisitaRaw, err := requireBounded(p.TipoVisita, maxTipoVisitaLength, ErrVisitaTipoRequerido, ErrVisitaTipoDemasiadoLargo)
+	if err != nil {
+		return nil, err
+	}
+	// The WRITE path closes the catalogue. requireBounded has already
+	// trimmed and NFC-normalized, which matters: the catalogue literals are
+	// NFC, so a decomposed "pagará" from a client would not match without it.
+	// The length check above stays as defence in depth even though every
+	// catalogue member is well under maxTipoVisitaLength — it keeps an
+	// oversized input answering ErrVisitaTipoDemasiadoLargo (the specific
+	// error) rather than the generic ErrVisitaTipoInvalido.
+	tipoVisita, err := ParseTipoVisita(tipoVisitaRaw)
 	if err != nil {
 		return nil, err
 	}
@@ -149,10 +166,19 @@ type RehydrateVisitaParams struct {
 	ImpteDoctoCCID *int
 }
 
-// RehydrateVisita rebuilds a Visita from persistence without validation —
+// RehydrateVisita rebuilds a Visita from persistence WITHOUT validation —
 // the repo must trust the persisted row was validated on write. The audit
 // subrecord is left zero-valued: MSP_VISITAS carries no audit columns to
 // rehydrate it from (see the Visita doc comment).
+//
+// TipoVisita in particular is cast, never parsed. MSP_VISITAS is a legacy
+// table with 226k rows written over two years by a backend that enforced no
+// catalogue at all — 200 of them hold the empty string, and three retired
+// literals account for ~59k more. Validating here would make
+// GET /v2/visitas/{id} fail on rows that are perfectly readable, so it does
+// not. The catalogue is a WRITE-path rule (NewVisita); this is the read path
+// and it accepts anything, exactly as HydrateImagenStorage does for
+// StorageKind in the cobranza module.
 func RehydrateVisita(p RehydrateVisitaParams) *Visita {
 	return &Visita{
 		id:             p.ID,
@@ -163,7 +189,7 @@ func RehydrateVisita(p RehydrateVisitaParams) *Visita {
 		lat:            p.Lat,
 		lng:            p.Lng,
 		nota:           p.Nota,
-		tipoVisita:     p.TipoVisita,
+		tipoVisita:     TipoVisita(p.TipoVisita),
 		zonaClienteID:  p.ZonaClienteID,
 		clienteID:      p.ClienteID,
 		impteDoctoCCID: p.ImpteDoctoCCID,
@@ -198,8 +224,11 @@ func (v *Visita) Lng() float64 { return v.lng }
 // note (MSP_VISITAS.NOTA is nullable).
 func (v *Visita) Nota() string { return v.nota }
 
-// TipoVisita returns the visit type (e.g. "cobro", "no_encontrado").
-func (v *Visita) TipoVisita() string { return v.tipoVisita }
+// TipoVisita returns the visit outcome. On an entity built by NewVisita this
+// is always a member of the closed catalogue (see tipo_visita.go). On one
+// built by RehydrateVisita it is whatever the row held — legacy rows are read
+// back verbatim and are NOT guaranteed to be catalogue members.
+func (v *Visita) TipoVisita() TipoVisita { return v.tipoVisita }
 
 // ZonaClienteID returns the cliente's zona at the time of the visit, or zero
 // if not resolved.

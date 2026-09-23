@@ -11,8 +11,8 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/abdimuy/msp-api/internal/auth"
-	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
 	"github.com/abdimuy/msp-api/internal/platform/config"
+	"github.com/abdimuy/msp-api/internal/platform/eventbus"
 )
 
 // sseHandler serves the SSE streaming endpoints for cobranza sync.

@@ -20,7 +20,20 @@ workers:
   count: -1
 
 test-cpu: 2
-timeout-coefficient: 3
+
+# ATENCION: esta clave NO la aplica el binario instalado (gremlins dev,
+# darwin/arm64). Medido: con 3, con 30 y con 200 escritos aca, visitas/domain
+# evaluaba los mismos 2-10 mutantes de 52 y el resto expiraba; con el flag
+# `--timeout-coefficient` explicito, 51 de 52 y estable. Es el mismo agujero
+# que `threshold.efficacy` de abajo, que tampoco se aplica ni por flag ni por
+# config.
+#
+# Se deja escrito el valor que SI queremos por si una version futura del
+# binario empieza a leerlo, pero quien lo hace cumplir es
+# `scripts/gremlins-gate.sh`, que lo pasa por flag. Cambiar este numero solo
+# no cambia nada: hay que cambiarlo alli (o exportar
+# GREMLINS_TIMEOUT_COEFFICIENT).
+timeout-coefficient: 60
 
 # Mutators. Enable the full default set — disable selectively only after
 # we observe a mutator producing too many equivalent/uninteresting mutants

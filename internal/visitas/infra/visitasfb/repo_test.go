@@ -30,10 +30,29 @@ func requireFBEnv(t *testing.T) {
 	}
 }
 
-// testTipoVisitaMarker tags every visita this test file creates so the
+// testCobradorMarker tags every visita this test file creates so the
 // verification query in the task brief ("residual rows after the run") can
-// select on a single, unambiguous value.
-const testTipoVisitaMarker = "test_task2_visitas_repo"
+// select on a single, unambiguous value:
+//
+//	SELECT COUNT(*) FROM MSP_VISITAS WHERE COBRADOR LIKE '%test_task2_visitas_repo%'
+//
+// The marker used to live in TIPO_VISITA. It moved to COBRADOR when the
+// TipoVisita catalogue closed (domain/tipo_visita.go): NewVisita now rejects
+// anything outside the catalogue, so an arbitrary marker string can no longer
+// be written there. COBRADOR is still free text, and a marker there is in
+// fact MORE selective — every one of the 226k legacy rows carries one of the
+// 14 catalogue values in TIPO_VISITA, so that column could never have
+// isolated this file's rows anyway.
+const testCobradorMarker = "test_task2_visitas_repo"
+
+// testTipoVisita is the catalogue member these tests write. Any member would
+// do; this is the most common one in production.
+const testTipoVisita = domain.TipoVisitaNoSeEncontraba
+
+// markedCobrador appends the residual-row marker to a cobrador name, so the
+// verification query can find this file's rows without relying on
+// TIPO_VISITA (see testCobradorMarker).
+func markedCobrador(base string) string { return base + " (" + testCobradorMarker + ")" }
 
 // buildValidVisita constructs a fresh, valid Visita using domain.NewVisita
 // with realistic Mexican Spanish data. Each call mints a new random UUID so
@@ -43,14 +62,14 @@ func buildValidVisita(t *testing.T) *domain.Visita {
 	now := time.Now().UTC()
 	v, err := domain.NewVisita(domain.CrearVisitaParams{
 		ID:            uuid.New(),
-		Cobrador:      "Ramírez García, Jorge",
+		Cobrador:      markedCobrador("Ramírez García, Jorge"),
 		CobradorID:    42,
 		Fecha:         now.Add(-time.Hour),
 		FormaCobroID:  87327,
 		Lat:           19.432608,
 		Lng:           -99.133209,
 		Nota:          "",
-		TipoVisita:    testTipoVisitaMarker,
+		TipoVisita:    string(testTipoVisita),
 		ZonaClienteID: 7,
 		ClienteID:     11486,
 		CreatedBy:     uuid.New(),
@@ -82,14 +101,14 @@ func TestE2E_Visitas_InsertThenFindByID_RoundTripsEveryField(t *testing.T) {
 		impte := 789012
 		v, err := domain.NewVisita(domain.CrearVisitaParams{
 			ID:             uuid.New(),
-			Cobrador:       "Hernández López, Ana",
+			Cobrador:       markedCobrador("Hernández López, Ana"),
 			CobradorID:     42,
 			Fecha:          now.Add(-2 * time.Hour),
 			FormaCobroID:   87327,
 			Lat:            19.432608,
 			Lng:            -99.133209,
 			Nota:           "Pagó completo, cliente satisfecho",
-			TipoVisita:     testTipoVisitaMarker,
+			TipoVisita:     string(testTipoVisita),
 			ZonaClienteID:  7,
 			ClienteID:      11486,
 			ImpteDoctoCCID: &impte,
@@ -173,7 +192,7 @@ func TestE2E_Visitas_InsertThenFindByID_AccentRoundTrip(t *testing.T) {
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		repo := newVisitasRepo(pool)
-		const wantCobrador = "José Muñoz Peña"
+		wantCobrador := markedCobrador("José Muñoz Peña")
 		const wantNota = "María salió, vuelve mañana"
 		now := time.Now().UTC()
 		v, err := domain.NewVisita(domain.CrearVisitaParams{
@@ -185,7 +204,7 @@ func TestE2E_Visitas_InsertThenFindByID_AccentRoundTrip(t *testing.T) {
 			Lat:           19.432608,
 			Lng:           -99.133209,
 			Nota:          wantNota,
-			TipoVisita:    testTipoVisitaMarker,
+			TipoVisita:    string(testTipoVisita),
 			ZonaClienteID: 7,
 			ClienteID:     11486,
 			CreatedBy:     uuid.New(),
@@ -248,5 +267,116 @@ func TestE2E_Visitas_FindByID_NotFound(t *testing.T) {
 		_, err := repo.FindByID(ctx, uuid.New())
 		require.ErrorIs(t, err, domain.ErrVisitaNoEncontrada,
 			"FindByID for unknown UUID must return ErrVisitaNoEncontrada; got: %v", err)
+	})
+}
+
+// ─── FindExistingIDs ────────────────────────────────────────────────────────
+
+// TestE2E_Visitas_FindExistingIDs_MixOfKnownAndUnknown inserts two visitas,
+// then asks FindExistingIDs about those two ids plus a third one it never
+// saw. The unknown id must be silently absent — never an error.
+//
+//nolint:paralleltest // serial: shares rollback-only tx.
+func TestE2E_Visitas_FindExistingIDs_MixOfKnownAndUnknown(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		repo := newVisitasRepo(pool)
+		v1, v2 := buildValidVisita(t), buildValidVisita(t)
+		require.NoError(t, repo.Insert(ctx, v1))
+		require.NoError(t, repo.Insert(ctx, v2))
+		unknown := uuid.New()
+
+		got, err := repo.FindExistingIDs(ctx, []uuid.UUID{v1.ID(), unknown, v2.ID()})
+
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []uuid.UUID{v1.ID(), v2.ID()}, got,
+			"the unknown id must be absent from the result, not an error")
+	})
+}
+
+// TestE2E_Visitas_FindExistingIDs_NoneKnown_ReturnsEmpty verifies a request
+// entirely of unknown ids returns an empty slice, not an error.
+//
+//nolint:paralleltest // serial: shares rollback-only tx.
+func TestE2E_Visitas_FindExistingIDs_NoneKnown_ReturnsEmpty(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		repo := newVisitasRepo(pool)
+
+		got, err := repo.FindExistingIDs(ctx, []uuid.UUID{uuid.New(), uuid.New()})
+
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+}
+
+// TestE2E_Visitas_FindExistingIDs_EmptyInput_NoQuery verifies an empty ids
+// slice short-circuits to an empty result without issuing a query.
+//
+//nolint:paralleltest // serial: shares rollback-only tx.
+func TestE2E_Visitas_FindExistingIDs_EmptyInput_NoQuery(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		repo := newVisitasRepo(pool)
+
+		got, err := repo.FindExistingIDs(ctx, []uuid.UUID{})
+
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+}
+
+// TestE2E_Visitas_FindExistingIDs_DuplicateInput_NoDuplicatesInResult
+// verifies that a "WHERE ID IN (...)" built with the same id repeated
+// several times still answers that id exactly once.
+//
+//nolint:paralleltest // serial: shares rollback-only tx.
+func TestE2E_Visitas_FindExistingIDs_DuplicateInput_NoDuplicatesInResult(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		repo := newVisitasRepo(pool)
+		v := buildValidVisita(t)
+		require.NoError(t, repo.Insert(ctx, v))
+
+		got, err := repo.FindExistingIDs(ctx, []uuid.UUID{v.ID(), v.ID(), v.ID()})
+
+		require.NoError(t, err)
+		assert.Equal(t, []uuid.UUID{v.ID()}, got)
+	})
+}
+
+// TestE2E_Visitas_FindExistingIDs_AtCap_SingleQuerySucceeds proves a single
+// "WHERE ID IN (...)" round-trip built with maxIDsPorRequest (100) bound
+// parameters — the visitashttp cap — succeeds against real Firebird without
+// chunking.
+//
+//nolint:paralleltest // serial: shares rollback-only tx.
+func TestE2E_Visitas_FindExistingIDs_AtCap_SingleQuerySucceeds(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		repo := newVisitasRepo(pool)
+		v := buildValidVisita(t)
+		require.NoError(t, repo.Insert(ctx, v))
+
+		ids := make([]uuid.UUID, 100)
+		ids[0] = v.ID()
+		for i := 1; i < len(ids); i++ {
+			ids[i] = uuid.New()
+		}
+
+		got, err := repo.FindExistingIDs(ctx, ids)
+
+		require.NoError(t, err)
+		assert.Equal(t, []uuid.UUID{v.ID()}, got)
 	})
 }
