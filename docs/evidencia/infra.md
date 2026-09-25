@@ -34,7 +34,7 @@ una prueba está configurada de una forma rara, o desde el mensaje del commit:
 Los números son correlativos y **nunca se reutilizan ni se renumeran**. Lo
 refutado **no se borra**: cambia de estado a REFUTADA y se queda.
 
-**Siguiente identificador libre: `E-INF-012`.**
+**Siguiente identificador libre: `E-INF-013`.**
 
 ---
 
@@ -412,9 +412,93 @@ Se encontró **mirando el PNG**. El arreglo trae una prueba que fija la propieda
 en los dos extremos (singular con un cobrador, plural con varios) en vez de
 clavar una cadena.
 
+**Nota 2 — la misma enfermedad con el consumidor siendo una COMPUERTA.**
+
+El 2026-09-24 se reportó *"el árbol está verde"* tras verificar los módulos
+propios (`:core:geo`, `:feature:ubicacion`) y las pruebas de navegación. El hook
+de pre-commit corre otra cosa: `ktlintCheck` **en la raíz** y
+`testDevlocalDebugUnitTest` **en la raíz** — 1,723 pruebas. Ahí había **cinco
+rojas**, una de ellas propia (un control tocable de 75 px contra el mínimo de
+100 del repo). El commit de otro agente quedó bloqueado, con 98 archivos
+esperando.
+
+El error no fue no correr las pruebas: fue **correr las que yo elegí en vez de
+las que cobran**. Verificar al productor —mis módulos— y no al consumidor —la
+compuerta real—. Desde entonces la comprobación es leer `.git/hooks/pre-commit`
+y ejecutar sus pasos tal cual.
+
+**Nota 3 — una regla escrita que ninguna prueba cobra es una regla que no
+existe.**
+
+El KDoc de `MSP_SOFT_EDGE_FADE` documentaba haber **abandonado** el criterio
+blando (el saldo arriba del *punto opaco*, el 44 % de la banda) por uno duro (el
+saldo arriba de donde la banda **empieza**), y explicaba por qué: con el blando,
+un golden mostraba el `$3,550` gris y desenfocado.
+
+**Las tres afirmaciones de `ElDineroNoSeMeteBajoLaBarraTest` seguían midiendo
+contra el punto opaco.** Medido:
+
+```
+saldo.bottom = 568.0     banda.top = 568.0     puntoOpaco = 645.44
+```
+
+**77 dp de holgura falsa.** Con `FONDO_NORMAL` subido a **120 dp** —muy por
+encima del presupuesto `M + fade ≤ 162`— las tres seguían **verdes**. La regla
+dura estaba escrita en la documentación y **no la cobraba nadie**.
+
+Es la variante más cara de todas las de esta familia, porque el KDoc **da
+confianza**: quien lo lee cree que la propiedad está garantizada, y lo que está
+garantizado es otra cosa más floja. Guardada ahora por
+`ElDineroNoSeMeteBajoLaBarraTest::el SALDO TOTAL queda arriba de donde la banda
+EMPIEZA`, que se pone roja con **un solo dp** de más.
+
 - **Guardada por:**
   `msp-app-kt/feature/ubicacion/src/test/.../ui/LaHojaDiceLasDosCuentasTest.kt`
   (monta la hoja con `createComposeRule` y lee el texto; revertir el arreglo
   pone **3 rojas**) y
   `.../domain/RotulosTest.kt::el verbo concuerda con el numero de cobradores`.
 - **Caduca si:** — (es una lección de método; no caduca con una versión)
+
+### E-INF-012 · Un contador de píxeles sobre goldens da una respuesta limpia y falsa en tema oscuro
+
+- **Nivel:** MEDIDO · **Estado:** VIGENTE
+- **Medido:** 2026-09-24, `msp-app-kt`, goldens de `:feature:pagos`
+- **Qué se quería medir:** si al bajar `FONDO_NORMAL` de 118 a 82 dp la calle del
+  fondo del detalle de cliente quedaba cortada. Se escribió un contador sobre el
+  PNG: recorrer las filas de arriba y quedarse con las que tienen **píxeles
+  oscuros** (`< 120` de luminancia), o sea "tinta".
+- **Lo que devolvió:**
+
+  ```
+  light_1_0   antes= 17.5dp   ahora=  4.0dp   -> CORTADA
+  dark_1_0    antes= 70.0dp   ahora= 70.0dp   -> ok        <-- FALSO
+  light_2_0   antes= 16.5dp   ahora= 16.5dp   -> ok
+  ```
+
+  La conclusión que se leía sola: *"sólo afecta al tema claro"*. **Es falsa.** Al
+  abrir `pagos_cliente_dark_1_0.png` la calle estaba **igual de partida** que en
+  claro.
+- **El mecanismo:** en tema oscuro **el fondo es oscuro y la tinta es clara**. El
+  criterio `< 120` no contaba glifos: contaba **el fondo**, así que toda fila
+  daba positivo y el "bloque de texto" medía 70 dp — el alto de la franja
+  entera— idéntico antes y después. Una métrica que mide lo contrario de lo que
+  cree devuelve un número **estable**, y la estabilidad se lee como ausencia de
+  cambio.
+- **Lo que lo cazó:** abrir el PNG. Nada más.
+- **El arreglo, para quien vuelva a escribir uno:** el criterio de "tinta"
+  **depende del tema**. `< 120` en claro, `> 140` en oscuro. Con eso, las cuatro
+  escalas dieron lo mismo que la versión commiteada (17.5 / 17.5 / 16.5 / 16.5) y
+  el número volvió a significar algo.
+- **Por qué se registra, y no como anécdota:** contar píxeles sobre un golden es
+  la forma **correcta** de convertir "se ve cortado" en un número, y se va a
+  volver a hacer. El riesgo no es que falle ruidosamente: es que devuelva una
+  cifra redonda y plausible. **Un contador de píxeles se valida contra un caso
+  donde se sabe la respuesta antes de creerle** — aquí habría bastado correrlo
+  sobre el golden commiteado en oscuro y notar que 70 dp no es el alto de una
+  línea de texto.
+- **Parentesco:** es la familia de `E-INF-011` desde el otro lado. Allá una regla
+  cierta no tenía quien la cobrara; aquí **la medición sí existe y miente**.
+- **Guardada por:** — (es una lección de método sobre análisis de imágenes; no
+  hay prueba automática que la fije)
+- **Caduca si:** los goldens dejan de tener variante oscura, o se adopta una
+  utilidad compartida de análisis que resuelva el umbral por tema
