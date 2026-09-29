@@ -1,6 +1,6 @@
 # Garantías — Tarea 5: puertos, contratos y los comandos de apertura
 
-> **Rama:** crea `feat/garantias-puertos` desde `main`, **después** de que se fusione el PR #21. Si `internal/garantias/domain/garantia.go` no existe en tu `main`, todavía no se fusionó: espera, no partas de `feat/garantias-dominio`.
+> **Rama:** `feat/garantias-puertos`, ya creada desde `main` con tu PR #21 fusionado. No la crees: `git fetch && git switch feat/garantias-puertos`. Para la entrega B, ver el calendario.
 > **Spec:** [`2026-07-27-garantias-design.md`](../specs/2026-07-27-garantias-design.md)
 > **Tanda:** 0.4 (puertos y contratos) + la primera tarea de la tanda 1 (comandos de apertura y recolección)
 > **Plazo:** una semana, del miércoles 30 de septiembre al **martes 6 de octubre**, con **dos entregas**: la A el **jueves 1 de octubre** y la B el **martes 6 de octubre**, las dos al final de tu jornada. El calendario está al final.
@@ -345,7 +345,7 @@ make check-sealed MODULE=garantias
 
 La B tiene tres jornadas y está apretada a propósito: el molde de B.2 es lo que cuesta, y los cuatro comandos son casi iguales una vez que existe. Si el lunes 5 ves que no llegas, dímelo el lunes, no el martes.
 
-La B va en una rama nueva desde `main`, **con la A ya fusionada**. Si la A todavía está en revisión cuando empiezas la B, parte de la rama de la A y rebasea cuando se fusione.
+La B va en una rama nueva, `feat/garantias-comandos-apertura`, que creas tú desde `main` **con la A ya fusionada** (no existe todavía porque tiene que nacer después de la A). Si la A todavía está en revisión cuando empiezas la B, parte de la rama de la A y rebasea cuando se fusione.
 
 ## Qué significa "terminado"
 

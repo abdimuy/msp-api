@@ -1,6 +1,6 @@
 # Garantías — Tarea 6: el repositorio Firebird (`infra/garfb`)
 
-> **Rama:** crea `feat/garantias-garfb` desde `main`, **después** de que se fusione el PR #21 (el dominio de garantías). El jueves 1 Kevin entrega los puertos, y desde ese día trabajas sobre ellos (ver "Cómo arrancar sin esperar").
+> **Rama:** `feat/garantias-garfb`, ya creada desde `main` con el dominio de garantías adentro. No la crees: `git fetch && git switch feat/garantias-garfb`. El jueves 1 Kevin entrega los puertos, y desde ese día trabajas sobre ellos (ver "Cómo arrancar sin esperar").
 > **Spec:** [`2026-07-27-garantias-design.md`](../specs/2026-07-27-garantias-design.md)
 > **Tanda:** 1 — el repositorio Firebird, lado de escritura
 > **Plazo:** una semana, del miércoles 30 de septiembre al **martes 6 de octubre**; entregas ese día, al final de tu jornada. Única, no por partes. El calendario está al final.
