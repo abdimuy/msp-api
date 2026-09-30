@@ -258,4 +258,82 @@ var (
 		"warranty_event_device_time_required",
 		"fecha del dispositivo del evento obligatoria",
 	)
+
+	// ErrGarantiaNoEncontrada is returned by the repository and the
+	// commands when the folio does not exist.
+	ErrGarantiaNoEncontrada = apperror.NewNotFound(
+		"warranty_not_found",
+		"garantía no encontrada",
+	)
+
+	// ErrClaveIdempotenciaDuplicada is returned by the repository when the
+	// idempotency key already exists. A command treats it as a repetition
+	// (brief decision 6), not as a failure: the phone re-sent the same
+	// request.
+	ErrClaveIdempotenciaDuplicada = apperror.NewConflict(
+		"warranty_idempotency_key_duplicate",
+		"clave de idempotencia duplicada",
+	)
+
+	// ErrClaveIdempotenciaDeOtroFolio is returned when the idempotency key
+	// belongs to a DIFFERENT folio. Unlike the plain duplicate, this is a
+	// real error: the caller is confused about which folio it is writing
+	// to, and hiding that would write the change to the wrong expediente.
+	ErrClaveIdempotenciaDeOtroFolio = apperror.NewConflict(
+		"warranty_idempotency_key_other_folio",
+		"la clave de idempotencia pertenece a otro folio",
+	)
+
+	// ErrRolDecisorObligatorio is returned by the three decision methods
+	// (RegistrarDiagnostico, AutorizarCambioFisico, RegistrarDesenlace)
+	// when the actor carries no role. Permission says WHETHER someone may
+	// decide; the role says FROM WHICH area they did, and without it the
+	// expediente cannot say who authorized an expensive swap.
+	ErrRolDecisorObligatorio = apperror.NewValidation(
+		"warranty_decision_role_required",
+		"rol de quien decide obligatorio",
+	)
+
+	// ErrEventoGPSInvalido is returned by newEvento when the coordinates
+	// are half a pair, out of range, or not finite.
+	ErrEventoGPSInvalido = apperror.NewValidation(
+		"warranty_event_gps_invalid",
+		"coordenadas gps inválidas",
+	)
+
+	// ErrPermisoInvalido is returned by ParsePermiso when the input is not
+	// one of the five recognized permission codes.
+	ErrPermisoInvalido = apperror.NewValidation(
+		"warranty_permission_invalid",
+		"permiso inválido",
+	)
+
+	// ErrPermisoDenegado is returned by the commands when the authenticated
+	// user does not hold the permission the action requires.
+	ErrPermisoDenegado = apperror.NewForbidden(
+		"warranty_permission_denied",
+		"sin permiso para esta acción",
+	)
+
+	// ErrUsuarioNoAutenticado is returned by the commands when there is no
+	// authenticated user behind the request. No event can be written
+	// without one, so it fails before the folio is even loaded.
+	ErrUsuarioNoAutenticado = apperror.NewUnauthorized(
+		"warranty_user_unauthenticated",
+		"usuario no autenticado",
+	)
+
+	// ErrImagenRutaInvalida is returned by NewImagen when the blob path is
+	// empty, absolute, or escapes STORAGE_DIR through a ".." segment.
+	ErrImagenRutaInvalida = apperror.NewValidation(
+		"warranty_image_path_invalid",
+		"ruta de imagen inválida",
+	)
+
+	// ErrImagenSubidaPorObligatorio is returned by NewImagen when the
+	// operator who uploaded the evidence is missing.
+	ErrImagenSubidaPorObligatorio = apperror.NewValidation(
+		"warranty_image_uploader_required",
+		"quien sube la imagen obligatorio",
+	)
 )

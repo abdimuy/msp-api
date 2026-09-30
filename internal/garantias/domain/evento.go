@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"math"
 	"strings"
 	"time"
 
@@ -60,6 +61,9 @@ func newEvento(p EventoParams) (*Evento, error) {
 	if p.DeviceCreatedAt.IsZero() {
 		return nil, ErrEventoDeviceCreatedAtObligatorio
 	}
+	if !gpsValido(p.GPSLat, p.GPSLon) {
+		return nil, ErrEventoGPSInvalido
+	}
 	return &Evento{
 		id:                uuid.New(),
 		garantiaID:        p.GarantiaID,
@@ -76,6 +80,24 @@ func newEvento(p EventoParams) (*Evento, error) {
 		deviceCreatedAt:   p.DeviceCreatedAt,
 		claveIdempotencia: p.ClaveIdempotencia,
 	}, nil
+}
+
+// gpsValido reports whether the event's coordinates are acceptable. They are
+// optional, but they come as a pair (spec §3.3): half a position would be
+// stored as a lat with no lon and read back as a place off the coast of
+// Africa. Each value must also be in its own range, or the same argument
+// holds for a lat of 200.
+func gpsValido(lat, lon *float64) bool {
+	if lat == nil && lon == nil {
+		return true
+	}
+	if lat == nil || lon == nil {
+		return false
+	}
+	if math.IsNaN(*lat) || math.IsNaN(*lon) || math.IsInf(*lat, 0) || math.IsInf(*lon, 0) {
+		return false
+	}
+	return *lat >= -90 && *lat <= 90 && *lon >= -180 && *lon <= 180
 }
 
 // HydrateEventoParams is the persisted shape used by the repository over

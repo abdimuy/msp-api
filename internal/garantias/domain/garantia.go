@@ -49,10 +49,18 @@ type Garantia struct {
 // ActorParams carries the event provenance every mutating method requires
 // (brief decision 8): who performed the action, the offline idempotency key
 // and the device timestamp. The aggregate never invents these values.
+//
+// RolDecisor is MANDATORY in the three decision events (RegistrarDiagnostico,
+// AutorizarCambioFisico, RegistrarDesenlace) and optional elsewhere, where it
+// is stored when present. GPSLat/GPSLon are always optional but come as a
+// pair, each in range (spec §3.3): the column pair records where the agent
+// was, and half a position is not a position.
 type ActorParams struct {
 	Usuario           string
 	ClaveIdempotencia string
 	DeviceCreatedAt   time.Time
+	RolDecisor        *RolDecisor
+	GPSLat, GPSLon    *float64
 }
 
 // AbrirGarantiaParams carries the inputs to AbrirGarantia.
@@ -196,6 +204,9 @@ func (g *Garantia) buildEvent(actor ActorParams, now time.Time, tipo TipoEvento,
 		EtapaDesde:        desde,
 		EtapaHasta:        hasta,
 		Usuario:           actor.Usuario,
+		RolDecisor:        actor.RolDecisor,
+		GPSLat:            actor.GPSLat,
+		GPSLon:            actor.GPSLon,
 		CreatedAt:         now,
 		DeviceCreatedAt:   actor.DeviceCreatedAt,
 		ClaveIdempotencia: actor.ClaveIdempotencia,
@@ -292,6 +303,9 @@ func (g *Garantia) RegistrarDiagnostico(articuloID uuid.UUID, ruta RutaReparacio
 	if err != nil {
 		return err
 	}
+	if actor.RolDecisor == nil {
+		return ErrRolDecisorObligatorio
+	}
 	if err := articulo.registrarDiagnostico(ruta, now); err != nil {
 		return err
 	}
@@ -344,6 +358,9 @@ func (g *Garantia) AutorizarCambioFisico(articuloID uuid.UUID, actor ActorParams
 	if err != nil {
 		return err
 	}
+	if actor.RolDecisor == nil {
+		return ErrRolDecisorObligatorio
+	}
 	reemplazo, err := newArticulo(NewArticuloParams{
 		ID:          uuid.New(),
 		GarantiaID:  g.id,
@@ -381,6 +398,9 @@ func (g *Garantia) RegistrarDesenlace(articuloID uuid.UUID, desenlace Desenlace,
 	e, err := g.buildEvent(actor, now, TipoEventoDesenlaceRegistrado, &articuloID, "", &desde, &hasta)
 	if err != nil {
 		return err
+	}
+	if actor.RolDecisor == nil {
+		return ErrRolDecisorObligatorio
 	}
 	if err := articulo.registrarDesenlace(desenlace, hasta, now); err != nil {
 		return err
