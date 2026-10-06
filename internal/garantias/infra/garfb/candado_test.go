@@ -1,3 +1,4 @@
+//nolint:paralleltest // Firebird integration tests must run serially.
 package garfb_test
 
 import (

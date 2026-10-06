@@ -1,3 +1,4 @@
+//nolint:paralleltest // Firebird integration tests must run serially.
 package garfb_test
 
 import (
@@ -146,8 +147,8 @@ func TestGarantiaRepo_CrearYObtener_Cliente(t *testing.T) {
 
 		require.NotNil(t, got.GPSLat())
 		require.NotNil(t, got.GPSLon())
-		require.Equal(t, lat, *got.GPSLat())
-		require.Equal(t, lon, *got.GPSLon())
+		require.InDelta(t, lat, *got.GPSLat(), 1e-9)
+		require.InDelta(t, lon, *got.GPSLon(), 1e-9)
 
 		require.Equal(t, g.AbiertoPor(), got.AbiertoPor())
 		require.Equal(t, g.ArticulosCount(), got.ArticulosCount())
@@ -179,6 +180,7 @@ func TestGarantiaRepo_CrearYObtener_Cliente(t *testing.T) {
 		}
 	})
 }
+
 func TestGarantiaRepo_ClaveIdempotenciaDuplicada(t *testing.T) {
 	pool := fbtestutil.NewTestFirebirdPool(t)
 
@@ -268,6 +270,7 @@ func TestGarantiaRepo_ClaveIdempotenciaDuplicada(t *testing.T) {
 		require.ErrorIs(t, err, domain.ErrClaveIdempotenciaDuplicada)
 	})
 }
+
 func TestGarantiaRepo_NoEncontrada(t *testing.T) {
 	pool := fbtestutil.NewTestFirebirdPool(t)
 
@@ -337,6 +340,7 @@ func TestGarantiaRepo_NoEncontrada(t *testing.T) {
 		require.ErrorIs(t, err, domain.ErrGarantiaNoEncontrada)
 	})
 }
+
 func TestGarantiaRepo_CrearYObtener_Piso(t *testing.T) {
 	pool := fbtestutil.NewTestFirebirdPool(t)
 

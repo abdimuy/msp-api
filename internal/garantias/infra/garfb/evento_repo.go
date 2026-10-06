@@ -14,16 +14,19 @@ import (
 
 var _ outbound.EventoRepo = (*EventoRepo)(nil)
 
+// EventoRepo persists and reads warranty events from Firebird.
 type EventoRepo struct {
 	pool *firebird.Pool
 }
 
+// NewEventoRepo creates an EventoRepo backed by the provided Firebird pool.
 func NewEventoRepo(pool *firebird.Pool) *EventoRepo {
 	return &EventoRepo{
 		pool: pool,
 	}
 }
 
+// ListarPorGarantia returns the events for a warranty in timeline order.
 func (r *EventoRepo) ListarPorGarantia(
 	ctx context.Context,
 	garantiaID uuid.UUID,
@@ -63,6 +66,7 @@ func (r *EventoRepo) ListarPorGarantia(
 	return eventos, nil
 }
 
+// ObtenerPorClaveIdempotencia returns the event for the given idempotency key, if any.
 func (r *EventoRepo) ObtenerPorClaveIdempotencia(
 	ctx context.Context,
 	clave string,
@@ -78,6 +82,7 @@ func (r *EventoRepo) ObtenerPorClaveIdempotencia(
 	er, err := scanEvento(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			//nolint:nilnil // A missing event is represented as no result and no error.
 			return nil, nil
 		}
 

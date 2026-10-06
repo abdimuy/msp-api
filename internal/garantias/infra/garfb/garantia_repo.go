@@ -16,16 +16,19 @@ import (
 
 var _ outbound.GarantiaRepo = (*GarantiaRepo)(nil)
 
+// GarantiaRepo persists and reads warranties and their articles from Firebird.
 type GarantiaRepo struct {
 	pool *firebird.Pool
 }
 
+// NewGarantiaRepo creates a GarantiaRepo backed by the provided Firebird pool.
 func NewGarantiaRepo(pool *firebird.Pool) *GarantiaRepo {
 	return &GarantiaRepo{
 		pool: pool,
 	}
 }
 
+// Crear inserts a warranty, its articles, and pending events using the active transaction.
 func (r *GarantiaRepo) Crear(ctx context.Context, g *domain.Garantia) error {
 	tx, err := firebird.RequireTx(ctx)
 	if err != nil {
@@ -76,6 +79,7 @@ func (r *GarantiaRepo) Crear(ctx context.Context, g *domain.Garantia) error {
 	return nil
 }
 
+// Guardar updates a warranty and its articles and inserts pending events using the active transaction.
 func (r *GarantiaRepo) Guardar(ctx context.Context, g *domain.Garantia) error {
 	tx, err := firebird.RequireTx(ctx)
 	if err != nil {
@@ -142,6 +146,7 @@ func (r *GarantiaRepo) Guardar(ctx context.Context, g *domain.Garantia) error {
 	return nil
 }
 
+// Obtener returns a warranty by ID.
 func (r *GarantiaRepo) Obtener(
 	ctx context.Context,
 	id uuid.UUID,
@@ -156,6 +161,7 @@ func (r *GarantiaRepo) Obtener(
 	)
 }
 
+// ObtenerPorFolio returns a warranty by folio.
 func (r *GarantiaRepo) ObtenerPorFolio(
 	ctx context.Context,
 	folio domain.Folio,
@@ -170,6 +176,7 @@ func (r *GarantiaRepo) ObtenerPorFolio(
 	)
 }
 
+// ObtenerParaActualizar returns a warranty by ID while locking its row in the active transaction.
 func (r *GarantiaRepo) ObtenerParaActualizar(
 	ctx context.Context,
 	id uuid.UUID,

@@ -1,3 +1,4 @@
+//nolint:paralleltest // Firebird integration tests must run serially.
 package garfb_test
 
 import (
@@ -160,6 +161,7 @@ func TestGarantiaRepo_GuardarAvanceYEvento(t *testing.T) {
 		)
 	})
 }
+
 func TestGarantiaRepo_GuardarArticuloNuevoYReemplazo(t *testing.T) {
 	pool := fbtestutil.NewTestFirebirdPool(t)
 
@@ -352,6 +354,7 @@ func TestGarantiaRepo_GuardarArticuloNuevoYReemplazo(t *testing.T) {
 		)
 	})
 }
+
 func TestGarantiaRepo_GuardarEsAtomicoSiFallaEvento(t *testing.T) {
 	pool := fbtestutil.NewTestFirebirdPool(t)
 
@@ -483,6 +486,7 @@ func TestGarantiaRepo_GuardarEsAtomicoSiFallaEvento(t *testing.T) {
 		require.Len(t, eventos, 2)
 	})
 }
+
 func TestGarantiaRepo_PersisteRutaDictamenYDatosDeEvento(t *testing.T) {
 	pool := fbtestutil.NewTestFirebirdPool(t)
 
@@ -680,11 +684,10 @@ func TestGarantiaRepo_PersisteRutaDictamenYDatosDeEvento(t *testing.T) {
 		)
 
 		// Verify that RolDecisor and GPS values round-trip through Firebird.
-		eventoDiagnostico, err :=
-			eventoRepo.ObtenerPorClaveIdempotencia(
-				ctx,
-				claveDiagnostico,
-			)
+		eventoDiagnostico, err := eventoRepo.ObtenerPorClaveIdempotencia(
+			ctx,
+			claveDiagnostico,
+		)
 		require.NoError(t, err)
 		require.NotNil(t, eventoDiagnostico)
 
@@ -698,10 +701,11 @@ func TestGarantiaRepo_PersisteRutaDictamenYDatosDeEvento(t *testing.T) {
 		require.NotNil(t, eventoDiagnostico.GPSLat())
 		require.NotNil(t, eventoDiagnostico.GPSLon())
 
-		require.Equal(t, lat, *eventoDiagnostico.GPSLat())
-		require.Equal(t, lon, *eventoDiagnostico.GPSLon())
+		require.InDelta(t, lat, *eventoDiagnostico.GPSLat(), 1e-9)
+		require.InDelta(t, lon, *eventoDiagnostico.GPSLon(), 1e-9)
 	})
 }
+
 func TestGarantiaRepo_PersisteDesenlaceYCierre(t *testing.T) {
 	pool := fbtestutil.NewTestFirebirdPool(t)
 

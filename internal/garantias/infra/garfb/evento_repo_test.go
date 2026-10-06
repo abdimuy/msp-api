@@ -1,3 +1,4 @@
+//nolint:paralleltest // Firebird integration tests must run serially.
 package garfb_test
 
 import (
@@ -108,6 +109,7 @@ func TestEventoRepo_ListarYObtenerPorClave(t *testing.T) {
 		require.Nil(t, inexistente)
 	})
 }
+
 func TestEventoRepo_ListarOrdenadoPorDeviceCreatedAt(t *testing.T) {
 	pool := fbtestutil.NewTestFirebirdPool(t)
 

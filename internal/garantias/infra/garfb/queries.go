@@ -1,3 +1,4 @@
+//nolint:misspell // DESCRIPCION is the actual Firebird column name.
 package garfb
 
 const insertarGarantiaSQL = `

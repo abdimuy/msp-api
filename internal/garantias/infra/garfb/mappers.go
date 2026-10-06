@@ -1,3 +1,4 @@
+//nolint:nilnil // Nullable database fields intentionally return nil without an error.
 package garfb
 
 import (
