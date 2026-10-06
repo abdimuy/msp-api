@@ -47,7 +47,7 @@ refutado **no se borra**: cambia de estado a REFUTADA y se queda.
 > checkout principal. Varias corrigen por unas líneas lo que decía
 > `msp-app-kt/docs/inicializar-semana.md`; donde eso pasa, se anota.
 
-**Siguiente identificador libre: `E-APP-048`.**
+**Siguiente identificador libre: `E-APP-057`.**
 
 > **Tercera tanda (2026-09-24).** `E-APP-029 … E-APP-047`. Es la primera tanda
 > con **mediciones en un aparato**: el teléfono de `javier.gil.perez@msp.com`
@@ -1634,6 +1634,192 @@ refutado **no se borra**: cambia de estado a REFUTADA y se queda.
 - **Guardada por:** — (sin prueba)
 - **Caduca si:** `savePayment` se vuelve `suspend`, o el diálogo espera su
   resultado antes de navegar
+
+---
+
+### E-APP-048 · Desde 2.18.0 el saldo del teléfono resta otra vez abonos que el servidor ya aplicó: las capturas de la era Node
+
+- **Nivel:** MEDIDO · **Estado:** CERRADA en rama (`msp-app-kt` `dedee4a7`, sin publicar)
+- **Medido:** 2026-09-30, teléfono de `juan.martinez@msp.com` (app 2.19.2) por el
+  depurador remoto, sólo `SELECT`, con canario `COUNT(*)`; producción
+  (`MUEBLERA_SNP`) por `isql` en transacción de sólo lectura.
+- **El caso:** Q00002413 (cargo 14186779). Servidor: `SALDO` 3,800 = 12,800 −
+  8,500 − 500, cuadra con sus 35 abonos (control). Room: `SALDO_REST` 3,550 =
+  base 3,800 − 250. La única fila que resta es `cfd7bc17-…` (11-ago, $250,
+  `GUARDADO_EN_MICROSIP = 1`, `DOCTO_CC_ID = 0`, nadie la nombra). Los abonos del
+  22 y del 29-sep están anotados y nombrados (control: no restan).
+- **En producción** `cfd7bc17` existe en `MSP_PAGOS_RECIBIDOS` con
+  `DOCTO_CC_ID = 15866668`, `ESTADO = A` e **`IMPTE_DOCTO_CC_ID` NULL**; el
+  documento tiene un solo abono vivo, mismo cargo y monto. La subconsulta del sync
+  (`pagos_repo.go:276`) da `pago_recibido_id` NULL para 15866669 (control:
+  15893809 sí devuelve su UUID).
+- **Por qué no se colapsa (LEÍDO):** el colapso UUID exige `PAGO_RECIBIDO_ID`
+  (`PaymentDao.findCollapsibleUuidTwins`); el legacy exige `DOCTO_CC_ID > 0`
+  (`deleteLegacyTwinsByDoctoCcIds`).
+- **Cuándo empezó (MEDIDO, `app_logs`):** el ticket bueno del 22-sep (16:01) salió
+  con 2.17.3; Juan instaló 2.18.0 a las 20:08. La resta entró en `c38c7e36`
+  (v2.18.0) y `999a5f93` (v2.18.1) le agregó `DOCTO_CC_ID = 0`; las dos restan esta
+  fila. Control: `git grep sumImporteNoReconocidoPorElServidor` da 0 en v2.17.3.
+- **Producción, universo (MEDIDO 2026-10-01):** 514,296 capturas con
+  `IMPTE_DOCTO_CC_ID` NULL, del 2024-09-15 al 2026-08-12 (API Node); desde el
+  13-ago todas lo traen salvo 2 del 19-ago en estado `P`.
+- **Verificada por:** compuerta ANTES del 2026-09-30 (agente independiente):
+  SOSTIENE.
+- **Guardada por:** `ResolucionDeCapturasSueltasTest`
+  (`E-APP-048 caso Q00002413 …`, `E-APP-048 propiedad - 300 escenarios …`).
+- **Caduca si:** el servidor llena `IMPTE_DOCTO_CC_ID` de las capturas Node, o la
+  app deja de restar capturas sueltas.
+- **Arreglo publicado:** app 2.19.3 (66), 2026-10-02 ~15:30, commit `62f2cab0`
+  de msp-app-kt; remedición en E-APP-056.
+
+### E-APP-049 · Alcance en la flota: 2,206 capturas sueltas, 1,725 ventas por debajo de Microsip
+
+- **Nivel:** MEDIDO · **Estado:** VIGENTE hasta publicar el arreglo
+- **Medido:** 2026-09-30 17:15 → 10-01 01:13 UTC, 50 de 54 teléfonos por el
+  depurador remoto (sólo `SELECT`, canarios `M2.rowCount = N_FOSIL` y
+  `M3.rowCount = N_ABAJO + N_ARRIBA` en los 50); cruce en producción el 2026-10-01.
+  `config/db_debug` restaurado idéntico al terminar.
+- **Teléfonos:** 30 de 50 con capturas sueltas; 2,206 filas, $547,838.
+- **Producción, fila por fila** (`MSP_PAGOS_RECIBIDOS` + `DOCTOS_CC` +
+  `IMPORTES_DOCTOS_CC`; canario: 2,199 encontradas = suma de los conteos por lote):
+  - 2,188 ($528,738) aplicadas una vez, mismo cargo y monto;
+  - 9 ($8,600) apuntan a un documento que no existe en `DOCTOS_CC`;
+  - 7 ($9,500) no existen en el servidor; 5 están en `MSP_FAILED_INTENTS` como
+    422 `pago_saldo_insuficiente` (STATUS `new`) y oficina capturó a mano el mismo
+    monto el mismo día;
+  - 2 ($1,000) condonaciones del 19-ago en estado `P`, `EX_SALDO_CARGO_EXCEDIDO`.
+- **Ventas (contra `MSP_SALDOS_VENTAS` de producción):** 1,725 por debajo por
+  capturas sueltas ($359,860, según la compuerta ANTES), 34 en $0 con deuda,
+  **0 por encima**. Las 44 "sin explicar" del teléfono: 42 coinciden con producción
+  (el teléfono tenía una base vieja, no es defecto).
+- **Control:** `oscar.roque` en 2.17.3 tiene 166 capturas sueltas y 0 ventas abajo.
+- **Caduca si:** se publica el arreglo y la remedición a 24–72 h da cero.
+
+### E-APP-050 · `GET /v2/cobranza/pagos/{id}` distingue las cuatro clases, pero un 200 con documento no prueba que el documento exista
+
+- **Nivel:** MEDIDO · **Estado:** VIGENTE
+- **Medido:** 2026-10-01 17:48 UTC, API Go local (binario `a56d58f`) contra el
+  Firebird de dev, sólo GET. Repetido por la compuerta ANTES.
+- **Respuestas:** era Node aplicada → 200 con `docto_cc_id`, cargo e importe en 0;
+  moderna → 200 completa; pendiente con error → 200 `sincronizacion: pendiente`
+  sin documento; inexistente → 404 `problem+json` con `pago_no_encontrado` en
+  `errors[0].message`. **Un documento borrado de `DOCTOS_CC` también da 200 con
+  documento.** Controles: ruta inexistente 404 `text/plain`; sin token 401.
+- **Consecuencia de diseño:** el arreglo exige dos pruebas para reconocer una
+  captura: el documento del GET **y** el gemelo del sync con ese documento, cargo
+  e importe.
+- **Guardada por:** `ResolucionDeCapturasSueltasTest` (`documento sin gemelo …`,
+  `un 404 del API sin pago_no_encontrado no marca`).
+
+### E-APP-051 · El arreglo de capturas sueltas, verificado en un aparato
+
+- **Nivel:** MEDIDO · **Estado:** VIGENTE (sólo dev)
+- **Medido:** 2026-10-01/02, Galaxy A25 (SM-A256E, Android 15) por cable, app
+  `devlocal` contra el API local y el Firebird de dev, zona 21563. Base del
+  teléfono leída binaria por `adb exec-out run-as`; servidor por `isql`.
+- **Línea base:** 310 de 310 ventas iguales al servidor (control de la comparación).
+- **Reproducción con la versión de hoy (`main`):** 4 capturas sembradas → 4 ventas
+  abajo, $550, 0 arriba.
+- **Con el arreglo:** 3 resueltas al saldo del servidor (2 con gemelo: copia
+  borrada, gemelo intacto; 1 con 404: marcada −1); la de documento inexistente no
+  se tocó. 309 iguales, 1 abajo (la esperada), 0 arriba; `Payment` 6,086 → 6,084.
+- **Sin servidor:** el worker devolvió RETRY dos veces y no cambió nada; al volver
+  el acceso se resolvió solo (23:12:14).
+- **Resincronización completa forzada:** ninguna venta volvió a bajar.
+- **Abono real con ticket:** Y00001481 $1,500 → $100 → $1,400 y Y00001967 $2,800 →
+  $100 → $2,700; un solo abono de cada uno en el servidor.
+- **No verificado:** el endpoint en producción, la escala (≈215 consultas en un
+  teléfono), otros modelos, y la reparación corriendo mientras se registra un abono.
+
+### E-APP-052 · El historial del ticket muestra como abono una captura marcada "no aplicada" (−1)
+
+- **Nivel:** MEDIDO · **Estado:** CERRADA en rama `fix/capturas-sueltas-saldo`
+  (msp-app-kt, sin publicar) el 2026-10-02
+- **Medido:** 2026-10-02 en el aparato de E-APP-051: el ticket de Y00001481 lista
+  "ABONO: 12/08/2026 – $100", que es la fila con `DOCTO_CC_ID = −1`.
+- **Consecuencia:** el saldo es correcto, pero el cliente ve un abono que Microsip
+  no tiene; donde oficina lo capturó a mano, el abono saldría dos veces.
+- **Arreglo (decisión del dueño, 2026-10-02: ocultar):** `RoomPagosAdapter.aHistorial`
+  descarta `DOCTO_CC_ID = −1` antes de contar descartes (afecta `pagosDe`, `pago(id)`
+  y `pagosDelPeriodo`); el ticket filtra con `abonosDelTicket` en sus dos listas.
+  Las condonaciones −1 siguen saliendo como "no aplicada" (`condonacionesDe`, sin cambio).
+- **Pruebas que lo guardan:** `CondonacionesDeLaVentaTest` "el abono que el servidor no
+  tiene no sale en el historial" y `AbonosDelTicketTest`; control en el mismo lote
+  (aplicado y pendiente siguen). **Rojo al revertir, MEDIDO 2026-10-02:** sin el filtro
+  cada una falla con exactamente `no-aplicado` de más.
+- **Sin verificar:** `importesCobrados` (línea base de la ruta) no filtra −1; una fila
+  −1 sigue contando en el techo. No se midió si mueve la línea base.
+
+### E-APP-053 · La condonación rechazada busca su código donde el API no lo pone
+
+- **Nivel:** INFERIDO (fuerte) · **Estado:** VIGENTE
+- **Leído:** `PendingPaymentsWorker.esCondonacionRechazadaPorSaldo` lee un `"code"` de
+  primer nivel; el API lo pone en `errors[].message` (`auth.go` `mapAppError`) y el
+  404 medido en E-APP-050 tiene esa forma. La prueba de la app usa un cuerpo con
+  `"code"` arriba.
+- **Consecuencia probable:** una condonación rechazada cae en el RELEASE genérico y
+  queda como captura suelta. El arreglo de E-APP-048 la resuelve después (404 →
+  −1), pero el camino directo no funciona.
+- **Lo volvería MEDIDO:** un POST de condonación mayor al saldo contra dev.
+
+### E-APP-054 · "Las 37 capturas sin gemelo de Juan pueden ser abonos perdidos"
+
+- **Nivel:** — · **Estado:** REFUTADA el 2026-09-30
+- **Quién lo creyó y por qué:** el autor del diagnóstico, al ver que 37 de 215
+  capturas no tenían gemelo en el snapshot del teléfono; era razonable porque el
+  14-ago se perdieron 11 abonos reales.
+- **Qué lo refutó (MEDIDO):** las 215, incluidas las 37, están aplicadas una vez en
+  producción con su documento.
+- **Lo volvería cierto:** una captura suelta sin documento en `MSP_PAGOS_RECIBIDOS`
+  ni abono equivalente en `IMPORTES_DOCTOS_CC`.
+
+### E-APP-055 · "El depurador remoto sólo se activa al abrir la app desde cero"
+
+- **Nivel:** — · **Estado:** REFUTADA el 2026-10-01
+- **Quién lo creyó y por qué:** el autor, al esperar respuesta del teléfono de un
+  cobrador; se apoyaba en la nota de memoria de que la lista blanca se revisa al
+  arrancar.
+- **Qué lo refutó (LEÍDO):** `RemoteDbDebugger.kt:72-170` escucha `config/db_debug`
+  con `addSnapshotListener`; al agregar el correo, el listener de comandos se
+  enciende en vivo, sin reiniciar. Basta el proceso vivo y conexión.
+
+### E-APP-056 · Con 2.19.3 el saldo del teléfono ya no queda abajo del servidor por capturas sueltas; ningún teléfono queda arriba
+
+- **Nivel:** MEDIDO · **Estado:** VIGENTE
+- **Medido:** depurador remoto del Room (consultas M1 resumen / M2 capturas
+  sueltas / M3 ventas descuadradas, sólo `SELECT`), comparando `SALDO_REST`
+  contra `PRECIO_TOTAL − TOTAL_IMPORTE − IMPTE_REST` que manda el servidor;
+  línea base = medición del 30-sep/1-oct (E-APP-048). `allowedDevices` se
+  respaldó y se restauró idéntico en ambas pasadas. Producción, teléfonos de
+  la flota.
+- **Pasada 1 (2026-10-02, 16:19–19:20, 33/54 teléfonos):** 7 teléfonos en
+  2.19.3: ventas abajo 97 ($24,600) → 0; en $0 con deuda 3 → 0; arriba 0 → 0.
+  **Control positivo:** 26 teléfonos aún en 2.19.2 conservaban el defecto (979
+  abajo $228,780 → 861 $185,130).
+- **Pasada 2 (2026-10-05, ~17:50–20:54, 46/54 teléfonos, 44 en 2.19.3):**
+  ventas abajo 1,813 ($402,710) → 106 ($24,750); abajo por captura suelta
+  1,722 → 55; en $0 con deuda 36 → 1; arriba 0 → 0. Caso de campo Juan
+  Martínez: 174 ventas abajo ($36,550) → 0.
+- **Telemetría 2026-10-02 (primeros 5 teléfonos con resolución):** 234
+  revisadas, 202 reconocidas, 32 sin evidencia ($13,850), 0 no aplicadas. En
+  Miguel Suárez las 5 restantes sin evidencia no restan en ninguna venta
+  visible (M3 vacío): **INFERIDO** que pertenecen a ventas que ya no están en
+  su teléfono; lo volvería MEDIDO consultar `sales` por esos
+  `DOCTO_CC_ACR_ID`.
+- **Residuo (abierto):** Pablo Vargas (2.19.3) 52 ventas abajo ($17,350), 70
+  capturas sueltas; su telemetría `RESOLUCION_CAPTURAS_SUELTAS` da
+  `pendientes: 70` en las 4 corridas del 2026-10-05 (13:07, 13:11, 13:30,
+  19:13) — cada `GET /v2/cobranza/pagos/{id}` cae en un error transitorio
+  (red/5xx/401/408/409/425/429/404 no del API); causa NO medida, la app no
+  registra el código; lo volvería MEDIDO leer los logs del API de producción
+  para sus GET. Otros 3 teléfonos con 1 venta cada uno (Rigoberto Santiago,
+  Israel Soto, Alejandro Chavarría). Jesús Guillermo sigue en 2.18.1 (3
+  ventas abajo, $550), versión anterior a la actualización sugerida.
+- **Sin verificar:** en Joaquín Rivera desaparecieron 25 ventas abajo "sin
+  explicar" (no por captura suelta) entre la base y la pasada 1; no se sabe
+  si fue el arreglo o su sync. Las 106 − 55 = 51 ventas abajo restantes no se
+  deben a capturas sueltas (la mayoría explicadas por abonos pendientes de
+  subir, p. ej. Eliseo Ramírez); no se revisaron una por una.
 
 ---
 
