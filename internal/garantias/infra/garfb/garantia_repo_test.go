@@ -448,3 +448,105 @@ func TestGarantiaRepo_CrearYObtener_Piso(t *testing.T) {
 		)
 	})
 }
+
+func TestGarantiaRepo_PersisteUTF8(t *testing.T) {
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	garantiaRepo := garfb.NewGarantiaRepo(pool)
+	eventoRepo := garfb.NewEventoRepo(pool)
+	folios := garfb.NewFolioGenerator(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		numero, err := folios.Siguiente(ctx)
+		require.NoError(t, err)
+
+		folio, err := domain.NewFolio(numero)
+		require.NoError(t, err)
+
+		origen, err := domain.ParseOrigenFolio("cliente")
+		require.NoError(t, err)
+
+		estadoCuenta, err := domain.ParseEstadoCuenta("liquidada")
+		require.NoError(t, err)
+
+		now := time.Date(2026, 10, 6, 11, 30, 0, 0, time.UTC)
+
+		clienteID := 991001
+		ventaID := 991002
+		articuloID := 991003
+
+		descripcionGarantia := "Sillón pequeño con daño: ñ, á, ü"
+		descripcionArticulo := "Artículo con piñón, lámpara y pingüino"
+		descripcionEvento := "Cancelación por revisión: niño, área y pingüino"
+
+		g, err := domain.AbrirGarantia(domain.AbrirGarantiaParams{
+			Folio:          folio,
+			Origen:         origen,
+			ClienteID:      &clienteID,
+			VentaID:        &ventaID,
+			EstadoCuenta:   &estadoCuenta,
+			Description:    descripcionGarantia,
+			Calle:          "Avenida Juárez",
+			NumeroExterior: "10",
+			Colonia:        "Centro",
+			Localidad:      "Puebla",
+			Ciudad:         "Puebla",
+			CodigoPostal:   "72000",
+			AbiertoPor:     "ruben",
+			Now:            now,
+			Actor: domain.ActorParams{
+				Usuario:           "ruben",
+				ClaveIdempotencia: uuid.NewString(),
+				DeviceCreatedAt:   now,
+			},
+		})
+		require.NoError(t, err)
+
+		err = g.AgregarArticulo(
+			domain.AgregarArticuloParams{
+				ArticuloID:  &articuloID,
+				Clave:       "UTF8-001",
+				Description: descripcionArticulo,
+			},
+			domain.ActorParams{
+				Usuario:           "ruben",
+				ClaveIdempotencia: uuid.NewString(),
+				DeviceCreatedAt:   now.Add(time.Minute),
+			},
+			now.Add(time.Minute),
+		)
+		require.NoError(t, err)
+
+		claveCancelacion := uuid.NewString()
+
+		err = g.Cancelar(
+			descripcionEvento,
+			domain.ActorParams{
+				Usuario:           "ruben",
+				ClaveIdempotencia: claveCancelacion,
+				DeviceCreatedAt:   now.Add(2 * time.Minute),
+			},
+			now.Add(2*time.Minute),
+		)
+		require.NoError(t, err)
+
+		require.NoError(t, garantiaRepo.Crear(ctx, g))
+
+		got, err := garantiaRepo.Obtener(ctx, g.ID())
+		require.NoError(t, err)
+
+		require.Equal(t, descripcionGarantia, got.Description())
+
+		articulos := got.ArticulosForRepo()
+		require.Len(t, articulos, 1)
+		require.Equal(t, descripcionArticulo, articulos[0].Description())
+
+		evento, err := eventoRepo.ObtenerPorClaveIdempotencia(
+			ctx,
+			claveCancelacion,
+		)
+		require.NoError(t, err)
+		require.NotNil(t, evento)
+		require.Equal(t, descripcionEvento, evento.Description())
+	})
+}

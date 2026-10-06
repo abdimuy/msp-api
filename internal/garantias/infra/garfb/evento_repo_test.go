@@ -200,8 +200,9 @@ func TestEventoRepo_ListarOrdenadoPorDeviceCreatedAt(t *testing.T) {
 				Usuario:           "ruben",
 				ClaveIdempotencia: claveAvance,
 
-				// Its device timestamp should place it between the other two.
-				DeviceCreatedAt: now.Add(2 * time.Minute),
+				// Same device timestamp as the article event.
+				// CREATED_AT must break the tie.
+				DeviceCreatedAt: now.Add(time.Minute),
 			},
 			now.Add(2*time.Minute),
 		)
@@ -213,9 +214,20 @@ func TestEventoRepo_ListarOrdenadoPorDeviceCreatedAt(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, eventos, 3)
 
-		// Expected order by DEVICE_CREATED_AT:
+		require.Equal(
+			t,
+			eventos[0].DeviceCreatedAt(),
+			eventos[1].DeviceCreatedAt(),
+		)
+
+		require.True(
+			t,
+			eventos[0].CreatedAt().Before(eventos[1].CreatedAt()),
+		)
+
+		// Expected order by DEVICE_CREATED_AT and CREATED_AT:
 		// 1 minute -> article
-		// 2 minutes -> stage advance
+		// 1 minute -> stage advance, ordered second by CREATED_AT
 		// 3 minutes -> folio opened.
 		require.Equal(
 			t,
@@ -233,13 +245,6 @@ func TestEventoRepo_ListarOrdenadoPorDeviceCreatedAt(t *testing.T) {
 			t,
 			claveFolio,
 			eventos[2].ClaveIdempotencia(),
-		)
-
-		require.True(
-			t,
-			eventos[0].DeviceCreatedAt().Before(
-				eventos[1].DeviceCreatedAt(),
-			),
 		)
 
 		require.True(
