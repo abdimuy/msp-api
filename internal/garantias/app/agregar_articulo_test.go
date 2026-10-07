@@ -20,7 +20,7 @@ func TestAgregarArticulo_CaminoFeliz(t *testing.T) {
 		GarantiaID:        g.ID(),
 		Clave:             "B",
 		Description:       "mesa de centro desvencijada",
-		ClaveIdempotencia: "k-agregar-1",
+		ClaveIdempotencia: clave(),
 		DeviceCreatedAt:   clk.Now(),
 	})
 	if err != nil {
@@ -35,6 +35,9 @@ func TestAgregarArticulo_CaminoFeliz(t *testing.T) {
 	if tx.calls != 1 {
 		t.Errorf("tx.calls = %d, want 1", tx.calls)
 	}
+	// The user must come from Identity, not from the command: the events the
+	// aggregate just added carry Identity's name (review round 1, blocker 3).
+	usuarioEventos(t, repo.lastSaved, "Juan")
 }
 
 func TestAgregarArticulo_NoAutenticado(t *testing.T) {
@@ -47,7 +50,7 @@ func TestAgregarArticulo_NoAutenticado(t *testing.T) {
 		GarantiaID:        g.ID(),
 		Clave:             "B",
 		Description:       "mesa",
-		ClaveIdempotencia: "k-x",
+		ClaveIdempotencia: clave(),
 		DeviceCreatedAt:   clk.Now(),
 	})
 	if !errors.Is(err, domain.ErrUsuarioNoAutenticado) {
@@ -68,7 +71,7 @@ func TestAgregarArticulo_SinPermiso(t *testing.T) {
 		GarantiaID:        g.ID(),
 		Clave:             "B",
 		Description:       "mesa",
-		ClaveIdempotencia: "k-x",
+		ClaveIdempotencia: clave(),
 		DeviceCreatedAt:   clk.Now(),
 	})
 	if !errors.Is(err, domain.ErrPermisoDenegado) {
@@ -83,13 +86,14 @@ func TestAgregarArticulo_ClaveRepetida_NoEscribe(t *testing.T) {
 	t.Parallel()
 	svc, repo, erepo, _, _, _, clk := setupService()
 	g := seedFolio(t, repo, clk.Now(), 1)
-	erepo.addEvento(hydrateEvento(g.ID(), "k-rep", clk.Now()))
+	k := clave()
+	erepo.addEvento(hydrateEvento(g.ID(), k, domain.TipoEventoArticuloAgregado, clk.Now()))
 
 	res, err := svc.AgregarArticulo(context.Background(), app.AgregarArticuloCmd{
 		GarantiaID:        g.ID(),
 		Clave:             "B",
 		Description:       "mesa",
-		ClaveIdempotencia: "k-rep",
+		ClaveIdempotencia: k,
 		DeviceCreatedAt:   clk.Now(),
 	})
 	if err != nil {
@@ -103,16 +107,63 @@ func TestAgregarArticulo_ClaveRepetida_NoEscribe(t *testing.T) {
 	}
 }
 
-func TestAgregarArticulo_CarreraEnGuardar(t *testing.T) {
+// TestAgregarArticulo_ClaveRepetida_DistintaGrafia pins the normalization
+// review round: the phone can resend the very same retry in uppercase and the
+// command must still recognize the already-recorded key.
+func TestAgregarArticulo_ClaveRepetida_DistintaGrafia(t *testing.T) {
 	t.Parallel()
 	svc, repo, erepo, _, _, _, clk := setupService()
 	g := seedFolio(t, repo, clk.Now(), 1)
+	k := clave()
+	erepo.addEvento(hydrateEvento(g.ID(), k, domain.TipoEventoArticuloAgregado, clk.Now()))
+
+	_, err := svc.AgregarArticulo(context.Background(), app.AgregarArticuloCmd{
+		GarantiaID:        g.ID(),
+		Clave:             "B",
+		Description:       "mesa",
+		ClaveIdempotencia: "{" + uppercaseUUID(k) + "}",
+		DeviceCreatedAt:   clk.Now(),
+	})
+	if err != nil {
+		t.Fatalf("la misma clave en otra grafia es una repeticion: %v", err)
+	}
+	if len(repo.saved) != 0 {
+		t.Errorf("saved = %d, want 0 (repeticion no escribe)", len(repo.saved))
+	}
+}
+
+func TestAgregarArticulo_ClaveNoUUID(t *testing.T) {
+	t.Parallel()
+	svc, repo, _, _, tx, _, clk := setupService()
+	g := seedFolio(t, repo, clk.Now(), 1)
+
+	_, err := svc.AgregarArticulo(context.Background(), app.AgregarArticuloCmd{
+		GarantiaID:        g.ID(),
+		Clave:             "B",
+		Description:       "mesa",
+		ClaveIdempotencia: "no es un UUID",
+		DeviceCreatedAt:   clk.Now(),
+	})
+	if !errors.Is(err, domain.ErrEventoClaveIdempotenciaInvalida) {
+		t.Fatalf("want ErrEventoClaveIdempotenciaInvalida, got %v", err)
+	}
+	if tx.calls != 0 || len(repo.saved) != 0 {
+		t.Errorf("no debe escribir: tx=%d saved=%d", tx.calls, len(repo.saved))
+	}
+}
+
+func TestAgregarArticulo_CarreraEnGuardar(t *testing.T) {
+	t.Parallel()
+	svc, repo, erepo, _, tx, _, clk := setupService()
+	g := seedFolio(t, repo, clk.Now(), 1)
+	k := clave()
 
 	// The pre-check finds nothing, then the twin commits the same key while we
-	// are saving: Guardar rejects on the unique index and the command must
-	// still come back as a success carrying the folio (spec §3.4).
+	// are saving: Guardar rejects on the unique index. The half-written row
+	// must be rolled back, not confirmed (review round 1, blocker 1), and the
+	// command still answers success carrying the folio (spec §3.4).
 	repo.onSave = func() {
-		erepo.addEvento(hydrateEvento(g.ID(), "k-carrera", clk.Now()))
+		erepo.addEvento(hydrateEvento(g.ID(), k, domain.TipoEventoArticuloAgregado, clk.Now()))
 	}
 	repo.saveErr = domain.ErrClaveIdempotenciaDuplicada
 
@@ -120,7 +171,7 @@ func TestAgregarArticulo_CarreraEnGuardar(t *testing.T) {
 		GarantiaID:        g.ID(),
 		Clave:             "B",
 		Description:       "mesa",
-		ClaveIdempotencia: "k-carrera",
+		ClaveIdempotencia: k,
 		DeviceCreatedAt:   clk.Now(),
 	})
 	if err != nil {
@@ -129,6 +180,16 @@ func TestAgregarArticulo_CarreraEnGuardar(t *testing.T) {
 	if res == nil || res.ID() != g.ID() {
 		t.Fatalf("debe devolver el folio existente")
 	}
+	if tx.rollbacks != 1 {
+		t.Errorf("rollbacks = %d, want 1 (la escritura a medias no se confirma)", tx.rollbacks)
+	}
+	if len(repo.saved) != 0 {
+		t.Errorf("saved = %d, want 0 (el folio no se persistio)", len(repo.saved))
+	}
+	estado, ok := repo.obtained[g.ID()]
+	if !ok || estado.ArticulosCount() != 1 {
+		t.Errorf("el repo no debe haber cambiado: articulos = %d", estado.ArticulosCount())
+	}
 }
 
 func TestAgregarArticulo_ClaveDeOtroFolio(t *testing.T) {
@@ -136,13 +197,14 @@ func TestAgregarArticulo_ClaveDeOtroFolio(t *testing.T) {
 	svc, repo, erepo, _, tx, _, clk := setupService()
 	g := seedFolio(t, repo, clk.Now(), 1)
 	otro := seedFolio(t, repo, clk.Now(), 1)
-	erepo.addEvento(hydrateEvento(otro.ID(), "k-ajeno", clk.Now()))
+	k := clave()
+	erepo.addEvento(hydrateEvento(otro.ID(), k, domain.TipoEventoArticuloAgregado, clk.Now()))
 
 	_, err := svc.AgregarArticulo(context.Background(), app.AgregarArticuloCmd{
 		GarantiaID:        g.ID(),
 		Clave:             "B",
 		Description:       "mesa",
-		ClaveIdempotencia: "k-ajeno",
+		ClaveIdempotencia: k,
 		DeviceCreatedAt:   clk.Now(),
 	})
 	if !errors.Is(err, domain.ErrClaveIdempotenciaDeOtroFolio) {
@@ -165,7 +227,7 @@ func TestAgregarArticulo_ErrorDeDominio_NoGuarda(t *testing.T) {
 		GarantiaID:        g.ID(),
 		Clave:             "B",
 		Description:       "",
-		ClaveIdempotencia: "k-dom",
+		ClaveIdempotencia: clave(),
 		DeviceCreatedAt:   clk.Now(),
 	})
 	if err == nil {

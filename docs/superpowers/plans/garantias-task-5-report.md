@@ -170,7 +170,7 @@ Verificación de la ronda 2 (mismos gates): `gofmt`/`go vet`/`go build` limpios,
 
 ### Status
 
-DONE — los gates de la B dan 0 y las coberturas están sobre sus pisos (domain 100.0% ≥ 99%, app 94.3% ≥ 90%). Sin commit ni push: pendiente tu revisión.
+DONE — los gates de la B dan 0 y las coberturas están sobre sus pisos (domain 100.0% ≥ 99%, app 93.6% ≥ 90%). Commit `2ff0524` (feat) y `d48fa9b` (reporte) sobre la rama `feat/garantias-comandos-apertura`, rebaseada sobre el tip de la A (`feat/garantias-puertos@4dbfc17`). La ronda 1 del review de la B está corregida (ver sección abajo) y las correcciones forman parte del mismo `<todo>` del commit de la entrega.
 
 ### Archivos
 
@@ -191,40 +191,41 @@ Todos dentro de la lista del brief (líneas 299-304): 5 de producción + 8 de pr
 
 ### Qué entregaste de verdad
 
-**El molde B.2, una sola vez.** `ejecutarFolio(ctx, garantiaID, permiso, actor, mutar)` (`service.go:69-119`) es los cinco pasos en una sola firma:
+**El molde B.2, una sola vez.** `ejecutarFolio(ctx, garantiaID, permiso, actor, mutar)` (`service.go:70-133`) es los cinco pasos en una sola firma:
 
 1. `usuario := s.usuario(ctx)` — de `Identity.UsuarioActual`, nunca del comando; el error (p. ej. `ErrUsuarioNoAutenticado`) se propaga tal cual.
 2. `s.exigirPermiso(ctx, permiso)` — `Identity.TienePermiso`; si no, `ErrPermisoDenegado`.
 3. `s.tx.RunInTx`:
-   a. `s.eventos.ObtenerPorClaveIdempotencia(clave)` (`service.go:86-98`): `nil` sigue; `vista.GarantiaID() == garantiaID` → repetición, `return nil` sin mutar; de otro folio → `ErrClaveIdempotenciaDeOtroFolio`.
-   b. `s.garantias.ObtenerParaActualizar(id)`.
+   a. `s.garantias.ObtenerParaActualizar(id)` — **bloquea el folio antes de mirar la clave** (3b antes de 3a, ronda 2 #24): con el lock tomado, dos requests al mismo folio se serializan y el segundo sí ve el evento que escribió el primero, así que cae en la repetición barata en vez de correr hacia `Guardar` (`service.go:96`).
+   b. `s.eventos.ObtenerPorClaveIdempotencia(clave)` (`service.go:100-112`): `nil` sigue; `vista.GarantiaID() == garantiaID` → repetición, `return nil` sin mutar; de otro folio → `ErrClaveIdempotenciaDeOtroFolio`.
    c. `mutar(ctx, g, actor)` — el método del dominio, único argumento que cambia por comando.
    d. `s.garantias.Guardar(g)`.
-4. Si `Guardar` devuelve `ErrClaveIdempotenciaDuplicada` → `return nil`, se trata como repetición (`service.go:108-112`).
-5. Fuera de la tx: `s.garantias.Obtener(id)` y se devuelve (`service.go:118`).
+4. Si `Guardar` devuelve `ErrClaveIdempotenciaDuplicada` → se devuelve el error para que `RunInTx` **haga rollback** (no commit): la escritura ya puso las filas del folio pero reventó en el UNIQUE del evento, y confirmarlas persistiría un cambio sin su evento (§4.4). Fuera de la tx, `resolverDuplicada` re-busca quién es dueño de la clave: misma folio → éxito con el estado actual, otro folio → `ErrClaveIdempotenciaDeOtroFolio`, clave ausente → `ErrClaveIdempotenciaDuplicada` (`service.go:127-133` + `resolverDuplicada`).
+5. Fuera de la tx: `s.garantias.Obtener(id)` y se devuelve.
 
-Los tres comandos de folio son el cascarón del archivo: `cmd` propio + `ejecutarFolio(ctx, cmd.GarantiaID, permiso, actorDe(...), closure)`. Lo único distinto es el cierre (`g.AgregarArticulo` / `g.AvanzarArticulo` / `g.IniciarProceso`) y el permiso según la tabla B.3: `crear`, `actualizar`, `actualizar`. No existe un segundo archivo que copie los pasos 3-5: si lo buscas, `ObtenerParaActualizar` aparece una vez en producción (`service.go:100`) y `RunInTx` dos (`service.go:85` y `abrir_garantia.go:46`).
+Los tres comandos de folio son el cascarón del archivo: `cmd` propio + `ejecutarFolio(ctx, cmd.GarantiaID, permiso, actorDe(...), closure)`. Lo único distinto es el cierre (`g.AgregarArticulo` / `g.AvanzarArticulo` / `g.IniciarProceso`) y el permiso según la tabla B.3: `crear`, `actualizar`, `actualizar`. No existe un segundo archivo que copie los pasos 3-5: si lo buscas, `ObtenerParaActualizar` aparece una vez en producción (`service.go:96`) y `RunInTx` dos (`service.go:91` y `abrir_garantia.go:56`).
 
-**`AbrirGarantia` no es el molde porque aún no existe el folio.** Todo el alta corre dentro de la misma transacción (`abrir_garantia.go:46-94`), como pide la línea 256: `FolioGenerator.Siguiente` → `domain.NewFolio` → `domain.AbrirGarantia` → `GarantiaRepo.Crear`. `AbiertoPor` = `actor.Usuario`, que sale de `Identity` (nunca del comando). La clave repetida —ya visible antes de escribir, o reventando `Crear` con `ErrClaveIdempotenciaDuplicada` (la carrera del paso 4)— se trata como el éxito que es: se relee el folio que abrió esa clave y se devuelve (vía `ObtenerPorClaveIdempotencia` → `Obtener`). Si después de una carrera la clave ya no aparece en el repo de eventos, devuelve `ErrClaveIdempotenciaDuplicada`, el mismo sentinel del paso 4.
+**`AbrirGarantia` no es el molde porque aún no existe el folio.** Todo el alta corre dentro de la misma transacción (`abrir_garantia.go:56-109`), como pide la línea 256: `FolioGenerator.Siguiente` → `domain.NewFolio` → `domain.AbrirGarantia` → `GarantiaRepo.Crear`. `AbiertoPor` = `actor.Usuario`, que sale de `Identity` (nunca del comando). La clave se normaliza **después** de usuario y permiso, para que un request sin autenticar falle con su propio sentinel. Una clave ya vista —`folio_abierto` antes de escribir, o reventando `Crear` con `ErrClaveIdempotenciaDuplicada` (la carrera)— se trata como el éxito que es: el `Crear` fallo **hace rollback** de la cabecera a medias y `resolverDuplicada` relee el folio que abrió esa clave. Una clave cuyo evento no es `folio_abierto` es un reuso contra el comando equivocado → `ErrClaveIdempotenciaDeOtroFolio`; si tras el rollback la clave ya no aparece, `ErrClaveIdempotenciaDuplicada`.
 
 **`ActorParams` lo arma el servicio.** `Usuario` sale de `Identity` (paso 1 del molde; `actorDeApertura` hace lo mismo), `ClaveIdempotencia`, `DeviceCreatedAt`, `GPS` salen del comando (`actorDe`, `service.go:147-154`) y `now` sale de `Clock`. Ningún comando de esta tanda lleva `RolDecisor` (no hay comando de decisión en el alcance): es la base de la Desviación 1.
 
-**`IDGenerator` está en `Deps`** como pide B.1 (`service.go:23`). Ningún comando de la B lo usa todavía: los eventos los construye el dominio (`buildEvent`, Entrega A) y estos cuatro comandos no generan IDs propios. Entra como dependencia para tandas posteriores.
+**`IDGenerator` no está en `Deps` (ronda 2 de #24).** El puerto vive en `outbound` para las tandas que hagan falta, pero ningún comando de la B usa uno todavía: los eventos los construye el dominio (`buildEvent`, Entrega A) y estos cuatro comandos no generan IDs propios. `Deps` queda en seis puertos: repo, eventos, folios, tx, identidad, reloj.
 
 ### Pruebas
 
-27 `func Test` en 8 archivos, `package app_test`, fakes en memoria, sin Firebird (línea 267).
+31 `func Test` en 6 archivos, `package app_test`, fakes en memoria, sin Firebird (línea 267).
 
 Por cada comando de folio:
-- Camino feliz: folio devuelto y estado del fake (artículos, transición, guardado único, `tx.calls == 1`).
+- Camino feliz: folio devuelto, estado del fake (artículos, transición, guardado único, `tx.calls == 1`) y **el `Usuario` de `Identity` en todos los eventos pendientes** (vía `repo.lastSaved`, el agregado crudo).
 - Sin usuario → `ErrUsuarioNoAutenticado` y **cero escrituras** (`tx.calls == 0`, `saved == 0`, `created == 0` — se comprueba, no se supone).
 - Sin permiso → `ErrPermisoDenegado`, cero escrituras. El fake niega un único permiso a la vez (`id.denegar = &permCrear`).
-- Repetición por clave (paso 3a): éxito y `saved == 0`.
-- **Repetición por carrera (paso 4): éxito y `saved == 0`.** No es un replay barato: `fakeGarantiaRepo.onSave` registra el evento del gemelo **después** de que la pre-comprobación pasó vacía y justo antes de devolver el error (`fakes_repo_test.go:52-60`), así que el comando cae en `Guardar → ErrClaveIdempotenciaDuplicada → repetición`. Sin `onSave` el test tocaría la rama 3a y dejaría el paso 4 verde pero nunca ejercitado.
+- Repetición por clave (paso 3b): éxito y `saved == 0`.
+- **Repetición por carrera (paso 4): éxito, `rollbacks == 1`, `saved == 0` y el estado del repo intacto.** No es un replay barato: `fakeGarantiaRepo.onSave` registra el evento del gemelo **después** de que la pre-comprobación pasó vacía y justo antes de devolver el error, así que el comando cae en `Guardar → ErrClaveIdempotenciaDuplicada → rollback → re-resolución`. Sin `onSave` el test tocaría la rama 3b y dejaría el paso 4 verde pero nunca ejercitado.
 - Clave de otro folio → `ErrClaveIdempotenciaDeOtroFolio`, sin escrituras.
+- Clave en otra grafía (mayúsculas) → repetición, gracias a `normalizarClave` (nota del review, Oct-7); clave que no es UUID → `ErrEventoClaveIdempotenciaInvalida`.
 - El rechazo del dominio sin guardar: `AgregarArticulo` con descripción vacía, `AvanzarArticulo` con transición inválida, `IniciarProceso` con folio sin artículos.
 
-`AbrirGarantia` (4 pruebas en total, la 4ª en `iniciar_proceso_test.go:154`): camino feliz (folio con `AbiertoPor` = nombre de `Identity`, folio asignado una vez, `created == 1`), sin usuario, sin permiso, y `TestAbrirGarantia_ClaveRepetida_ReusaElFolio`.
+`AbrirGarantia` (6 pruebas: camino feliz con `AbiertoPor` = nombre de `Identity` y `created == 1`, sin usuario, sin permiso, repetición reusando el folio —solo si el evento es `folio_abierto`—, clave de otro evento → `ErrClaveIdempotenciaDeOtroFolio`, y **carrera en `Crear`** que verifica rollback de la cabecera, `created == 0` y que devuelve el folio del gemelo).
 
 Corte transversal: `TestEscrituraDentroDeTransaccion` con `recordingRepo` — toda escritura ocurre con la tx abierta, la invariante del agregado por la que el molde existe; y `TestErroresDePuertoSePropagan` — cada sentinel de puerto se propaga sin ser tragado.
 
@@ -238,7 +239,7 @@ Con `go clean -testcache` antes de la corrida con cobertura.
 | `go vet ./internal/garantias/...` | limpio |
 | `go build ./...` | limpio |
 | `golangci-lint run ./internal/garantias/...` | `0 issues.` |
-| `go clean -testcache && go test -race -count=1 -coverprofile=cov.out ./internal/garantias/domain/ ./internal/garantias/app/` | `ok  .../domain 2.576s coverage: 100.0% of statements`<br>`ok  .../app 2.440s coverage: 94.3% of statements` |
+| `go clean -testcache && go test -race -count=1 -coverprofile=cov.out ./internal/garantias/domain/ ./internal/garantias/app/` | `ok  .../domain 2.537s coverage: 100.0% of statements`<br>`ok  .../app 2.365s coverage: 93.6% of statements` |
 | `go tool cover -func=cov.out \| grep -E 'garantias/(domain\|app)' \| tail -5` | las 5 últimas líneas son de `domain/` (el `tail` corta del final y `app/` queda arriba en el orden alfabético): `total: (statements) 100.0%` |
 | `make check-sealed MODULE=garantias` | `✔ garantias is sealed`, exit 0 (el glifo puede salir doble-codificado en la consola de Windows, igual que en la Entrega A) |
 
@@ -246,26 +247,39 @@ Los dos pisos por separado, como sugiere la nota de la línea 326 (el `tail -5` 
 
 ```
 go test -race -count=1 -coverprofile=domain.out ./internal/garantias/domain/
-ok  	github.com/abdimuy/msp-api/internal/garantias/domain	2.607s	coverage: 100.0% of statements
+ok  	github.com/abdimuy/msp-api/internal/garantias/domain	2.537s	coverage: 100.0% of statements
 ```
 
 ```
 go test -race -count=1 -coverprofile=app.out ./internal/garantias/app/
-ok  	github.com/abdimuy/msp-api/internal/garantias/app	2.467s	coverage: 94.3% of statements
+ok  	github.com/abdimuy/msp-api/internal/garantias/app	2.365s	coverage: 93.6% of statements
 ```
 
-Pisos del brief: domain 99% → 100.0%; app 90% → 94.3%. Los `cov.out`, `domain.out` y `app.out` se borraron al terminar.
+Pisos del brief: domain 99% → 100.0%; app 90% → 93.6%. Los `cov.out`, `domain.out` y `app.out` se borraron al terminar.
 
 ### Desviaciones declaradas
 
 1. **Los `Cmd` traen el VO ya tipado, no el `string` + `Parse`.** El brief (línea 261) pide que "los strings que llegan de fuera (origen, etapa, estado_cuenta, rol_decisor) se parsean en el comando". Entregado: `AbrirGarantiaCmd.Origen` es `domain.OrigenFolio`, `.EstadoCuenta` es `*domain.EstadoCuenta`, `AvanzarArticuloCmd.EtapaDestino` es `domain.Etapa` — el `Parse` del VO queda para el adapter HTTP de la tanda 3, que ni existe, y el error del `Parse` se devolverá tal cual allí. Por qué: la misma línea permite en el `cmd` "tipos primitivos **o del dominio**", y sin un transport que mande `string` no hay nada que parsear en el servicio. Si lo prefieres literal, son tres campos y sus tests, ~30 min.
 2. **Los pasos 1-2 (usuario + permiso) están escritos dos veces.** En `ejecutarFolio` y —más cortos— en `actorDeApertura`. El criterio de "terminado" (línea 352) es que los pasos 1-5 **del molde** existan una sola vez, y eso se cumple: los pasos 3-5 viven únicamente en `ejecutarFolio` y los tres comandos de folio pasan por esa única firma. `AbrirGarantia` no puede usarlo: no hay folio que bloquear, y el propio brief le da un flujo distinto (línea 256). La duplicación son ~6 líneas; se puede extraer a un `resolverActor(ctx, permiso)` si lo pides.
 3. **Fakes en dos archivos, no uno.** El brief (línea 267) dice fakes en `fakes_test.go`. Entregados en `fakes_test.go` + `fakes_repo_test.go` (el repo grande, con `onSave` y `recordingRepo`). Es organización interna de un paquete de test, pero lo declaro para que no parezca otra cosa.
-4. **El `Usuario` del evento no es observable en `app`.** El camino feliz comprueba el estado del folio y del fake; el campo `Usuario` del evento lo imprime el dominio con `actor.Usuario` (probado en Entrega A) pero la garantía no expone sus eventos pendientes (no hay acceso al campo privado y el dominio está sellado), así que a nivel `app` el único punto donde el nombre de `Identity` es observable es `AbiertoPor` en la apertura, que sí se comprueba. En los tres comandos de folio no hay nada legible por el puerto para asertarlo; quedará cubierto end-to-end cuando el repo real persista eventos.
+4. **El `Usuario` del evento ahora sí es observable en `app`.** La desviación anterior quedó resuelta en la ronda 1 del review: el camino feliz de los tres comandos comprueba, vía `repo.lastSaved` (el agregado crudo que recibe el repo, no el clon), que **todos** los eventos pendientes llevan el nombre de `Identity`. La desviación solo aplicaba al diseño original donde el fake clonaba y el campo quedaba oculto.
 
 ### Nota de rama (no es desviación)
 
-La B nació de `feat/garantias-puertos` (la rama de la A) y no de `main`, porque la A sigue en revisión. El brief lo prevé expresamente (línea 348): "Si la A todavía está en revisión cuando empiezas la B, parte de la rama de la A y rebasea cuando se fusione". Se rebasará sobre `main` cuando la A se fusione.
+La B nació de `feat/garantias-puertos` (la rama de la A) y no de `main`, porque la A sigue en revisión. El brief lo prevé expresamente (línea 348): "Si la A todavía está en revisión cuando empiezas la B, parte de la rama de la A y rebasea cuando se fusione". Ya se rebaseó sobre el tip de la A (`feat/garantias-puertos@4dbfc17`, la ronda 3 aprobada de #24); el historial quedó reescrito y se empujó con `--force-with-lease`. Cuando la A se fusione a `main`, basta con retargetear #26 a `main` — su base ya está en ese tip.
+
+## Correcciones del review (PR #26)
+
+Ronda 1 del review de la B, más la nota del 7-Oct. Cada punto con su prueba.
+
+1. **Paso 4 = rollback real + invertir 3a/3b** (`service.go:91-126`). Antes: `Guardar` → `ErrClaveIdempotenciaDuplicada` → `return nil` (la tx confirmaba una escritura a medias). Ahora: el error vuelve para que `RunInTx` haga **rollback** y, fuera de la tx, `resolverDuplicada` re-busca la clave (mismo folio → éxito, otro folio → `DeOtroFolio`, ausente → `Duplicada`). Además, dentro de la tx el folio se bloquea **antes** de mirar la clave (`ObtenerParaActualizar` antes que `ObtenerPorClaveIdempotencia`), para que dos requests al mismo folio se serialicen y el segundo vea el evento del primero (repetición barata, no carrera). Mutante a matar: el viejo `return nil` sobre el error se queda sin tests verdes.
+2. **Fakes honestos de transacción y de repositorio**. `fakeTxRunner` ahora cuenta `commits`/`rollbacks` y los expone como `onCommit`/`onRollback` (`fakes_test.go`); `fakeGarantiaRepo` **stagea** las escrituras y solo un `commit` las conserva — `Crear`/`Guardar` escriben la fila aun cuando van a devolver error, y un rollback deja el repo idéntico a antes (`fakes_repo_test.go`). Las carreras de los tres comandos y la de `AbrirGarantia` asertan `rollbacks == 1`, `saved == 0` (o `created == 0`) y el estado original del repo.
+3. **`Usuario()` desde `Identity` en los tres comandos**. El camino feliz aserta con `lastSaved.EventosPendientes()` que todos los eventos llevan el nombre de `Identity` (`usuarioEventos`); `AbrirGarantia` ya lo traía vía `AbiertoPor`.
+4. **`IDGenerator` fuera de `Deps`** (también pedido en ronda 2 de #24). `Deps` quedó con 6 puertos; el puerto de generador queda en `outbound` para tandas futuras.
+5. **Línea ~175 del reporte**: corregido en el Status de esta Entrega B (antes decía "Sin commit ni push"). La línea ~125 era de la A y ya había quedado corregida en su ronda.
+6. **Normalización de la clave de idempotencia (nota 7-Oct)**. `normalizarClave` (`service.go:149-159`) trimea, exige `uuid.Parse` y usa `parsed.String()` — la grafía canónica que guarda el dominio — antes de **toda** búsqueda o escritura. Sin esto, un reintento enviado en mayúsculas (o con llaves) reventaría contra la búsqueda y correría de nuevo hacia el UNIQUE. Clave vacía → `ErrEventoClaveIdempotenciaObligatoria`; clave que no es UUID → `ErrEventoClaveIdempotenciaInvalida`. Tests: `ClaveRepetida_DistintaGrafia` (misma clave en mayúsculas = repetición, sin escritura) y `ClaveNoUUID`.
+
+Cobertura tras la ronda: domain 100.0% ≥ 99%, app 93.6% ≥ 90%; `golangci-lint` 0 issues; suite `-race` verde.
 
 ## Report Path
 

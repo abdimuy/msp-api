@@ -27,7 +27,7 @@ func TestErroresDePuertoSePropagan(t *testing.T) {
 			GarantiaID:        g.ID(),
 			ArticuloID:        firstArticuloID(t, g),
 			EtapaDestino:      domain.EtapaPendienteRecoleccion,
-			ClaveIdempotencia: "k-bd",
+			ClaveIdempotencia: clave(),
 			DeviceCreatedAt:   clk.Now(),
 		})
 		if !errors.Is(err, errBD) {
@@ -44,7 +44,7 @@ func TestErroresDePuertoSePropagan(t *testing.T) {
 
 		_, err := svc.IniciarProceso(context.Background(), app.IniciarProcesoCmd{
 			GarantiaID:        uuidAleatorio(),
-			ClaveIdempotencia: "k-no-existe",
+			ClaveIdempotencia: clave(),
 			DeviceCreatedAt:   clk.Now(),
 		})
 		if !errors.Is(err, domain.ErrGarantiaNoEncontrada) {
@@ -64,7 +64,7 @@ func TestErroresDePuertoSePropagan(t *testing.T) {
 			GarantiaID:        g.ID(),
 			Clave:             "B",
 			Description:       "mesa",
-			ClaveIdempotencia: "k-bd-save",
+			ClaveIdempotencia: clave(),
 			DeviceCreatedAt:   clk.Now(),
 		})
 		if !errors.Is(err, errBD) {
@@ -82,7 +82,7 @@ func TestErroresDePuertoSePropagan(t *testing.T) {
 			GarantiaID:        g.ID(),
 			ArticuloID:        firstArticuloID(t, g),
 			EtapaDestino:      domain.EtapaPendienteRecoleccion,
-			ClaveIdempotencia: "k-bd-perm",
+			ClaveIdempotencia: clave(),
 			DeviceCreatedAt:   clk.Now(),
 		})
 		if !errors.Is(err, errBD) {
@@ -101,7 +101,7 @@ func TestErroresDePuertoSePropagan(t *testing.T) {
 		_, err := svc.AbrirGarantia(context.Background(), app.AbrirGarantiaCmd{
 			Origen:            domain.OrigenFolioPiso,
 			Description:       "silla",
-			ClaveIdempotencia: "k-bd-folio",
+			ClaveIdempotencia: clave(),
 			DeviceCreatedAt:   clk.Now(),
 		})
 		if !errors.Is(err, errBD) {
@@ -120,7 +120,7 @@ func TestErroresDePuertoSePropagan(t *testing.T) {
 		_, err := svc.AbrirGarantia(context.Background(), app.AbrirGarantiaCmd{
 			Origen:            domain.OrigenFolioPiso,
 			Description:       "silla",
-			ClaveIdempotencia: "k-bd-crear",
+			ClaveIdempotencia: clave(),
 			DeviceCreatedAt:   clk.Now(),
 		})
 		if !errors.Is(err, errBD) {
@@ -137,7 +137,7 @@ func TestErroresDePuertoSePropagan(t *testing.T) {
 			Origen:            domain.OrigenFolioPiso,
 			ClienteID:         &cliente,
 			Description:       "silla",
-			ClaveIdempotencia: "k-piso",
+			ClaveIdempotencia: clave(),
 			DeviceCreatedAt:   clk.Now(),
 		})
 		if !errors.Is(err, domain.ErrClienteIDNoPermitido) {

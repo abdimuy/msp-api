@@ -24,6 +24,8 @@ func setupService() (*app.Service, *fakeGarantiaRepo, *fakeEventoRepo, *fakeFoli
 	erepo := newFakeEventoRepo()
 	fgen := &fakeFolioGen{nums: []int{1001}}
 	tx := &fakeTxRunner{}
+	tx.onCommit = grepo.commit
+	tx.onRollback = grepo.rollback
 	id := &fakeIdentity{usuario: outbound.Usuario{ID: "u1", Nombre: "Juan"}}
 	clk := &fakeClock{now: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)}
 	svc := app.NewService(app.Deps{
@@ -43,7 +45,7 @@ func TestAbrirGarantia_CaminoFeliz(t *testing.T) {
 	cmd := app.AbrirGarantiaCmd{
 		Origen:            domain.OrigenFolioPiso,
 		Description:       "mueble roto",
-		ClaveIdempotencia: "k1",
+		ClaveIdempotencia: clave(),
 		DeviceCreatedAt:   clk.Now(),
 	}
 	g, err := svc.AbrirGarantia(context.Background(), cmd)
