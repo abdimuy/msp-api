@@ -241,6 +241,12 @@ func TestAbrirGarantia_ClienteRejections(t *testing.T) {
 		{"device_zero", func(p *domain.AbrirGarantiaParams) { p.Actor.DeviceCreatedAt = time.Time{} }, domain.ErrEventoDeviceCreatedAtObligatorio},
 		{"abierto_por_muy_largo", func(p *domain.AbrirGarantiaParams) { p.AbiertoPor = strings.Repeat("a", 65) }, domain.ErrAbiertoPorMuyLargo},
 		{"estado_cuenta_invalido", func(p *domain.AbrirGarantiaParams) { e := domain.EstadoCuenta("basura"); p.EstadoCuenta = &e }, domain.ErrEstadoCuentaInvalido},
+		{"calle_muy_larga", func(p *domain.AbrirGarantiaParams) { p.Calle = strings.Repeat("a", 301) }, domain.ErrCalleMuyLarga},
+		{"numero_exterior_muy_largo", func(p *domain.AbrirGarantiaParams) { p.NumeroExterior = strings.Repeat("a", 21) }, domain.ErrNumeroExteriorMuyLargo},
+		{"colonia_muy_larga", func(p *domain.AbrirGarantiaParams) { p.Colonia = strings.Repeat("a", 101) }, domain.ErrColoniaMuyLarga},
+		{"localidad_muy_larga", func(p *domain.AbrirGarantiaParams) { p.Localidad = strings.Repeat("a", 101) }, domain.ErrLocalidadMuyLarga},
+		{"ciudad_muy_larga", func(p *domain.AbrirGarantiaParams) { p.Ciudad = strings.Repeat("a", 101) }, domain.ErrCiudadMuyLarga},
+		{"codigo_postal_muy_largo", func(p *domain.AbrirGarantiaParams) { p.CodigoPostal = strings.Repeat("a", 11) }, domain.ErrCodigoPostalMuyLargo},
 		{"cliente_nil", func(p *domain.AbrirGarantiaParams) { p.ClienteID = nil }, domain.ErrClienteIDObligatorio},
 		{"venta_nil", func(p *domain.AbrirGarantiaParams) { p.VentaID = nil }, domain.ErrVentaIDObligatorio},
 		{"estado_cuenta_nil", func(p *domain.AbrirGarantiaParams) { p.EstadoCuenta = nil }, domain.ErrEstadoCuentaObligatorio},
@@ -261,6 +267,63 @@ func TestAbrirGarantia_ClienteRejections(t *testing.T) {
 				t.Fatalf("AbrirGarantia: want %v, got %v", tc.want, err)
 			}
 		})
+	}
+}
+
+// TestAbrirGarantia_DomicilioEnElLimite pins the boundary: exactly the column
+// width is accepted, so the guard is ">" and not ">=". Mutating the constant
+// or the operator would fail here.
+func TestAbrirGarantia_DomicilioEnElLimite(t *testing.T) {
+	t.Parallel()
+	p := clienteParams()
+	p.Calle = strings.Repeat("a", 300)
+	p.NumeroExterior = strings.Repeat("a", 20)
+	p.Colonia = strings.Repeat("a", 100)
+	p.Localidad = strings.Repeat("a", 100)
+	p.Ciudad = strings.Repeat("a", 100)
+	p.CodigoPostal = strings.Repeat("a", 10)
+	if _, err := domain.AbrirGarantia(p); err != nil {
+		t.Fatalf("AbrirGarantia at the column limits: %v, want nil", err)
+	}
+}
+
+// TestClaveIdempotencia_FormaCanonica pins review round 2: uuid.Parse accepts
+// four spellings of the same retry, and all four must collapse into the one
+// canonical value the UNIQUE index sees — otherwise the same request arriving
+// twice would insert twice and idempotency would silently stop working.
+func TestClaveIdempotencia_FormaCanonica(t *testing.T) {
+	t.Parallel()
+	base := "6f1c2b9e-1d2a-4c3b-9a8e-0f1e2d3c4b5a"
+	casos := []string{
+		base,
+		strings.ToUpper(base),
+		"{" + base + "}",
+		"urn:uuid:" + base,
+		strings.ReplaceAll(base, "-", ""),
+	}
+	for _, clave := range casos {
+		g, err := domain.AbrirGarantia(domain.AbrirGarantiaParams{
+			Folio:       domain.Folio("GA-000042"),
+			Origen:      domain.OrigenFolioPiso,
+			Description: "silla rota",
+			AbiertoPor:  "Juan",
+			Now:         fixed,
+			Actor: domain.ActorParams{
+				Usuario:           "juan",
+				ClaveIdempotencia: clave,
+				DeviceCreatedAt:   fixed.Add(time.Hour),
+			},
+		})
+		if err != nil {
+			t.Fatalf("AbrirGarantia(clave=%q): %v", clave, err)
+		}
+		got := lastEvent(t, g).ClaveIdempotencia()
+		if got != base {
+			t.Errorf("clave %q -> %q, want canónica %q", clave, got, base)
+		}
+		if len(got) != 36 {
+			t.Errorf("clave %q -> len %d, want 36 para la columna CHAR(36)", clave, len(got))
+		}
 	}
 }
 
@@ -382,6 +445,31 @@ func TestAgregarArticulo_ClaveMuyLarga(t *testing.T) {
 	}
 	if g.ArticulosCount() != 0 || countPending(g) != 1 {
 		t.Fatalf("no mutation/event expected on failure")
+	}
+}
+
+func TestAgregarArticulo_DescriptionMuyLarga(t *testing.T) {
+	t.Parallel()
+	g := openPiso(t)
+	err := g.AgregarArticulo(domain.AgregarArticuloParams{
+		Description: strings.Repeat("a", 301),
+	}, actor("juan"), fixed)
+	if !errors.Is(err, domain.ErrArticuloDescriptionMuyLarga) {
+		t.Fatalf("want ErrArticuloDescriptionMuyLarga, got %v", err)
+	}
+	if g.ArticulosCount() != 0 || countPending(g) != 1 {
+		t.Fatalf("no mutation/event expected on failure")
+	}
+}
+
+// TestAgregarArticulo_EnElLimite pins the boundary: 300 characters (the exact
+// column width) still creates the article, so the guard is ">" and not ">=".
+func TestAgregarArticulo_EnElLimite(t *testing.T) {
+	t.Parallel()
+	g := openPiso(t)
+	a := addArticle(t, g, strings.Repeat("a", 300))
+	if a.Description() != strings.Repeat("a", 300) {
+		t.Fatalf("description no guardada completa")
 	}
 }
 

@@ -132,6 +132,38 @@ Verificación tras las correcciones (mismos gates de la tabla de arriba, `go tes
 - `go test -race -short ./internal/garantias/...` → 4 paquetes `ok`.
 - `make check-sealed MODULE=garantias` → `garantias is sealed`.
 
+## Correcciones del review, ronda 2 (PR #24)
+
+El líder revisó `c932ce9` y dio dos puntos nuevos (el bloqueante y los cuatro menores anteriores quedaron cerrados: mató los seis mutantes, incluidos los límites exactos):
+
+- **`ClaveIdempotencia` admitía cuatro grafías y se guardaba tal cual.** `uuid.Parse` acepta `36`, `{38}`, `urn:uuid:45` y `32` dígitos sin guiones. Almacenar el texto crudo haría que la misma petición entrara dos veces con cuatro valores distintos para el `UNIQUE` y la idempotencia dejara de funcionar en silencio. `newEvento` ahora guarda `parsed.String()`: siempre 36 caracteres minúsculas, canónico y dentro de la columna. Prueba `TestClaveIdempotencia_FormaCanonica`: las cuatro grafías más la minúscula convergen en la misma clave, de longitud 36.
+- **Siete columnas más sin control de largo.** `validarDomicilioLargo` (llamado en `AbrirGarantia` después de `validarOrigenCliente` y de `validarOrigenPiso`) y el `newArticulo` ahora miden en caracteres, como los `VARCHAR(n)` UTF8: `Calle` 300, `NumeroExterior` 20, `Colonia`/`Localidad`/`Ciudad` 100, `CodigoPostal` 10, `Description` de artículo 300 — cada uno con su centinela, así el mensaje dice cuál campo falló.
+
+### Ejercicio contra la migración 000050: cada `VARCHAR`
+
+| Columna | Ancho | Cubierta por |
+|---|---|---|
+| `MSP_GA_GARANTIA.FOLIO` | 12 | no se captura: lo genera `GEN_MSP_GA_FOLIO` en Go |
+| `.ORIGEN` | 10 | `OrigenFolio.IsValid()` |
+| `.ESTADO_CUENTA` | 20 | `EstadoCuenta.IsValid()` (ronda 1) |
+| `.ESTADO` | 24 | máquina de estados, ya cerrada |
+| `.CALLE` | 300 | ronda 2 |
+| `.NUMERO_EXTERIOR` | 20 | ronda 2 |
+| `.COLONIA` / `.LOCALIDAD` / `.CIUDAD` | 100 | ronda 2 |
+| `.CODIGO_POSTAL` | 10 | ronda 2 |
+| `.ABIERTO_POR` | 64 | ronda 1 |
+| `MSP_GA_ARTICULO.ROL` / `.RUTA` / `.ETAPA` / `.UBICACION` / `.DICTAMEN` / `.DESENLACE` | 12–28 | enums cerrados (`IsValid`) |
+| `.CLAVE` | 30 | ronda 1 |
+| `.DESCRIPCION` | 300 | ronda 2 |
+| `MSP_GA_EVENTO.TIPO` / `.ETAPA_*` / `.ROL_DECISOR` | 16–28 | enums cerrados; `ROL_DECISOR` validado en ronda 1 |
+| `.USUARIO` | 64 | ronda 1 |
+| `.CLAVE_IDEMPOTENCIA` | `CHAR(36)` | `uuid.Parse` + forma canónica (ronda 2) |
+| `MSP_GA_IMAGEN.RUTA` / `.DESCRIPCION` | 500 | ronda 1 |
+| `.SUBIDA_POR` | 64 | ronda 1 |
+| `DESCRIPCION` de folio y de evento | — | `BLOB`, sin límite |
+
+Verificación de la ronda 2 (mismos gates): `gofmt`/`go vet`/`go build` limpios, `golangci-lint run ./internal/garantias/...` → `0 issues.`, `go test -race -count=1 ./internal/garantias/...` → 4 paquetes `ok`, dominio `100.0%`, `make check-sealed MODULE=garantias` → `garantias is sealed`.
+
 ## Report Path
 
 `docs/superpowers/plans/garantias-task-5-report.md`

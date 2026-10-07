@@ -137,6 +137,34 @@ func validarOrigenCliente(p AbrirGarantiaParams) error {
 	return nil
 }
 
+// validarDomicilioLargo enforces each address field against its column width
+// (migration 000050). It runs after validarOrigenCliente, which already
+// required every field on cliente folios, and after validarOrigenPiso, which
+// forbids the whole block on piso ones. Counting is in characters because the
+// columns are VARCHAR(n) UTF8: a byte count would reject accented names that
+// the database happily stores.
+func validarDomicilioLargo(p AbrirGarantiaParams) error {
+	if utf8.RuneCountInString(p.Calle) > 300 {
+		return ErrCalleMuyLarga
+	}
+	if utf8.RuneCountInString(p.NumeroExterior) > 20 {
+		return ErrNumeroExteriorMuyLargo
+	}
+	if utf8.RuneCountInString(p.Colonia) > 100 {
+		return ErrColoniaMuyLarga
+	}
+	if utf8.RuneCountInString(p.Localidad) > 100 {
+		return ErrLocalidadMuyLarga
+	}
+	if utf8.RuneCountInString(p.Ciudad) > 100 {
+		return ErrCiudadMuyLarga
+	}
+	if utf8.RuneCountInString(p.CodigoPostal) > 10 {
+		return ErrCodigoPostalMuyLargo
+	}
+	return nil
+}
+
 // AbrirGarantia opens a new warranty folio. The origin decides which fields
 // are mandatory and which are rejected: cliente folios take client, sale and
 // account balance plus the home address; piso folios reject all of them.
@@ -165,6 +193,9 @@ func AbrirGarantia(p AbrirGarantiaParams) (*Garantia, error) {
 		return nil, err
 	}
 	if err := validarOrigenCliente(p); err != nil {
+		return nil, err
+	}
+	if err := validarDomicilioLargo(p); err != nil {
 		return nil, err
 	}
 	if p.EstadoCuenta != nil && !p.EstadoCuenta.IsValid() {

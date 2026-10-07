@@ -64,7 +64,14 @@ func newEvento(p EventoParams) (*Evento, error) {
 	if clave == "" {
 		return nil, ErrEventoClaveIdempotenciaObligatoria
 	}
-	if _, err := uuid.Parse(clave); err != nil {
+	// uuid.Parse also accepts "{…}", "urn:uuid:…" and the 32 hex digits
+	// without dashes. All four spell the same retry, but stored verbatim
+	// they would be four different values for the UNIQUE index and
+	// idempotency would silently stop working. The canonical String()
+	// form is always 36 lowercase ASCII characters, so it also fits the
+	// CHAR(36) column without truncating.
+	parsed, err := uuid.Parse(clave)
+	if err != nil {
 		return nil, ErrEventoClaveIdempotenciaInvalida
 	}
 	if p.RolDecisor != nil && !p.RolDecisor.IsValid() {
@@ -90,7 +97,7 @@ func newEvento(p EventoParams) (*Evento, error) {
 		gpsLon:            p.GPSLon,
 		createdAt:         p.CreatedAt,
 		deviceCreatedAt:   p.DeviceCreatedAt,
-		claveIdempotencia: clave,
+		claveIdempotencia: parsed.String(),
 	}, nil
 }
 

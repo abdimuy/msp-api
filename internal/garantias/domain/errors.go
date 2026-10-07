@@ -397,9 +397,61 @@ var (
 	// ErrEventoClaveIdempotenciaInvalida is returned by newEvento when the
 	// idempotency key is not a UUID. The phone generates it as a UUID and
 	// the column is CHAR(36); anything else is a client bug that would
-	// poison the UNIQUE index with garbage.
+	// poison the UNIQUE index with garbage. The key is stored in canonical
+	// form so every spelling of the same retry collapses into one value.
 	ErrEventoClaveIdempotenciaInvalida = apperror.NewValidation(
 		"warranty_event_idempotency_invalid",
 		"clave de idempotencia del evento inválida",
+	)
+
+	// ErrCalleMuyLarga is returned by AbrirGarantia when the street line
+	// exceeds the 300-character column width (MSP_GA_GARANTIA.CALLE).
+	ErrCalleMuyLarga = apperror.NewValidation(
+		"warranty_street_too_long",
+		"calle demasiado larga",
+	)
+
+	// ErrNumeroExteriorMuyLargo is returned by AbrirGarantia when the
+	// exterior number exceeds the 20-character column width.
+	ErrNumeroExteriorMuyLargo = apperror.NewValidation(
+		"warranty_street_number_too_long",
+		"número exterior demasiado largo",
+	)
+
+	// ErrColoniaMuyLarga is returned by AbrirGarantia when the neighborhood
+	// exceeds the 100-character column width (MSP_GA_GARANTIA.COLONIA).
+	ErrColoniaMuyLarga = apperror.NewValidation(
+		"warranty_neighborhood_too_long",
+		"colonia demasiado larga",
+	)
+
+	// ErrLocalidadMuyLarga is returned by AbrirGarantia when the locality
+	// exceeds the 100-character column width (MSP_GA_GARANTIA.LOCALIDAD).
+	ErrLocalidadMuyLarga = apperror.NewValidation(
+		"warranty_locality_too_long",
+		"localidad demasiado larga",
+	)
+
+	// ErrCiudadMuyLarga is returned by AbrirGarantia when the city exceeds
+	// the 100-character column width (MSP_GA_GARANTIA.CIUDAD).
+	ErrCiudadMuyLarga = apperror.NewValidation(
+		"warranty_city_too_long",
+		"ciudad demasiado larga",
+	)
+
+	// ErrCodigoPostalMuyLargo is returned by AbrirGarantia when the postal
+	// code exceeds the 10-character column width (MSP_GA_GARANTIA.CODIGO_POSTAL).
+	ErrCodigoPostalMuyLargo = apperror.NewValidation(
+		"warranty_postal_code_too_long",
+		"código postal demasiado largo",
+	)
+
+	// ErrArticuloDescriptionMuyLarga is returned by newArticulo when the
+	// article description exceeds the 300-character column width
+	// (MSP_GA_ARTICULO.DESCRIPCION).
+	//nolint:misspell // column name in Spanish per project vocabulary
+	ErrArticuloDescriptionMuyLarga = apperror.NewValidation(
+		"warranty_article_description_too_long",
+		"descripción del artículo demasiado larga",
 	)
 )

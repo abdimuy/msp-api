@@ -55,6 +55,9 @@ func newArticulo(p NewArticuloParams) (*Articulo, error) {
 	if description == "" {
 		return nil, ErrArticuloDescriptionObligatoria
 	}
+	if utf8.RuneCountInString(description) > 300 {
+		return nil, ErrArticuloDescriptionMuyLarga
+	}
 	if utf8.RuneCountInString(p.Clave) > 30 {
 		return nil, ErrArticuloClaveMuyLarga
 	}
