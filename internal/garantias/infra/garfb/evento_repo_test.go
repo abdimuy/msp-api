@@ -3,6 +3,7 @@ package garfb_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -134,10 +135,8 @@ func TestEventoRepo_ListarOrdenadoPorDeviceCreatedAt(t *testing.T) {
 
 		clienteID := 990001
 		ventaID := 990002
-		articuloMicrosipID := 990003
 
 		claveFolio := uuid.NewString()
-		claveArticulo := uuid.NewString()
 
 		g, err := domain.AbrirGarantia(domain.AbrirGarantiaParams{
 			Folio:          folio,
@@ -157,101 +156,71 @@ func TestEventoRepo_ListarOrdenadoPorDeviceCreatedAt(t *testing.T) {
 			Actor: domain.ActorParams{
 				Usuario:           "ruben",
 				ClaveIdempotencia: claveFolio,
-
-				// This event is created first,
-				// but the device reports a later timestamp.
-				DeviceCreatedAt: now.Add(3 * time.Minute),
+				DeviceCreatedAt:   now.Add(20 * time.Minute),
 			},
 		})
 		require.NoError(t, err)
 
-		err = g.AgregarArticulo(
-			domain.AgregarArticuloParams{
-				ArticuloID:  &articuloMicrosipID,
-				Clave:       "ORDEN-001",
-				Description: "Artículo para probar orden",
-			},
-			domain.ActorParams{
-				Usuario:           "ruben",
-				ClaveIdempotencia: claveArticulo,
+		const totalEmpatados = 8
 
-				// This event is created later but has an earlier device timestamp.
-				DeviceCreatedAt: now.Add(time.Minute),
-			},
-			now.Add(time.Minute),
-		)
-		require.NoError(t, err)
+		claves := make([]string, 0, totalEmpatados)
+		deviceCreatedAt := now.Add(time.Minute)
+
+		for i := range totalEmpatados {
+			articuloID := 990100 + i
+			claveEvento := uuid.NewString()
+
+			claves = append(claves, claveEvento)
+
+			err = g.AgregarArticulo(
+				domain.AgregarArticuloParams{
+					ArticuloID:  &articuloID,
+					Clave:       fmt.Sprintf("ORDEN-%02d", i+1),
+					Description: "Artículo para probar desempate",
+				},
+				domain.ActorParams{
+					Usuario:           "ruben",
+					ClaveIdempotencia: claveEvento,
+					DeviceCreatedAt:   deviceCreatedAt,
+				},
+				now.Add(time.Duration(i+1)*time.Minute),
+			)
+			require.NoError(t, err)
+		}
 
 		require.NoError(t, garantiaRepo.Crear(ctx, g))
 
-		// Reload before generating a third event.
-		cargada, err := garantiaRepo.ObtenerParaActualizar(ctx, g.ID())
-		require.NoError(t, err)
-
-		articulos := cargada.ArticulosForRepo()
-		require.Len(t, articulos, 1)
-
-		claveAvance := uuid.NewString()
-
-		err = cargada.AvanzarArticulo(
-			articulos[0].ID(),
-			domain.EtapaPendienteRecoleccion,
-			domain.ActorParams{
-				Usuario:           "ruben",
-				ClaveIdempotencia: claveAvance,
-
-				// Same device timestamp as the article event.
-				// CREATED_AT must break the tie.
-				DeviceCreatedAt: now.Add(time.Minute),
-			},
-			now.Add(2*time.Minute),
-		)
-		require.NoError(t, err)
-
-		require.NoError(t, garantiaRepo.Guardar(ctx, cargada))
-
 		eventos, err := eventoRepo.ListarPorGarantia(ctx, g.ID())
 		require.NoError(t, err)
-		require.Len(t, eventos, 3)
+		require.Len(t, eventos, totalEmpatados+1)
 
-		require.Equal(
-			t,
-			eventos[0].DeviceCreatedAt(),
-			eventos[1].DeviceCreatedAt(),
-		)
+		for i := range totalEmpatados {
+			require.Equal(
+				t,
+				deviceCreatedAt,
+				eventos[i].DeviceCreatedAt(),
+			)
 
-		require.True(
-			t,
-			eventos[0].CreatedAt().Before(eventos[1].CreatedAt()),
-		)
+			require.Equal(
+				t,
+				claves[i],
+				eventos[i].ClaveIdempotencia(),
+			)
 
-		// Expected order by DEVICE_CREATED_AT and CREATED_AT:
-		// 1 minute -> article
-		// 1 minute -> stage advance, ordered second by CREATED_AT
-		// 3 minutes -> folio opened.
-		require.Equal(
-			t,
-			claveArticulo,
-			eventos[0].ClaveIdempotencia(),
-		)
-
-		require.Equal(
-			t,
-			claveAvance,
-			eventos[1].ClaveIdempotencia(),
-		)
+			if i > 0 {
+				require.True(
+					t,
+					eventos[i-1].CreatedAt().Before(
+						eventos[i].CreatedAt(),
+					),
+				)
+			}
+		}
 
 		require.Equal(
 			t,
 			claveFolio,
-			eventos[2].ClaveIdempotencia(),
-		)
-
-		require.True(
-			t,
-			eventos[1].DeviceCreatedAt().Before(
-				eventos[2].DeviceCreatedAt(),
-			),
+			eventos[totalEmpatados].ClaveIdempotencia(),
 		)
 	})
 }

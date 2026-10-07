@@ -22,23 +22,58 @@ La implementación se encuentra en:
 
 También se organizaron las pruebas en archivos separados para garantías, eventos, transacciones, guardado, folios y bloqueo.
 
-## Transacciones y atomicidad
+## Transacciones y manejo de errores
 
 Las operaciones `Crear`, `Guardar` y `ObtenerParaActualizar` requieren una transacción activa.
 
-Para comprobar la atomicidad se utiliza la prueba:
+`Guardar` no realiza rollback automáticamente. Si devuelve un error, puede dejar cambios parciales dentro de la transacción activa, por lo que quien llama debe deshacer la transacción antes de continuar.
+
+Esto se comprueba con la prueba:
 
 `TestGarantiaRepo_GuardarEsAtomicoSiFallaEvento`
 
-En la prueba se crea una garantía y después se avanza la etapa de un artículo. Al guardar, la inserción del evento falla porque utiliza una clave de idempotencia duplicada.
+La prueba crea una garantía, avanza la etapa de un artículo y después provoca un error al insertar un evento utilizando una clave de idempotencia duplicada.
 
-Se utiliza un `SAVEPOINT` antes de ejecutar `Guardar` y, al producirse el error, se ejecuta `ROLLBACK TO SAVEPOINT`.
+Antes de ejecutar `Guardar` se crea un `SAVEPOINT`.
 
-Después del rollback se comprueba que:
+Cuando `Guardar` devuelve el error, la prueba comprueba primero que el artículo sí alcanzó temporalmente la etapa `pendiente_recoleccion` dentro de la transacción. Esto demuestra que pueden existir escrituras parciales antes del rollback.
 
-- La etapa del artículo continúa con el valor anterior.
-- El evento que produjo el error no queda guardado.
-- Solamente permanecen los eventos creados originalmente.
+Después se ejecuta:
+
+`ROLLBACK TO SAVEPOINT`
+
+Finalmente se comprueba que la etapa vuelve a su valor anterior y que el evento fallido no queda persistido.
+
+La responsabilidad de mantener la atomicidad corresponde a la transacción del caller: si `Guardar` devuelve error, el caller debe hacer rollback.
+
+## Lecturas y RunInReadTx
+
+Las lecturas públicas se ejecutan mediante `firebird.RunInReadTx` para evitar que el driver deje transacciones implícitas abiertas.
+
+Se aplicó a:
+
+- `GarantiaRepo.Obtener`
+- `GarantiaRepo.ObtenerPorFolio`
+- `EventoRepo.ListarPorGarantia`
+- `EventoRepo.ObtenerPorClaveIdempotencia`
+- `FolioGenerator.Siguiente`
+
+`RunInReadTx` también funciona cuando ya existe una transacción en el contexto, por lo que las lecturas pueden reutilizarla sin abrir otra adicional.
+
+Se agregó la prueba:
+
+`TestLecturasPublicas_NoDejanTransaccionesAbiertas`
+
+La prueba ejecuta 15 lecturas públicas y compara la cantidad de transacciones del proceso antes y después. También realiza las mismas lecturas dentro de `RunInReadTx` como control.
+
+Resultado medido:
+
+```text
+=== RUN   TestLecturasPublicas_NoDejanTransaccionesAbiertas
+read_tx_test.go:132: transacciones: antes=3 despues=3 control=3
+--- PASS: TestLecturasPublicas_NoDejanTransaccionesAbiertas (0.70s)
+PASS
+```
 
 ## Bloqueo
 
@@ -80,22 +115,23 @@ ok  	github.com/abdimuy/msp-api/internal/garantias/infra/garfb	0.143s
 
 ## Orden de eventos
 
-`ListarPorGarantia` ordena los eventos de esta manera:
+`ListarPorGarantia` ordena los eventos utilizando:
 
 `DEVICE_CREATED_AT, CREATED_AT, ID`
 
-La prueba `TestEventoRepo_ListarOrdenadoPorDeviceCreatedAt` utiliza dos eventos con el mismo `DEVICE_CREATED_AT`.
+La prueba `TestEventoRepo_ListarOrdenadoPorDeviceCreatedAt` utiliza 8 eventos con el mismo `DEVICE_CREATED_AT`.
 
-El primer evento tiene `CREATED_AT` a las `00:01` y el segundo a las `00:02`, comprobando que `CREATED_AT` funciona como segundo criterio de ordenamiento.
+Los 8 eventos tienen valores de `CREATED_AT` crecientes, por lo que la prueba verifica que el segundo criterio de ordenamiento sea realmente `CREATED_AT` y no el `ID` aleatorio.
 
-Salida final de la prueba:
+La prueba normal se ejecutó 10 veces:
 
 ```text
-=== RUN   TestEventoRepo_ListarOrdenadoPorDeviceCreatedAt
-2026/10/06 11:27:10 INFO firebird: connected host=localhost database=/firebird/data/MSPTEST.FDB charset=UTF8 pool_size=5
---- PASS: TestEventoRepo_ListarOrdenadoPorDeviceCreatedAt (0.12s)
+$ go test -v -count=10 \
+  -run TestEventoRepo_ListarOrdenadoPorDeviceCreatedAt \
+  ./internal/garantias/infra/garfb/
+
 PASS
-ok  	github.com/abdimuy/msp-api/internal/garantias/infra/garfb	0.127s
+ok   github.com/abdimuy/msp-api/internal/garantias/infra/garfb  0.964s
 ```
 
 ## Número de consultas de Obtener
@@ -171,14 +207,14 @@ $ make check-sealed MODULE=garantias
 ### Pruebas con race detector y cobertura
 
 ```text
-$ go clean -testcache
 $ go test -race -count=1 -p 1 -coverprofile=cov.out ./internal/garantias/infra/garfb/
-ok  	github.com/abdimuy/msp-api/internal/garantias/infra/garfb	2.397s	coverage: 80.9% of statements
+ok   github.com/abdimuy/msp-api/internal/garantias/infra/garfb   3.013s   coverage: 81.1% of statements
+
 $ go tool cover -func=cov.out | tail -1
-total:								(statements)			80.9%
+total:                                          (statements)            81.1%
 ```
 
-La cobertura final obtenida fue de `80.9%`, superando el mínimo requerido de `80%`.
+La cobertura final obtenida fue del `81.1%`, superando el mínimo requerido de `80%`.
 
 ## Ejecución sin FB_DATABASE
 
@@ -241,7 +277,7 @@ ok  	github.com/abdimuy/msp-api/internal/garantias/infra/garfb	0.002s
 
 ## Pruebas de mutación
 
-Se realizaron las tres comprobaciones de mutación solicitadas.
+Se realizaron pruebas de mutación para comprobar que los tests detecten cambios que rompen comportamientos importantes del repositorio.
 
 ### 1. Bloqueo
 
@@ -254,8 +290,6 @@ Error:       An error is expected but got nil.
 Test:        TestGarantiaRepo_Candado_Commit
 --- FAIL: TestGarantiaRepo_Candado_Commit
 ```
-
-Después se restauró `queries.go`.
 
 ### 2. Mapeo de clave de idempotencia duplicada
 
@@ -309,11 +343,14 @@ La persistencia Firebird de garantías permite crear, actualizar y recuperar gar
 
 Se comprobó además:
 
-- Cobertura de `80.9%`.
-- Funcionamiento de UTF-8.
-- Orden correcto de eventos.
-- Dos consultas para recuperar una garantía con tres artículos.
+- Cobertura superior al mínimo requerido del `80%`.
+- Funcionamiento correcto de UTF-8.
+- Orden de eventos por `DEVICE_CREATED_AT`, `CREATED_AT` e `ID`.
+- Dos consultas para recuperar una garantía junto con sus artículos.
 - Manejo de claves de idempotencia duplicadas.
-- Atomicidad ante errores.
-- Bloqueo de concurrencia.
+- Propagación correcta de errores durante `Guardar`.
+- Necesidad de rollback por parte del caller cuando una escritura devuelve error.
+- Lecturas públicas sin dejar transacciones implícitas abiertas.
+- Orden estable de artículos por `CREATED_AT, ID`.
+- Bloqueo de concurrencia mediante `WITH LOCK`.
 - Ejecución segura de las pruebas cuando `FB_DATABASE` no está configurada.

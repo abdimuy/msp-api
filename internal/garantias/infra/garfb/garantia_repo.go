@@ -79,7 +79,9 @@ func (r *GarantiaRepo) Crear(ctx context.Context, g *domain.Garantia) error {
 	return nil
 }
 
-// Guardar updates a warranty and its articles and inserts pending events using the active transaction.
+// Guardar updates a warranty and its articles and inserts pending events using
+// the active transaction. If it returns an error, partial writes may remain in
+// that transaction, so the caller must roll it back.
 func (r *GarantiaRepo) Guardar(ctx context.Context, g *domain.Garantia) error {
 	tx, err := firebird.RequireTx(ctx)
 	if err != nil {
@@ -151,14 +153,26 @@ func (r *GarantiaRepo) Obtener(
 	ctx context.Context,
 	id uuid.UUID,
 ) (*domain.Garantia, error) {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
+	var garantia *domain.Garantia
 
-	return obtenerGarantia(
-		ctx,
-		q,
-		obtenerGarantiaSQL,
-		id.String(),
-	)
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+
+		var err error
+		garantia, err = obtenerGarantia(
+			ctx,
+			q,
+			obtenerGarantiaSQL,
+			id.String(),
+		)
+
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return garantia, nil
 }
 
 // ObtenerPorFolio returns a warranty by folio.
@@ -166,14 +180,26 @@ func (r *GarantiaRepo) ObtenerPorFolio(
 	ctx context.Context,
 	folio domain.Folio,
 ) (*domain.Garantia, error) {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
+	var garantia *domain.Garantia
 
-	return obtenerGarantia(
-		ctx,
-		q,
-		obtenerGarantiaPorFolioSQL,
-		folio.String(),
-	)
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+
+		var err error
+		garantia, err = obtenerGarantia(
+			ctx,
+			q,
+			obtenerGarantiaPorFolioSQL,
+			folio.String(),
+		)
+
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return garantia, nil
 }
 
 // ObtenerParaActualizar returns a warranty by ID while locking its row in the active transaction.

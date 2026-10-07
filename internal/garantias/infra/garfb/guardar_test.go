@@ -459,6 +459,18 @@ func TestGarantiaRepo_GuardarEsAtomicoSiFallaEvento(t *testing.T) {
 			domain.ErrClaveIdempotenciaDuplicada,
 		)
 
+		antesRollback, err := repo.Obtener(ctx, g.ID())
+		require.NoError(t, err)
+
+		articulosAntesRollback := antesRollback.ArticulosForRepo()
+		require.Len(t, articulosAntesRollback, 1)
+
+		require.Equal(
+			t,
+			domain.EtapaPendienteRecoleccion,
+			articulosAntesRollback[0].Etapa(),
+		)
+
 		// Roll back only the work performed after the savepoint.
 		_, err = q.ExecContext(
 			ctx,

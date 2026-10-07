@@ -8,11 +8,23 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/abdimuy/msp-api/internal/garantias/domain"
+	"github.com/abdimuy/msp-api/internal/platform/apperror"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 )
 
 type rowScanner interface {
 	Scan(dest ...any) error
+}
+
+func hydrationError(entity, id string, err error) error {
+	return apperror.NewInternal(
+		"warranty_hydration_failed",
+		"datos persistidos de garantía inválidos",
+	).
+		WithSource("garfb").
+		WithError(err).
+		WithField("entity", entity).
+		WithField("id", id)
 }
 
 type garantiaRow struct {
@@ -212,62 +224,62 @@ func parseDesenlacePtr(v sql.NullString) (*domain.Desenlace, error) {
 func hydrateArticulo(r *articuloRow) (*domain.Articulo, error) {
 	id, err := uuid.Parse(r.id)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("articulo", r.id, err)
 	}
 
 	garantiaID, err := uuid.Parse(r.garantiaID)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("articulo", r.id, err)
 	}
 
 	rol, err := domain.ParseRolArticulo(r.rol)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("articulo", r.id, err)
 	}
 
 	ruta, err := parseRutaPtr(r.ruta)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("articulo", r.id, err)
 	}
 
 	etapa, err := domain.ParseEtapa(r.etapa)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("articulo", r.id, err)
 	}
 
 	ubicacion, err := domain.ParseUbicacion(r.ubicacion)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("articulo", r.id, err)
 	}
 
 	dictamen, err := parseDictamenPtr(r.dictamen)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("articulo", r.id, err)
 	}
 
 	desenlace, err := parseDesenlacePtr(r.desenlace)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("articulo", r.id, err)
 	}
 
 	reemplazaA, err := uuidPtr(r.reemplazaA)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("articulo", r.id, err)
 	}
 
 	cerrado, err := firebird.ScanNullUTCTime(r.cerradoRaw)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("articulo", r.id, err)
 	}
 
 	createdAt, err := firebird.ScanUTCTime(r.createdRaw)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("articulo", r.id, err)
 	}
 
 	updatedAt, err := firebird.ScanUTCTime(r.updatedRaw)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("articulo", r.id, err)
 	}
 
 	return domain.HydrateArticulo(domain.HydrateArticuloParams{
@@ -295,42 +307,42 @@ func hydrateGarantia(
 ) (*domain.Garantia, error) {
 	id, err := uuid.Parse(r.id)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("garantia", r.id, err)
 	}
 
 	folio, err := domain.ParseFolio(r.folio)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("garantia", r.id, err)
 	}
 
 	origen, err := domain.ParseOrigenFolio(r.origen)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("garantia", r.id, err)
 	}
 
 	estadoCuenta, err := parseEstadoCuentaPtr(r.estadoCuenta)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("garantia", r.id, err)
 	}
 
 	estado, err := domain.ParseEstadoFolio(r.estado)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("garantia", r.id, err)
 	}
 
 	cerrado, err := firebird.ScanNullUTCTime(r.cerradoRaw)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("garantia", r.id, err)
 	}
 
 	createdAt, err := firebird.ScanUTCTime(r.createdRaw)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("garantia", r.id, err)
 	}
 
 	updatedAt, err := firebird.ScanUTCTime(r.updatedRaw)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("garantia", r.id, err)
 	}
 
 	return domain.HydrateGarantia(domain.HydrateGarantiaParams{
@@ -448,47 +460,47 @@ func parseRolDecisorPtr(v sql.NullString) (*domain.RolDecisor, error) {
 func hydrateEvento(r *eventoRow) (*domain.Evento, error) {
 	id, err := uuid.Parse(r.id)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("evento", r.id, err)
 	}
 
 	garantiaID, err := uuid.Parse(r.garantiaID)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("evento", r.id, err)
 	}
 
 	articuloRef, err := uuidPtr(r.articuloRef)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("evento", r.id, err)
 	}
 
 	tipo, err := domain.ParseTipoEvento(r.tipo)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("evento", r.id, err)
 	}
 
 	etapaDesde, err := parseEtapaPtr(r.etapaDesde)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("evento", r.id, err)
 	}
 
 	etapaHasta, err := parseEtapaPtr(r.etapaHasta)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("evento", r.id, err)
 	}
 
 	rolDecisor, err := parseRolDecisorPtr(r.rolDecisor)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("evento", r.id, err)
 	}
 
 	createdAt, err := firebird.ScanUTCTime(r.createdRaw)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("evento", r.id, err)
 	}
 
 	deviceCreatedAt, err := firebird.ScanUTCTime(r.deviceCreatedRaw)
 	if err != nil {
-		return nil, err
+		return nil, hydrationError("evento", r.id, err)
 	}
 
 	return domain.HydrateEvento(domain.HydrateEventoParams{

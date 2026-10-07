@@ -27,12 +27,20 @@ func NewFolioGenerator(pool *firebird.Pool) *FolioGenerator {
 
 // Siguiente returns the next number from the Firebird generator.
 func (g *FolioGenerator) Siguiente(ctx context.Context) (int, error) {
-	q := firebird.GetQuerier(ctx, g.pool.DB)
-
 	var numero int
 
-	if err := q.QueryRowContext(ctx, siguienteFolioSQL).Scan(&numero); err != nil {
-		return 0, firebird.MapError(err)
+	err := firebird.RunInReadTx(ctx, g.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, g.pool.DB)
+
+		if err := q.QueryRowContext(ctx, siguienteFolioSQL).Scan(&numero); err != nil {
+			return firebird.MapError(err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return 0, err
 	}
+
 	return numero, nil
 }

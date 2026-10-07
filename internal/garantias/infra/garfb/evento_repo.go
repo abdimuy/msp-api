@@ -31,36 +31,43 @@ func (r *EventoRepo) ListarPorGarantia(
 	ctx context.Context,
 	garantiaID uuid.UUID,
 ) ([]*domain.Evento, error) {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
-
-	rows, err := q.QueryContext(
-		ctx,
-		listarEventosPorGarantiaSQL,
-		garantiaID.String(),
-	)
-	if err != nil {
-		return nil, firebird.MapError(err)
-	}
-	defer func() { _ = rows.Close() }()
-
 	var eventos []*domain.Evento
 
-	for rows.Next() {
-		er, err := scanEvento(rows)
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+
+		rows, err := q.QueryContext(
+			ctx,
+			listarEventosPorGarantiaSQL,
+			garantiaID.String(),
+		)
 		if err != nil {
-			return nil, err
+			return firebird.MapError(err)
+		}
+		defer func() { _ = rows.Close() }()
+
+		for rows.Next() {
+			er, err := scanEvento(rows)
+			if err != nil {
+				return err
+			}
+
+			e, err := hydrateEvento(er)
+			if err != nil {
+				return err
+			}
+
+			eventos = append(eventos, e)
 		}
 
-		e, err := hydrateEvento(er)
-		if err != nil {
-			return nil, err
+		if err := rows.Err(); err != nil {
+			return firebird.MapError(err)
 		}
 
-		eventos = append(eventos, e)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, firebird.MapError(err)
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return eventos, nil
@@ -71,23 +78,33 @@ func (r *EventoRepo) ObtenerPorClaveIdempotencia(
 	ctx context.Context,
 	clave string,
 ) (*domain.Evento, error) {
-	q := firebird.GetQuerier(ctx, r.pool.DB)
+	var evento *domain.Evento
 
-	row := q.QueryRowContext(
-		ctx,
-		obtenerEventoPorClaveIdempotenciaSQL,
-		clave,
-	)
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
 
-	er, err := scanEvento(row)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			//nolint:nilnil // A missing event is represented as no result and no error.
-			return nil, nil
+		row := q.QueryRowContext(
+			ctx,
+			obtenerEventoPorClaveIdempotenciaSQL,
+			clave,
+		)
+
+		er, err := scanEvento(row)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+
+			return err
 		}
 
+		evento, err = hydrateEvento(er)
+
+		return err
+	})
+	if err != nil {
 		return nil, err
 	}
 
-	return hydrateEvento(er)
+	return evento, nil
 }
