@@ -3,6 +3,7 @@ package domain
 import (
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -53,6 +54,9 @@ func newArticulo(p NewArticuloParams) (*Articulo, error) {
 	description := strings.TrimSpace(p.Description)
 	if description == "" {
 		return nil, ErrArticuloDescriptionObligatoria
+	}
+	if utf8.RuneCountInString(p.Clave) > 30 {
+		return nil, ErrArticuloClaveMuyLarga
 	}
 	return &Articulo{
 		id:          p.ID,

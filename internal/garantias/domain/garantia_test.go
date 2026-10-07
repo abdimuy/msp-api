@@ -3,6 +3,7 @@ package domain_test
 import (
 	"errors"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,8 +14,12 @@ import (
 
 var fixed = time.Date(2026, 8, 15, 10, 0, 0, 0, time.UTC)
 
+// claveValida is a real UUID, the shape the phone generates and the domain
+// now enforces (CHAR(36) column, spec §3.3.3).
+var claveValida = uuid.New().String()
+
 func actor(usuario string) domain.ActorParams {
-	return domain.ActorParams{Usuario: usuario, ClaveIdempotencia: "clave-1", DeviceCreatedAt: fixed.Add(time.Hour)}
+	return domain.ActorParams{Usuario: usuario, ClaveIdempotencia: claveValida, DeviceCreatedAt: fixed.Add(time.Hour)}
 }
 
 // actorDecisor is actor plus the role the three decision events require
@@ -207,7 +212,7 @@ func TestAbrirGarantia_ClienteHappy(t *testing.T) {
 	if e.Tipo() != domain.TipoEventoFolioAbierto {
 		t.Errorf("opening event tipo = %q, want folio_abierto", e.Tipo())
 	}
-	if e.Usuario() != "juan" || e.ClaveIdempotencia() != "clave-1" {
+	if e.Usuario() != "juan" || e.ClaveIdempotencia() != claveValida {
 		t.Errorf("actor fields = %q/%q", e.Usuario(), e.ClaveIdempotencia())
 	}
 	if !e.CreatedAt().Equal(fixed) || !e.DeviceCreatedAt().Equal(fixed.Add(time.Hour)) {
@@ -230,8 +235,12 @@ func TestAbrirGarantia_ClienteRejections(t *testing.T) {
 		{"abierto_por_vacio", func(p *domain.AbrirGarantiaParams) { p.AbiertoPor = "  " }, domain.ErrAbiertoPorObligatorio},
 		{"descripcion_vacia", func(p *domain.AbrirGarantiaParams) { p.Description = "  " }, domain.ErrDescriptionObligatoria},
 		{"usuario_vacio", func(p *domain.AbrirGarantiaParams) { p.Actor.Usuario = "" }, domain.ErrEventoUsuarioObligatorio},
+		{"usuario_muy_largo", func(p *domain.AbrirGarantiaParams) { p.Actor.Usuario = strings.Repeat("a", 65) }, domain.ErrEventoUsuarioMuyLargo},
 		{"clave_vacia", func(p *domain.AbrirGarantiaParams) { p.Actor.ClaveIdempotencia = "" }, domain.ErrEventoClaveIdempotenciaObligatoria},
+		{"clave_no_uuid", func(p *domain.AbrirGarantiaParams) { p.Actor.ClaveIdempotencia = "no-soy-uuid" }, domain.ErrEventoClaveIdempotenciaInvalida},
 		{"device_zero", func(p *domain.AbrirGarantiaParams) { p.Actor.DeviceCreatedAt = time.Time{} }, domain.ErrEventoDeviceCreatedAtObligatorio},
+		{"abierto_por_muy_largo", func(p *domain.AbrirGarantiaParams) { p.AbiertoPor = strings.Repeat("a", 65) }, domain.ErrAbiertoPorMuyLargo},
+		{"estado_cuenta_invalido", func(p *domain.AbrirGarantiaParams) { e := domain.EstadoCuenta("basura"); p.EstadoCuenta = &e }, domain.ErrEstadoCuentaInvalido},
 		{"cliente_nil", func(p *domain.AbrirGarantiaParams) { p.ClienteID = nil }, domain.ErrClienteIDObligatorio},
 		{"venta_nil", func(p *domain.AbrirGarantiaParams) { p.VentaID = nil }, domain.ErrVentaIDObligatorio},
 		{"estado_cuenta_nil", func(p *domain.AbrirGarantiaParams) { p.EstadoCuenta = nil }, domain.ErrEstadoCuentaObligatorio},
@@ -358,6 +367,21 @@ func TestAgregarArticulo_DescripcionVacia(t *testing.T) {
 	}
 	if g.ArticulosCount() != 0 || countPending(g) != 1 {
 		t.Fatalf("invariante Â§4.4 rota: article added or event queued on failure")
+	}
+}
+
+func TestAgregarArticulo_ClaveMuyLarga(t *testing.T) {
+	t.Parallel()
+	g := openPiso(t)
+	err := g.AgregarArticulo(domain.AgregarArticuloParams{
+		Clave:       strings.Repeat("x", 31),
+		Description: "silla",
+	}, actor("juan"), fixed)
+	if !errors.Is(err, domain.ErrArticuloClaveMuyLarga) {
+		t.Fatalf("want ErrArticuloClaveMuyLarga, got %v", err)
+	}
+	if g.ArticulosCount() != 0 || countPending(g) != 1 {
+		t.Fatalf("no mutation/event expected on failure")
 	}
 }
 
@@ -546,7 +570,7 @@ func TestAvanzarArticulo_EtapasExclusivasSwap(t *testing.T) {
 func TestArticulo_MutacionesActualizanUpdatedAt(t *testing.T) {
 	t.Parallel()
 	cambio := fixed.Add(time.Hour)
-	mut := domain.ActorParams{Usuario: "juan", ClaveIdempotencia: "clave-1", DeviceCreatedAt: cambio.Add(time.Hour)}
+	mut := domain.ActorParams{Usuario: "juan", ClaveIdempotencia: claveValida, DeviceCreatedAt: cambio.Add(time.Hour)}
 	mutDecisor := mut
 	rol := domain.RolDecisorOficina
 	mutDecisor.RolDecisor = &rol
@@ -1178,6 +1202,60 @@ func TestMutaciones_RechazanActorInvalido(t *testing.T) {
 			t.Fatalf("want ErrEventoUsuarioObligatorio, got %v", err)
 		}
 		if g.Estado() != domain.EstadoFolioAbierto || countPending(g) != pendientes {
+			t.Fatalf("no mutation/event expected")
+		}
+	})
+}
+
+// TestMutaciones_RechazanRolDecisorInvalido guards the review fix: a bogus
+// catalog value (RolDecisor("gerencia")) must not reach the DB. newEvento
+// rejects it before the aggregate mutates anything or queues an event.
+func TestMutaciones_RechazanRolDecisorInvalido(t *testing.T) {
+	t.Parallel()
+	rol := domain.RolDecisor("gerencia")
+	malo := domain.ActorParams{Usuario: "juan", ClaveIdempotencia: claveValida, DeviceCreatedAt: fixed.Add(time.Hour), RolDecisor: &rol}
+	t.Run("diagnostico", func(t *testing.T) {
+		t.Parallel()
+		g := openPiso(t)
+		a := addArticle(t, g, "silla")
+		a = advance(t, g, a, domain.EtapaEnRevision)
+		pendientes := countPending(g)
+		err := g.RegistrarDiagnostico(a.ID(), domain.RutaReparacionTaller, malo, fixed)
+		if !errors.Is(err, domain.ErrRolDecisorInvalido) {
+			t.Fatalf("want ErrRolDecisorInvalido, got %v", err)
+		}
+		if a.Ruta() != nil || a.Etapa() != domain.EtapaEnRevision || countPending(g) != pendientes {
+			t.Fatalf("no mutation/event expected")
+		}
+	})
+	t.Run("autorizar_cambio", func(t *testing.T) {
+		t.Parallel()
+		g := openPiso(t)
+		a := addArticle(t, g, "silla")
+		a = advance(t, g, a, domain.EtapaEnRevision)
+		a = diagnostico(t, g, a, domain.RutaReparacionTaller)
+		pendientes := countPending(g)
+		err := g.AutorizarCambioFisico(a.ID(), malo, fixed)
+		if !errors.Is(err, domain.ErrRolDecisorInvalido) {
+			t.Fatalf("want ErrRolDecisorInvalido, got %v", err)
+		}
+		if a.Etapa() != domain.EtapaEnTaller || g.ArticulosCount() != 1 || countPending(g) != pendientes {
+			t.Fatalf("no mutation/event expected")
+		}
+	})
+	t.Run("desenlace", func(t *testing.T) {
+		t.Parallel()
+		g := openPiso(t)
+		a := addArticle(t, g, "silla")
+		a = advance(t, g, a, domain.EtapaEnRevision)
+		a = diagnostico(t, g, a, domain.RutaReparacionTaller)
+		swap(t, g, a) // standby
+		pendientes := countPending(g)
+		err := g.RegistrarDesenlace(a.ID(), domain.DesenlaceMerma, malo, fixed)
+		if !errors.Is(err, domain.ErrRolDecisorInvalido) {
+			t.Fatalf("want ErrRolDecisorInvalido, got %v", err)
+		}
+		if a.Etapa() != domain.EtapaStandby || a.Desenlace() != nil || countPending(g) != pendientes {
 			t.Fatalf("no mutation/event expected")
 		}
 	})

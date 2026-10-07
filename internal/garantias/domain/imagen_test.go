@@ -3,6 +3,7 @@ package domain_test
 import (
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -114,6 +115,86 @@ func TestNewImagen_SubidaPorObligatorio(t *testing.T) {
 	if img != nil {
 		t.Error("want nil imagen")
 	}
+}
+
+func TestNewImagen_EventoObligatorio(t *testing.T) {
+	t.Parallel()
+	img, err := domain.NewImagen(domain.NewImagenParams{
+		EventoID:  uuid.Nil,
+		Ruta:      "garantias/x.jpg",
+		SubidaPor: "juan",
+		CreatedAt: fixed,
+	})
+	if !errors.Is(err, domain.ErrImagenEventoObligatorio) {
+		t.Errorf("err = %v, want ErrImagenEventoObligatorio", err)
+	}
+	if img != nil {
+		t.Error("want nil imagen")
+	}
+}
+
+func TestNewImagen_CreatedAtObligatorio(t *testing.T) {
+	t.Parallel()
+	img, err := domain.NewImagen(domain.NewImagenParams{
+		EventoID:  uuid.New(),
+		Ruta:      "garantias/x.jpg",
+		SubidaPor: "juan",
+		CreatedAt: time.Time{},
+	})
+	if !errors.Is(err, domain.ErrImagenCreatedAtObligatorio) {
+		t.Errorf("err = %v, want ErrImagenCreatedAtObligatorio", err)
+	}
+	if img != nil {
+		t.Error("want nil imagen")
+	}
+}
+
+// TestNewImagen_Longitudes pins the column-width guards at their boundaries:
+// one rune over the VARCHAR limit is rejected, the limit itself is accepted.
+func TestNewImagen_Longitudes(t *testing.T) {
+	t.Parallel()
+	ruta := string(make([]rune, 500))
+	casos := []struct {
+		nombre string
+		mutate func(*domain.NewImagenParams)
+		want   error
+	}{
+		{"subida_por", func(p *domain.NewImagenParams) { p.SubidaPor = strings.Repeat("a", 65) }, domain.ErrImagenSubidaPorMuyLargo},
+		{"ruta", func(p *domain.NewImagenParams) { p.Ruta = string(make([]rune, 501)) }, domain.ErrImagenRutaMuyLarga},
+		{"descripcion", func(p *domain.NewImagenParams) { p.Descripcion = strings.Repeat("a", 501) }, domain.ErrImagenDescripcionMuyLarga},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			t.Parallel()
+			p := domain.NewImagenParams{
+				EventoID:    uuid.New(),
+				Ruta:        ruta,
+				Descripcion: "pieza",
+				SubidaPor:   "juan",
+				CreatedAt:   fixed,
+			}
+			c.mutate(&p)
+			img, err := domain.NewImagen(p)
+			if !errors.Is(err, c.want) {
+				t.Errorf("err = %v, want %v", err, c.want)
+			}
+			if img != nil {
+				t.Error("want nil imagen")
+			}
+		})
+	}
+	t.Run("limites_aceptados", func(t *testing.T) {
+		t.Parallel()
+		if _, err := domain.NewImagen(domain.NewImagenParams{
+			EventoID:    uuid.New(),
+			Ruta:        ruta,
+			Descripcion: string(make([]rune, 500)),
+			SubidaPor:   strings.Repeat("a", 64),
+			CreatedAt:   fixed,
+		}); err != nil {
+			t.Errorf("NewImagen at the limits: %v, want nil", err)
+		}
+	})
 }
 
 // TestNewImagen_RutasValidas pins what the domain ACCEPTS, so tightening

@@ -4,6 +4,7 @@ import (
 	"math"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -52,11 +53,22 @@ type EventoParams struct {
 // event ID is generated here via uuid.New(). Tipo is a validated closed enum
 // fed by typed constants, so an invalid value can never reach this function.
 func newEvento(p EventoParams) (*Evento, error) {
-	if strings.TrimSpace(p.Usuario) == "" {
+	usuario := strings.TrimSpace(p.Usuario)
+	if usuario == "" {
 		return nil, ErrEventoUsuarioObligatorio
 	}
-	if strings.TrimSpace(p.ClaveIdempotencia) == "" {
+	if utf8.RuneCountInString(usuario) > 64 {
+		return nil, ErrEventoUsuarioMuyLargo
+	}
+	clave := strings.TrimSpace(p.ClaveIdempotencia)
+	if clave == "" {
 		return nil, ErrEventoClaveIdempotenciaObligatoria
+	}
+	if _, err := uuid.Parse(clave); err != nil {
+		return nil, ErrEventoClaveIdempotenciaInvalida
+	}
+	if p.RolDecisor != nil && !p.RolDecisor.IsValid() {
+		return nil, ErrRolDecisorInvalido
 	}
 	if p.DeviceCreatedAt.IsZero() {
 		return nil, ErrEventoDeviceCreatedAtObligatorio
@@ -72,13 +84,13 @@ func newEvento(p EventoParams) (*Evento, error) {
 		description:       p.Description,
 		etapaDesde:        p.EtapaDesde,
 		etapaHasta:        p.EtapaHasta,
-		usuario:           strings.TrimSpace(p.Usuario),
+		usuario:           usuario,
 		rolDecisor:        p.RolDecisor,
 		gpsLat:            p.GPSLat,
 		gpsLon:            p.GPSLon,
 		createdAt:         p.CreatedAt,
 		deviceCreatedAt:   p.DeviceCreatedAt,
-		claveIdempotencia: p.ClaveIdempotencia,
+		claveIdempotencia: clave,
 	}, nil
 }
 

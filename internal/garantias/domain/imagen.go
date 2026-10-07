@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -52,21 +53,38 @@ type HydrateImagenParams struct {
 
 // NewImagen creates the evidence row for an event. Ruta and SubidaPor are
 // mandatory: a row without them says nothing, and the table has no nullable
-// excuse for it.
+// excuse for it. Every length mirrors the column width so a fat name or a
+// path that fits nowhere fails in Go, not on the Firebird write.
 func NewImagen(p NewImagenParams) (*Imagen, error) {
+	if p.EventoID == uuid.Nil {
+		return nil, ErrImagenEventoObligatorio
+	}
 	ruta := strings.TrimSpace(p.Ruta)
 	if !rutaRelativa(ruta) {
 		return nil, ErrImagenRutaInvalida
+	}
+	if utf8.RuneCountInString(ruta) > 500 {
+		return nil, ErrImagenRutaMuyLarga
 	}
 	subidaPor := strings.TrimSpace(p.SubidaPor)
 	if subidaPor == "" {
 		return nil, ErrImagenSubidaPorObligatorio
 	}
+	if utf8.RuneCountInString(subidaPor) > 64 {
+		return nil, ErrImagenSubidaPorMuyLargo
+	}
+	descripcion := strings.TrimSpace(p.Descripcion)
+	if utf8.RuneCountInString(descripcion) > 500 {
+		return nil, ErrImagenDescripcionMuyLarga
+	}
+	if p.CreatedAt.IsZero() {
+		return nil, ErrImagenCreatedAtObligatorio
+	}
 	return &Imagen{
 		id:          uuid.New(),
 		eventoID:    p.EventoID,
 		ruta:        ruta,
-		descripcion: strings.TrimSpace(p.Descripcion),
+		descripcion: descripcion,
 		subidaPor:   subidaPor,
 		createdAt:   p.CreatedAt,
 	}, nil

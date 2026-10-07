@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -153,6 +154,9 @@ func AbrirGarantia(p AbrirGarantiaParams) (*Garantia, error) {
 	if abiertoPor == "" {
 		return nil, ErrAbiertoPorObligatorio
 	}
+	if utf8.RuneCountInString(abiertoPor) > 64 {
+		return nil, ErrAbiertoPorMuyLargo
+	}
 	description := strings.TrimSpace(p.Description)
 	if description == "" {
 		return nil, ErrDescriptionObligatoria
@@ -162,6 +166,9 @@ func AbrirGarantia(p AbrirGarantiaParams) (*Garantia, error) {
 	}
 	if err := validarOrigenCliente(p); err != nil {
 		return nil, err
+	}
+	if p.EstadoCuenta != nil && !p.EstadoCuenta.IsValid() {
+		return nil, ErrEstadoCuentaInvalido
 	}
 	g := &Garantia{
 		id:             uuid.New(),

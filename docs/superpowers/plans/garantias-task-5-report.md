@@ -116,6 +116,22 @@ Lo anoté porque se ve al correr la suite del módulo:
 
 El paquete da 83.8% hoy. 
 
+## Correcciones del review (PR #24)
+
+El líder marcó un bloqueante y cuatro menores en la revisión de esta entrega. Se corrigieron en este mismo PR (sin commit todavía, como la entrega):
+
+- **Bloqueante — el catálogo llegaba a la DB.** `EstadoCuenta("basura")` y `RolDecisor("gerencia")` pasaban de largo porque nadie los validaba al construir: `AbrirGarantia` los guardaba tal cual y `newEvento` los incrustaba en el evento. Ahora `AbrirGarantia` rechaza `EstadoCuenta` no válido con `ErrEstadoCuentaInvalido` y `newEvento` rechaza un `RolDecisor` presente pero fuera del catálogo con `ErrRolDecisorInvalido`, antes de mutar nada. Las pruebas de los tres eventos de decisión comprueban las dos mitades: el artículo no se movió ni se encoló evento.
+- **Menor — anchos de columna.** Se agregaron los centinelas de longitud que la migración ya impone y el dominio no: `AbiertoPor`/`Usuario`/`SubidaPor` ≤ 64, `Ruta`/`Descripcion` de imagen ≤ 500, `Clave` de artículo ≤ 30 (contados en caracteres, como los `VARCHAR(n)` UTF8). Cada uno con prueba de rechazo por encima y de aceptación en el límite.
+- **Menor — `ClaveIdempotencia` es un UUID.** El teléfono la genera como UUID y la columna es `CHAR(36)`; `newEvento` ahora la valida con `uuid.Parse`. Los helpers de prueba dejaron de usar `"clave-1"` y cargan un UUID real.
+- **Menor — `NewImagen`.** Rechaza `EventoID == uuid.Nil` y `CreatedAt` cero, los dos con su centinela.
+
+Verificación tras las correcciones (mismos gates de la tabla de arriba, `go test -race -count=1`):
+
+- `golangci-lint run ./internal/garantias/...` → `0 issues.` (se añadió un `//nolint:misspell` puntual por `DESCRIPCION`, mismo vocabulario español ya documentado en la nota 1).
+- `go test ./internal/garantias/domain/ -cover` → `100.0%`.
+- `go test -race -short ./internal/garantias/...` → 4 paquetes `ok`.
+- `make check-sealed MODULE=garantias` → `garantias is sealed`.
+
 ## Report Path
 
 `docs/superpowers/plans/garantias-task-5-report.md`

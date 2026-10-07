@@ -336,4 +336,70 @@ var (
 		"warranty_image_uploader_required",
 		"quien sube la imagen obligatorio",
 	)
+
+	// ErrImagenEventoObligatorio is returned by NewImagen when the event the
+	// evidence hangs from is missing (uuid.Nil).
+	ErrImagenEventoObligatorio = apperror.NewValidation(
+		"warranty_image_event_required",
+		"evento de la imagen obligatorio",
+	)
+
+	// ErrImagenCreatedAtObligatorio is returned by NewImagen when the
+	// registration timestamp is missing.
+	ErrImagenCreatedAtObligatorio = apperror.NewValidation(
+		"warranty_image_time_required",
+		"fecha de la imagen obligatoria",
+	)
+
+	// ErrEventoUsuarioMuyLargo is returned by newEvento when the actor
+	// name exceeds the 64-character column width (MSP_GA_EVENTO.USUARIO).
+	ErrEventoUsuarioMuyLargo = apperror.NewValidation(
+		"warranty_event_user_too_long",
+		"usuario del evento demasiado largo",
+	)
+
+	// ErrAbiertoPorMuyLargo is returned by AbrirGarantia when the operator
+	// name exceeds the 64-character column width (MSP_GA_GARANTIA.ABIERTO_POR).
+	ErrAbiertoPorMuyLargo = apperror.NewValidation(
+		"warranty_operator_too_long",
+		"operador que abre el folio demasiado largo",
+	)
+
+	// ErrImagenSubidaPorMuyLargo is returned by NewImagen when the uploader
+	// name exceeds the 64-character column width (MSP_GA_IMAGEN.SUBIDA_POR).
+	ErrImagenSubidaPorMuyLargo = apperror.NewValidation(
+		"warranty_image_uploader_too_long",
+		"quien sube la imagen demasiado largo",
+	)
+
+	// ErrImagenRutaMuyLarga is returned by NewImagen when the blob path
+	// exceeds the 500-character column width (MSP_GA_IMAGEN.RUTA).
+	ErrImagenRutaMuyLarga = apperror.NewValidation(
+		"warranty_image_path_too_long",
+		"ruta de imagen demasiado larga",
+	)
+
+	// ErrImagenDescripcionMuyLarga is returned by NewImagen when the caption
+	// exceeds the 500-character column width (MSP_GA_IMAGEN.DESCRIPCION).
+	//nolint:misspell // column name in Spanish per project vocabulary
+	ErrImagenDescripcionMuyLarga = apperror.NewValidation(
+		"warranty_image_caption_too_long",
+		"descripción de imagen demasiado larga",
+	)
+
+	// ErrArticuloClaveMuyLarga is returned by newArticulo when the article
+	// key exceeds the 30-character column width (MSP_GA_ARTICULO.CLAVE).
+	ErrArticuloClaveMuyLarga = apperror.NewValidation(
+		"warranty_article_key_too_long",
+		"clave del artículo demasiado larga",
+	)
+
+	// ErrEventoClaveIdempotenciaInvalida is returned by newEvento when the
+	// idempotency key is not a UUID. The phone generates it as a UUID and
+	// the column is CHAR(36); anything else is a client bug that would
+	// poison the UNIQUE index with garbage.
+	ErrEventoClaveIdempotenciaInvalida = apperror.NewValidation(
+		"warranty_event_idempotency_invalid",
+		"clave de idempotencia del evento inválida",
+	)
 )
