@@ -21,11 +21,21 @@ type fakeGarantiaRepo struct {
 	obtained  map[uuid.UUID]*domain.Garantia
 	byFolio   map[domain.Folio]*domain.Garantia
 	forUpdate map[uuid.UUID]*domain.Garantia
+	// staged writes model the real repository: rows are written while the
+	// transaction is open, and only a commit keeps them. Guardar/Crear stage
+	// their rows even when they are about to return an error, so a half-write
+	// that got rolled back is indistinguishable from never having happened.
+	stagedCreated []*domain.Garantia
+	stagedSaved   []*domain.Garantia
+	// lastSaved is the raw aggregate handed to Guardar, kept for assertions on
+	// its pending events (the clones lose them).
+	lastSaved *domain.Garantia
 	createErr error
 	saveErr   error
 	getErr    error
 	seeded    int
 	onSave    func()
+	onCreate  func()
 }
 
 func newFakeGarantiaRepo() *fakeGarantiaRepo {
@@ -36,35 +46,63 @@ func newFakeGarantiaRepo() *fakeGarantiaRepo {
 	}
 }
 
+// commit keeps the writes staged since the last commit/rollback; rollback
+// drops them. The tx runner fires them through onCommit/onRollback, wired in
+// setupService.
+func (f *fakeGarantiaRepo) commit() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, c := range f.stagedCreated {
+		f.created = append(f.created, c)
+		f.obtained[c.ID()] = c
+		f.byFolio[c.Folio()] = c
+	}
+	for _, s := range f.stagedSaved {
+		f.saved = append(f.saved, s)
+		f.obtained[s.ID()] = s
+		f.byFolio[s.Folio()] = s
+	}
+	f.stagedCreated, f.stagedSaved = nil, nil
+}
+
+func (f *fakeGarantiaRepo) rollback() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.stagedCreated, f.stagedSaved = nil, nil
+}
+
 func (f *fakeGarantiaRepo) Crear(ctx context.Context, g *domain.Garantia) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// Mirror Guardar: onCreate fires before the error so a test can register
+	// the twin's event while the pre-check has already come back empty.
+	if f.onCreate != nil {
+		f.onCreate()
+	}
+	clone := cloneGarantia(g)
+	f.stagedCreated = append(f.stagedCreated, clone)
 	if f.createErr != nil {
 		return f.createErr
 	}
-	clone := cloneGarantia(g)
-	f.created = append(f.created, clone)
-	f.obtained[g.ID()] = clone
-	f.byFolio[g.Folio()] = clone
 	return nil
 }
 
 func (f *fakeGarantiaRepo) Guardar(ctx context.Context, g *domain.Garantia) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.lastSaved = g
 	// onSave fires before saveErr so a test can register the twin's event while
 	// the pre-check has already come back empty — the only way to reach the
 	// race branch (spec §3.4) instead of the cheap replay path.
 	if f.onSave != nil {
 		f.onSave()
 	}
+	// The write lands even when the error is about to be returned, mirroring
+	// the real row insert that fails on the event UNIQUE.
+	f.stagedSaved = append(f.stagedSaved, cloneGarantia(g))
 	if f.saveErr != nil {
 		return f.saveErr
 	}
-	clone := cloneGarantia(g)
-	f.saved = append(f.saved, clone)
-	f.obtained[g.ID()] = clone
-	f.byFolio[g.Folio()] = clone
 	return nil
 }
 

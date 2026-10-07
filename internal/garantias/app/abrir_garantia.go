@@ -35,12 +35,22 @@ type AbrirGarantiaCmd struct {
 // lock yet. It still runs the whole write inside one transaction — folio
 // number, aggregate and pending events land together or not at all (§4.4) —
 // and it treats a repeated key as the success it is (§3.3), returning the folio
-// that key opened.
+// that key opened. A key counts as a replay only when the event it belongs to
+// is folio_abierto; anything else means the key is being reused against the
+// command, which is ErrClaveIdempotenciaDeOtroFolio.
 func (s *Service) AbrirGarantia(ctx context.Context, cmd AbrirGarantiaCmd) (*domain.Garantia, error) {
 	actor, err := s.actorDeApertura(ctx, cmd)
 	if err != nil {
 		return nil, err
 	}
+	// Normalized after identity and permission, so an unauthenticated or
+	// unauthorized request fails with its own sentinel, before touching the
+	// key. Once here, every lookup below uses the canonical spelling.
+	clave, err := normalizarClave(cmd.ClaveIdempotencia)
+	if err != nil {
+		return nil, err
+	}
+	actor.ClaveIdempotencia = clave
 
 	var creada *domain.Garantia
 	err = s.tx.RunInTx(ctx, func(ctx context.Context) error {
@@ -49,6 +59,9 @@ func (s *Service) AbrirGarantia(ctx context.Context, cmd AbrirGarantiaCmd) (*dom
 			return err
 		}
 		if vista != nil {
+			if vista.Tipo() != domain.TipoEventoFolioAbierto {
+				return domain.ErrClaveIdempotenciaDeOtroFolio
+			}
 			return nil // replay: its folio is re-read below, not rebuilt
 		}
 
@@ -85,28 +98,26 @@ func (s *Service) AbrirGarantia(ctx context.Context, cmd AbrirGarantiaCmd) (*dom
 		}
 		if err := s.garantias.Crear(ctx, abierta); err != nil {
 			if errors.Is(err, domain.ErrClaveIdempotenciaDuplicada) {
-				return nil // the racing twin wins; read its folio below
+				// Return the error so RunInTx rolls back the half-written
+				// header (the racing twin wins; its folio is read below).
+				return domain.ErrClaveIdempotenciaDuplicada
 			}
 			return err
 		}
 		creada = abierta
 		return nil
 	})
-	if err != nil {
+	if err != nil && !errors.Is(err, domain.ErrClaveIdempotenciaDuplicada) {
 		return nil, err
 	}
 	if creada != nil {
 		return creada, nil
 	}
-
-	vista, err := s.eventos.ObtenerPorClaveIdempotencia(ctx, actor.ClaveIdempotencia)
-	if err != nil {
-		return nil, err
-	}
-	if vista == nil {
-		return nil, domain.ErrClaveIdempotenciaDuplicada
-	}
-	return s.garantias.Obtener(ctx, vista.GarantiaID())
+	// The write rolled back; whoever owns the key now wins. For AbrirGarantia
+	// the key is a replay only when the event behind it is folio_abierto.
+	return s.resolverDuplicada(ctx, actor.ClaveIdempotencia, func(v *domain.Evento) bool {
+		return v.Tipo() == domain.TipoEventoFolioAbierto
+	})
 }
 
 // actorDeApertura resolves the user from Identity and checks the permiso. The

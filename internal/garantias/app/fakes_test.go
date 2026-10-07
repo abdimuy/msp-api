@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,10 +14,14 @@ import (
 )
 
 type fakeTxRunner struct {
-	mu       sync.Mutex
-	inTx     bool
-	calls    int
-	errOnRun error
+	mu         sync.Mutex
+	inTx       bool
+	calls      int
+	commits    int
+	rollbacks  int
+	errOnRun   error
+	onCommit   func()
+	onRollback func()
 }
 
 func (f *fakeTxRunner) RunInTx(ctx context.Context, fn func(ctx context.Context) error) error {
@@ -26,12 +31,34 @@ func (f *fakeTxRunner) RunInTx(ctx context.Context, fn func(ctx context.Context)
 	errOnRun := f.errOnRun
 	f.mu.Unlock()
 	if errOnRun != nil {
+		f.mu.Lock()
+		f.inTx = false
+		f.rollbacks++
+		onRoll := f.onRollback
+		f.mu.Unlock()
+		if onRoll != nil {
+			onRoll()
+		}
 		return errOnRun
 	}
 	err := fn(ctx)
 	f.mu.Lock()
 	f.inTx = false
-	f.mu.Unlock()
+	if err != nil {
+		f.rollbacks++
+		onRoll := f.onRollback
+		f.mu.Unlock()
+		if onRoll != nil {
+			onRoll()
+		}
+	} else {
+		f.commits++
+		onComm := f.onCommit
+		f.mu.Unlock()
+		if onComm != nil {
+			onComm()
+		}
+	}
 	return err
 }
 
@@ -94,6 +121,12 @@ func (f *fakeIdentity) TienePermiso(ctx context.Context, p domain.Permiso) (bool
 	return true, nil
 }
 
+// clave yields a valid UUID idempotency key, the only shape the commands
+// accept since the domain stores the canonical form.
+func clave() string {
+	return uuid.New().String()
+}
+
 // seedFolio builds a real aggregate with the domain and stores it in the fake
 // repo, so the commands under test read a genuine entity rather than a stub.
 func seedFolio(t *testing.T, repo *fakeGarantiaRepo, now time.Time, nArts int) *domain.Garantia {
@@ -111,7 +144,7 @@ func seedFolio(t *testing.T, repo *fakeGarantiaRepo, now time.Time, nArts int) *
 		Now:         now,
 		Actor: domain.ActorParams{
 			Usuario:           "Juan",
-			ClaveIdempotencia: "seed-" + folio.String(),
+			ClaveIdempotencia: clave(),
 			DeviceCreatedAt:   now,
 		},
 	})
@@ -119,13 +152,13 @@ func seedFolio(t *testing.T, repo *fakeGarantiaRepo, now time.Time, nArts int) *
 		t.Fatalf("AbrirGarantia: %v", err)
 	}
 	for i := range nArts {
-		clave := string(rune('A' + i))
+		artClave := string(rune('A' + i))
 		if err := g.AgregarArticulo(domain.AgregarArticuloParams{
-			Clave:       clave,
-			Description: "articulo " + clave,
+			Clave:       artClave,
+			Description: "articulo " + artClave,
 		}, domain.ActorParams{
 			Usuario:           "Juan",
-			ClaveIdempotencia: "seed-art-" + clave,
+			ClaveIdempotencia: clave(),
 			DeviceCreatedAt:   now,
 		}, now); err != nil {
 			t.Fatalf("AgregarArticulo: %v", err)
@@ -147,12 +180,14 @@ func firstArticuloID(t *testing.T, g *domain.Garantia) uuid.UUID {
 	return uuid.Nil
 }
 
-// hydrateEvento builds a persisted-shape event for the idempotency fake.
-func hydrateEvento(garantiaID uuid.UUID, clave string, now time.Time) *domain.Evento {
+// hydrateEvento builds a persisted-shape event for the idempotency fake. The
+// key is stored as given — tests pass the canonical form, matching what the
+// real repository persists.
+func hydrateEvento(garantiaID uuid.UUID, clave string, tipo domain.TipoEvento, now time.Time) *domain.Evento {
 	return domain.HydrateEvento(domain.HydrateEventoParams{
 		ID:                uuid.New(),
 		GarantiaID:        garantiaID,
-		Tipo:              domain.TipoEventoArticuloAgregado,
+		Tipo:              tipo,
 		Usuario:           "Juan",
 		CreatedAt:         now,
 		DeviceCreatedAt:   now,
@@ -163,4 +198,30 @@ func hydrateEvento(garantiaID uuid.UUID, clave string, now time.Time) *domain.Ev
 // uuidAleatorio returns an id no folio will ever carry.
 func uuidAleatorio() uuid.UUID {
 	return uuid.New()
+}
+
+// uppercaseUUID returns the key in the other canonical-braced-free spelling's
+// case, to exercise the normalization path of a resend.
+func uppercaseUUID(k string) string {
+	return strings.ToUpper(k)
+}
+
+// usuarioEventos asserts that every pending event of the aggregate was
+// recorded under the caller Identity gave us. The aggregate is the raw one the
+// fake received in Guardar, where the pending events of the mutation live.
+func usuarioEventos(t *testing.T, g *domain.Garantia, nombre string) {
+	t.Helper()
+	if g == nil {
+		t.Fatal("el repo no recibio ningun agregado")
+	}
+	n := 0
+	for ev := range g.EventosPendientes() {
+		n++
+		if ev.Usuario() != nombre {
+			t.Errorf("evento %q con usuario %q, want %q the one from Identity", ev.Tipo(), ev.Usuario(), nombre)
+		}
+	}
+	if n == 0 {
+		t.Error("el agregado no trae ningun evento pendiente")
+	}
 }

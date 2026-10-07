@@ -4,6 +4,7 @@ package app
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,7 +21,6 @@ type Deps struct {
 	TxRunner       outbound.TxRunner
 	Identity       outbound.Identity
 	Clock          outbound.Clock
-	IDGenerator    outbound.IDGenerator
 }
 
 // Service is the application service for garantias commands.
@@ -35,7 +35,6 @@ type Service struct {
 	tx        outbound.TxRunner
 	identity  outbound.Identity
 	clock     outbound.Clock
-	idGen     outbound.IDGenerator
 }
 
 // NewService creates a new Service.
@@ -47,7 +46,6 @@ func NewService(deps Deps) *Service {
 		tx:        deps.TxRunner,
 		identity:  deps.Identity,
 		clock:     deps.Clock,
-		idGen:     deps.IDGenerator,
 	}
 }
 
@@ -61,11 +59,14 @@ type operacion func(ctx context.Context, g *domain.Garantia, actor domain.ActorP
 //
 //  1. resolve the user from Identity — never from the command
 //  2. check the command's permission
-//  3. inside a transaction: reject a replayed or foreign idempotency key,
-//     lock the folio, mutate it, save it
-//  4. a duplicate key surfacing from Guardar is a replay, not a failure: two
-//     phones raced and the first had not committed when we looked
-//  5. re-read the folio outside the transaction and return it
+//  3. inside a transaction: lock the folio first, then reject a replayed or
+//     foreign idempotency key, mutate it, save it
+//  4. a duplicate key surfacing from Guardar is a rollback, not a commit: the
+//     write already placed the folio rows but failed on the event UNIQUE, and
+//     committing them would persist a change without its event (§4.4)
+//  5. after the rollback, re-read who owns the key — the twin won, so the
+//     command answers with the current state — and re-read the folio outside
+//     the transaction to return it
 func (s *Service) ejecutarFolio(
 	ctx context.Context,
 	garantiaID uuid.UUID,
@@ -81,8 +82,21 @@ func (s *Service) ejecutarFolio(
 	if err := s.exigirPermiso(ctx, permiso); err != nil {
 		return nil, err
 	}
+	clave, err := normalizarClave(actor.ClaveIdempotencia)
+	if err != nil {
+		return nil, err
+	}
+	actor.ClaveIdempotencia = clave
 
 	err = s.tx.RunInTx(ctx, func(ctx context.Context) error {
+		// Lock the folio before looking at the key (3b before 3a). With the
+		// lock held, two requests to the same folio serialize, so the second
+		// one does see the event the first one wrote and the cheap replay
+		// path below triggers instead of racing into Guardar.
+		g, err := s.garantias.ObtenerParaActualizar(ctx, garantiaID)
+		if err != nil {
+			return err
+		}
 		vista, err := s.eventos.ObtenerPorClaveIdempotencia(ctx, actor.ClaveIdempotencia)
 		if err != nil {
 			return err
@@ -97,25 +111,63 @@ func (s *Service) ejecutarFolio(
 			return domain.ErrClaveIdempotenciaDeOtroFolio
 		}
 
-		g, err := s.garantias.ObtenerParaActualizar(ctx, garantiaID)
-		if err != nil {
-			return err
-		}
 		if err := mutar(ctx, g, actor); err != nil {
 			return err
 		}
 		if err := s.garantias.Guardar(ctx, g); err != nil {
 			if errors.Is(err, domain.ErrClaveIdempotenciaDuplicada) {
-				return nil
+				// Return the error so RunInTx rolls back the half-written
+				// folio; the twin's key is resolved again right below.
+				return domain.ErrClaveIdempotenciaDuplicada
 			}
 			return err
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		if !errors.Is(err, domain.ErrClaveIdempotenciaDuplicada) {
+			return nil, err
+		}
+		return s.resolverDuplicada(ctx, actor.ClaveIdempotencia, func(v *domain.Evento) bool {
+			return v.GarantiaID() == garantiaID
+		})
 	}
 	return s.garantias.Obtener(ctx, garantiaID)
+}
+
+// resolverDuplicada runs after the rollback caused by a duplicate key: the
+// twin's event owns it now. An absent key means there was no twin and the
+// write is simply lost; an event that is not ours means the key was reused
+// against the wrong folio (or command). Otherwise the folio behind the event is
+// re-read and returned.
+func (s *Service) resolverDuplicada(ctx context.Context, clave string, esMia func(*domain.Evento) bool) (*domain.Garantia, error) {
+	vista, err := s.eventos.ObtenerPorClaveIdempotencia(ctx, clave)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case vista == nil:
+		return nil, domain.ErrClaveIdempotenciaDuplicada
+	case !esMia(vista):
+		return nil, domain.ErrClaveIdempotenciaDeOtroFolio
+	}
+	return s.garantias.Obtener(ctx, vista.GarantiaID())
+}
+
+// normalizarClave canonicalizes the idempotency key before any lookup. The
+// domain stores the canonical form (parsed.String(), ronda 3 of #24): a
+// search done with the raw spelling would miss a replay sent in uppercase or
+// with braces and let it race into the UNIQUE index again.
+func normalizarClave(clave string) (string, error) {
+	clave = strings.TrimSpace(clave)
+	if clave == "" {
+		return "", domain.ErrEventoClaveIdempotenciaObligatoria
+	}
+	parsed, err := uuid.Parse(clave)
+	if err != nil {
+		return "", domain.ErrEventoClaveIdempotenciaInvalida
+	}
+	return parsed.String(), nil
 }
 
 // usuario resolves the caller from Identity. The value never comes from the

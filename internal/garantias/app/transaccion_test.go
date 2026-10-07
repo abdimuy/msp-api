@@ -21,6 +21,8 @@ func TestEscrituraDentroDeTransaccion(t *testing.T) {
 	erepo := newFakeEventoRepo()
 	fgen := &fakeFolioGen{nums: []int{3001}}
 	tx := &fakeTxRunner{}
+	tx.onCommit = base.commit
+	tx.onRollback = base.rollback
 	rec := &recordingRepo{
 		fakeGarantiaRepo: base,
 		enTx:             func() bool { return tx.enTx() },
@@ -38,7 +40,7 @@ func TestEscrituraDentroDeTransaccion(t *testing.T) {
 	if _, err := svc.AbrirGarantia(context.Background(), app.AbrirGarantiaCmd{
 		Origen:            domain.OrigenFolioPiso,
 		Description:       "silla rota",
-		ClaveIdempotencia: "k-tx-1",
+		ClaveIdempotencia: clave(),
 		DeviceCreatedAt:   now,
 	}); err != nil {
 		t.Fatalf("AbrirGarantia: %v", err)
@@ -49,7 +51,7 @@ func TestEscrituraDentroDeTransaccion(t *testing.T) {
 		GarantiaID:        g.ID(),
 		Clave:             "B",
 		Description:       "mesa",
-		ClaveIdempotencia: "k-tx-2",
+		ClaveIdempotencia: clave(),
 		DeviceCreatedAt:   now,
 	}); err != nil {
 		t.Fatalf("AgregarArticulo: %v", err)
