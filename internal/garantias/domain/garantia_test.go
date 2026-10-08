@@ -145,7 +145,7 @@ func clienteParams() domain.AbrirGarantiaParams {
 		EstadoCuenta:   &estado,
 		Description:    "silla rota",
 		VigenciaHasta:  &vigencia,
-		Calle:          "Av. JuÃ¡rez",
+		Calle:          "Av. Juárez",
 		NumeroExterior: "12",
 		Colonia:        "Centro",
 		Localidad:      "Zapopan",
@@ -186,9 +186,9 @@ func TestAbrirGarantia_ClienteHappy(t *testing.T) {
 		t.Errorf("EstadoCuenta() = %v, want liquidada", g.EstadoCuenta())
 	}
 	if g.Description() != "silla rota" || g.AbiertoPor() != "Juan" {
-		t.Errorf("Descripcion/AbiertoPor = %q/%q", g.Description(), g.AbiertoPor())
+		t.Errorf("Description/AbiertoPor = %q/%q", g.Description(), g.AbiertoPor())
 	}
-	if g.Calle() != "Av. JuÃ¡rez" || g.NumeroExterior() != "12" ||
+	if g.Calle() != "Av. Juárez" || g.NumeroExterior() != "12" ||
 		g.Colonia() != "Centro" || g.Localidad() != "Zapopan" ||
 		g.Ciudad() != "Guadalajara" || g.CodigoPostal() != "45100" {
 		t.Errorf("domicilio fields not set")
@@ -421,7 +421,7 @@ func TestAgregarArticulo_UbicacionSegunOrigen(t *testing.T) {
 	})
 }
 
-func TestAgregarArticulo_DescripcionVacia(t *testing.T) {
+func TestAgregarArticulo_DescriptionVacia(t *testing.T) {
 	t.Parallel()
 	g := openPiso(t)
 	err := g.AgregarArticulo(domain.AgregarArticuloParams{Description: "  "}, actor("juan"), fixed)
@@ -429,7 +429,7 @@ func TestAgregarArticulo_DescripcionVacia(t *testing.T) {
 		t.Fatalf("want ErrArticuloDescriptionObligatoria, got %v", err)
 	}
 	if g.ArticulosCount() != 0 || countPending(g) != 1 {
-		t.Fatalf("invariante Â§4.4 rota: article added or event queued on failure")
+		t.Fatalf("invariante §4.4 rota: article added or event queued on failure")
 	}
 }
 
@@ -596,7 +596,7 @@ func TestAvanzarArticulo_Invalida(t *testing.T) {
 		t.Errorf("state mutated on failure: %q", a.Etapa())
 	}
 	if countPending(g) != pendientes {
-		t.Errorf("event queued on failure â€” Â§4.4 broken")
+		t.Errorf("event queued on failure — §4.4 broken")
 	}
 }
 
@@ -664,8 +664,8 @@ func TestArticulo_MutacionesActualizanUpdatedAt(t *testing.T) {
 	mutDecisor.RolDecisor = &rol
 
 	// ruta taller: avanzar, registrarDiagnostico, autorizarCambioFisico, registrarDesenlace.
-	// El artÃ­culo nace en fixed; cada mutador corre en cambio, asÃ­ que UpdatedAt
-	// debe moverse en cada uno (fallarÃ­a si un mutador perdiera MarkUpdatedAt).
+	// El artículo nace en fixed; cada mutador corre en cambio, así que UpdatedAt
+	// debe moverse en cada uno (fallaría si un mutador perdiera MarkUpdatedAt).
 	g := openPiso(t)
 	a := addArticle(t, g, "silla")
 	if err := g.AvanzarArticulo(a.ID(), domain.EtapaEnRevision, mut, cambio); err != nil {
@@ -869,7 +869,7 @@ func TestRegistrarDictamen_Invalidos(t *testing.T) {
 	})
 	t.Run("etapa_incorrecta", func(t *testing.T) {
 		t.Parallel()
-		// proveedor, pero sin haber llegado a dictamen_recibido todavÃ­a
+		// proveedor, pero sin haber llegado a dictamen_recibido todavía
 		g := openPiso(t)
 		a := addArticle(t, g, "pantalla")
 		a = advance(t, g, a, domain.EtapaEnRevision)
@@ -1355,7 +1355,7 @@ func TestEventosPendientes_CancelaTemprano(t *testing.T) {
 	n := 0
 	for range g.EventosPendientes() {
 		n++
-		break // yield returns false: la iteraciÃ³n se corta limpia
+		break // yield returns false: la iteración se corta limpia
 	}
 	if n != 1 {
 		t.Fatalf("ranges %d, want 1 tras el break", n)
@@ -1452,7 +1452,7 @@ func TestMarcarListoEntrega_Guardia(t *testing.T) {
 		a = diagnostico(t, g, a, domain.RutaReparacionTaller)
 		swap(t, g, a)
 
-		// tercer artÃ­culo atascado en en_taller
+		// tercer artículo atascado en en_taller
 		tercero := addArticle(t, g, "mesa")
 		tercero = advance(t, g, tercero, domain.EtapaEnRevision)
 		diagnostico(t, g, tercero, domain.RutaReparacionTaller)
@@ -1466,7 +1466,7 @@ func TestMarcarListoEntrega_Guardia(t *testing.T) {
 			t.Fatalf("estado mutado: %q", g.Estado())
 		}
 		if countPending(g) != pendientes {
-			t.Fatalf("evento encolado en fallo â€” Â§4.4 rota")
+			t.Fatalf("evento encolado en fallo — §4.4 rota")
 		}
 	})
 	t.Run("pasa_con_terminal", func(t *testing.T) {
@@ -1569,14 +1569,14 @@ func TestCancelar(t *testing.T) {
 		if err := g.IniciarProceso(actor("juan"), fixed); err != nil {
 			t.Fatalf("setup: %v", err)
 		}
-		if err := g.Cancelar("cliente desistiÃ³", actor("juan"), fixed); err != nil {
+		if err := g.Cancelar("cliente desistió", actor("juan"), fixed); err != nil {
 			t.Fatalf("Cancelar: %v", err)
 		}
 		if g.Estado() != domain.EstadoFolioCancelado {
 			t.Fatalf("Estado() = %q, want cancelado", g.Estado())
 		}
 		e := lastEvent(t, g)
-		if e.Tipo() != domain.TipoEventoFolioCancelado || e.Description() != "cliente desistiÃ³" {
+		if e.Tipo() != domain.TipoEventoFolioCancelado || e.Description() != "cliente desistió" {
 			t.Fatalf("bad folio_cancelado event")
 		}
 	})

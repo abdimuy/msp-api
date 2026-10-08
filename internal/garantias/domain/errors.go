@@ -379,10 +379,10 @@ var (
 		"ruta de imagen demasiado larga",
 	)
 
-	// ErrImagenDescripcionMuyLarga is returned by NewImagen when the caption
+	// ErrImagenDescriptionMuyLarga is returned by NewImagen when the caption
 	// exceeds the 500-character column width (MSP_GA_IMAGEN.DESCRIPCION).
 	//nolint:misspell // column name in Spanish per project vocabulary
-	ErrImagenDescripcionMuyLarga = apperror.NewValidation(
+	ErrImagenDescriptionMuyLarga = apperror.NewValidation(
 		"warranty_image_caption_too_long",
 		"descripción de imagen demasiado larga",
 	)

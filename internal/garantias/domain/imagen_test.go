@@ -18,7 +18,7 @@ func TestNewImagen(t *testing.T) {
 	img, err := domain.NewImagen(domain.NewImagenParams{
 		EventoID:    eventoID,
 		Ruta:        "garantias/2026/08/abc-123.jpg",
-		Descripcion: "  mueble recién recogido  ",
+		Description: "  mueble recién recogido  ",
 		SubidaPor:   "  juan  ",
 		CreatedAt:   fixed,
 	})
@@ -34,8 +34,8 @@ func TestNewImagen(t *testing.T) {
 	if img.Ruta() != "garantias/2026/08/abc-123.jpg" {
 		t.Errorf("Ruta() = %q, want trimmed relative path", img.Ruta())
 	}
-	if img.Descripcion() != "mueble recién recogido" {
-		t.Errorf("Descripcion() = %q, want trimmed", img.Descripcion())
+	if img.Description() != "mueble recién recogido" {
+		t.Errorf("Description() = %q, want trimmed", img.Description())
 	}
 	if img.SubidaPor() != "juan" {
 		t.Errorf("SubidaPor() = %q, want %q", img.SubidaPor(), "juan")
@@ -45,7 +45,7 @@ func TestNewImagen(t *testing.T) {
 	}
 }
 
-func TestNewImagen_DescripcionVacia(t *testing.T) {
+func TestNewImagen_DescriptionVacia(t *testing.T) {
 	t.Parallel()
 	img, err := domain.NewImagen(domain.NewImagenParams{
 		EventoID:  uuid.New(),
@@ -56,8 +56,8 @@ func TestNewImagen_DescripcionVacia(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewImagen: %v", err)
 	}
-	if img.Descripcion() != "" {
-		t.Errorf("Descripcion() = %q, want empty", img.Descripcion())
+	if img.Description() != "" {
+		t.Errorf("Description() = %q, want empty", img.Description())
 	}
 }
 
@@ -161,7 +161,7 @@ func TestNewImagen_Longitudes(t *testing.T) {
 	}{
 		{"subida_por", func(p *domain.NewImagenParams) { p.SubidaPor = strings.Repeat("a", 65) }, domain.ErrImagenSubidaPorMuyLargo},
 		{"ruta", func(p *domain.NewImagenParams) { p.Ruta = string(make([]rune, 501)) }, domain.ErrImagenRutaMuyLarga},
-		{"descripcion", func(p *domain.NewImagenParams) { p.Descripcion = strings.Repeat("a", 501) }, domain.ErrImagenDescripcionMuyLarga},
+		{"description", func(p *domain.NewImagenParams) { p.Description = strings.Repeat("a", 501) }, domain.ErrImagenDescriptionMuyLarga},
 	}
 	for _, c := range casos {
 		t.Run(c.nombre, func(t *testing.T) {
@@ -169,7 +169,7 @@ func TestNewImagen_Longitudes(t *testing.T) {
 			p := domain.NewImagenParams{
 				EventoID:    uuid.New(),
 				Ruta:        ruta,
-				Descripcion: "pieza",
+				Description: "pieza",
 				SubidaPor:   "juan",
 				CreatedAt:   fixed,
 			}
@@ -188,7 +188,7 @@ func TestNewImagen_Longitudes(t *testing.T) {
 		if _, err := domain.NewImagen(domain.NewImagenParams{
 			EventoID:    uuid.New(),
 			Ruta:        ruta,
-			Descripcion: string(make([]rune, 500)),
+			Description: string(make([]rune, 500)),
 			SubidaPor:   strings.Repeat("a", 64),
 			CreatedAt:   fixed,
 		}); err != nil {
@@ -248,7 +248,7 @@ func TestHydrateImagen_Garbage(t *testing.T) {
 		ID:          id,
 		EventoID:    eventoID,
 		Ruta:        "/ruta/absoluta.jpg",
-		Descripcion: "sin validar",
+		Description: "sin validar",
 		SubidaPor:   "",
 		CreatedAt:   fixed,
 	})

@@ -1,4 +1,4 @@
-//nolint:misspell // Spanish vocabulary (Descripcion) per project convention.
+//nolint:misspell // Spanish vocabulary (Ruta, SubidaPor) per project convention.
 package domain
 
 import (
@@ -23,7 +23,7 @@ type Imagen struct {
 	id          uuid.UUID
 	eventoID    uuid.UUID
 	ruta        string
-	descripcion string
+	description string
 	subidaPor   string
 	createdAt   time.Time
 }
@@ -35,7 +35,7 @@ type Imagen struct {
 type NewImagenParams struct {
 	EventoID    uuid.UUID
 	Ruta        string
-	Descripcion string
+	Description string
 	SubidaPor   string
 	CreatedAt   time.Time
 }
@@ -46,7 +46,7 @@ type HydrateImagenParams struct {
 	ID          uuid.UUID
 	EventoID    uuid.UUID
 	Ruta        string
-	Descripcion string
+	Description string
 	SubidaPor   string
 	CreatedAt   time.Time
 }
@@ -73,9 +73,9 @@ func NewImagen(p NewImagenParams) (*Imagen, error) {
 	if utf8.RuneCountInString(subidaPor) > 64 {
 		return nil, ErrImagenSubidaPorMuyLargo
 	}
-	descripcion := strings.TrimSpace(p.Descripcion)
-	if utf8.RuneCountInString(descripcion) > 500 {
-		return nil, ErrImagenDescripcionMuyLarga
+	description := strings.TrimSpace(p.Description)
+	if utf8.RuneCountInString(description) > 500 {
+		return nil, ErrImagenDescriptionMuyLarga
 	}
 	if p.CreatedAt.IsZero() {
 		return nil, ErrImagenCreatedAtObligatorio
@@ -84,7 +84,7 @@ func NewImagen(p NewImagenParams) (*Imagen, error) {
 		id:          uuid.New(),
 		eventoID:    p.EventoID,
 		ruta:        ruta,
-		descripcion: descripcion,
+		description: description,
 		subidaPor:   subidaPor,
 		createdAt:   p.CreatedAt,
 	}, nil
@@ -97,7 +97,7 @@ func HydrateImagen(p HydrateImagenParams) *Imagen {
 		id:          p.ID,
 		eventoID:    p.EventoID,
 		ruta:        p.Ruta,
-		descripcion: p.Descripcion,
+		description: p.Description,
 		subidaPor:   p.SubidaPor,
 		createdAt:   p.CreatedAt,
 	}
@@ -129,8 +129,8 @@ func (i *Imagen) EventoID() uuid.UUID { return i.eventoID }
 // Ruta returns the blob path relative to STORAGE_DIR.
 func (i *Imagen) Ruta() string { return i.ruta }
 
-// Descripcion returns the free-form caption, possibly empty.
-func (i *Imagen) Descripcion() string { return i.descripcion }
+// Description returns the free-form caption, possibly empty.
+func (i *Imagen) Description() string { return i.description }
 
 // SubidaPor returns the operator who uploaded the evidence.
 func (i *Imagen) SubidaPor() string { return i.subidaPor }
