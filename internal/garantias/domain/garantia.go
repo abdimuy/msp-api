@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -49,10 +50,18 @@ type Garantia struct {
 // ActorParams carries the event provenance every mutating method requires
 // (brief decision 8): who performed the action, the offline idempotency key
 // and the device timestamp. The aggregate never invents these values.
+//
+// RolDecisor is MANDATORY in the three decision events (RegistrarDiagnostico,
+// AutorizarCambioFisico, RegistrarDesenlace) and optional elsewhere, where it
+// is stored when present. GPSLat/GPSLon are always optional but come as a
+// pair, each in range (spec §3.3): the column pair records where the agent
+// was, and half a position is not a position.
 type ActorParams struct {
 	Usuario           string
 	ClaveIdempotencia string
 	DeviceCreatedAt   time.Time
+	RolDecisor        *RolDecisor
+	GPSLat, GPSLon    *float64
 }
 
 // AbrirGarantiaParams carries the inputs to AbrirGarantia.
@@ -128,6 +137,34 @@ func validarOrigenCliente(p AbrirGarantiaParams) error {
 	return nil
 }
 
+// validarDomicilioLargo enforces each address field against its column width
+// (migration 000050). It runs after validarOrigenCliente, which already
+// required every field on cliente folios, and after validarOrigenPiso, which
+// forbids the whole block on piso ones. Counting is in characters because the
+// columns are VARCHAR(n) UTF8: a byte count would reject accented names that
+// the database happily stores.
+func validarDomicilioLargo(p AbrirGarantiaParams) error {
+	if utf8.RuneCountInString(p.Calle) > 300 {
+		return ErrCalleMuyLarga
+	}
+	if utf8.RuneCountInString(p.NumeroExterior) > 20 {
+		return ErrNumeroExteriorMuyLargo
+	}
+	if utf8.RuneCountInString(p.Colonia) > 100 {
+		return ErrColoniaMuyLarga
+	}
+	if utf8.RuneCountInString(p.Localidad) > 100 {
+		return ErrLocalidadMuyLarga
+	}
+	if utf8.RuneCountInString(p.Ciudad) > 100 {
+		return ErrCiudadMuyLarga
+	}
+	if utf8.RuneCountInString(p.CodigoPostal) > 10 {
+		return ErrCodigoPostalMuyLargo
+	}
+	return nil
+}
+
 // AbrirGarantia opens a new warranty folio. The origin decides which fields
 // are mandatory and which are rejected: cliente folios take client, sale and
 // account balance plus the home address; piso folios reject all of them.
@@ -145,6 +182,9 @@ func AbrirGarantia(p AbrirGarantiaParams) (*Garantia, error) {
 	if abiertoPor == "" {
 		return nil, ErrAbiertoPorObligatorio
 	}
+	if utf8.RuneCountInString(abiertoPor) > 64 {
+		return nil, ErrAbiertoPorMuyLargo
+	}
 	description := strings.TrimSpace(p.Description)
 	if description == "" {
 		return nil, ErrDescriptionObligatoria
@@ -154,6 +194,12 @@ func AbrirGarantia(p AbrirGarantiaParams) (*Garantia, error) {
 	}
 	if err := validarOrigenCliente(p); err != nil {
 		return nil, err
+	}
+	if err := validarDomicilioLargo(p); err != nil {
+		return nil, err
+	}
+	if p.EstadoCuenta != nil && !p.EstadoCuenta.IsValid() {
+		return nil, ErrEstadoCuentaInvalido
 	}
 	g := &Garantia{
 		id:             uuid.New(),
@@ -196,6 +242,9 @@ func (g *Garantia) buildEvent(actor ActorParams, now time.Time, tipo TipoEvento,
 		EtapaDesde:        desde,
 		EtapaHasta:        hasta,
 		Usuario:           actor.Usuario,
+		RolDecisor:        actor.RolDecisor,
+		GPSLat:            actor.GPSLat,
+		GPSLon:            actor.GPSLon,
 		CreatedAt:         now,
 		DeviceCreatedAt:   actor.DeviceCreatedAt,
 		ClaveIdempotencia: actor.ClaveIdempotencia,
@@ -292,6 +341,9 @@ func (g *Garantia) RegistrarDiagnostico(articuloID uuid.UUID, ruta RutaReparacio
 	if err != nil {
 		return err
 	}
+	if actor.RolDecisor == nil {
+		return ErrRolDecisorObligatorio
+	}
 	if err := articulo.registrarDiagnostico(ruta, now); err != nil {
 		return err
 	}
@@ -344,6 +396,9 @@ func (g *Garantia) AutorizarCambioFisico(articuloID uuid.UUID, actor ActorParams
 	if err != nil {
 		return err
 	}
+	if actor.RolDecisor == nil {
+		return ErrRolDecisorObligatorio
+	}
 	reemplazo, err := newArticulo(NewArticuloParams{
 		ID:          uuid.New(),
 		GarantiaID:  g.id,
@@ -381,6 +436,9 @@ func (g *Garantia) RegistrarDesenlace(articuloID uuid.UUID, desenlace Desenlace,
 	e, err := g.buildEvent(actor, now, TipoEventoDesenlaceRegistrado, &articuloID, "", &desde, &hasta)
 	if err != nil {
 		return err
+	}
+	if actor.RolDecisor == nil {
+		return ErrRolDecisorObligatorio
 	}
 	if err := articulo.registrarDesenlace(desenlace, hasta, now); err != nil {
 		return err
