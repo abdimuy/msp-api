@@ -1,8 +1,10 @@
 package domain
 
 import (
+	"math"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -51,14 +53,35 @@ type EventoParams struct {
 // event ID is generated here via uuid.New(). Tipo is a validated closed enum
 // fed by typed constants, so an invalid value can never reach this function.
 func newEvento(p EventoParams) (*Evento, error) {
-	if strings.TrimSpace(p.Usuario) == "" {
+	usuario := strings.TrimSpace(p.Usuario)
+	if usuario == "" {
 		return nil, ErrEventoUsuarioObligatorio
 	}
-	if strings.TrimSpace(p.ClaveIdempotencia) == "" {
+	if utf8.RuneCountInString(usuario) > 64 {
+		return nil, ErrEventoUsuarioMuyLargo
+	}
+	clave := strings.TrimSpace(p.ClaveIdempotencia)
+	if clave == "" {
 		return nil, ErrEventoClaveIdempotenciaObligatoria
+	}
+	// uuid.Parse also accepts "{…}", "urn:uuid:…" and the 32 hex digits
+	// without dashes. All four spell the same retry, but stored verbatim
+	// they would be four different values for the UNIQUE index and
+	// idempotency would silently stop working. The canonical String()
+	// form is always 36 lowercase ASCII characters, so it also fits the
+	// CHAR(36) column without truncating.
+	parsed, err := uuid.Parse(clave)
+	if err != nil {
+		return nil, ErrEventoClaveIdempotenciaInvalida
+	}
+	if p.RolDecisor != nil && !p.RolDecisor.IsValid() {
+		return nil, ErrRolDecisorInvalido
 	}
 	if p.DeviceCreatedAt.IsZero() {
 		return nil, ErrEventoDeviceCreatedAtObligatorio
+	}
+	if !gpsValido(p.GPSLat, p.GPSLon) {
+		return nil, ErrEventoGPSInvalido
 	}
 	return &Evento{
 		id:                uuid.New(),
@@ -68,14 +91,32 @@ func newEvento(p EventoParams) (*Evento, error) {
 		description:       p.Description,
 		etapaDesde:        p.EtapaDesde,
 		etapaHasta:        p.EtapaHasta,
-		usuario:           strings.TrimSpace(p.Usuario),
+		usuario:           usuario,
 		rolDecisor:        p.RolDecisor,
 		gpsLat:            p.GPSLat,
 		gpsLon:            p.GPSLon,
 		createdAt:         p.CreatedAt,
 		deviceCreatedAt:   p.DeviceCreatedAt,
-		claveIdempotencia: p.ClaveIdempotencia,
+		claveIdempotencia: parsed.String(),
 	}, nil
+}
+
+// gpsValido reports whether the event's coordinates are acceptable. They are
+// optional, but they come as a pair (spec §3.3): half a position would be
+// stored as a lat with no lon and read back as a place off the coast of
+// Africa. Each value must also be in its own range, or the same argument
+// holds for a lat of 200.
+func gpsValido(lat, lon *float64) bool {
+	if lat == nil && lon == nil {
+		return true
+	}
+	if lat == nil || lon == nil {
+		return false
+	}
+	if math.IsNaN(*lat) || math.IsNaN(*lon) || math.IsInf(*lat, 0) || math.IsInf(*lon, 0) {
+		return false
+	}
+	return *lat >= -90 && *lat <= 90 && *lon >= -180 && *lon <= 180
 }
 
 // HydrateEventoParams is the persisted shape used by the repository over
