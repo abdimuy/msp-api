@@ -281,6 +281,65 @@ Ronda 1 del review de la B, más la nota del 7-Oct. Cada punto con su prueba.
 
 Cobertura tras la ronda: domain 100.0% ≥ 99%, app 93.6% ≥ 90%; `golangci-lint` 0 issues; suite `-race` verde.
 
+### Ronda 2 del review (7-Oct) — los tres puntos y la nota del issue
+
+7. **El candado antes que la búsqueda, con prueba** (punto 1). El orden y el comentario del porqué ya estaban; lo que faltaba era la prueba. Los fakes traen un `registrador` compartido por el repo de folios y el de eventos (cableado en `setupService`), y `TestAvanzarArticulo_CandadoAntesQueLaClave` exige que `obtener_para_actualizar` aparezca antes que `buscar_clave`. El mutante "buscar la clave antes del candado" pasa a morir.
+8. **Los dos GPS separados** (punto 2). `AbrirGarantiaCmd.GPSLat/GPSLon` ahora es la posición del agente y va al evento `folio_abierto`; el domicilio vive en `DomicilioGPSLat/DomicilioGPSLon` y va al folio, donde `validarOrigenPiso` lo sigue rechazando en piso. Pruebas: `TestAbrirGarantia_PisoConGPSDelAgente` (pasa: el evento guarda la posición y el folio no la), `TestAbrirGarantia_PisoConDomicilioGPS` (control: `ErrDomicilioNoPermitido`) y `TestAbrirGarantia_ClienteGuardaLosDosGPS` (los dos valores quedan cada uno donde corresponde).
+9. **Menores a, b y c.**
+   - **a:** `TestAbrirGarantia_CarreraConClaveDeOtroEvento` cubre el chequeo de tipo de `resolverDuplicada` —el que el mutante alcanzaba—; el chequeo de dentro de la transacción ya lo cubre `TestAbrirGarantia_ClaveDeOtroEvento`.
+   - **b:** la comparación de tipo entró a `ejecutarFolio` vía `revisarClave` (folio **y** tipo), y también en `resolverDuplicada`. `TestAvanzarArticulo_ClaveDeOtroTipoMismoFolio` mata el primer call site y `TestAvanzarArticulo_CarreraConClaveDeOtroTipo`, el segundo. Las pruebas de repetición de `AvanzarArticulo` e `IniciarProceso` ahora siembran `etapa_avanzada` en vez de `articulo_agregado`, porque una clave de otro tipo ya no es repetición de ese comando.
+   - **c:** `AbrirGarantia` responde con `Obtener` también cuando la creación salió bien, de modo que la respuesta de una creación y la de su repetición tienen la misma forma.
+10. **La nota del issue (7-Oct), la clave normalizada antes de buscar:** ya estaba en esta ronda, en los dos caminos (`normalizarClave` en `ejecutarFolio` y en `AbrirGarantia`), con `ClaveRepetida_DistintaGrafia` y `ClaveNoUUID`.
+
+Los cuatro mutantes se le aplicaron al código y la prueba se puso roja; después se restauró el archivo. No es una deducción:
+
+| Mutante | Prueba que lo mata |
+|---|---|
+| clave buscada antes del candado | `TestAvanzarArticulo_CandadoAntesQueLaClave` |
+| `revisarClave` sin comparar el tipo | `TestAvanzarArticulo_ClaveDeOtroTipoMismoFolio` |
+| `resolverDuplicada` sin comparar el tipo | `TestAvanzarArticulo_CarreraConClaveDeOtroTipo` |
+| `AbrirGarantia` acepta cualquier tipo tras el rollback | `TestAbrirGarantia_CarreraConClaveDeOtroEvento` |
+
+### Verificación de la ronda 2 (salida literal)
+
+```
+gofmt -l internal/garantias
+(sin salida)
+
+go vet ./internal/garantias/...
+(sin salida)
+
+golangci-lint run ./internal/garantias/...
+0 issues.
+
+go build ./...
+(sin salida)
+
+go test -race -count=1 ./internal/garantias/...
+ok  	github.com/abdimuy/msp-api/internal/garantias	3.425s
+ok  	github.com/abdimuy/msp-api/internal/garantias/app	3.471s
+ok  	github.com/abdimuy/msp-api/internal/garantias/domain	3.506s
+ok  	github.com/abdimuy/msp-api/internal/garantias/infra/storage	3.488s
+ok  	github.com/abdimuy/msp-api/internal/garantias/ports/outbound	3.159s
+
+go test -count=1 -coverprofile=app.out ./internal/garantias/app/
+ok  	github.com/abdimuy/msp-api/internal/garantias/app	1.315s	coverage: 94.8% of statements
+
+go tool cover -func=app.out | tail -1
+total:				(statements)	94.8%
+```
+
+`app` subió de 93.6% a 94.8% (piso del brief: 90%).
+
+**Desviación declarada:** `make check-sealed MODULE=garantias` no corre en esta consola de Windows (`El sistema no puede encontrar la ruta especificada`: el target es shell POSIX y aquí `make` invoca `cmd`). Se corrió el mismo pipeline a mano:
+
+```
+go list -deps ./internal/garantias/... | filtro msp-api/internal/ que no sea garantias ni platform
+→ sin fugas
+```
+
+**Pendiente, no mío:** el rebase sobre `main` que pide el issue espera a que se fusione el #24 (sigue abierto el 8-Oct).
+
 ## Report Path
 
 `docs/superpowers/plans/garantias-task-5-report.md`

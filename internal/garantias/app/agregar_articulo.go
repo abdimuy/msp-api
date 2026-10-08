@@ -26,6 +26,7 @@ type AgregarArticuloCmd struct {
 func (s *Service) AgregarArticulo(ctx context.Context, cmd AgregarArticuloCmd) (*domain.Garantia, error) {
 	return s.ejecutarFolio(ctx, cmd.GarantiaID, domain.PermisoCrear,
 		actorDe(cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon),
+		domain.TipoEventoArticuloAgregado,
 		func(_ context.Context, g *domain.Garantia, actor domain.ActorParams) error {
 			return g.AgregarArticulo(domain.AgregarArticuloParams{
 				ArticuloID:  cmd.ArticuloID,

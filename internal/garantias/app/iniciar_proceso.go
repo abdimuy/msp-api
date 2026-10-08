@@ -24,6 +24,7 @@ type IniciarProcesoCmd struct {
 func (s *Service) IniciarProceso(ctx context.Context, cmd IniciarProcesoCmd) (*domain.Garantia, error) {
 	return s.ejecutarFolio(ctx, cmd.GarantiaID, domain.PermisoActualizar,
 		actorDe(cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon),
+		domain.TipoEventoEtapaAvanzada,
 		func(_ context.Context, g *domain.Garantia, actor domain.ActorParams) error {
 			return g.IniciarProceso(actor, s.clock.Now())
 		})

@@ -27,15 +27,17 @@ type fakeGarantiaRepo struct {
 	// that got rolled back is indistinguishable from never having happened.
 	stagedCreated []*domain.Garantia
 	stagedSaved   []*domain.Garantia
-	// lastSaved is the raw aggregate handed to Guardar, kept for assertions on
-	// its pending events (the clones lose them).
-	lastSaved *domain.Garantia
-	createErr error
-	saveErr   error
-	getErr    error
-	seeded    int
-	onSave    func()
-	onCreate  func()
+	// lastSaved/lastCreated are the raw aggregates handed to Guardar/Crear,
+	// kept for assertions on their pending events (the clones lose them).
+	lastSaved   *domain.Garantia
+	lastCreated *domain.Garantia
+	createErr   error
+	saveErr     error
+	getErr      error
+	seeded      int
+	onSave      func()
+	onCreate    func()
+	orden       *registrador
 }
 
 func newFakeGarantiaRepo() *fakeGarantiaRepo {
@@ -79,6 +81,7 @@ func (f *fakeGarantiaRepo) Crear(ctx context.Context, g *domain.Garantia) error 
 	if f.onCreate != nil {
 		f.onCreate()
 	}
+	f.lastCreated = g
 	clone := cloneGarantia(g)
 	f.stagedCreated = append(f.stagedCreated, clone)
 	if f.createErr != nil {
@@ -109,6 +112,7 @@ func (f *fakeGarantiaRepo) Guardar(ctx context.Context, g *domain.Garantia) erro
 func (f *fakeGarantiaRepo) ObtenerParaActualizar(ctx context.Context, id uuid.UUID) (*domain.Garantia, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.orden.registra("obtener_para_actualizar")
 	if g, ok := f.forUpdate[id]; ok {
 		return cloneGarantia(g), nil
 	}
@@ -142,6 +146,7 @@ type fakeEventoRepo struct {
 	byID    map[uuid.UUID]*domain.Evento
 	byClave map[string]*domain.Evento
 	getErr  error
+	orden   *registrador
 }
 
 func newFakeEventoRepo() *fakeEventoRepo {
@@ -168,6 +173,7 @@ func (f *fakeEventoRepo) ListarPorGarantia(ctx context.Context, garantiaID uuid.
 func (f *fakeEventoRepo) ObtenerPorClaveIdempotencia(ctx context.Context, clave string) (*domain.Evento, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.orden.registra("buscar_clave")
 	if f.getErr != nil {
 		return nil, f.getErr
 	}
