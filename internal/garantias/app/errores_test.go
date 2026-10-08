@@ -19,7 +19,7 @@ func TestErroresDePuertoSePropagan(t *testing.T) {
 
 	t.Run("evento_repo_falla_al_ver_la_clave", func(t *testing.T) {
 		t.Parallel()
-		svc, repo, erepo, _, _, _, clk := setupService()
+		svc, repo, erepo, _, _, _, clk, _ := setupService()
 		g := seedFolio(t, repo, clk.Now(), 1)
 		erepo.getErr = errBD
 
@@ -40,7 +40,7 @@ func TestErroresDePuertoSePropagan(t *testing.T) {
 
 	t.Run("folio_inexistente", func(t *testing.T) {
 		t.Parallel()
-		svc, _, _, _, _, _, clk := setupService()
+		svc, _, _, _, _, _, clk, _ := setupService()
 
 		_, err := svc.IniciarProceso(context.Background(), app.IniciarProcesoCmd{
 			GarantiaID:        uuidAleatorio(),
@@ -56,7 +56,7 @@ func TestErroresDePuertoSePropagan(t *testing.T) {
 	// error differs, so only ErrClaveIdempotenciaDuplicada may be swallowed.
 	t.Run("guardar_falla_de_verdad", func(t *testing.T) {
 		t.Parallel()
-		svc, repo, _, _, _, _, clk := setupService()
+		svc, repo, _, _, _, _, clk, _ := setupService()
 		g := seedFolio(t, repo, clk.Now(), 1)
 		repo.saveErr = errBD
 
@@ -74,7 +74,7 @@ func TestErroresDePuertoSePropagan(t *testing.T) {
 
 	t.Run("tiene_permiso_falla", func(t *testing.T) {
 		t.Parallel()
-		svc, repo, _, _, tx, id, clk := setupService()
+		svc, repo, _, _, tx, id, clk, _ := setupService()
 		g := seedFolio(t, repo, clk.Now(), 1)
 		id.errPerm = errBD
 
@@ -95,7 +95,7 @@ func TestErroresDePuertoSePropagan(t *testing.T) {
 
 	t.Run("generador_de_folio_falla", func(t *testing.T) {
 		t.Parallel()
-		svc, repo, _, fgen, _, _, clk := setupService()
+		svc, repo, _, fgen, _, _, clk, _ := setupService()
 		fgen.err = errBD
 
 		_, err := svc.AbrirGarantia(context.Background(), app.AbrirGarantiaCmd{
@@ -114,7 +114,7 @@ func TestErroresDePuertoSePropagan(t *testing.T) {
 
 	t.Run("crear_falla_de_verdad", func(t *testing.T) {
 		t.Parallel()
-		svc, repo, _, _, _, _, clk := setupService()
+		svc, repo, _, _, _, _, clk, _ := setupService()
 		repo.createErr = errBD
 
 		_, err := svc.AbrirGarantia(context.Background(), app.AbrirGarantiaCmd{
@@ -130,7 +130,7 @@ func TestErroresDePuertoSePropagan(t *testing.T) {
 
 	t.Run("piso_rechaza_datos_de_cliente", func(t *testing.T) {
 		t.Parallel()
-		svc, repo, _, _, _, _, clk := setupService()
+		svc, repo, _, _, _, _, clk, _ := setupService()
 		cliente := 77
 
 		_, err := svc.AbrirGarantia(context.Background(), app.AbrirGarantiaCmd{

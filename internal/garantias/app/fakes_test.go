@@ -127,6 +127,42 @@ func clave() string {
 	return uuid.New().String()
 }
 
+// registrador records the order of the repo calls the order test cares about.
+// It is shared by the folio repo (obtener_para_actualizar) and the event repo
+// (buscar_clave), so the test can assert the lock comes first no matter which
+// fake the runtime call reaches.
+type registrador struct {
+	mu   sync.Mutex
+	paso []string
+}
+
+func (r *registrador) registra(p string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.paso = append(r.paso, p)
+}
+
+func (r *registrador) pasos() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]string, len(r.paso))
+	copy(out, r.paso)
+	return out
+}
+
+// primerPaso returns the index of the first occurrence of paso, or -1.
+func primerPaso(r *registrador, paso string) int {
+	for i, p := range r.pasos() {
+		if p == paso {
+			return i
+		}
+	}
+	return -1
+}
+
 // seedFolio builds a real aggregate with the domain and stores it in the fake
 // repo, so the commands under test read a genuine entity rather than a stub.
 func seedFolio(t *testing.T, repo *fakeGarantiaRepo, now time.Time, nArts int) *domain.Garantia {
@@ -193,6 +229,24 @@ func hydrateEvento(garantiaID uuid.UUID, clave string, tipo domain.TipoEvento, n
 		DeviceCreatedAt:   now,
 		ClaveIdempotencia: clave,
 	})
+}
+
+// unicoEventoPendiente returns the single pending event of the raw aggregate a
+// command handed to Crear. Pending events only live on that raw aggregate:
+// the clones and the re-read answers do not carry them.
+func unicoEventoPendiente(t *testing.T, g *domain.Garantia) *domain.Evento {
+	t.Helper()
+	if g == nil {
+		t.Fatal("el repo no recibio ningun agregado")
+	}
+	var evs []*domain.Evento
+	for ev := range g.EventosPendientes() {
+		evs = append(evs, ev)
+	}
+	if len(evs) != 1 {
+		t.Fatalf("eventos pendientes = %d, want 1", len(evs))
+	}
+	return evs[0]
 }
 
 // uuidAleatorio returns an id no folio will ever carry.

@@ -12,7 +12,7 @@ import (
 
 func TestAgregarArticulo_CaminoFeliz(t *testing.T) {
 	t.Parallel()
-	svc, repo, _, _, tx, _, clk := setupService()
+	svc, repo, _, _, tx, _, clk, _ := setupService()
 	g := seedFolio(t, repo, clk.Now(), 1)
 	antes := g.ArticulosCount()
 
@@ -42,7 +42,7 @@ func TestAgregarArticulo_CaminoFeliz(t *testing.T) {
 
 func TestAgregarArticulo_NoAutenticado(t *testing.T) {
 	t.Parallel()
-	svc, repo, _, _, tx, id, clk := setupService()
+	svc, repo, _, _, tx, id, clk, _ := setupService()
 	g := seedFolio(t, repo, clk.Now(), 1)
 	id.errUser = domain.ErrUsuarioNoAutenticado
 
@@ -63,7 +63,7 @@ func TestAgregarArticulo_NoAutenticado(t *testing.T) {
 
 func TestAgregarArticulo_SinPermiso(t *testing.T) {
 	t.Parallel()
-	svc, repo, _, _, tx, id, clk := setupService()
+	svc, repo, _, _, tx, id, clk, _ := setupService()
 	g := seedFolio(t, repo, clk.Now(), 1)
 	id.denegar = &permCrear
 
@@ -84,7 +84,7 @@ func TestAgregarArticulo_SinPermiso(t *testing.T) {
 
 func TestAgregarArticulo_ClaveRepetida_NoEscribe(t *testing.T) {
 	t.Parallel()
-	svc, repo, erepo, _, _, _, clk := setupService()
+	svc, repo, erepo, _, _, _, clk, _ := setupService()
 	g := seedFolio(t, repo, clk.Now(), 1)
 	k := clave()
 	erepo.addEvento(hydrateEvento(g.ID(), k, domain.TipoEventoArticuloAgregado, clk.Now()))
@@ -112,7 +112,7 @@ func TestAgregarArticulo_ClaveRepetida_NoEscribe(t *testing.T) {
 // command must still recognize the already-recorded key.
 func TestAgregarArticulo_ClaveRepetida_DistintaGrafia(t *testing.T) {
 	t.Parallel()
-	svc, repo, erepo, _, _, _, clk := setupService()
+	svc, repo, erepo, _, _, _, clk, _ := setupService()
 	g := seedFolio(t, repo, clk.Now(), 1)
 	k := clave()
 	erepo.addEvento(hydrateEvento(g.ID(), k, domain.TipoEventoArticuloAgregado, clk.Now()))
@@ -134,7 +134,7 @@ func TestAgregarArticulo_ClaveRepetida_DistintaGrafia(t *testing.T) {
 
 func TestAgregarArticulo_ClaveNoUUID(t *testing.T) {
 	t.Parallel()
-	svc, repo, _, _, tx, _, clk := setupService()
+	svc, repo, _, _, tx, _, clk, _ := setupService()
 	g := seedFolio(t, repo, clk.Now(), 1)
 
 	_, err := svc.AgregarArticulo(context.Background(), app.AgregarArticuloCmd{
@@ -154,7 +154,7 @@ func TestAgregarArticulo_ClaveNoUUID(t *testing.T) {
 
 func TestAgregarArticulo_CarreraEnGuardar(t *testing.T) {
 	t.Parallel()
-	svc, repo, erepo, _, tx, _, clk := setupService()
+	svc, repo, erepo, _, tx, _, clk, _ := setupService()
 	g := seedFolio(t, repo, clk.Now(), 1)
 	k := clave()
 
@@ -194,7 +194,7 @@ func TestAgregarArticulo_CarreraEnGuardar(t *testing.T) {
 
 func TestAgregarArticulo_ClaveDeOtroFolio(t *testing.T) {
 	t.Parallel()
-	svc, repo, erepo, _, tx, _, clk := setupService()
+	svc, repo, erepo, _, tx, _, clk, _ := setupService()
 	g := seedFolio(t, repo, clk.Now(), 1)
 	otro := seedFolio(t, repo, clk.Now(), 1)
 	k := clave()
@@ -220,7 +220,7 @@ func TestAgregarArticulo_ClaveDeOtroFolio(t *testing.T) {
 
 func TestAgregarArticulo_ErrorDeDominio_NoGuarda(t *testing.T) {
 	t.Parallel()
-	svc, repo, _, _, _, _, clk := setupService()
+	svc, repo, _, _, _, _, clk, _ := setupService()
 	g := seedFolio(t, repo, clk.Now(), 0)
 
 	_, err := svc.AgregarArticulo(context.Background(), app.AgregarArticuloCmd{

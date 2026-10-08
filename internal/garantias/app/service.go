@@ -67,11 +67,19 @@ type operacion func(ctx context.Context, g *domain.Garantia, actor domain.ActorP
 //  5. after the rollback, re-read who owns the key — the twin won, so the
 //     command answers with the current state — and re-read the folio outside
 //     the transaction to return it
+//
+// tipo is the event this command records. The lock must come before the key
+// lookup (3 before a): two requests to the same folio then serialize, the
+// second one sees the first one's event and answers as a replay. That serial
+// behavior is not a performance detail — it is what the phone receives: the
+// simultaneous retry must be a success, not a stage_transition_forbidden over
+// an article that actually saved.
 func (s *Service) ejecutarFolio(
 	ctx context.Context,
 	garantiaID uuid.UUID,
 	permiso domain.Permiso,
 	actor domain.ActorParams,
+	tipo domain.TipoEvento,
 	mutar operacion,
 ) (*domain.Garantia, error) {
 	usuario, err := s.usuario(ctx)
@@ -89,10 +97,10 @@ func (s *Service) ejecutarFolio(
 	actor.ClaveIdempotencia = clave
 
 	err = s.tx.RunInTx(ctx, func(ctx context.Context) error {
-		// Lock the folio before looking at the key (3b before 3a). With the
-		// lock held, two requests to the same folio serialize, so the second
-		// one does see the event the first one wrote and the cheap replay
-		// path below triggers instead of racing into Guardar.
+		// Lock the folio before looking at the key. With the lock held, two
+		// requests to the same folio serialize, so the second one does see the
+		// event the first one wrote and the cheap replay path below triggers
+		// instead of racing into Guardar.
 		g, err := s.garantias.ObtenerParaActualizar(ctx, garantiaID)
 		if err != nil {
 			return err
@@ -101,14 +109,14 @@ func (s *Service) ejecutarFolio(
 		if err != nil {
 			return err
 		}
-		switch {
-		case vista == nil:
-		case vista.GarantiaID() == garantiaID:
-			// Replay of a command this folio already recorded: succeed with
-			// the current state and write nothing.
+		repite, err := revisarClave(vista, garantiaID, tipo)
+		if err != nil {
+			return err
+		}
+		if repite {
+			// Replay of this exact command: succeed with the current state
+			// and write nothing.
 			return nil
-		default:
-			return domain.ErrClaveIdempotenciaDeOtroFolio
 		}
 
 		if err := mutar(ctx, g, actor); err != nil {
@@ -129,10 +137,26 @@ func (s *Service) ejecutarFolio(
 			return nil, err
 		}
 		return s.resolverDuplicada(ctx, actor.ClaveIdempotencia, func(v *domain.Evento) bool {
-			return v.GarantiaID() == garantiaID
+			return v.GarantiaID() == garantiaID && v.Tipo() == tipo
 		})
 	}
 	return s.garantias.Obtener(ctx, garantiaID)
+}
+
+// revisarClave decides what an already-registered idempotency key means for
+// this command, inside the transaction and after the folio is locked. Absent:
+// the command proceeds. Present on this same folio and of this same event
+// type: a replay of this exact command, which succeeds writing nothing. Any
+// other owner is a key reused against the wrong folio or the wrong command.
+func revisarClave(vista *domain.Evento, garantiaID uuid.UUID, tipo domain.TipoEvento) (bool, error) {
+	switch {
+	case vista == nil:
+		return false, nil
+	case vista.GarantiaID() == garantiaID && vista.Tipo() == tipo:
+		return true, nil
+	default:
+		return false, domain.ErrClaveIdempotenciaDeOtroFolio
+	}
 }
 
 // resolverDuplicada runs after the rollback caused by a duplicate key: the

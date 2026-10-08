@@ -10,6 +10,12 @@ import (
 )
 
 // AbrirGarantiaCmd contains the input to open a warranty folio.
+//
+// The two GPS pairs are different data (spec §3.1 and §3.3): GPSLat/GPSLon is
+// where the agent was when saving, and it belongs to the folio_abierto event
+// on any origin, piso included. DomicilioGPSLat/DomicilioGPSLon is where the
+// client lives, it belongs to the folio's address, and the domain rejects it
+// on piso folios along with the rest of the address.
 type AbrirGarantiaCmd struct {
 	Origen            domain.OrigenFolio
 	ClienteID         *int
@@ -25,6 +31,8 @@ type AbrirGarantiaCmd struct {
 	CodigoPostal      string
 	GPSLat            *float64
 	GPSLon            *float64
+	DomicilioGPSLat   *float64
+	DomicilioGPSLon   *float64
 	ClaveIdempotencia string
 	DeviceCreatedAt   time.Time
 }
@@ -87,8 +95,8 @@ func (s *Service) AbrirGarantia(ctx context.Context, cmd AbrirGarantiaCmd) (*dom
 			Localidad:      cmd.Localidad,
 			Ciudad:         cmd.Ciudad,
 			CodigoPostal:   cmd.CodigoPostal,
-			GPSLat:         cmd.GPSLat,
-			GPSLon:         cmd.GPSLon,
+			GPSLat:         cmd.DomicilioGPSLat,
+			GPSLon:         cmd.DomicilioGPSLon,
 			AbiertoPor:     actor.Usuario,
 			Now:            s.clock.Now(),
 			Actor:          actor,
@@ -110,14 +118,18 @@ func (s *Service) AbrirGarantia(ctx context.Context, cmd AbrirGarantiaCmd) (*dom
 	if err != nil && !errors.Is(err, domain.ErrClaveIdempotenciaDuplicada) {
 		return nil, err
 	}
-	if creada != nil {
-		return creada, nil
+	if creada == nil {
+		// The write rolled back; whoever owns the key now wins. For AbrirGarantia
+		// the key is a replay only when the event behind it is folio_abierto.
+		return s.resolverDuplicada(ctx, actor.ClaveIdempotencia, func(v *domain.Evento) bool {
+			return v.Tipo() == domain.TipoEventoFolioAbierto
+		})
 	}
-	// The write rolled back; whoever owns the key now wins. For AbrirGarantia
-	// the key is a replay only when the event behind it is folio_abierto.
-	return s.resolverDuplicada(ctx, actor.ClaveIdempotencia, func(v *domain.Evento) bool {
-		return v.Tipo() == domain.TipoEventoFolioAbierto
-	})
+	// Answer with the re-read folio, like every other command: an aggregate
+	// still in memory and one read back from the store can differ in timestamp
+	// precision, and the replay of this same command already answers with the
+	// second shape.
+	return s.garantias.Obtener(ctx, creada.ID())
 }
 
 // actorDeApertura resolves the user from Identity and checks the permiso. The
