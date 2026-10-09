@@ -181,70 +181,86 @@ func (r *BandejaRepo) Listar(
 	err = firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
 		q := firebird.GetQuerier(ctx, r.pool.DB)
 
-		filas, err := consultarGarantias(ctx, q, query, args...)
-		if err != nil {
-			return err
-		}
+		pagina, err = listarBandejaEnTx(
+			ctx,
+			q,
+			query,
+			args,
+			limite,
+		)
 
-		hayMas := len(filas) > limite
-		if hayMas {
-			filas = filas[:limite]
-		}
-
-		ids := make([]string, 0, len(filas))
-		for _, fila := range filas {
-			ids = append(ids, fila.id)
-		}
-
-		articulos, err := listarArticulosPorGarantias(ctx, q, ids)
-		if err != nil {
-			return err
-		}
-
-		items := make([]*domain.Garantia, 0, len(filas))
-
-		for _, fila := range filas {
-			g, err := hydrateGarantia(
-				fila,
-				articulos[fila.id],
-			)
-			if err != nil {
-				return err
-			}
-
-			items = append(items, g)
-		}
-
-		var siguienteCursor string
-
-		if hayMas && len(items) > 0 {
-			ultimo := items[len(items)-1]
-			ultimoID := ultimo.ID()
-
-			siguienteCursor, err = pagination.EncodeCursor(
-				pagination.Cursor{
-					// UpdatedAt contiene CREATED_AT para esta paginación.
-					UpdatedAt: ultimo.CreatedAt(),
-					ID:        &ultimoID,
-				},
-			)
-			if err != nil {
-				return err
-			}
-		}
-
-		pagina = outbound.Pagina[*domain.Garantia]{
-			Items:           items,
-			SiguienteCursor: siguienteCursor,
-		}
-
-		return nil
+		return err
 	})
 	if err != nil {
 		return outbound.Pagina[*domain.Garantia]{}, err
 	}
 
 	return pagina, nil
+}
+
+func listarBandejaEnTx(
+	ctx context.Context,
+	q firebird.Querier,
+	query string,
+	args []any,
+	limite int,
+) (outbound.Pagina[*domain.Garantia], error) {
+	filas, err := consultarGarantias(ctx, q, query, args...)
+	if err != nil {
+		return outbound.Pagina[*domain.Garantia]{}, err
+	}
+
+	hayMas := len(filas) > limite
+	if hayMas {
+		filas = filas[:limite]
+	}
+
+	ids := make([]string, 0, len(filas))
+	for _, fila := range filas {
+		ids = append(ids, fila.id)
+	}
+
+	articulos, err := listarArticulosPorGarantias(ctx, q, ids)
+	if err != nil {
+		return outbound.Pagina[*domain.Garantia]{}, err
+	}
+
+	items := make([]*domain.Garantia, 0, len(filas))
+
+	for _, fila := range filas {
+		g, err := hydrateGarantia(
+			fila,
+			articulos[fila.id],
+		)
+		if err != nil {
+			return outbound.Pagina[*domain.Garantia]{}, err
+		}
+
+		items = append(items, g)
+	}
+
+	var siguienteCursor string
+
+	if hayMas && len(items) > 0 {
+		ultimo := items[len(items)-1]
+		ultimoID := ultimo.ID()
+
+		siguienteCursor, err = pagination.EncodeCursor(
+			pagination.Cursor{
+				// UpdatedAt contiene CREATED_AT para esta paginación.
+				UpdatedAt: ultimo.CreatedAt(),
+				ID:        &ultimoID,
+			},
+		)
+		if err != nil {
+			return outbound.Pagina[*domain.Garantia]{}, err
+		}
+	}
+
+	return outbound.Pagina[*domain.Garantia]{
+		Items:           items,
+		SiguienteCursor: siguienteCursor,
+	}, nil
 }
 
 func consultarGarantias(

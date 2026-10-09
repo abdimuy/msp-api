@@ -13,6 +13,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/garantias/domain"
 	"github.com/abdimuy/msp-api/internal/garantias/infra/garfb"
 	"github.com/abdimuy/msp-api/internal/garantias/ports/outbound"
+	"github.com/abdimuy/msp-api/internal/platform/apperror"
 	"github.com/abdimuy/msp-api/internal/platform/fbtestutil"
 )
 
@@ -832,5 +833,131 @@ func TestBandejaRepo_Listar_NoDuplicaGarantiaConDosArticulos(t *testing.T) {
 		require.Len(t, pagina.Items, 1)
 		require.Equal(t, g.ID(), pagina.Items[0].ID())
 		require.Len(t, pagina.Items[0].ArticulosForRepo(), 2)
+	})
+}
+
+func TestBandejaRepo_ListarYObtener_ArticulosOrdenados(t *testing.T) {
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	garantiaRepo := garfb.NewGarantiaRepo(pool)
+	bandejaRepo := garfb.NewBandejaRepo(pool)
+	folios := garfb.NewFolioGenerator(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		base := time.Date(2026, 10, 9, 10, 0, 0, 0, time.UTC)
+
+		numero, err := folios.Siguiente(ctx)
+		require.NoError(t, err)
+
+		folio, err := domain.NewFolio(numero)
+		require.NoError(t, err)
+
+		origen, err := domain.ParseOrigenFolio("piso")
+		require.NoError(t, err)
+
+		g, err := domain.AbrirGarantia(domain.AbrirGarantiaParams{
+			Folio:       folio,
+			Origen:      origen,
+			Description: "Garantía para probar orden de artículos",
+			AbiertoPor:  "ruben",
+			Now:         base,
+			Actor: domain.ActorParams{
+				Usuario:           "ruben",
+				ClaveIdempotencia: uuid.NewString(),
+				DeviceCreatedAt:   base,
+			},
+		})
+		require.NoError(t, err)
+
+		casos := []struct {
+			clave string
+			fecha time.Time
+			id    int
+		}{
+			{
+				clave: "ORD-03",
+				fecha: base.Add(30 * time.Minute),
+				id:    810003,
+			},
+			{
+				clave: "ORD-01",
+				fecha: base.Add(10 * time.Minute),
+				id:    810001,
+			},
+			{
+				clave: "ORD-02",
+				fecha: base.Add(20 * time.Minute),
+				id:    810002,
+			},
+		}
+
+		for _, caso := range casos {
+			articuloID := caso.id
+
+			err = g.AgregarArticulo(
+				domain.AgregarArticuloParams{
+					ArticuloID:  &articuloID,
+					Clave:       caso.clave,
+					Description: "Artículo para probar orden",
+				},
+				domain.ActorParams{
+					Usuario:           "ruben",
+					ClaveIdempotencia: uuid.NewString(),
+					DeviceCreatedAt:   caso.fecha,
+				},
+				caso.fecha,
+			)
+			require.NoError(t, err)
+		}
+
+		require.NoError(t, garantiaRepo.Crear(ctx, g))
+
+		pagina, err := bandejaRepo.Listar(
+			ctx,
+			outbound.ListarGarantiasFiltros{},
+			outbound.Paginacion{
+				Limite: 20,
+			},
+		)
+		require.NoError(t, err)
+		require.Len(t, pagina.Items, 1)
+
+		articulosListar := pagina.Items[0].ArticulosForRepo()
+		require.Len(t, articulosListar, 3)
+		require.Equal(t, "ORD-01", articulosListar[0].Clave())
+		require.Equal(t, "ORD-02", articulosListar[1].Clave())
+		require.Equal(t, "ORD-03", articulosListar[2].Clave())
+
+		obtenida, err := garantiaRepo.Obtener(ctx, g.ID())
+		require.NoError(t, err)
+
+		articulosObtener := obtenida.ArticulosForRepo()
+		require.Len(t, articulosObtener, 3)
+		require.Equal(t, "ORD-01", articulosObtener[0].Clave())
+		require.Equal(t, "ORD-02", articulosObtener[1].Clave())
+		require.Equal(t, "ORD-03", articulosObtener[2].Clave())
+	})
+}
+
+func TestBandejaRepo_Listar_CursorInvalido(t *testing.T) {
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	bandejaRepo := garfb.NewBandejaRepo(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		_, err := bandejaRepo.Listar(
+			ctx,
+			outbound.ListarGarantiasFiltros{},
+			outbound.Paginacion{
+				Cursor: "cursor-invalido",
+				Limite: 20,
+			},
+		)
+
+		require.Error(t, err)
+
+		appErr, ok := apperror.As(err)
+		require.True(t, ok)
+		require.Equal(t, apperror.KindValidation, appErr.Kind)
+		require.Equal(t, "warranty_cursor_invalid", appErr.Code)
 	})
 }

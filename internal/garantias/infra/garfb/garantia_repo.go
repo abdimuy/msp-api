@@ -341,7 +341,7 @@ func insertarEvento(
 		e.ClaveIdempotencia(),
 	)
 	if err != nil {
-		if strings.Contains(err.Error(), "UQ_MSP_GA_EVENTO_CLAVE") {
+		if esClaveDuplicada(err) {
 			return domain.ErrClaveIdempotenciaDuplicada
 		}
 
@@ -349,6 +349,16 @@ func insertarEvento(
 	}
 
 	return nil
+}
+
+func esClaveDuplicada(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Dependemos del nombre de la restricción que incluye el driver
+	// de Firebird en el texto del error.
+	return strings.Contains(err.Error(), "UQ_MSP_GA_EVENTO_CLAVE")
 }
 
 func nullableString(v string) any {
