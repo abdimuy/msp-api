@@ -52,6 +52,8 @@ func (r *ImagenRepo) Registrar(
 }
 
 // ListarPorEvento returns the images for one event ordered by CREATED_AT and ID.
+//
+//nolint:dupl // El flujo de lectura es similar al de EventoRepo, pero usa otro dominio y mapper.
 func (r *ImagenRepo) ListarPorEvento(
 	ctx context.Context,
 	eventoID uuid.UUID,

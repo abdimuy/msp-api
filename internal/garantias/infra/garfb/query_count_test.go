@@ -136,8 +136,8 @@ func TestGarantiaRepo_ObtenerUsaDosConsultas(t *testing.T) {
 }
 
 func crearGarantiaParaConteoBandeja(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	repo *GarantiaRepo,
 	folios *FolioGenerator,
 	now time.Time,
@@ -168,7 +168,7 @@ func crearGarantiaParaConteoBandeja(
 	})
 	require.NoError(t, err)
 
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 2; i++ { //nolint:intrange
 		articuloID := articuloBase + i
 
 		err = g.AgregarArticulo(
@@ -201,10 +201,10 @@ func TestBandejaRepo_ListarUsaDosConsultasPorPagina(t *testing.T) {
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		base := time.Date(2026, 10, 9, 9, 0, 0, 0, time.UTC)
 
-		for i := 0; i < 3; i++ {
+		for i := 0; i < 3; i++ { //nolint:intrange
 			crearGarantiaParaConteoBandeja(
-				t,
 				ctx,
+				t,
 				repo,
 				folios,
 				base.Add(time.Duration(i)*time.Hour),

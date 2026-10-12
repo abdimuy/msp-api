@@ -17,6 +17,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/platform/fbtestutil"
 )
 
+//nolint:revive // Helper de prueba: se mantiene *testing.T como primer parámetro.
 func crearGarantiaParaBandeja(
 	t *testing.T,
 	ctx context.Context,
@@ -84,6 +85,7 @@ func crearGarantiaParaBandeja(
 	return g
 }
 
+//nolint:revive // Helper de prueba: se mantiene *testing.T como primer parámetro.
 func crearGarantiaClienteParaBandeja(
 	t *testing.T,
 	ctx context.Context,
@@ -153,6 +155,7 @@ func crearGarantiaClienteParaBandeja(
 	return g
 }
 
+//nolint:revive // Helper de prueba: se mantiene *testing.T como primer parámetro.
 func crearGarantiaConEtapaParaBandeja(
 	t *testing.T,
 	ctx context.Context,
@@ -627,6 +630,7 @@ func TestBandejaRepo_Listar_PaginacionSinRepetirNiSaltar(t *testing.T) {
 
 		creadas := make([]*domain.Garantia, 0, 5)
 
+		//nolint:intrange // El índice se usa para construir los datos de prueba.
 		for i := 0; i < 5; i++ {
 			g := crearGarantiaParaBandeja(
 				t,
@@ -708,6 +712,7 @@ func TestBandejaRepo_Listar_PaginacionConCreatedAtIgual(t *testing.T) {
 
 		creadas := make([]*domain.Garantia, 0, 4)
 
+		//nolint:intrange // El índice se usa para construir los datos de prueba.
 		for i := 0; i < 4; i++ {
 			g := crearGarantiaParaBandeja(
 				t,

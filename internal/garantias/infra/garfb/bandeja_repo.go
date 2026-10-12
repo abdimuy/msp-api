@@ -166,6 +166,7 @@ func buildBandejaQuery(
 	return query, args, limite, nil
 }
 
+// Listar devuelve una página de garantías aplicando filtros y paginación.
 func (r *BandejaRepo) Listar(
 	ctx context.Context,
 	f outbound.ListarGarantiasFiltros,

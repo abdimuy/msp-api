@@ -14,11 +14,13 @@ type scannerConError struct {
 	err error
 }
 
-func (s scannerConError) Scan(dest ...any) error {
+func (s *scannerConError) Scan(dest ...any) error {
 	return s.err
 }
 
 func TestNormalizarLimite(t *testing.T) {
+	t.Parallel()
+
 	require.Equal(t, 20, normalizarLimite(0))
 	require.Equal(t, 20, normalizarLimite(-1))
 	require.Equal(t, 100, normalizarLimite(101))
@@ -26,6 +28,8 @@ func TestNormalizarLimite(t *testing.T) {
 }
 
 func TestEsClaveDuplicada(t *testing.T) {
+	t.Parallel()
+
 	require.False(t, esClaveDuplicada(nil))
 
 	require.False(
@@ -42,6 +46,8 @@ func TestEsClaveDuplicada(t *testing.T) {
 }
 
 func TestHydrateRows_UUIDInvalido(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		nombre string
 		fn     func() error
@@ -87,6 +93,8 @@ func TestHydrateRows_UUIDInvalido(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.nombre, func(t *testing.T) {
+			t.Parallel()
+
 			err := tt.fn()
 			require.Error(t, err)
 
@@ -98,6 +106,8 @@ func TestHydrateRows_UUIDInvalido(t *testing.T) {
 }
 
 func TestScanRows_PropagaError(t *testing.T) {
+	t.Parallel()
+
 	errEsperado := errors.New("fallo de scan")
 	scanner := scannerConError{err: errEsperado}
 
@@ -108,28 +118,28 @@ func TestScanRows_PropagaError(t *testing.T) {
 		{
 			nombre: "garantia",
 			fn: func() error {
-				_, err := scanGarantia(scanner)
+				_, err := scanGarantia(&scanner)
 				return err
 			},
 		},
 		{
 			nombre: "articulo",
 			fn: func() error {
-				_, err := scanArticulo(scanner)
+				_, err := scanArticulo(&scanner)
 				return err
 			},
 		},
 		{
 			nombre: "evento",
 			fn: func() error {
-				_, err := scanEvento(scanner)
+				_, err := scanEvento(&scanner)
 				return err
 			},
 		},
 		{
 			nombre: "imagen",
 			fn: func() error {
-				_, err := scanImagen(scanner)
+				_, err := scanImagen(&scanner)
 				return err
 			},
 		},
@@ -137,12 +147,16 @@ func TestScanRows_PropagaError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.nombre, func(t *testing.T) {
+			t.Parallel()
+
 			require.ErrorIs(t, tt.fn(), errEsperado)
 		})
 	}
 }
 
 func TestMapperHelpers_NullEInvalidos(t *testing.T) {
+	t.Parallel()
+
 	id, err := uuidPtr(sql.NullString{})
 	require.NoError(t, err)
 	require.Nil(t, id)
