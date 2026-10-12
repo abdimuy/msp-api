@@ -520,3 +520,56 @@ func hydrateEvento(r *eventoRow) (*domain.Evento, error) {
 		ClaveIdempotencia: r.claveIdempotencia,
 	}), nil
 }
+
+type imagenRow struct {
+	id          string
+	eventoID    string
+	ruta        string
+	description sql.NullString
+	subidaPor   string
+	createdRaw  any
+}
+
+func scanImagen(row rowScanner) (*imagenRow, error) {
+	var r imagenRow
+
+	err := row.Scan(
+		&r.id,
+		&r.eventoID,
+		&r.ruta,
+		&r.description,
+		&r.subidaPor,
+		&r.createdRaw,
+	)
+	if err != nil {
+		return nil, firebird.MapError(err)
+	}
+
+	return &r, nil
+}
+
+func hydrateImagen(r *imagenRow) (*domain.Imagen, error) {
+	id, err := uuid.Parse(r.id)
+	if err != nil {
+		return nil, hydrationError("imagen", r.id, err)
+	}
+
+	eventoID, err := uuid.Parse(r.eventoID)
+	if err != nil {
+		return nil, hydrationError("imagen", r.id, err)
+	}
+
+	createdAt, err := firebird.ScanUTCTime(r.createdRaw)
+	if err != nil {
+		return nil, hydrationError("imagen", r.id, err)
+	}
+
+	return domain.HydrateImagen(domain.HydrateImagenParams{
+		ID:          id,
+		EventoID:    eventoID,
+		Ruta:        r.ruta,
+		Description: r.description.String,
+		SubidaPor:   r.subidaPor,
+		CreatedAt:   createdAt,
+	}), nil
+}
