@@ -5,7 +5,7 @@
 > - Entrega 2: `feat/garantias-comandos-v2`, que creas tú desde la entrega 1 **cuando el #26 ya esté en `main`**.
 >
 > **Spec:** [`2026-07-27-garantias-design.md`](../specs/2026-07-27-garantias-design.md), §3.2, §3.3, §4 completo, §5, §7 y §8.
-> **Plazo:** dos entregas, **jueves 15 de octubre, 12pm** y **lunes 19 de octubre, 12pm**. El módulo va atrasado y ésta es la ruta crítica: no hay holgura.
+> **Plazo:** dos entregas, **viernes 16 de octubre, 12pm** y **martes 20 de octubre, 12pm**. El módulo va atrasado y ésta es la ruta crítica: no hay holgura.
 
 ## Qué construyes
 
@@ -13,10 +13,10 @@ Al terminar esta tarea, el folio de garantía puede recorrer **todo** su ciclo d
 
 | Entrega | Contenido | Cuándo |
 |---|---|---|
-| **1** | Corrección del dominio y migración `000065` | **Jueves 15, 12pm** |
-| **2** | Los 10 comandos que faltan, el repositorio al día y las tres pruebas de punta a punta | **Lunes 19, 12pm** |
+| **1** | Corrección del dominio y migración `000065` | **Viernes 16, 12pm** |
+| **2** | Los 10 comandos que faltan, el repositorio al día y las tres pruebas de punta a punta | **Martes 20, 12pm** |
 
-**Antes que nada, el martes 13 en la mañana:** rebasea el #26 sobre `main` y cambia su base a `main`, como te pedí. Es el que desbloquea la entrega 2.
+**Antes que nada, el miércoles 14 en la mañana:** rebasea el #26 sobre `main` y cambia su base a `main`, como te pedí. Es el que desbloquea la entrega 2.
 
 ---
 
@@ -183,7 +183,7 @@ Con esto el frontend no reimplementa la máquina (spec §6).
 
 ---
 
-## Entrega 1 — dominio y migración (jueves 15, 12pm)
+## Entrega 1 — dominio y migración (viernes 16, 12pm)
 
 **Migración `000065_add_ubicacion_a_msp_ga_evento`**, up y down, con la forma y el comentario de la `000057`:
 - Agrega `UBICACION_DESDE` y `UBICACION_HASTA`, ambas `VARCHAR(28) CHARACTER SET ASCII` y nulas, a `MSP_GA_EVENTO`.
@@ -230,7 +230,7 @@ En `domain`, **100% de cobertura**, que hoy ya tienes. Además:
 
 ---
 
-## Entrega 2 — comandos, repositorio y punta a punta (lunes 19, 12pm)
+## Entrega 2 — comandos, repositorio y punta a punta (martes 20, 12pm)
 
 **Los 10 comandos**, cada uno en su archivo y todos por `ejecutarFolio`:
 
@@ -337,12 +337,12 @@ Lo que hayas hecho distinto al brief, declarado con el porqué.
 
 | Cuándo | Qué tiene que estar empujado |
 |---|---|
-| **Martes 13, en la mañana** | El #26 rebaseado sobre `main`, con su base cambiada a `main` |
-| **Martes 13, al cierre** | Migración 000065, R1, R2 y R7, con sus pruebas |
-| **Miércoles 14, al cierre** | R3, R4, R5, R6 y R8, con sus pruebas |
-| **Jueves 15, 12pm** | **Entrega 1**: R9 a R12, mutantes D1–D10 y PR |
-| **Viernes 16, al cierre** | Los 10 comandos con sus pruebas |
-| **Lunes 19, 12pm** | **Entrega 2**: el repositorio al día, las tres pruebas de punta a punta, mutantes C1–C6 y PR |
+| **Miércoles 14, en la mañana** | El #26 rebaseado sobre `main`, con su base cambiada a `main` |
+| **Miércoles 14, al cierre** | Migración 000065, R1, R2 y R7, con sus pruebas |
+| **Jueves 15, al cierre** | R3, R4, R5, R6 y R8, con sus pruebas |
+| **Viernes 16, 12pm** | **Entrega 1**: R9 a R12, mutantes D1–D10 y PR |
+| **Lunes 19, al cierre** | Los 10 comandos con sus pruebas |
+| **Martes 20, 12pm** | **Entrega 2**: el repositorio al día, las tres pruebas de punta a punta, mutantes C1–C6 y PR |
 
 Los avances diarios los reviso. Si en algún momento ves que no llegas, avísame ese mismo día.
 
