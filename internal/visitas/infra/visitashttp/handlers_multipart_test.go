@@ -57,6 +57,20 @@ func (r *httpFakeImagenesRepo) FindImagenIDs(_ context.Context, visitaID uuid.UU
 	return out, nil
 }
 
+func (r *httpFakeImagenesRepo) ListImagenes(_ context.Context, visitaID uuid.UUID) ([]*domain.Imagen, error) {
+	return append([]*domain.Imagen{}, r.porVisita[visitaID]...), nil
+}
+
+// FindImagenDeVisita replica el WHERE ID = ? AND VISITA_ID = ? del repo real.
+func (r *httpFakeImagenesRepo) FindImagenDeVisita(_ context.Context, visitaID, imagenID uuid.UUID) (*domain.Imagen, error) {
+	for _, img := range r.porVisita[visitaID] {
+		if img.ID() == imagenID {
+			return img, nil
+		}
+	}
+	return nil, domain.ErrImagenNoEncontrada
+}
+
 func (r *httpFakeImagenesRepo) count(visitaID uuid.UUID) int { return len(r.porVisita[visitaID]) }
 
 // httpFakeStorage records every blob written and every key deleted.

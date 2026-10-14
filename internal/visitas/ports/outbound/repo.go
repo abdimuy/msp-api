@@ -52,4 +52,11 @@ type VisitasImagenesRepo interface {
 	// visitaID, in no particular order. Used by the idempotent-replay path to
 	// decide which images of a retried request are genuinely new.
 	FindImagenIDs(ctx context.Context, visitaID uuid.UUID) ([]uuid.UUID, error)
+
+	// ListImagenes devuelve las imágenes de la visita en orden de CREATED_AT.
+	ListImagenes(ctx context.Context, visitaID uuid.UUID) ([]*domain.Imagen, error)
+
+	// FindImagenDeVisita carga una imagen SOLO si pertenece a visitaID;
+	// si no, domain.ErrImagenNoEncontrada.
+	FindImagenDeVisita(ctx context.Context, visitaID, imagenID uuid.UUID) (*domain.Imagen, error)
 }

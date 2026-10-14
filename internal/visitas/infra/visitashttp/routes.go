@@ -93,6 +93,7 @@ func MountRouter(r chi.Router, svc *visitasapp.Service, opts ...MountOption) hum
 	api := humachi.New(r, humaCfg)
 	handlers := NewHandlers(svc)
 	registerOperations(api, handlers)
+	mountImagenesVisita(r, handlers)
 	describeCrearVisitaBody(api)
 	// SSE push endpoint — raw chi, because Huma has no streaming response
 	// model. Registered unconditionally when a bus is wired: the feature flag
@@ -214,6 +215,16 @@ func registerOperations(api huma.API, h *Handlers) {
 		Tags:        tags,
 		Security:    security,
 	}, h.ObtenerVisita)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "listar-imagenes-visita",
+		Method:      http.MethodGet,
+		Path:        "/visitas/{id}/imagenes",
+		Summary:     "Listar fotos de una visita",
+		Description: "Devuelve las fotos de la visita (misma forma que las de pagos). El binario se pide en /visitas/{id}/imagenes/{img_id}.",
+		Tags:        tags,
+		Security:    security,
+	}, h.ListarImagenesVisita)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "visitas-existentes-por-ids",
