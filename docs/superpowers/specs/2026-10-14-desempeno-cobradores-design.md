@@ -1,6 +1,6 @@
 # Desempeño de cobradores — diseño (fase 1)
 
-Fecha: 2026-10-14 · Estado: aprobado en conversación por partes, pendiente de revisión escrita
+Fecha: 2026-10-14 · Estado: aprobado por el dueño (2026-10-14), incluidos los mocks v3
 Repos: `msp-api` (la mayor parte), `sistema-cobro-web` (escritorio), `msp-app-kt` (solo el juego de casos compartido)
 
 ## 1. Propósito
@@ -36,6 +36,10 @@ poder detectar solo lo que merece revisión.
 | D11 | Se reutilizan los modales de Clientes (ficha del cliente, detalle de venta, detalle de pago). |
 | D12 | El GPS continuo queda fuera por ahora. Promesas y citas sí deben llegar al servidor (fase 2). |
 | D13 | Todo lo que se pueda, en paralelo. |
+| D14 | El tablero **no muestra totales sumados de varios usuarios** (ni banda de resumen ni pies de tabla): solo cifras por usuario. El API del tablero tampoco los devuelve. |
+| D15 | Estilo visual elegido en los mocks: **"Audaz 2026"** (https://claude.ai/artifact/8onDaCe8muASEe18vFB9vy). |
+| D16 | La línea de actividad la elige cada quien en la pantalla (Puntos, Bloques, Por hora, Bloques + hora; predeterminado Bloques; se recuerda por computadora). Los cálculos de cada vista (tramos, conteos por hora) vienen del API. |
+| D17 | **Popovers de información rápida** en nombre del usuario, estado ahora, tramos y pausas de la línea, celdas de pausas, pagos, cobertura y % cobro, chips de estado, fotos, señales y renglones de actividad. Su contenido viene del API (sin totales de varios usuarios). |
 
 ### Fuera de alcance
 
@@ -164,6 +168,12 @@ cobertura {con_algo, total}, pct_cobro, linea [{hora, tipo}]`.
 - `estado_ahora`: activo si la última actividad es de hace menos de `pausa_min`; sin actividad si
   ya pasó el umbral; no ha empezado si hoy no hay actividad.
 - `pausa_min` acotado (5–240); por defecto 45.
+- Para las vistas de la línea y los popovers (D16, D17), cada fila trae además: `tramos [{desde,
+  hasta, pagos {n, importe}, visitas, condonaciones, clientes}]`, `por_hora [{hora, pagos, visitas,
+  condonaciones}]`, `pausas_detalle [{desde, hasta, minutos, anterior, siguiente}]`,
+  `pagos_por_forma {efectivo, transferencia, cheque}` (solo esas tres; no existe "depósito"), `no_aplicados`, `cobertura_por_segmento`,
+  `cobro {cobrado, esperado}` y `ultima {tipo, cliente, hora}`. Nunca totales de varios usuarios
+  (D14).
 
 ### 4.2 Jornada
 `GET /v2/desempeno/usuarios/{uid}/jornada?fecha=YYYY-MM-DD&pausa_min=45[&desde_hora&hasta_hora]`
@@ -292,3 +302,11 @@ Las promesas y citas solo viven en Room (`PROMESA_FECHA`, `PROMESA_MONTO_CENTAVO
 Fase 2: columnas nuevas opcionales en `MSP_VISITAS`, el API las acepta y devuelve, la app las
 manda (API primero, app después; teléfonos viejos siguen funcionando). Cuando existan, el estado
 por venta del servidor distingue Diferido y Cita como el teléfono, sin rediseño de pantalla.
+
+## 10. Notas de los mocks (v3)
+
+- El mock muestra "Depósito" como forma de pago y el modelo del teléfono en el popover del nombre:
+  ninguno de los dos entra. Formas de pago: efectivo, transferencia y cheque (más condonación
+  aparte). El modelo del teléfono no está en el servidor y queda fuera.
+- Los popovers de la línea de actividad se abren con el ratón; los de nombre y celdas también con
+  teclado.
