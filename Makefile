@@ -313,6 +313,7 @@ test-firebird-all: ## Run ALL Firebird-backed tests: platform, module repos (aut
 	          ./internal/visitas/infra/visitasfb/... ./internal/visitas/infra/visitashttp/... \
 	          ./internal/clientes/infra/clientesfb/... ./internal/config/infra/configfb/... \
 	          ./internal/rutas/infra/rutasfb/... ./internal/microsip/infra/microsipfb/... \
+	          ./internal/desempeno/infra/desempenofb/... \
 	          -p 1 -race -count=1 -timeout 600s
 
 test-firebird-ventas: ## Run Firebird-backed tests for the venta creation flow (platform + ventas)
