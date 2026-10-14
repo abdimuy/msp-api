@@ -123,6 +123,15 @@ func TestHTTP_ObtenerImagenVisita_DeOtraVisitaEs404(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 	assert.Contains(t, rec.Body.String(), "code=visita_imagen_no_encontrada")
 	assert.NotContains(t, rec.Body.String(), "JPEG", "ni un byte de la foto ajena")
+
+	// Con If-None-Match del id ajeno sigue siendo 404, no 304: el 304 sólo
+	// se responde después de verificar la pertenencia.
+	req := httptest.NewRequest(http.MethodGet, "/visitas/"+visitaB.String()+"/imagenes/"+img.ID().String(), nil)
+	req.Header.Set("If-None-Match", `"`+img.ID().String()+`"`)
+	rec = httptest.NewRecorder()
+	mountWithUser(visitaUser(), f.svc).ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusNotFound, rec.Code, "foto ajena con If-None-Match: 404, no 304")
+	assert.Empty(t, rec.Header().Get("ETag"), "no se confirma el ETag de una foto ajena")
 }
 
 func TestHTTP_ObtenerImagenVisita_AuthYParametros(t *testing.T) {
