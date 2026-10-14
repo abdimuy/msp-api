@@ -1,5 +1,10 @@
 # Desempeño de cobradores — contratos (fuente única para API y escritorio)
 
+Versión 2 (2026-10-14): agrega `docto_pv_id`, `captura_tardia`, `trato`/`etiqueta` de visita,
+datos de popover en `puntos`, `cobro.falta`, `generado_at` en jornada, nulos de no configurado,
+valores de filtros, `GET /v2/desempeno/catalogos`. El enlace "sin configurar" lleva a Usuarios
+(`/settings`), donde se editan zona e inicio de semana.
+
 Complemento de `2026-10-14-desempeno-cobradores-design.md`. Lo que aquí se nombra es **ley** para
 los dos planes: el API lo produce byte a byte y el escritorio lo consume byte a byte. Cambiar un
 nombre exige cambiar este archivo primero.
@@ -38,6 +43,8 @@ nombre exige cambiar este archivo primero.
   "registrado_por": RegistradoPor,
   "lat": 18.4617 | null, "lng": -97.3928 | null, "con_gps": true,
   "num_fotos": 2,
+  "docto_pv_id": 9921 | null,              // para abrir el detalle de venta de Clientes
+  "captura_tardia": false,                 // recibido_at − hora ≥ 2 h (regla del servidor)
   "pago": null | {
     "importe": "150.00",
     "forma_cobro": "efectivo" | "transferencia" | "cheque" | "condonacion" | "otra",
@@ -48,7 +55,8 @@ nombre exige cambiar este archivo primero.
   "visita": null | {
     "visita_id": "412cc2fc-...", "tipo_visita": "No se encontraba",
     "nota": "Vecina dice que regresa el lunes" | null,
-    "estado": EstadoCuenta } }
+    "estado": EstadoCuenta, "trato": Trato,
+    "etiqueta": "No estaba" } }               // misma etiqueta que el teléfono
 
 // EstadoCuenta (códigos fijos; etiqueta y detalle los arma el servidor en español)
 "pago" | "abono_parcial" | "visite_vuelvo" | "prometio_proxima" | "se_nego"
@@ -80,7 +88,10 @@ nombre exige cambiar este archivo primero.
 
 // LineaDelDia
 { "dia": "2026-10-14",
-  "puntos": [ { "id": "...", "tipo": "pago", "hora": "...Z" } ],
+  "puntos": [ { "id": "...", "tipo": "pago", "hora": "...Z",
+                "cliente_nombre": "...", "importe": "150.00" | null,   // null en visitas
+                "resultado": "No se encontraba" | null,               // literal en visitas
+                "num_fotos": 0 } ],
   "tramos": [Tramo], "por_hora": [Hora], "pausas": [Pausa] }
 ```
 
@@ -111,12 +122,15 @@ Query: `periodo=hoy|semana` (default `hoy`), `pausa_min`, `desde_hora`, `hasta_h
     "visitas": 13,
     "cobertura": { "con_algo": 186, "total": 232 },
     "cobertura_por_segmento": { "sin_visitar": 46, "volver": 20, "despues": 3, "pagados": 140, "sin_nada": 46 },
-    "cobro": { "cobrado": "8600.00", "esperado": "13050.00", "pct": "65.90" },
+    "cobro": { "cobrado": "8600.00", "esperado": "13050.00", "falta": "4450.00", "pct": "65.90" | null },
     "lineas": [LineaDelDia]    // 1 en "hoy"; un día por cada día de la semana en "semana"
   } ] }
 ```
 
-- Usuario no configurado: `configurado=false`, métricas en cero/`null`, `lineas=[]`.
+- Usuario no configurado: `configurado=false`, métricas en cero/`null`, `lineas=[]`;
+  `zona_id`, `zona_nombre`, `inicio_semana` y `cobro.pct` pueden venir `null`.
+- `cobertura_por_segmento.sin_nada` == `cobertura.total − cobertura.con_algo`, siempre de la semana
+  del usuario (no incluye la semana anterior).
 - **Sin totales del equipo** (D14): no hay campos agregados fuera de cada usuario.
 - `cobertura`, `cobertura_por_segmento` y `cobro` son siempre de **la semana del usuario**,
   aunque `periodo=hoy`.
@@ -126,7 +140,7 @@ Query: `periodo=hoy|semana` (default `hoy`), `pausa_min`, `desde_hora`, `hasta_h
 Query: `fecha` (default hoy), `pausa_min`, `desde_hora`, `hasta_hora`.
 
 ```jsonc
-{ "uid": "abc123", "fecha": "2026-10-14", "pausa_min": 45,
+{ "uid": "abc123", "fecha": "2026-10-14", "pausa_min": 45, "generado_at": "...Z",
   "actividades": [Actividad],      // solo las que registró ESTE usuario, orden por hora asc
   "linea": LineaDelDia,
   "senales": [Senal],
@@ -144,6 +158,9 @@ rango máximo 92 días), `tipo` (repetible: pago|visita|condonacion), `forma_cob
 `monto_min`, `monto_max`, `con_fotos` (true|false), `con_gps` (true|false), `q` (cliente o folio,
 sin acentos ni mayúsculas), `orden=hora|cliente|monto|tipo|registrado_por` (default `hora`),
 `dir=asc|desc` (default `desc`), `cursor` (opaco), `limit` 1–500 (default 100).
+Valores de `forma_cobro`: los códigos `efectivo|transferencia|cheque|condonacion|otra` (no ids).
+`totales.importe` = solo dinero (formas 157/158/52569, no rechazados); las condonaciones NO
+suman ahí. Agrupar por venta = `orden=cliente` y agrupación en pantalla.
 
 ```jsonc
 { "items": [Actividad],             // TODA la zona del usuario, cualquier registrador
@@ -155,6 +172,14 @@ sin acentos ni mayúsculas), `orden=hora|cliente|monto|tipo|registrado_por` (def
 `GET /v2/desempeno/usuarios/{uid}/actividad.xlsx` con los mismos filtros (sin `cursor`/`limit`):
 `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`, tope 50,000
 filas (si se excede → 422 `desempeno_export_demasiadas_filas`).
+
+## 4b. `GET /v2/desempeno/catalogos`
+
+```jsonc
+{ "formas_cobro": [ { "codigo": "efectivo", "etiqueta": "Efectivo" }, ... ],
+  "tipos_visita": [ { "literal": "No se encontraba", "estado": "no_estaba", "grupo": "No estaba" }, ... ] }
+```
+El escritorio arma los filtros con esto; no copia catálogos.
 
 ## 5. `GET /v2/desempeno/usuarios/{uid}/cuentas`
 
