@@ -1,5 +1,6 @@
 # Desempeño de cobradores — contratos (fuente única para API y escritorio)
 
+Versión 2.1 (2026-10-14): motivo `inicio_semana_futuro` (inicio de semana después de ahora → fila no configurada, nunca 422 del tablero).
 Versión 2 (2026-10-14): agrega `docto_pv_id`, `captura_tardia`, `trato`/`etiqueta` de visita,
 datos de popover en `puntos`, `cobro.falta`, `generado_at` en jornada, nulos de no configurado,
 valores de filtros, `GET /v2/desempeno/catalogos`. El enlace "sin configurar" lleva a Usuarios
@@ -104,7 +105,7 @@ Query: `periodo=hoy|semana` (default `hoy`), `pausa_min`, `desde_hora`, `hasta_h
   "usuarios": [ {
     "uid": "abc123", "nombre": "Juan Carlos Méndez", "email": "...",
     "zona_id": 21563, "zona_nombre": "RUTA 21",
-    "configurado": true, "motivo_no_configurado": null | "sin_zona" | "sin_inicio_semana",
+    "configurado": true, "motivo_no_configurado": null | "sin_zona" | "sin_inicio_semana" | "inicio_semana_futuro",
     "inicio_semana": "2026-10-09T13:46:00Z" | null,
     "ventas_universo": 232,
     "estado_ahora": "activo" | "sin_actividad" | "no_ha_empezado",
