@@ -1,0 +1,41 @@
+{
+  "nombre": "con condonacion manda la visita",
+  "ventana": {
+    "inicio": "2026-10-09T13:46:00Z",
+    "fin": "2026-10-14T22:40:00Z"
+  },
+  "cuentas": [
+    {
+      "venta_id": 1,
+      "cliente_id": 10,
+      "parcialidad": "150.00"
+    }
+  ],
+  "pagos": [
+    {
+      "venta_id": 1,
+      "importe": "150.00",
+      "forma_cobro_id": 137026,
+      "fecha_hora": "2026-10-10T15:00:00Z",
+      "rechazado": false
+    }
+  ],
+  "visitas": [
+    {
+      "cliente_id": 10,
+      "venta_id": 1,
+      "tipo_visita": "Fue grosero o agresivo",
+      "fecha_hora": "2026-10-11T16:00:00Z",
+      "fecha_cita": null,
+      "hora_cita": null,
+      "fecha_promesa": null
+    }
+  ],
+  "esperado": [
+    {
+      "venta_id": 1,
+      "estado": "se_nego",
+      "con_algo": true
+    }
+  ]
+}
