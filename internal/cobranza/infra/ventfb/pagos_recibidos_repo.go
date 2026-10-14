@@ -272,7 +272,9 @@ INSERT INTO MSP_PAGOS_IMAGENES (
 	CREATED_AT, UPDATED_AT, CREATED_BY, UPDATED_BY
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-const deletePagoImagenSQL = `DELETE FROM MSP_PAGOS_IMAGENES WHERE ID = ?`
+// La imagen se busca y se borra por (ID, PAGO_ID): pedirla por otro pago es
+// un 404, no una fuga (arreglo de pertenencia, spec desempeño §3.2).
+const deletePagoImagenSQL = `DELETE FROM MSP_PAGOS_IMAGENES WHERE ID = ? AND PAGO_ID = ?`
 
 const selectPagoImagenCols = `
 	ID, STORAGE_KIND, STORAGE_KEY, MIME, SIZE_BYTES, DESCRIPCION,
@@ -281,7 +283,7 @@ const selectPagoImagenCols = `
 const findPagoImagenByIDSQL = `
 SELECT ` + selectPagoImagenCols + `
 FROM MSP_PAGOS_IMAGENES
-WHERE ID = ?`
+WHERE ID = ? AND PAGO_ID = ?`
 
 const listPagoImagenesSQL = `
 SELECT ` + selectPagoImagenCols + `
@@ -316,11 +318,12 @@ func (r *PagosRecibidosRepo) InsertImagen(ctx context.Context, pagoID uuid.UUID,
 	})
 }
 
-// DeleteImagen removes a single row from MSP_PAGOS_IMAGENES.
-func (r *PagosRecibidosRepo) DeleteImagen(ctx context.Context, imagenID uuid.UUID) error {
+// DeleteImagenDePago removes a single row from MSP_PAGOS_IMAGENES when it
+// belongs to pagoID.
+func (r *PagosRecibidosRepo) DeleteImagenDePago(ctx context.Context, pagoID, imagenID uuid.UUID) error {
 	return firebird.RunInTx(ctx, r.pool.DB, func(ctx context.Context) error {
 		q := firebird.GetQuerier(ctx, r.pool.DB)
-		res, err := q.ExecContext(ctx, deletePagoImagenSQL, imagenID.String())
+		res, err := q.ExecContext(ctx, deletePagoImagenSQL, imagenID.String(), pagoID.String())
 		if err != nil {
 			return firebird.MapError(err)
 		}
@@ -328,12 +331,12 @@ func (r *PagosRecibidosRepo) DeleteImagen(ctx context.Context, imagenID uuid.UUI
 	})
 }
 
-// FindImagenByID loads a single comprobante row.
-func (r *PagosRecibidosRepo) FindImagenByID(ctx context.Context, imagenID uuid.UUID) (*domain.Imagen, error) {
+// FindImagenDePago loads a single comprobante row when it belongs to pagoID.
+func (r *PagosRecibidosRepo) FindImagenDePago(ctx context.Context, pagoID, imagenID uuid.UUID) (*domain.Imagen, error) {
 	var result *domain.Imagen
 	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
 		q := firebird.GetQuerier(ctx, r.pool.DB)
-		row := q.QueryRowContext(ctx, findPagoImagenByIDSQL, imagenID.String())
+		row := q.QueryRowContext(ctx, findPagoImagenByIDSQL, imagenID.String(), pagoID.String())
 		var serr error
 		result, serr = scanPagoImagenRow(row)
 		return serr

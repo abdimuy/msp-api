@@ -53,13 +53,14 @@ type PagosImagenesRepo interface {
 	// InsertImagen persists a new comprobante row in MSP_PAGOS_IMAGENES.
 	InsertImagen(ctx context.Context, pagoID uuid.UUID, img *domain.Imagen) error
 
-	// DeleteImagen removes a comprobante row. Returns
-	// [domain.ErrImagenNoEncontrada] when the row does not exist.
-	DeleteImagen(ctx context.Context, imagenID uuid.UUID) error
+	// DeleteImagenDePago removes a comprobante row ONLY if it belongs to
+	// pagoID. Returns [domain.ErrImagenNoEncontrada] when no row matches both
+	// ids — an image of another pago is indistinguishable from a missing one.
+	DeleteImagenDePago(ctx context.Context, pagoID, imagenID uuid.UUID) error
 
-	// FindImagenByID loads a single comprobante row by its UUID, without
-	// loading its parent pago. Returns [domain.ErrImagenNoEncontrada] on miss.
-	FindImagenByID(ctx context.Context, imagenID uuid.UUID) (*domain.Imagen, error)
+	// FindImagenDePago loads a comprobante row ONLY if it belongs to pagoID.
+	// Returns [domain.ErrImagenNoEncontrada] when no row matches both ids.
+	FindImagenDePago(ctx context.Context, pagoID, imagenID uuid.UUID) (*domain.Imagen, error)
 
 	// ListImagenes returns every comprobante attached to pagoID, ordered by
 	// CREATED_AT ascending.
