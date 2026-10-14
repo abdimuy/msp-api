@@ -428,6 +428,8 @@ type PagoDetalleDTO struct {
 	RecibidoAt     string  `json:"recibido_at,omitempty"  format:"date-time" doc:"Timestamp de recepción vía app (RFC3339 UTC); ausente en pagos nativos"`
 	AplicadoAt     string  `json:"aplicado_at,omitempty"  format:"date-time" doc:"Timestamp de aplicación vía app (RFC3339 UTC); ausente en pagos nativos"`
 	Origen         string  `json:"origen"                doc:"Origen del dato: 'app' cuando MSP_PAGOS_RECIBIDOS tiene registro; 'microsip' en caso contrario"`
+	PagoRecibidoID *string `json:"pago_recibido_id"      doc:"UUID del pago en MSP_PAGOS_RECIBIDOS (sus fotos: /v2/cobranza/pagos/{id}/imagenes); null si no pasó por la app"`
+	NumFotos       int     `json:"num_fotos"             doc:"Número de comprobantes del pago; 0 sin fotos o sin pago de la app"`
 }
 
 // RefrescarBusquedaOutput is the response for POST /clientes/_search/refresh.

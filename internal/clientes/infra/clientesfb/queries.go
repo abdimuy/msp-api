@@ -735,6 +735,12 @@ ORDER BY pago.FECHA`
 // while COBRADORES.NOMBRE is CHARACTER SET ISO8859_1 (sql.NullString — Firebird
 // already transliterated it). MSP_PAGOS_RECIBIDOS columns are UTF8.
 //
+// pago_recibido_id / num_fotos (spec desempeño §3.2.3): el UUID de
+// MSP_PAGOS_RECIBIDOS que la app generó y cuántas fotos tiene, por SUBCONSULTA
+// ESCALAR con MIN(...) — nunca fan-out aunque hubiera dos filas con el mismo
+// DOCTO_CC_ID. Pagos de oficina o legado: NULL y 0. MSP_PAGOS_RECIBIDOS.ID es
+// CHARACTER SET NONE con UUID ASCII → sql.NullString.
+//
 // GPS: native DOCTOS_CC has no LAT/LON columns; GPS comes only from
 // MSP_PAGOS_RECIBIDOS.LAT/LON (VARCHAR(20), ASCII decimal text).
 //
@@ -803,7 +809,12 @@ SELECT
   r.LAT                                         AS MSP_LAT,
   r.LON                                         AS MSP_LON,
   r.RECEIVED_AT                                 AS MSP_RECEIVED_AT,
-  r.APLICADO_AT                                 AS MSP_APLICADO_AT
+  r.APLICADO_AT                                 AS MSP_APLICADO_AT,
+  (SELECT MIN(pr2.ID) FROM MSP_PAGOS_RECIBIDOS pr2
+    WHERE pr2.DOCTO_CC_ID = p.DOCTO_CC_ID)      AS MSP_PAGO_RECIBIDO_ID,
+  (SELECT COUNT(*) FROM MSP_PAGOS_IMAGENES im
+    WHERE im.PAGO_ID = (SELECT MIN(pr3.ID) FROM MSP_PAGOS_RECIBIDOS pr3
+                         WHERE pr3.DOCTO_CC_ID = p.DOCTO_CC_ID)) AS NUM_FOTOS
 FROM DOCTOS_CC p
 JOIN IMPORTES_DOCTOS_CC i ON i.DOCTO_CC_ID = p.DOCTO_CC_ID
   AND i.TIPO_IMPTE = 'R'
