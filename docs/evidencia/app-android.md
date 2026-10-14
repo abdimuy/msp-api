@@ -47,7 +47,7 @@ refutado **no se borra**: cambia de estado a REFUTADA y se queda.
 > checkout principal. Varias corrigen por unas líneas lo que decía
 > `msp-app-kt/docs/inicializar-semana.md`; donde eso pasa, se anota.
 
-**Siguiente identificador libre: `E-APP-057`.**
+**Siguiente identificador libre: `E-APP-058`.**
 
 > **Tercera tanda (2026-09-24).** `E-APP-029 … E-APP-047`. Es la primera tanda
 > con **mediciones en un aparato**: el teléfono de `javier.gil.perez@msp.com`
@@ -1820,6 +1820,81 @@ refutado **no se borra**: cambia de estado a REFUTADA y se queda.
   si fue el arreglo o su sync. Las 106 − 55 = 51 ventas abajo restantes no se
   deben a capturas sueltas (la mayoría explicadas por abonos pendientes de
   subir, p. ej. Eliseo Ramírez); no se revisaron una por una.
+
+
+### E-APP-057 · El deriver de Kotlin excluye el pago rechazado del abono, la cobertura lo cuenta, y el juego compartido `VERSION c37e982d…` pasa completo en `:core:common`
+
+- **Nivel:** MEDIDO · **Estado:** VIGENTE
+- **Afirmación:** `PagoEnVentana` gana `rechazado: Boolean = false`
+  (`DOCTO_CC_ID = -1`); `EstadoCuentaDeriver.abonosPorVenta` lo descarta
+  (`.filterNot { it.rechazado }`) y `CoberturaDelPeriodo.ventasConAlgo` sí lo
+  cuenta como "algo", con el mismo `IndiceVisitas` del deriver (extraído a
+  archivo propio, mismo cuerpo). Los 40 casos de `testdata/estado-cuenta/`
+  (51 estados por venta: `sin_tocar` 16, `pago` 8, `no_estaba` 8,
+  `visite_vuelvo` 6, `se_nego` 5, `abono_parcial` 3, `cita_a_una_hora` 3,
+  `prometio_proxima` 2; `con_algo` true 38 / false 13) dan 51/51 iguales a
+  `esperado` contra el deriver y la cobertura de Kotlin, con el filtro de
+  rechazados ya dentro del dominio.
+- **Medido:** 2026-10-14, dev local (Mac), msp-app-kt rama
+  `feat/estado-cuenta-casos-compartidos` (commits `6f40f69f`, `3896c76b`,
+  `58add446`, `083c0d61`).
+  - Juego copiado con `MSP_API_DIR=/Volumes/M2-1TB/Developer/msp-api-desempeno
+    ./scripts/casos-estado-cuenta.sh copiar` desde msp-api `feat/desempeno`
+    (`5b0dcba`): `ok: juego idéntico, VERSION
+    c37e982d1f95dd8cca800dff3d9caaa7b81563429564fced37161f2c885b4c22`. El hash
+    recalculado en la fuente (`ls *.json | LC_ALL=C sort | xargs cat | shasum -a
+    256`) da el mismo valor; `verificar` también al final (exit 0).
+  - `:core:common:testDebugUnitTest --tests '…domain.casos.*'`:
+    `EstadoCuentaCasosCompartidosTest` 40/40, `JuegoDeCasosCoberturaTest` 3/3,
+    `JuegoDeCasosVersionTest` 5/5, `CasoDeEstadoCuentaParseoTest` 7/7 (conteo de
+    los XML de `build/test-results`). `:core:common:test` completo: 26 clases,
+    360 pruebas, 0 fallas (20:41 UTC). `prePushCheck`: verde en la segunda
+    corrida (ver "Sin verificar"), 615 clases / 6,001 pruebas / 0 fallas en los
+    XML, incluida `:feature:pagos` (128 clases, 1,134 pruebas).
+  - Lado Go, mismos bytes: en `msp-api-desempeno` (`feat/desempeno`),
+    `go test -count=1 -v ./internal/desempeno/domain/ -run 'Caso|Version|Juego'`
+    → `ok`, 46 `--- PASS` (incluye `TestCasosEstadoCuenta_VersionCorrespondeAlHash`).
+- **Controles positivos** (dev local, 2026-10-14; cada mutación revertida y la
+  suite vuelta a verde):
+  1. Comentar `.filterNot { it.rechazado }` (20:24 UTC): fallan las 3 pruebas
+     `E-APP-057 pago rechazado …` de `EstadoCuentaDeriverTest` (el plan
+     esperaba 2; también falla "no tapa la visita", porque el dinero manda y da
+     `PAGO` sobre `SE_NEGO`).
+  2. En `CoberturaDelPeriodo`, excluir rechazados de `conPago`: falla
+     `E-APP-057 pago rechazado cuenta como algo`.
+  3. Un espacio al final de `001-*.json` de la copia: falla
+     `VERSION coincide con el SHA-256 de los casos`; un espacio en `VERSION`:
+     `scripts/casos-estado-cuenta.sh verificar` → `DIVERGENCIA…`, exit 1.
+  4. `abonoVentana >= parcialidad` → `>` (20:38:02 UTC): fallan 8 casos
+     (001, 003 borde exacto con escala distinta, 005, 006, 015, 016, 019, 039).
+  5. Comentar `.filterNot { it.rechazado }` contra el juego (20:38:18 UTC):
+     fallan 009 y 010 (los dos casos con `rechazado: true`).
+- **Consumidores enumerados** (`grep` en `core`, `feature`, `app`, sólo
+  `src/main`): `PagoEnVentana(` se construye sólo en
+  `feature/pagos/…/application/DerivarEstadoDelPeriodo.kt:105` (no pasa
+  `rechazado`, queda `false`); `EstadoCuentaDeriver.derivar` se llama sólo en
+  `DerivarEstadoDelPeriodo.kt:71`; `IndiceVisitas` (antes `private`, ahora
+  `internal` en `:core:common`) sólo lo usan el deriver y la cobertura;
+  `CoberturaDelPeriodo` no tiene llamador de producción todavía.
+- **Sin verificar:**
+  - Que el teléfono en producción no cambie de comportamiento: **INFERIDO**.
+    `RoomPagosAdapter.aHistorial`
+    (`feature/pagos/…/data/adapter/RoomPagosAdapter.kt:101-113`, LEÍDO
+    2026-10-14) ya filtra `DOCTO_CC_ID != DOCTO_CC_ID_RECHAZADO_POR_EL_SERVIDOR`
+    y las formas fuera de {157, 158, 52569} antes del deriver, y el único
+    constructor deja `rechazado = false`. Lo respaldan las 1,134 pruebas de
+    `:feature:pagos` en verde; lo volvería MEDIDO un aparato con 2.20.x+ este
+    cambio leído por el depurador remoto.
+  - La primera corrida de `prePushCheck` (tras `rm -rf app/build`) falló en 4
+    pruebas de `:app` (`CadaDestinoDeCobranzaSeMontaTest` 1,
+    `CadaPantallaDeCobranzaRespetaLaBarraDeEstadoTest` 3) con
+    `GooglePlayServicesMissingManifestValueException`, el síntoma ya conocido
+    de residuo de `assembleProdRelease`. Solas pasaron y la segunda corrida
+    completa (también tras `rm -rf app/build`) dio verde. Causa no aislada;
+    esta vez no había salidas de release en `app/build` antes de la primera.
+  - El arnés convierte los casos en entradas del dominio con un parseo
+    estricto propio; no se comparó contra el arnés Go campo por campo, sólo
+    el resultado (los dos verdes sobre el mismo `VERSION`).
 
 ---
 
