@@ -284,3 +284,20 @@ func TestCalcularJornada_PuntosLlevanElPopover(t *testing.T) {
 	assert.Nil(t, v.Importe, "importe null en visitas")
 	assert.Equal(t, "No se encontraba", v.Resultado)
 }
+
+// Revisión del carril A (punto 4, mutación M7): los minutos activos restan
+// solo las pausas cerradas; la pausa en curso cae después de la última
+// actividad y no se descuenta.
+func TestCalcularJornada_MinutosActivosNoRestanLaPausaEnCurso(t *testing.T) {
+	t.Parallel()
+	acts := []domain.Actividad{
+		act("pago:1", domain.TipoPago, hl(t, "10:00:00"), 1),
+		act("pago:2", domain.TipoPago, hl(t, "10:30:00"), 2),
+	}
+	j := domain.CalcularJornada(acts, params(t, "45", "", ""), dia14, cdmx(t), hl(t, "12:00:00"))
+	require.Len(t, j.Linea.Pausas, 1)
+	require.True(t, j.Linea.Pausas[0].EnCurso)
+	assert.Equal(t, hl(t, "12:00:00"), j.Linea.Pausas[0].Hasta, "la pausa en curso termina ahora")
+	assert.Equal(t, 90, j.Resumen.Pausas.Minutos)
+	assert.Equal(t, 30, j.Resumen.MinutosActivos)
+}

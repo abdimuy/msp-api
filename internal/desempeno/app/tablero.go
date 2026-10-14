@@ -4,6 +4,7 @@ package app
 import (
 	"context"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -31,9 +32,11 @@ type TableroInput struct {
 
 // LimiteParaleloTablero acota cuántas filas del tablero se calculan a la vez
 // (resolución del arquitecto del 2026-10-14: paralelo acotado con errgroup).
-// Cada fila hace hasta tres lecturas de Firebird y una de rutas; ocho a la vez
-// no satura el pool. La latencia real se mide en C4 (Apéndice 1).
-const LimiteParaleloTablero = 8
+// El pool de Firebird es de 10 conexiones y lo comparte todo el API; con la
+// semana calculada una vez por zona (semanasPorZona), una fila nueva hace a lo
+// más tres lecturas de Firebird y una de rutas. Cuatro a la vez deja aire al
+// resto del API (revisión del carril A). La latencia real se mide en C4.
+const LimiteParaleloTablero = 4
 
 // Tablero tiene una fila por usuario, sin totales del equipo (D14).
 type Tablero struct {
@@ -124,12 +127,13 @@ func (s *Service) Tablero(ctx context.Context, in TableroInput) (Tablero, error)
 	}
 	ix := domain.NuevoIndiceUsuarios(us)
 	ahora := s.clock.Now()
+	cache := &semanasPorZona{m: map[claveSemana]*semanaDeZona{}}
 	t := Tablero{GeneradoAt: ahora, Periodo: periodo, PausaMin: p.PausaMin, Filas: make([]FilaTablero, len(us))}
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(LimiteParaleloTablero)
 	for i, u := range us {
 		g.Go(func() error {
-			fila, err := s.filaTablero(gctx, contexto{usuario: u, indice: ix, ahora: ahora}, periodo, p)
+			fila, err := s.filaTablero(gctx, cache, contexto{usuario: u, indice: ix, ahora: ahora}, periodo, p)
 			if err != nil {
 				return err
 			}
@@ -161,31 +165,83 @@ func filaVacia(u domain.UsuarioCobranza, motivo string) FilaTablero {
 	}
 }
 
-func (s *Service) filaTablero(ctx context.Context, c contexto, periodo Periodo, p domain.ParametrosJornada) (FilaTablero, error) {
+// claveSemana identifica una semana compartible: la misma zona con el mismo
+// inicio da el mismo universo, las mismas actividades y el mismo cobro de rutas
+// (rutas app/cobranza_usuarios.go CobranzaDeUsuario solo usa ZonaID e
+// InicioSemana del usuario).
+type claveSemana struct {
+	zona   int
+	inicio int64
+}
+
+// semanaDeZona se calcula una sola vez por petición del tablero (sync.Once),
+// la pida la fila que la pida primero; las demás esperan y la reutilizan. Es de
+// solo lectura una vez calculada: cada fila filtra con registradasPor, que
+// copia.
+type semanaDeZona struct {
+	once  sync.Once
+	sem   semana
+	cobro domain.Cobro
+	hoy   []domain.Actividad // actividades de hoy de TODA la zona
+	err   error
+}
+
+type semanasPorZona struct {
+	mu sync.Mutex
+	m  map[claveSemana]*semanaDeZona
+}
+
+func (sz *semanasPorZona) de(u domain.UsuarioCobranza) *semanaDeZona {
+	k := claveSemana{zona: u.ZonaID, inicio: u.InicioSemana.UnixNano()}
+	sz.mu.Lock()
+	defer sz.mu.Unlock()
+	e, ok := sz.m[k]
+	if !ok {
+		e = &semanaDeZona{}
+		sz.m[k] = e
+	}
+	return e
+}
+
+// semanaCompartida devuelve la semana de la zona del usuario, calculándola si
+// es la primera fila que la pide.
+func (s *Service) semanaCompartida(ctx context.Context, cache *semanasPorZona, c contexto, hoy domain.Fecha) *semanaDeZona {
+	e := cache.de(c.usuario)
+	e.once.Do(func() {
+		if e.sem, e.err = s.calcularSemana(ctx, c); e.err != nil {
+			return
+		}
+		var cs domain.CobroSemana
+		if cs, e.err = s.usuarios.CobroSemana(ctx, c.usuario); e.err != nil {
+			return
+		}
+		e.cobro = domain.CalcularCobro(cs)
+		e.hoy, e.err = s.actividadesDeHoy(ctx, c, e.sem, hoy)
+	})
+	return e
+}
+
+func (s *Service) filaTablero(
+	ctx context.Context, cache *semanasPorZona, c contexto, periodo Periodo, p domain.ParametrosJornada,
+) (FilaTablero, error) {
 	u := c.usuario
-	if ok, motivo := u.Configuracion(); !ok {
+	if ok, motivo := u.ConfiguracionEn(c.ahora); !ok {
 		return filaVacia(u, motivo), nil
 	}
 	fila := filaVacia(u, "")
 	fila.Configurado = true
 
-	sem, err := s.calcularSemana(ctx, c)
-	if err != nil {
-		return FilaTablero{}, err
+	hoy := domain.DiaDe(c.ahora, s.loc)
+	e := s.semanaCompartida(ctx, cache, c, hoy)
+	if e.err != nil {
+		return FilaTablero{}, e.err
 	}
-	cs, err := s.usuarios.CobroSemana(ctx, u)
-	if err != nil {
-		return FilaTablero{}, err
-	}
-	fila.Cobro = domain.CalcularCobro(cs)
+	sem := e.sem
+	fila.Cobro = e.cobro
 	s.llenarCobertura(&fila, sem, c.ahora)
 
-	hoy := domain.DiaDe(c.ahora, s.loc)
 	propiasSemana := registradasPor(sem.actividades, u)
-	propiasHoy, err := s.actividadesDeHoy(ctx, c, sem, hoy)
-	if err != nil {
-		return FilaTablero{}, err
-	}
+	propiasHoy := registradasPor(e.hoy, u)
 	jHoy := domain.CalcularJornada(propiasHoy, p, hoy, s.loc, c.ahora)
 	fila.EstadoAhora, fila.EstadoDesde = domain.CalcularEstadoAhora(jHoy, p, c.ahora)
 
@@ -209,18 +265,14 @@ func (s *Service) filaTablero(ctx context.Context, c contexto, periodo Periodo, 
 	return fila, nil
 }
 
-// actividadesDeHoy resuelve las de hoy: si la semana empezó antes de hoy, las de hoy ya están en
-// la semana; si empezó hoy a media jornada, se consultan desde las 00:00.
+// actividadesDeHoy resuelve las de hoy de toda la zona: si la semana empezó antes de hoy,
+// las de hoy ya están en la semana; si empezó hoy a media jornada, se consultan desde las 00:00.
 func (s *Service) actividadesDeHoy(ctx context.Context, c contexto, sem semana, hoy domain.Fecha) ([]domain.Actividad, error) {
 	inicioHoy := hoy.InicioDelDia(s.loc)
 	if !sem.ventana.Inicio().After(inicioHoy) {
-		return registradasPor(sem.actividades, c.usuario), nil
+		return sem.actividades, nil
 	}
-	acts, err := s.actividadesCompletas(ctx, c.indice, c.usuario.ZonaID, inicioHoy, c.ahora)
-	if err != nil {
-		return nil, err
-	}
-	return registradasPor(acts, c.usuario), nil
+	return s.actividadesCompletas(ctx, c.indice, c.usuario.ZonaID, inicioHoy, c.ahora)
 }
 
 func (s *Service) llenarCobertura(fila *FilaTablero, sem semana, ahora time.Time) {
@@ -284,6 +336,9 @@ func llenarPeriodo(fila *FilaTablero, acts []domain.Actividad) {
 		case domain.FormaCobroCheque:
 			dst = &fila.PagosPorForma.Cheque
 		default:
+			// Inalcanzable hoy: CuentaComoDinero ya exige 157/158/52569. Un pago
+			// aplicado con forma "otra" queda fuera del dinero y de no_aplicados
+			// (ver resumir en domain/jornada.go y la medición C0, consulta M3).
 			continue
 		}
 		dst.N++

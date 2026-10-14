@@ -50,8 +50,8 @@ func nuevoMundo(t *testing.T) mundo {
 		juan: juan, rosa: rosa, lupe: lupe, ahora: ahora,
 		usuarios: &fakeUsuarios{
 			usuarios: []domain.UsuarioCobranza{rosa, lupe, juan},
-			cobro: map[string]domain.CobroSemana{
-				juan.UID: {PctPonderado: &pct, Ventas: []domain.CobroVenta{
+			cobro: map[int]domain.CobroSemana{
+				zonaRuta21: {PctPonderado: &pct, Ventas: []domain.CobroVenta{
 					{VentaID: 1, Parcialidad: dinero("150"), AbonoSemana: dinero("150"), AplicaPonderado: true},
 					{VentaID: 8, Parcialidad: dinero("150"), AbonoSemana: dinero("0"), Vencidas: dinero("2"), AplicaPonderado: true},
 				}},

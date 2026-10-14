@@ -168,6 +168,7 @@ func TestTablero_CalculoPorUsuarioEnParaleloAcotado(t *testing.T) {
 	for i := range n {
 		u := base
 		u.UID = "uid-" + dos(i)
+		u.ZonaID = 50000 + i // zonas distintas: la semana se calcula una vez por zona
 		us = append(us, u)
 	}
 	m.usuarios.usuarios = us
@@ -208,4 +209,77 @@ func TestTablero_CalculoPorUsuarioEnParaleloAcotado(t *testing.T) {
 	defer m.actividades.mu.Unlock()
 	assert.Equal(t, desempenoapp.LimiteParaleloTablero, m.actividades.maxAVez,
 		"ni más del límite a la vez, ni en serie")
+}
+
+// Revisión del carril A (punto 3): el pool de Firebird es de 10 conexiones; la
+// semana (universo, actividades, cobro de rutas) se calcula UNA vez por zona e
+// inicio dentro de cada petición del tablero. Juan y Rosa comparten la zona 21.
+func TestTablero_DosUsuariosDeLaMismaZonaHacenUnaConsultaDeCadaTipo(t *testing.T) {
+	t.Parallel()
+	for periodo, pagosJuan := range map[string]int{"hoy": 2, "semana": 3} {
+		m := nuevoMundo(t)
+		svc := nuevoServicio(t, m.usuarios, m.actividades, m.cuentas, m.ahora)
+		tb, err := svc.Tablero(context.Background(), desempenoapp.TableroInput{Periodo: periodo})
+		require.NoError(t, err)
+		assert.Equal(t, 1, m.cuentas.llamadas, "%s: un universo para la zona 21", periodo)
+		assert.Len(t, m.actividades.llamadas, 1, "%s: una lectura de actividades para la zona 21", periodo)
+		assert.Equal(t, 1, m.usuarios.llamadasCob, "%s: un cobro de rutas para la zona 21", periodo)
+		juan, rosa := filaDe(t, tb, "uid-juan"), filaDe(t, tb, "uid-rosa")
+		assert.Equal(t, pagosJuan, juan.Pagos.N, "%s: cada fila sigue contando solo lo suyo", periodo)
+		assert.Equal(t, 1, rosa.Pagos.N, "%s: Rosa solo registró pago:1003 hoy", periodo)
+		assert.Equal(t, juan.CoberturaConAlgo, rosa.CoberturaConAlgo, "%s: misma zona, misma cobertura", periodo)
+	}
+	assert.Equal(t, 4, desempenoapp.LimiteParaleloTablero)
+}
+
+// Inicio de semana distinto en la misma zona = otra ventana: no se comparte.
+func TestTablero_MismaZonaConOtroInicioNoComparteSemana(t *testing.T) {
+	t.Parallel()
+	m := nuevoMundo(t)
+	otro := local(t, 10, "08:00")
+	m.rosa.InicioSemana = &otro
+	m.usuarios.usuarios = []domain.UsuarioCobranza{m.juan, m.rosa}
+	svc := nuevoServicio(t, m.usuarios, m.actividades, m.cuentas, m.ahora)
+	_, err := svc.Tablero(context.Background(), desempenoapp.TableroInput{})
+	require.NoError(t, err)
+	assert.Equal(t, 2, m.cuentas.llamadas)
+	assert.Equal(t, 2, m.usuarios.llamadasCob)
+}
+
+// Revisión del carril A (punto 1, contrato v2.1): un inicio de semana futuro
+// no tumba el tablero; esa fila sale sin configurar y las demás se calculan.
+func TestTablero_InicioSemanaFuturoEsFilaNoConfigurada(t *testing.T) {
+	t.Parallel()
+	m := nuevoMundo(t)
+	futuro := m.ahora.Add(3 * time.Hour)
+	m.rosa.InicioSemana = &futuro
+	m.usuarios.usuarios = []domain.UsuarioCobranza{m.juan, m.rosa, m.lupe}
+	svc := nuevoServicio(t, m.usuarios, m.actividades, m.cuentas, m.ahora)
+
+	tb, err := svc.Tablero(context.Background(), desempenoapp.TableroInput{})
+	require.NoError(t, err)
+	rosa := filaDe(t, tb, "uid-rosa")
+	assert.False(t, rosa.Configurado)
+	assert.Equal(t, domain.MotivoInicioSemanaFuturo, rosa.MotivoNoConfigurado)
+	assert.Empty(t, rosa.Lineas)
+	assert.Equal(t, 0, rosa.Pagos.N)
+	assert.True(t, filaDe(t, tb, "uid-juan").Configurado, "las demás filas se calculan")
+}
+
+// Revisión del carril A (punto 4): sin_nada == total − con_algo aunque el
+// repositorio devuelva una venta repetida; la repetida se cuenta una vez.
+func TestTablero_UniversoConVentaRepetidaSeCuentaUnaVez(t *testing.T) {
+	t.Parallel()
+	m := nuevoMundo(t)
+	u := m.cuentas.porZona[zonaRuta21]
+	m.cuentas.porZona[zonaRuta21] = append(u, u[7], u[0]) // 8 (sin nada) y 1 (pagada) otra vez
+	svc := nuevoServicio(t, m.usuarios, m.actividades, m.cuentas, m.ahora)
+	tb, err := svc.Tablero(context.Background(), desempenoapp.TableroInput{})
+	require.NoError(t, err)
+	f := filaDe(t, tb, "uid-juan")
+	assert.Equal(t, 8, f.CoberturaTotal)
+	assert.Equal(t, 8, f.VentasUniverso)
+	assert.Equal(t, f.CoberturaTotal-f.CoberturaConAlgo, f.PorSegmento.SinNada)
+	ps := f.PorSegmento
+	assert.Equal(t, f.CoberturaTotal, ps.SinVisitar+ps.Volver+ps.Despues+ps.Pagados, "cada venta en un segmento")
 }

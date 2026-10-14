@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -101,4 +102,72 @@ func TestCuentas_Errores(t *testing.T) {
 	require.ErrorIs(t, err, domain.ErrUsuarioSinZona)
 	_, err = svc.Cuentas(ctx, "uid-nadie", desempenoapp.CuentasInput{})
 	require.ErrorIs(t, err, domain.ErrUsuarioNoEncontrado)
+}
+
+// Revisión del carril A (punto 2): una condonación (concepto 27969) que
+// Microsip guardó con forma 157 nunca cuenta como dinero en el estado por
+// venta: queda sin_tocar, o con el estado de su visita si la hay.
+func TestCuentas_CondonacionPorConceptoNuncaEsDinero(t *testing.T) {
+	t.Parallel()
+	m := nuevoMundo(t)
+	cond := pagoDe("pago:2001", m.juan, local(t, 14, "13:00"), 8, 18, "150.00", domain.FormaCobroEfectivo)
+	cond.Tipo = domain.ClasificarTipoPago(domain.FormaCobroEfectivo, domain.ConceptoCondonaciones)
+	require.Equal(t, domain.TipoCondonacion, cond.Tipo)
+	visita := visitaDe("visita:v-9", m.juan, local(t, 14, "12:00"), 2, 11, domain.TipoVisitaFueGrosero)
+	cond2 := pagoDe("pago:2002", m.juan, local(t, 14, "13:30"), 2, 11, "150.00", domain.FormaCobroEfectivo)
+	cond2.Tipo = domain.TipoCondonacion
+	acts := m.actividades.porZona[zonaRuta21]
+	// La venta 2 no tiene otro dinero: se quita su pago de transferencia.
+	sinPago2 := make([]domain.Actividad, 0, len(acts)+3)
+	for _, a := range acts {
+		if a.ID != "pago:1002" {
+			sinPago2 = append(sinPago2, a)
+		}
+	}
+	m.actividades.porZona[zonaRuta21] = append(sinPago2, cond, visita, cond2)
+	svc := nuevoServicio(t, m.usuarios, m.actividades, m.cuentas, m.ahora)
+
+	v, err := svc.Cuentas(context.Background(), "uid-juan", desempenoapp.CuentasInput{})
+	require.NoError(t, err)
+	por := map[int]desempenoapp.CuentaVista{}
+	for _, c := range v.Cuentas {
+		por[c.Cuenta.VentaID] = c
+	}
+	assert.Equal(t, domain.EstadoSinTocar, por[8].Resultado.Estado, "150 condonados = parcialidad, pero no es dinero")
+	assert.True(t, por[8].Resultado.ConAlgo)
+	assert.True(t, por[8].Resultado.AbonoVentana.IsZero())
+	assert.Equal(t, domain.EstadoSeNego, por[2].Resultado.Estado, "manda la visita, no la condonación")
+}
+
+// Revisión del carril A (punto 4): una venta repetida en el universo sale una
+// sola vez y los conteos cuadran (sin_nada == total − con_algo).
+func TestCuentas_UniversoConVentaRepetidaSaleUnaVez(t *testing.T) {
+	t.Parallel()
+	m := nuevoMundo(t)
+	u := m.cuentas.porZona[zonaRuta21]
+	m.cuentas.porZona[zonaRuta21] = append(u, u[7], u[0])
+	svc := nuevoServicio(t, m.usuarios, m.actividades, m.cuentas, m.ahora)
+	v, err := svc.Cuentas(context.Background(), "uid-juan", desempenoapp.CuentasInput{})
+	require.NoError(t, err)
+	assert.Equal(t, []int{1, 2, 3, 4, 5, 6, 7, 8}, ventasDe(v.Cuentas))
+	assert.Equal(t, 8, v.Conteos.Total)
+	conAlgo := 0
+	for _, c := range v.Cuentas {
+		if c.Resultado.ConAlgo {
+			conAlgo++
+		}
+	}
+	assert.Equal(t, v.Conteos.Total-conAlgo, v.Conteos.SinNada)
+}
+
+// Revisión del carril A (punto 1): cuentas de un usuario con inicio futuro = 409.
+func TestCuentas_InicioSemanaFuturoEs409(t *testing.T) {
+	t.Parallel()
+	m := nuevoMundo(t)
+	futuro := m.ahora.Add(time.Hour)
+	m.juan.InicioSemana = &futuro
+	m.usuarios.usuarios = []domain.UsuarioCobranza{m.juan}
+	svc := nuevoServicio(t, m.usuarios, m.actividades, m.cuentas, m.ahora)
+	_, err := svc.Cuentas(context.Background(), "uid-juan", desempenoapp.CuentasInput{})
+	require.ErrorIs(t, err, domain.ErrUsuarioInicioSemanaFuturo)
 }

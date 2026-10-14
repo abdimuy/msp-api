@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -69,4 +70,35 @@ func TestJornada_Errores(t *testing.T) {
 	_, err = nuevoServicio(t, &fakeUsuarios{err: domain.ErrFirestoreNoDisponible}, m.actividades, m.cuentas, m.ahora).
 		Jornada(ctx, "uid-juan", desempenoapp.JornadaInput{})
 	require.ErrorIs(t, err, domain.ErrFirestoreNoDisponible)
+}
+
+// Revisión del carril A (punto 1): la jornada de un usuario con inicio de
+// semana futuro es 409 desempeno_usuario_sin_inicio_semana con mensaje claro.
+func TestJornada_InicioSemanaFuturoEs409(t *testing.T) {
+	t.Parallel()
+	m := nuevoMundo(t)
+	futuro := m.ahora.Add(time.Hour)
+	m.juan.InicioSemana = &futuro
+	m.usuarios.usuarios = []domain.UsuarioCobranza{m.juan}
+	svc := nuevoServicio(t, m.usuarios, m.actividades, m.cuentas, m.ahora)
+	_, err := svc.Jornada(context.Background(), "uid-juan", desempenoapp.JornadaInput{})
+	require.ErrorIs(t, err, domain.ErrUsuarioSinInicioSemana)
+	require.ErrorIs(t, err, domain.ErrUsuarioInicioSemanaFuturo)
+}
+
+// Revisión del carril A (punto 4): la pausa en curso de HOY termina en
+// "ahora", no en la medianoche del día, aunque la consulta llegue hasta ella.
+func TestJornada_PausaEnCursoDeHoyTerminaAhora(t *testing.T) {
+	t.Parallel()
+	m := nuevoMundo(t)
+	svc := nuevoServicio(t, m.usuarios, m.actividades, m.cuentas, m.ahora.Add(2*time.Hour)) // 18:40
+	v, err := svc.Jornada(context.Background(), "uid-juan", desempenoapp.JornadaInput{})
+	require.NoError(t, err)
+	pausas := v.Jornada.Linea.Pausas
+	require.NotEmpty(t, pausas)
+	enCurso := pausas[len(pausas)-1]
+	require.True(t, enCurso.EnCurso)
+	assert.Equal(t, local(t, 14, "16:20"), enCurso.Desde)
+	assert.Equal(t, local(t, 14, "18:40"), enCurso.Hasta)
+	assert.Equal(t, 140, enCurso.Minutos)
 }

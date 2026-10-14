@@ -39,6 +39,9 @@ func (s *Service) Jornada(ctx context.Context, uid string, in JornadaInput) (Vis
 	if c.usuario.ZonaID <= 0 {
 		return VistaJornada{}, domain.ErrUsuarioSinZona
 	}
+	if c.usuario.InicioSemanaFuturo(c.ahora) {
+		return VistaJornada{}, domain.ErrUsuarioInicioSemanaFuturo
+	}
 	dia := domain.DiaDe(c.ahora, s.loc)
 	if in.Fecha != "" {
 		if dia, err = domain.ParseFecha(in.Fecha); err != nil {

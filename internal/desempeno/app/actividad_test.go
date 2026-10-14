@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -166,4 +167,61 @@ func TestActividad_ParametrosInvalidos(t *testing.T) {
 	require.ErrorIs(t, err, domain.ErrUsuarioSinInicioSemana, "sin desde y sin inicio de semana no hay rango")
 	_, err = svc.Actividad(ctx, "uid-sin-inicio", desempenoapp.FiltroActividadInput{Desde: "2026-10-10T00:00:00Z"})
 	require.NoError(t, err, "con desde explícito sí")
+}
+
+// Revisión del carril A (punto 1): actividad de un usuario con inicio de
+// semana futuro es 409, aunque pida un rango explícito.
+func TestActividad_InicioSemanaFuturoEs409(t *testing.T) {
+	t.Parallel()
+	m := nuevoMundo(t)
+	futuro := m.ahora.Add(time.Hour)
+	m.juan.InicioSemana = &futuro
+	m.usuarios.usuarios = []domain.UsuarioCobranza{m.juan}
+	svc := nuevoServicio(t, m.usuarios, m.actividades, m.cuentas, m.ahora)
+	for _, in := range []desempenoapp.FiltroActividadInput{{}, {Desde: "2026-10-10T00:00:00Z"}} {
+		_, err := svc.Actividad(context.Background(), "uid-juan", in)
+		require.ErrorIs(t, err, domain.ErrUsuarioInicioSemanaFuturo, "%+v", in)
+	}
+}
+
+// Revisión del carril A (punto 4): el filtro forma_cobro usa la clasificación
+// del tipo (ClasificarTipoPago): una condonación por concepto 27969 que
+// Microsip guardó con forma 157 es "condonacion", no "efectivo".
+func TestActividad_FiltroFormaCobroUsaLaClasificacion(t *testing.T) {
+	t.Parallel()
+	m := nuevoMundo(t)
+	cond := pagoDe("pago:2001", m.juan, local(t, 14, "13:00"), 8, 18, "70.00", domain.FormaCobroEfectivo)
+	cond.Tipo = domain.ClasificarTipoPago(domain.FormaCobroEfectivo, domain.ConceptoCondonaciones)
+	m.actividades.porZona[zonaRuta21] = append(m.actividades.porZona[zonaRuta21], cond)
+	svc := nuevoServicio(t, m.usuarios, m.actividades, m.cuentas, m.ahora)
+
+	pag, err := svc.Actividad(context.Background(), "uid-juan", desempenoapp.FiltroActividadInput{FormasCobro: []string{"condonacion"}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"pago:1005", "pago:2001"}, idsDe(pag.Items))
+
+	pag, err = svc.Actividad(context.Background(), "uid-juan", desempenoapp.FiltroActividadInput{FormasCobro: []string{"efectivo"}})
+	require.NoError(t, err)
+	assert.NotContains(t, idsDe(pag.Items), "pago:2001")
+	assert.Equal(t, "condonacion", domain.EtiquetaFormaDeActividad(cond))
+	assert.Equal(t, "efectivo", domain.EtiquetaFormaDeActividad(pag.Items[0]))
+}
+
+// Revisión del carril A (punto 4): sin desde y con un inicio de semana de hace
+// más de 92 días, el rango por omisión se recorta a los últimos 92 días en vez
+// de responder 422.
+func TestActividad_InicioViejoRecortaAlRangoMaximo(t *testing.T) {
+	t.Parallel()
+	m := nuevoMundo(t)
+	viejo := m.ahora.Add(-200 * 24 * time.Hour)
+	m.juan.InicioSemana = &viejo
+	m.usuarios.usuarios = []domain.UsuarioCobranza{m.juan}
+	svc := nuevoServicio(t, m.usuarios, m.actividades, m.cuentas, m.ahora)
+	_, err := svc.Actividad(context.Background(), "uid-juan", desempenoapp.FiltroActividadInput{})
+	require.NoError(t, err)
+	ll := m.actividades.llamadas[len(m.actividades.llamadas)-1]
+	assert.Equal(t, m.ahora.Add(-desempenoapp.RangoMaximo), ll.desde)
+	assert.Equal(t, m.ahora, ll.hasta)
+
+	_, err = svc.Actividad(context.Background(), "uid-juan", desempenoapp.FiltroActividadInput{Desde: viejo.Format(time.RFC3339)})
+	require.ErrorIs(t, err, domain.ErrParametroInvalido, "un desde explícito fuera de rango sigue siendo 422")
 }

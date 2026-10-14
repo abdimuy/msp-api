@@ -16,11 +16,16 @@ import (
 
 // ─── fakes de los puertos (sin librerías de mocks) ───────────────────────────
 
+// fakeUsuarios: el cobro de rutas depende solo de zona e inicio de semana
+// (rutas app/cobranza_usuarios.go: VentasPorZona(zona, inicio, now)), así que
+// el fake lo indexa por zona. Seguro para goroutines.
 type fakeUsuarios struct {
-	usuarios []domain.UsuarioCobranza
-	cobro    map[string]domain.CobroSemana
-	err      error
-	errCobro error
+	mu          sync.Mutex
+	usuarios    []domain.UsuarioCobranza
+	cobro       map[int]domain.CobroSemana
+	err         error
+	errCobro    error
+	llamadasCob int
 }
 
 func (f *fakeUsuarios) ListarUsuarios(context.Context) ([]domain.UsuarioCobranza, error) {
@@ -28,7 +33,10 @@ func (f *fakeUsuarios) ListarUsuarios(context.Context) ([]domain.UsuarioCobranza
 }
 
 func (f *fakeUsuarios) CobroSemana(_ context.Context, u domain.UsuarioCobranza) (domain.CobroSemana, error) {
-	return f.cobro[u.UID], f.errCobro
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.llamadasCob++
+	return f.cobro[u.ZonaID], f.errCobro
 }
 
 type llamadaActividades struct {
@@ -80,11 +88,16 @@ func (f *fakeActividades) ActividadesZona(_ context.Context, zona int, desde, ha
 }
 
 type fakeCuentas struct {
-	porZona map[int][]domain.CuentaUniverso
-	err     error
+	mu       sync.Mutex
+	porZona  map[int][]domain.CuentaUniverso
+	err      error
+	llamadas int
 }
 
 func (f *fakeCuentas) UniversoSemana(_ context.Context, zona int, _ time.Time) ([]domain.CuentaUniverso, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.llamadas++
 	return f.porZona[zona], f.err
 }
 

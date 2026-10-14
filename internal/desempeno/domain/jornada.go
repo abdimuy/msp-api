@@ -334,6 +334,12 @@ func resumir(acts []Actividad, pausas []Pausa) ResumenJornada {
 			r.Condonaciones.sumar(a.Importe())
 		case a.Tipo == TipoVisita:
 			r.Visitas++
+			// Un pago APLICADO con forma fuera de {157, 158, 52569} ("otra") no
+			// cae en ninguna rama a propósito: no es dinero (contrato §4) y
+			// tampoco es "no aplicado" (sí llegó a Microsip). Decisión de la
+			// revisión del carril A: queda fuera de las dos cifras hasta que la
+			// medición C0 del Apéndice 1 (consulta M3: formas reales de los pagos
+			// de cobranza en producción, 90 días) diga si existen y qué son.
 		}
 	}
 	r.Clientes = len(clientes)

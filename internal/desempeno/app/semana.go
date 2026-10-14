@@ -17,10 +17,11 @@ type semana struct {
 	derivacion  domain.Derivacion
 }
 
-// calcularSemana exige usuario configurado. La ventana es
+// calcularSemana exige usuario configurado y con inicio de semana no futuro
+// (contrato v2.1: 409, nunca el 422 de una ventana invertida). La ventana es
 // [FECHA_CARGA_INICIAL, ahora], inclusiva (VentanaCobro.kt).
 func (s *Service) calcularSemana(ctx context.Context, c contexto) (semana, error) {
-	if err := c.usuario.ExigirConfigurado(); err != nil {
+	if err := c.usuario.ExigirConfiguradoEn(c.ahora); err != nil {
 		return semana{}, err
 	}
 	v, err := domain.NuevaVentana(*c.usuario.InicioSemana, c.ahora)
@@ -31,6 +32,7 @@ func (s *Service) calcularSemana(ctx context.Context, c contexto) (semana, error
 	if err != nil {
 		return semana{}, err
 	}
+	universo = sinVentasRepetidas(universo)
 	acts, err := s.actividadesCompletas(ctx, c.indice, c.usuario.ZonaID, v.Inicio(), v.Fin())
 	if err != nil {
 		return semana{}, err
@@ -38,6 +40,22 @@ func (s *Service) calcularSemana(ctx context.Context, c contexto) (semana, error
 	pagos, visitas := aPeriodo(acts)
 	d := domain.Derivar(cuentasPeriodo(universo), pagos, visitas, v)
 	return semana{ventana: v, universo: universo, actividades: acts, derivacion: d}, nil
+}
+
+// sinVentasRepetidas deja la primera aparición de cada VentaID. Derivar indexa
+// por venta, así que una repetida (un JOIN del repositorio que duplique filas)
+// haría que total ≠ entradas derivadas y rompería sin_nada == total − con_algo.
+func sinVentasRepetidas(universo []domain.CuentaUniverso) []domain.CuentaUniverso {
+	vistas := make(map[int]bool, len(universo))
+	out := make([]domain.CuentaUniverso, 0, len(universo))
+	for _, c := range universo {
+		if vistas[c.VentaID] {
+			continue
+		}
+		vistas[c.VentaID] = true
+		out = append(out, c)
+	}
+	return out
 }
 
 func cuentasPeriodo(universo []domain.CuentaUniverso) []domain.CuentaPeriodo {

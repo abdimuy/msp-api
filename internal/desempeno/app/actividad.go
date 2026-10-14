@@ -156,10 +156,18 @@ func (s *Service) parseFiltro(in FiltroActividadInput, c contexto) (filtroActivi
 	return f, err
 }
 
-// parseRango: por omisión [inicio de semana, ahora]; máximo 92 días.
+// parseRango: por omisión [inicio de semana, ahora]; máximo 92 días. Sin desde
+// explícito y con un inicio de semana de hace más de 92 días, desde se recorta
+// a hasta − 92 d (el usuario no pidió ese rango: no es un 422).
 func parseRango(desdeS, hastaS string, c contexto) (time.Time, time.Time, error) {
 	var desde, hasta time.Time
 	var err error
+	hasta = c.ahora
+	if hastaS != "" {
+		if hasta, err = time.Parse(time.RFC3339, hastaS); err != nil {
+			return desde, hasta, invalido("hasta")
+		}
+	}
 	switch {
 	case desdeS != "":
 		if desde, err = time.Parse(time.RFC3339, desdeS); err != nil {
@@ -169,11 +177,8 @@ func parseRango(desdeS, hastaS string, c contexto) (time.Time, time.Time, error)
 		return desde, hasta, domain.ErrUsuarioSinInicioSemana
 	default:
 		desde = *c.usuario.InicioSemana
-	}
-	hasta = c.ahora
-	if hastaS != "" {
-		if hasta, err = time.Parse(time.RFC3339, hastaS); err != nil {
-			return desde, hasta, invalido("hasta")
+		if minimo := hasta.Add(-RangoMaximo); desde.Before(minimo) {
+			desde = minimo
 		}
 	}
 	desde, hasta = desde.UTC(), hasta.UTC()
@@ -270,7 +275,7 @@ func (f *filtroActividad) acepta(a domain.Actividad) bool {
 	if f.tipos != nil && !f.tipos[string(a.Tipo)] {
 		return false
 	}
-	if f.formas != nil && (a.Pago == nil || !f.formas[domain.EtiquetaFormaCobro(a.Pago.FormaCobroID)]) {
+	if f.formas != nil && (a.Pago == nil || !f.formas[domain.EtiquetaFormaDeActividad(a)]) {
 		return false
 	}
 	if f.tiposVisita != nil && (a.Visita == nil || !f.tiposVisita[a.Visita.TipoVisita]) {
@@ -401,6 +406,9 @@ func (s *Service) filtrar(ctx context.Context, uid string, in FiltroActividadInp
 	}
 	if c.usuario.ZonaID <= 0 {
 		return nil, filtroActividad{}, domain.ErrUsuarioSinZona
+	}
+	if c.usuario.InicioSemanaFuturo(c.ahora) {
+		return nil, filtroActividad{}, domain.ErrUsuarioInicioSemanaFuturo
 	}
 	f, err := s.parseFiltro(in, c)
 	if err != nil {
