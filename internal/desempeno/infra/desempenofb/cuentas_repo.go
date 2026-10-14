@@ -14,6 +14,9 @@ import (
 
 var _ outbound.CuentasRepo = (*CuentasRepo)(nil)
 
+// frecuenciaPorOmision es la que el teléfono asume si frec_pago llega vacío.
+const frecuenciaPorOmision = "SEMANAL"
+
 // CuentasRepo lee el universo de ventas de la semana de una zona.
 type CuentasRepo struct {
 	pool *firebird.Pool
@@ -43,6 +46,14 @@ const puentePV = `(SELECT des.DOCTO_FTE_ID FROM DOCTOS_ENTRE_SIS des
 // producto = descripción (ARTICULOS.NOMBRE) del primer artículo de la venta
 // por POSICION, resolución del arquitecto sobre D-API-7.
 //
+// FrecPago, FechaVenta y FechaUltPago alimentan NumAtrasos y salen de las
+// MISMAS fuentes que el sync de ventas (ventfb/ventas_repo.go selectVentaCols y
+// ventaFromClause): UPPER(lfp.VALOR_DESPLEGADO) → `frec_pago`, dc.FECHA del
+// DOCTOS_PV unido por s.DOCTO_PV_ID → `fecha_venta`, s.FECHA_ULT_PAGO →
+// `fecha_ult_pago`. LISTAS_ATRIBUTOS.VALOR_DESPLEGADO es NONE: se lee desnuda
+// (firebird.Win1252) y se pasa a mayúsculas en Go; vacía = "SEMANAL", como el
+// teléfono (VentaDto.kt: frec_pago.ifBlank { SEMANAL }).
+//
 // CAST a NUMERIC(18,2): firebirdsql v0.9.x devuelve sin escala si no.
 // Charsets: CLIENTES.NOMBRE ISO8859_1 y ARTICULOS.NOMBRE ISO8859_1 →
 // sql.NullString; DOCTOS_PV.FOLIO NONE → firebird.Win1252 (sin COALESCE con
@@ -57,6 +68,9 @@ SELECT
   CAST(s.PRECIO_TOTAL AS NUMERIC(18,2)),
   CAST(COALESCE(l.ENGANCHE, 0) AS NUMERIC(18,2)),
   s.FECHA_CARGO,
+  lfp.VALOR_DESPLEGADO,
+  dc.FECHA,
+  s.FECHA_ULT_PAGO,
   COALESCE(` + puentePV + `, 0),
   (SELECT pv.FOLIO FROM DOCTOS_PV pv WHERE pv.DOCTO_PV_ID = ` + puentePV + ` ROWS 1),
   (SELECT FIRST 1 a.NOMBRE FROM DOCTOS_PV_DET det JOIN ARTICULOS a ON a.ARTICULO_ID = det.ARTICULO_ID
@@ -65,6 +79,7 @@ FROM MSP_SALDOS_VENTAS s
 LEFT JOIN LIBRES_CARGOS_CC l   ON l.DOCTO_CC_ID      = s.DOCTO_CC_ID
 LEFT JOIN LISTAS_ATRIBUTOS lfp ON lfp.LISTA_ATRIB_ID = l.FORMA_DE_PAGO
 LEFT JOIN CLIENTES c           ON c.CLIENTE_ID       = s.CLIENTE_ID
+LEFT JOIN DOCTOS_PV dc         ON dc.DOCTO_PV_ID     = s.DOCTO_PV_ID
 WHERE s.ZONA_CLIENTE_ID = ?
   AND s.CARGO_CANCELADO <> 'S'
   AND COALESCE(UPPER(lfp.VALOR_DESPLEGADO), 'SEMANAL') <> 'CONTADO'
@@ -103,9 +118,11 @@ func scanCuenta(rows *sql.Rows) (domain.CuentaUniverso, error) {
 		parcialidadRaw, saldoRaw, cargoRaw any
 		precioTotalRaw, engancheRaw        any
 		folio                              firebird.Win1252 // DOCTOS_PV.FOLIO — NONE
+		frecPago                           firebird.Win1252 // LISTAS_ATRIBUTOS.VALOR_DESPLEGADO — NONE
+		fechaVentaRaw, fechaUltPagoRaw     any
 	)
 	if err := rows.Scan(&c.VentaID, &c.ClienteID, &clienteNombre, &parcialidadRaw, &saldoRaw,
-		&precioTotalRaw, &engancheRaw, &cargoRaw, &c.DoctoPVID, &folio, &producto); err != nil {
+		&precioTotalRaw, &engancheRaw, &cargoRaw, &frecPago, &fechaVentaRaw, &fechaUltPagoRaw, &c.DoctoPVID, &folio, &producto); err != nil {
 		return c, err
 	}
 	var err error
@@ -123,6 +140,16 @@ func scanCuenta(rows *sql.Rows) (domain.CuentaUniverso, error) {
 	}
 	if c.FechaCargo, err = firebird.ScanUTCTime(cargoRaw); err != nil {
 		return c, err
+	}
+	if c.FechaVenta, err = instanteNulo(fechaVentaRaw); err != nil {
+		return c, err
+	}
+	if c.FechaUltPago, err = instanteNulo(fechaUltPagoRaw); err != nil {
+		return c, err
+	}
+	c.FrecPago = strings.ToUpper(strings.TrimSpace(string(frecPago)))
+	if c.FrecPago == "" {
+		c.FrecPago = frecuenciaPorOmision
 	}
 	c.ClienteNombre = clienteNombre.String
 	c.Producto = producto.String

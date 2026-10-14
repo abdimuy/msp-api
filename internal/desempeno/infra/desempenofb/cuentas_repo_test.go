@@ -168,3 +168,83 @@ func TestCuentasRepo_SinContratoEngancheEnCero(t *testing.T) {
 		assert.True(t, c.EsNueva(), "8800 == 8800 − 0")
 	})
 }
+
+// fijarFrecuencia apunta LIBRES_CARGOS_CC.FORMA_DE_PAGO del cargo al atributo
+// del catálogo cuyo valor, sin distinguir mayúsculas, es frec. Toma el de ID
+// más alto: en dev conviven "QUINCENAL" y "Quincenal", y el de minúsculas
+// obliga a que el repositorio normalice a mayúsculas como el sync.
+func fijarFrecuencia(ctx context.Context, t *testing.T, q firebird.Querier, cargoID int, frec string) {
+	t.Helper()
+	var atributo int
+	require.NoError(t, q.QueryRowContext(ctx,
+		`SELECT FIRST 1 LISTA_ATRIB_ID FROM LISTAS_ATRIBUTOS
+		 WHERE UPPER(VALOR_DESPLEGADO) = ? ORDER BY LISTA_ATRIB_ID DESC`, frec).Scan(&atributo),
+		"el catálogo LISTAS_ATRIBUTOS necesita la frecuencia %s", frec)
+	_, err := q.ExecContext(ctx, `UPDATE LIBRES_CARGOS_CC SET FORMA_DE_PAGO = ? WHERE DOCTO_CC_ID = ?`, atributo, cargoID)
+	require.NoError(t, err, "fijar FORMA_DE_PAGO")
+}
+
+// Los tres campos alimentan NumAtrasos (fórmula del teléfono). Si el
+// repositorio los dejara vacíos, los atrasos saldrían mal en silencio.
+func TestCuentasRepo_FrecuenciaFechaVentaYUltimoPago(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		q := firebird.GetQuerier(ctx, pool.DB)
+		microsipseed.RequiereConceptos(t, q, domain.ConceptoCobranzaEnRuta)
+		zona := microsipseed.PrimeraZona(t, q)
+		casos := []struct {
+			frec    string
+			fecha   time.Time
+			pagoDia time.Time
+		}{
+			{"SEMANAL", time.Date(2024, 3, 4, 0, 0, 0, 0, time.UTC), time.Date(2024, 3, 11, 0, 0, 0, 0, time.UTC)},
+			{"QUINCENAL", time.Date(2024, 3, 6, 0, 0, 0, 0, time.UTC), time.Date(2024, 3, 21, 0, 0, 0, 0, time.UTC)},
+			{"MENSUAL", time.Date(2024, 3, 8, 0, 0, 0, 0, time.UTC), time.Date(2024, 4, 8, 0, 0, 0, 0, time.UTC)},
+		}
+		ventas := make([]microsipseed.Venta, len(casos))
+		for i, cs := range casos {
+			cliente := microsipseed.ClienteEnZona(t, q, "MARÍA JOSÉ IBÁÑEZ "+cs.frec, zona)
+			ventas[i] = microsipseed.VentaCredito(t, q, cliente, microsipseed.OpcionesVenta{Fecha: cs.fecha})
+			fijarFrecuencia(ctx, t, q, ventas[i].CargoCCID, cs.frec)
+			microsipseed.AbonoAplicado(t, q, ventas[i], microsipseed.OpcionesAbono{
+				ConceptoCCID: domain.ConceptoCobranzaEnRuta, Importe: decimal.NewFromInt(100), Fecha: cs.pagoDia,
+			})
+		}
+
+		cs, err := desempenofb.NewCuentasRepo(pool).UniversoSemana(ctx, zona, time.Date(2026, 10, 9, 14, 46, 0, 0, time.UTC))
+		require.NoError(t, err)
+		for i, caso := range casos {
+			c, ok := cuentaDe(cs, ventas[i].CargoCCID)
+			require.True(t, ok, caso.frec)
+			assert.Equal(t, caso.frec, c.FrecPago, "UPPER(LISTAS_ATRIBUTOS.VALOR_DESPLEGADO), como `frec_pago` del sync")
+			require.NotNil(t, c.FechaVenta, "%s: DOCTOS_PV.FECHA existe y no puede quedar nil", caso.frec)
+			// DOCTOS_PV.FECHA y DOCTOS_CC.FECHA son DATE: medianoche de CDMX (06:00Z).
+			assert.Equal(t, caso.fecha.Add(6*time.Hour), *c.FechaVenta, caso.frec)
+			require.NotNil(t, c.FechaUltPago, "%s: hubo un pago y FECHA_ULT_PAGO no puede quedar nil", caso.frec)
+			assert.Equal(t, caso.pagoDia.Add(6*time.Hour), *c.FechaUltPago, caso.frec)
+		}
+	})
+}
+
+func TestCuentasRepo_SinPagosNiFrecuencia(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		q := firebird.GetQuerier(ctx, pool.DB)
+		zona := microsipseed.PrimeraZona(t, q)
+		cliente := microsipseed.ClienteEnZona(t, q, "ÁNGEL NÚÑEZ SOLÍS", zona)
+		venta := microsipseed.VentaCredito(t, q, cliente, microsipseed.OpcionesVenta{})
+
+		cs, err := desempenofb.NewCuentasRepo(pool).UniversoSemana(ctx, zona, time.Date(2026, 10, 9, 0, 0, 0, 0, time.UTC))
+		require.NoError(t, err)
+		c, ok := cuentaDe(cs, venta.CargoCCID)
+		require.True(t, ok)
+		assert.Nil(t, c.FechaUltPago, "sin pagos: nil, no la fecha cero")
+		// El teléfono toma SEMANAL cuando frec_pago llega vacío
+		// (VentaDto.kt: frec_pago.ifBlank { SEMANAL }); el universo ya lo
+		// trata así en su WHERE.
+		assert.Equal(t, "SEMANAL", c.FrecPago)
+		require.NotNil(t, c.FechaVenta)
+	})
+}

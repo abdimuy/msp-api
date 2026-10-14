@@ -179,7 +179,7 @@ var registro = []Columna{
 	},
 	{
 		"LISTAS_ATRIBUTOS", "VALOR_DESPLEGADO", FamiliaNone,
-		[]string{"clientes/infra/clientesfb", "config/infra/configfb"},
+		[]string{"clientes/infra/clientesfb", "config/infra/configfb", "desempeno/infra/desempenofb"},
 		"371 de 1,246 filas traen no-ASCII.",
 	},
 	{
