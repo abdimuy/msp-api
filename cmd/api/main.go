@@ -235,6 +235,8 @@ func appOptions() []fx.Option {
 			provideVisitasImagenesRepo,
 			provideVisitasStorage,
 			provideVisitasService,
+			// Desempeño de cobradores (solo lectura).
+			provideDesempenoService,
 			provideRootHandler,
 			provideHTTPServer,
 		),

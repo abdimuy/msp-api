@@ -1,0 +1,31 @@
+{
+  "nombre": "un centavo menos que la parcialidad es abono parcial",
+  "ventana": {
+    "inicio": "2026-10-09T13:46:00Z",
+    "fin": "2026-10-14T22:40:00Z"
+  },
+  "cuentas": [
+    {
+      "venta_id": 1,
+      "cliente_id": 10,
+      "parcialidad": "150.00"
+    }
+  ],
+  "pagos": [
+    {
+      "venta_id": 1,
+      "importe": "149.99",
+      "forma_cobro_id": 157,
+      "fecha_hora": "2026-10-11T16:00:00Z",
+      "rechazado": false
+    }
+  ],
+  "visitas": [],
+  "esperado": [
+    {
+      "venta_id": 1,
+      "estado": "abono_parcial",
+      "con_algo": true
+    }
+  ]
+}

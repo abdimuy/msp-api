@@ -719,6 +719,24 @@ ORDER BY pago.FECHA`
 
 // ─── ObtenerPagoDetalle ───────────────────────────────────────────────────────
 
+// pagoRecibidoDelAbono elige la captura de la app (MSP_PAGOS_RECIBIDOS.ID) del
+// abono p.DOCTO_CC_ID con la misma regla que la actividad de desempeño
+// (desempenofb/actividades_repo.go, queryPagosAplicados): primero la ligada
+// por IMPTE_DOCTO_CC_ID a un importe vivo del abono (IDX_MSP_PAGOS_RECIB_IMPTE)
+// y, sólo si no hay ninguna, la vieja ligada por DOCTO_CC_ID con
+// IMPTE_DOCTO_CC_ID nulo (IDX_PAGOS_REC_DOCTO_CC). MIN(ID) en cada rama: un
+// solo valor, sin fan-out. La actividad liga por importe; el detalle es del
+// abono entero, así que toma el MIN entre las capturas de sus importes.
+const pagoRecibidoDelAbono = `COALESCE(
+    (SELECT MIN(pr2.ID) FROM IMPORTES_DOCTOS_CC i2
+       JOIN MSP_PAGOS_RECIBIDOS pr2 ON pr2.IMPTE_DOCTO_CC_ID = i2.IMPTE_DOCTO_CC_ID
+      WHERE i2.DOCTO_CC_ID = p.DOCTO_CC_ID
+        AND i2.TIPO_IMPTE = 'R'
+        AND i2.CANCELADO  = 'N'),
+    (SELECT MIN(pr3.ID) FROM MSP_PAGOS_RECIBIDOS pr3
+      WHERE pr3.DOCTO_CC_ID = p.DOCTO_CC_ID
+        AND pr3.IMPTE_DOCTO_CC_ID IS NULL))`
+
 // queryPagoDetalle fetches the rich detail for a single payment document (DOCTOS_CC
 // abono). Amounts are aggregated over IMPORTES_DOCTOS_CC rows with TIPO_IMPTE='R'
 // and CANCELADO='N'. The primary cargo is resolved via a correlated ROWS 1 scalar
@@ -735,13 +753,21 @@ ORDER BY pago.FECHA`
 // while COBRADORES.NOMBRE is CHARACTER SET ISO8859_1 (sql.NullString — Firebird
 // already transliterated it). MSP_PAGOS_RECIBIDOS columns are UTF8.
 //
+// pago_recibido_id / num_fotos (spec desempeño §3.2.3): el UUID de
+// MSP_PAGOS_RECIBIDOS que la app generó y cuántas fotos tiene, por SUBCONSULTA
+// ESCALAR con MIN(...) — nunca fan-out aunque hubiera dos capturas. La captura
+// se elige con la MISMA regla que la actividad de desempeño
+// (desempenofb/actividades_repo.go, queryPagosAplicados), ver
+// pagoRecibidoDelAbono. Pagos de oficina o legado: NULL y 0.
+// MSP_PAGOS_RECIBIDOS.ID es CHARACTER SET NONE con UUID ASCII → sql.NullString.
+//
 // GPS: native DOCTOS_CC has no LAT/LON columns; GPS comes only from
 // MSP_PAGOS_RECIBIDOS.LAT/LON (VARCHAR(20), ASCII decimal text).
 //
 // NOTE: doctoCCID is bound once — in the outer WHERE clause.
 // APLICA_A_CARGO_ID and DOCTO_PV_ID are resolved via correlated scalar subqueries
 // using ROWS 1, matching the pattern from queryPagos (FormaCobro correlated scalar).
-const queryPagoDetalle = `
+var queryPagoDetalle = `
 SELECT
   p.DOCTO_CC_ID,
   p.FECHA,
@@ -803,7 +829,10 @@ SELECT
   r.LAT                                         AS MSP_LAT,
   r.LON                                         AS MSP_LON,
   r.RECEIVED_AT                                 AS MSP_RECEIVED_AT,
-  r.APLICADO_AT                                 AS MSP_APLICADO_AT
+  r.APLICADO_AT                                 AS MSP_APLICADO_AT,
+  ` + pagoRecibidoDelAbono + `                AS MSP_PAGO_RECIBIDO_ID,
+  (SELECT COUNT(*) FROM MSP_PAGOS_IMAGENES im
+    WHERE im.PAGO_ID = ` + pagoRecibidoDelAbono + `) AS NUM_FOTOS
 FROM DOCTOS_CC p
 JOIN IMPORTES_DOCTOS_CC i ON i.DOCTO_CC_ID = p.DOCTO_CC_ID
   AND i.TIPO_IMPTE = 'R'

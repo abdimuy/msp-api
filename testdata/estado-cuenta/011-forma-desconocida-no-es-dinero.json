@@ -1,0 +1,31 @@
+{
+  "nombre": "una forma de cobro desconocida no es dinero",
+  "ventana": {
+    "inicio": "2026-10-09T13:46:00Z",
+    "fin": "2026-10-14T22:40:00Z"
+  },
+  "cuentas": [
+    {
+      "venta_id": 1,
+      "cliente_id": 10,
+      "parcialidad": "150.00"
+    }
+  ],
+  "pagos": [
+    {
+      "venta_id": 1,
+      "importe": "150.00",
+      "forma_cobro_id": 999,
+      "fecha_hora": "2026-10-11T16:00:00Z",
+      "rechazado": false
+    }
+  ],
+  "visitas": [],
+  "esperado": [
+    {
+      "venta_id": 1,
+      "estado": "sin_tocar",
+      "con_algo": true
+    }
+  ]
+}

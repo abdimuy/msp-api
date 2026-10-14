@@ -51,3 +51,11 @@ type CalendarioCobradorClient interface {
 	// each with its own FECHA_CARGA_INICIAL window.
 	ListarCobradores(ctx context.Context) ([]UsuarioCobrador, error)
 }
+
+// CalendarioConfigurable es opcional: lo implementa un cliente de calendario
+// que puede estar SIN Firestore detrás (rutasfirestore.NoopCalendarioClient).
+// Quien no puede tratar "sin calendario" como "flota vacía" lo consulta; un
+// cliente que no lo implementa se considera configurado.
+type CalendarioConfigurable interface {
+	Configurado() bool
+}

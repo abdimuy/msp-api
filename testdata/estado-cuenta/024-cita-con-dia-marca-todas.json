@@ -1,0 +1,43 @@
+{
+  "nombre": "una cita con dia gana al literal y marca todas las ventas del cliente",
+  "ventana": {
+    "inicio": "2026-10-09T13:46:00Z",
+    "fin": "2026-10-14T22:40:00Z"
+  },
+  "cuentas": [
+    {
+      "venta_id": 1,
+      "cliente_id": 10,
+      "parcialidad": "150.00"
+    },
+    {
+      "venta_id": 2,
+      "cliente_id": 10,
+      "parcialidad": "200.00"
+    }
+  ],
+  "pagos": [],
+  "visitas": [
+    {
+      "cliente_id": 10,
+      "venta_id": 1,
+      "tipo_visita": "Pidió que regrese otro día",
+      "fecha_hora": "2026-10-11T16:00:00Z",
+      "fecha_cita": "2026-10-15",
+      "hora_cita": "16:30",
+      "fecha_promesa": null
+    }
+  ],
+  "esperado": [
+    {
+      "venta_id": 1,
+      "estado": "cita_a_una_hora",
+      "con_algo": true
+    },
+    {
+      "venta_id": 2,
+      "estado": "cita_a_una_hora",
+      "con_algo": true
+    }
+  ]
+}

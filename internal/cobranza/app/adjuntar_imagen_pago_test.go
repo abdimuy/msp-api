@@ -51,12 +51,12 @@ func (f *fakePagosImagenesRepo) InsertImagen(_ context.Context, pagoID uuid.UUID
 	return nil
 }
 
-func (f *fakePagosImagenesRepo) DeleteImagen(_ context.Context, imagenID uuid.UUID) error {
+func (f *fakePagosImagenesRepo) DeleteImagenDePago(_ context.Context, pagoID, imagenID uuid.UUID) error {
 	if f.deleteErr != nil {
 		return f.deleteErr
 	}
 	img, ok := f.images[imagenID]
-	if !ok {
+	if !ok || !f.esDe(pagoID, imagenID) {
 		return domain.ErrImagenNoEncontrada
 	}
 	// Remove from byPago slices.
@@ -72,15 +72,25 @@ func (f *fakePagosImagenesRepo) DeleteImagen(_ context.Context, imagenID uuid.UU
 	return nil
 }
 
-func (f *fakePagosImagenesRepo) FindImagenByID(_ context.Context, imagenID uuid.UUID) (*domain.Imagen, error) {
+func (f *fakePagosImagenesRepo) FindImagenDePago(_ context.Context, pagoID, imagenID uuid.UUID) (*domain.Imagen, error) {
 	if f.findErr != nil {
 		return nil, f.findErr
 	}
 	img, ok := f.images[imagenID]
-	if !ok {
+	if !ok || !f.esDe(pagoID, imagenID) {
 		return nil, domain.ErrImagenNoEncontrada
 	}
 	return img, nil
+}
+
+// esDe replica el WHERE ID = ? AND PAGO_ID = ? del repositorio real.
+func (f *fakePagosImagenesRepo) esDe(pagoID, imagenID uuid.UUID) bool {
+	for _, id := range f.byPago[pagoID] {
+		if id == imagenID {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *fakePagosImagenesRepo) ListImagenes(_ context.Context, pagoID uuid.UUID) ([]*domain.Imagen, error) {
@@ -590,7 +600,7 @@ func TestEliminarImagenPago_DeleteRowFails(t *testing.T) {
 	pagoID := seedPago(t, pagosRepo)
 	img := seedImagen(t, imagenes, pagoID)
 	// Reset deleteErr AFTER seeding (seedImagen calls InsertImagen, not Delete).
-	// deleteErr is already set above — it will apply to DeleteImagen call in svc.
+	// deleteErr is already set above — it will apply to DeleteImagenDePago call in svc.
 	svc := newImagenSvc(t, pagosRepo, imagenes, storage, nil)
 
 	err := svc.EliminarImagenPago(context.Background(), pagoID, img.ID(), uuid.New())
@@ -613,7 +623,7 @@ func TestEliminarImagenPago_BlobDeleteFails_NotPropagated(t *testing.T) {
 	img := seedImagen(t, imagenes, pagoID)
 	svc := newImagenSvc(t, pagosRepo, imagenes, storage, nil)
 
-	// DeleteImagen row succeeds, but blob delete will fail.
+	// DeleteImagenDePago row succeeds, but blob delete will fail.
 	err := svc.EliminarImagenPago(context.Background(), pagoID, img.ID(), uuid.New())
 
 	// Best-effort: blob failure must NOT propagate.
@@ -800,4 +810,45 @@ func TestListarImagenesPago_DepsMissing(t *testing.T) {
 
 	_, err := svc.ListarImagenesPago(context.Background(), uuid.New())
 	require.Error(t, err)
+}
+
+// ─── Pertenencia ──────────────────────────────────────────────────────────────
+
+func TestObtenerImagenPago_DeOtroPagoEs404(t *testing.T) {
+	t.Parallel()
+
+	pagosRepo := newFakePagosRecibidosRepo()
+	imagenes := newFakePagosImagenesRepo()
+	storage := newFakeStorageProvider()
+	pagoA := seedPago(t, pagosRepo)
+	pagoB := seedPago(t, pagosRepo)
+	img := seedImagen(t, imagenes, pagoA)
+	storage.objects[img.Storage().Key()] = []byte("data")
+	storage.mimes[img.Storage().Key()] = domain.MimeJPEG
+	svc := newImagenSvc(t, pagosRepo, imagenes, storage, nil)
+
+	_, err := svc.ObtenerImagenPago(context.Background(), pagoB, img.ID())
+	require.ErrorIs(t, err, domain.ErrImagenNoEncontrada)
+
+	res, err := svc.ObtenerImagenPago(context.Background(), pagoA, img.ID())
+	require.NoError(t, err, "control positivo: con su pago sí")
+	_ = res.Object.Body.Close()
+}
+
+func TestEliminarImagenPago_DeOtroPagoNoBorraNada(t *testing.T) {
+	t.Parallel()
+
+	pagosRepo := newFakePagosRecibidosRepo()
+	imagenes := newFakePagosImagenesRepo()
+	storage := newFakeStorageProvider()
+	pagoA := seedPago(t, pagosRepo)
+	pagoB := seedPago(t, pagosRepo)
+	img := seedImagen(t, imagenes, pagoA)
+	storage.objects[img.Storage().Key()] = []byte("data")
+	svc := newImagenSvc(t, pagosRepo, imagenes, storage, nil)
+
+	err := svc.EliminarImagenPago(context.Background(), pagoB, img.ID(), uuid.New())
+	require.ErrorIs(t, err, domain.ErrImagenNoEncontrada)
+	assert.Len(t, imagenes.images, 1, "la fila de A sigue")
+	assert.Equal(t, 0, storage.deleteCalls, "el blob de A no se tocó")
 }

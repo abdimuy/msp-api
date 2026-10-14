@@ -114,6 +114,13 @@ var (
 		"no se encontró la visita",
 	)
 
+	// ErrImagenNoEncontrada: la imagen no existe o no es de ESA visita. Las
+	// dos se responden igual (404) para no revelar fotos de otra visita.
+	ErrImagenNoEncontrada = apperror.NewNotFound(
+		"visita_imagen_no_encontrada",
+		"imagen no encontrada",
+	)
+
 	// ─── Imagen (hija de Visita) ───────────────────────────────────────────.
 
 	// ErrImagenIDRequerido is returned when the imagen UUID is the zero value.

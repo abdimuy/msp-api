@@ -584,3 +584,73 @@ func TestHTTP_ObtenerImagenPagoHandler_NotFound(t *testing.T) {
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
+
+// ─── Pertenencia (spec desempeño §3.2) ────────────────────────────────────────
+
+func TestHTTP_ObtenerImagenPagoHandler_ImagenDeOtroPagoEs404(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	pagosRepo := newFakePagosRecibidosRepo()
+	imagenesRepo := newFakePagosImagenesRepo()
+	storage := newFakeStorageProvider()
+	pagoA := seedHTTPPago(t, pagosRepo)
+	pagoB := seedHTTPPago(t, pagosRepo)
+	img := seedHTTPImagen(t, imagenesRepo, storage, pagoA)
+	svc := buildTestService(now, newFakeSaldosRepoHTTP(), pagosRepo, imagenesRepo, nil, storage, nil, fakeTxRunner{})
+
+	rec := httptest.NewRecorder()
+	mountReadWithUser(pagoUser(), svc).ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, fmt.Sprintf("/pagos/%s/imagenes/%s", pagoB, img.ID()), nil))
+	assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "code=pago_imagen_no_encontrada")
+	assert.NotContains(t, rec.Body.String(), "XXXX", "no se filtra ni un byte del blob")
+
+	// Con If-None-Match del id ajeno sigue siendo 404, no 304: el 304 sólo
+	// se responde después de verificar la pertenencia.
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/pagos/%s/imagenes/%s", pagoB, img.ID()), nil)
+	req.Header.Set("If-None-Match", `"`+img.ID().String()+`"`)
+	rec = httptest.NewRecorder()
+	mountReadWithUser(pagoUser(), svc).ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusNotFound, rec.Code, "foto ajena con If-None-Match: 404, no 304")
+	assert.Empty(t, rec.Header().Get("ETag"), "no se confirma el ETag de una foto ajena")
+}
+
+func TestHTTP_EliminarImagenPago_ImagenDeOtroPagoEs404(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	pagosRepo := newFakePagosRecibidosRepo()
+	imagenesRepo := newFakePagosImagenesRepo()
+	storage := newFakeStorageProvider()
+	pagoA := seedHTTPPago(t, pagosRepo)
+	pagoB := seedHTTPPago(t, pagosRepo)
+	img := seedHTTPImagen(t, imagenesRepo, storage, pagoA)
+	svc := buildTestService(now, newFakeSaldosRepoHTTP(), pagosRepo, imagenesRepo, nil, storage, nil, fakeTxRunner{})
+
+	rec := httptest.NewRecorder()
+	mountReadWithUser(pagoUser(), svc).ServeHTTP(rec,
+		httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/pagos/%s/imagenes/%s", pagoB, img.ID()), nil))
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Len(t, imagenesRepo.images, 1, "la imagen de A sigue")
+	assert.Equal(t, 0, storage.deleteCalls)
+}
+
+func TestHTTP_EliminarImagenPago_SinPermisoEs403YNoBorra(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	pagosRepo := newFakePagosRecibidosRepo()
+	imagenesRepo := newFakePagosImagenesRepo()
+	storage := newFakeStorageProvider()
+	pagoID := seedHTTPPago(t, pagosRepo)
+	img := seedHTTPImagen(t, imagenesRepo, storage, pagoID)
+	svc := buildTestService(now, newFakeSaldosRepoHTTP(), pagosRepo, imagenesRepo, nil, storage, nil, fakeTxRunner{})
+
+	rec := httptest.NewRecorder()
+	mountReadWithUser(noPermUser(), svc).ServeHTTP(rec,
+		httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/pagos/%s/imagenes/%s", pagoID, img.ID()), nil))
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	assert.Len(t, imagenesRepo.images, 1, "la imagen sigue")
+	assert.Equal(t, 0, storage.deleteCalls)
+}

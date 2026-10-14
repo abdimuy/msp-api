@@ -140,12 +140,12 @@ func (f *fakePagosImagenesRepo) InsertImagen(_ context.Context, pagoID uuid.UUID
 	return nil
 }
 
-func (f *fakePagosImagenesRepo) DeleteImagen(_ context.Context, imagenID uuid.UUID) error {
+func (f *fakePagosImagenesRepo) DeleteImagenDePago(_ context.Context, pagoID, imagenID uuid.UUID) error {
 	if f.deleteErr != nil {
 		return f.deleteErr
 	}
 	img, ok := f.images[imagenID]
-	if !ok {
+	if !ok || !f.esDe(pagoID, imagenID) {
 		return domain.ErrImagenNoEncontrada
 	}
 	for pagoID, ids := range f.byPago {
@@ -160,15 +160,25 @@ func (f *fakePagosImagenesRepo) DeleteImagen(_ context.Context, imagenID uuid.UU
 	return nil
 }
 
-func (f *fakePagosImagenesRepo) FindImagenByID(_ context.Context, imagenID uuid.UUID) (*domain.Imagen, error) {
+func (f *fakePagosImagenesRepo) FindImagenDePago(_ context.Context, pagoID, imagenID uuid.UUID) (*domain.Imagen, error) {
 	if f.findErr != nil {
 		return nil, f.findErr
 	}
 	img, ok := f.images[imagenID]
-	if !ok {
+	if !ok || !f.esDe(pagoID, imagenID) {
 		return nil, domain.ErrImagenNoEncontrada
 	}
 	return img, nil
+}
+
+// esDe replica el WHERE ID = ? AND PAGO_ID = ? del repositorio real.
+func (f *fakePagosImagenesRepo) esDe(pagoID, imagenID uuid.UUID) bool {
+	for _, id := range f.byPago[pagoID] {
+		if id == imagenID {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *fakePagosImagenesRepo) ListImagenes(_ context.Context, pagoID uuid.UUID) ([]*domain.Imagen, error) {

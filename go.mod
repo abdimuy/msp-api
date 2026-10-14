@@ -24,6 +24,7 @@ require (
 	go.uber.org/fx v1.24.0
 	go.uber.org/goleak v1.3.0
 	golang.org/x/image v0.40.0
+	golang.org/x/sync v0.21.0
 	golang.org/x/text v0.37.0
 	google.golang.org/api v0.231.0
 	google.golang.org/grpc v1.74.2
@@ -103,7 +104,6 @@ require (
 	golang.org/x/crypto v0.49.0 // indirect
 	golang.org/x/net v0.51.0 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
-	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/time v0.11.0 // indirect
 	google.golang.org/appengine/v2 v2.0.6 // indirect

@@ -53,6 +53,9 @@ import (
 	reactivacionapp "github.com/abdimuy/msp-api/internal/reactivacion/app"
 	reactivacionhttp "github.com/abdimuy/msp-api/internal/reactivacion/infra/reactivacionhttp"
 
+	desempenoapp "github.com/abdimuy/msp-api/internal/desempeno/app"
+	desempenohttp "github.com/abdimuy/msp-api/internal/desempeno/infra/desempenohttp"
+
 	visitasapp "github.com/abdimuy/msp-api/internal/visitas/app"
 	visitashttp "github.com/abdimuy/msp-api/internal/visitas/infra/visitashttp"
 )
@@ -182,6 +185,7 @@ func provideRootHandler(
 	configSvc *configapp.Service,
 	reactivacionSvc *reactivacionapp.Service,
 	visitasSvc *visitasapp.Service,
+	desempenoSvc *desempenoapp.Service,
 	logger *slog.Logger,
 ) RootHandler {
 	r := chi.NewRouter()
@@ -367,6 +371,18 @@ func provideRootHandler(
 			// path they never open makes their exposure zero by construction.
 			visitashttp.MountRouter(r, visitasSvc,
 				visitashttp.WithSSE(eventBus, cfg.Visitas, logger))
+		})
+
+		// Desempeño de cobradores — solo lectura, authn únicamente (sin
+		// idempotencia ni captura de intents: no hay escrituras). desempeno:ver
+		// se exige dentro de cada handler. MountRouter registra rutas
+		// /desempeno/*, así que va en un Group (como rutas), NO en
+		// r.Route("/desempeno"), que duplicaría el prefijo.
+		// Rutas finales: GET /v2/desempeno/catalogos y
+		// /v2/desempeno/usuarios[/{uid}/jornada|actividad|cuentas].
+		r.Group(func(r chi.Router) {
+			r.Use(skipAuthForPublicDocs(authn.Handler))
+			desempenohttp.MountRouter(r, desempenoSvc)
 		})
 
 		// Cobranza endpoints — authn only. Read (saldos, pagos, sync) plus

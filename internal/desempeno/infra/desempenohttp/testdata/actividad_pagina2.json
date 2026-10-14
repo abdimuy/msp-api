@@ -1,0 +1,46 @@
+{
+  "items": [
+    {
+      "id": "visita:412cc2fc-0000-4000-8000-000000000002",
+      "tipo": "visita",
+      "hora": "2026-10-14T15:00:00Z",
+      "recibido_at": null,
+      "cliente_id": 1544900,
+      "cliente_nombre": "ROSARIO VILLA",
+      "venta_id": null,
+      "folio": null,
+      "registrado_por": {
+        "usuario_uid": "abc123",
+        "cobrador_id": 11502,
+        "nombre": "Juan Carlos Méndez",
+        "origen": "app"
+      },
+      "lat": null,
+      "lng": null,
+      "con_gps": false,
+      "num_fotos": 0,
+      "docto_pv_id": null,
+      "captura_tardia": false,
+      "pago": null,
+      "visita": {
+        "visita_id": "412cc2fc-0000-4000-8000-000000000002",
+        "tipo_visita": "No se encontraba",
+        "nota": "Vecina dice que regresa el lunes",
+        "estado": "no_estaba",
+        "trato": "nadie",
+        "etiqueta": "No estaba"
+      }
+    }
+  ],
+  "siguiente_cursor": null,
+  "totales": {
+    "n": 2,
+    "importe": "150.00",
+    "por_tipo": {
+      "pago": 1,
+      "visita": 1,
+      "condonacion": 0
+    }
+  }
+}
+

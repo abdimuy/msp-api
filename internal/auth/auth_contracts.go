@@ -140,4 +140,7 @@ const (
 	PermReactivacionLeer = domain.PermReactivacionLeer
 	// PermReactivacionAdministrar — see domain.PermReactivacionAdministrar.
 	PermReactivacionAdministrar = domain.PermReactivacionAdministrar
+
+	// PermDesempenoVer — see domain.PermDesempenoVer.
+	PermDesempenoVer = domain.PermDesempenoVer
 )

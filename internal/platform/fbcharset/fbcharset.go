@@ -179,7 +179,7 @@ var registro = []Columna{
 	},
 	{
 		"LISTAS_ATRIBUTOS", "VALOR_DESPLEGADO", FamiliaNone,
-		[]string{"clientes/infra/clientesfb", "config/infra/configfb"},
+		[]string{"clientes/infra/clientesfb", "config/infra/configfb", "desempeno/infra/desempenofb"},
 		"371 de 1,246 filas traen no-ASCII.",
 	},
 	{
@@ -204,8 +204,28 @@ var registro = []Columna{
 	},
 	{
 		"DOCTOS_PV", "FOLIO", FamiliaNone,
-		[]string{"rutas/infra/rutasfb"},
+		[]string{"rutas/infra/rutasfb", "desempeno/infra/desempenofb"},
 		"CHAR(9) generado por el sistema; 0 filas con no-ASCII.",
+	},
+	{
+		"DOCTOS_CC", "LAT", FamiliaNone,
+		[]string{"desempeno/infra/desempenofb"},
+		"VARCHAR(100) con un decimal en texto (E-COB-018); se parsea a float.",
+	},
+	{
+		"DOCTOS_CC", "LON", FamiliaNone,
+		[]string{"desempeno/infra/desempenofb"},
+		"VARCHAR(100) con un decimal en texto (E-COB-018); se parsea a float.",
+	},
+	{
+		"MSP_PAGOS_RECIBIDOS", "LAT", FamiliaNone,
+		[]string{"desempeno/infra/desempenofb"},
+		"VARCHAR(20) legado (migración 000016); decimal en texto.",
+	},
+	{
+		"MSP_PAGOS_RECIBIDOS", "LON", FamiliaNone,
+		[]string{"desempeno/infra/desempenofb"},
+		"VARCHAR(20) legado (migración 000016); decimal en texto.",
 	},
 	{
 		"CAJAS", "NOMBRE", FamiliaNone,
