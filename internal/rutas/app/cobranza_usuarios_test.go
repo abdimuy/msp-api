@@ -62,7 +62,10 @@ func TestService_UsuariosCobradores_ErrorDeZonasSePropaga(t *testing.T) {
 func TestService_CobranzaDeUsuario_IgualQueDesglosePorUsuario(t *testing.T) {
 	t.Parallel()
 	zonaID := 21563
-	inicio := time.Date(2026, 10, 9, 13, 46, 0, 0, time.UTC)
+	// Ventana de 8 días hacia atrás desde el reloj real (los dos servicios
+	// usan time.Now): siempre contiene un vencimiento semanal, así que la venta
+	// SÍ aplica al ponderado y PctPonderado no puede ser nil.
+	inicio := time.Now().UTC().AddDate(0, 0, -8).Truncate(time.Minute)
 	ventas := []rutasdomain.VentaCobranza{{
 		VentaID: 1, ClienteID: 10, ZonaID: zonaID,
 		Parcialidad: decimal.NewFromInt(100), Frecuencia: rutasdomain.Semanal,
@@ -87,8 +90,40 @@ func TestService_CobranzaDeUsuario_IgualQueDesglosePorUsuario(t *testing.T) {
 	assert.Equal(t, desglose[0].VentaID, got.Ventas[0].VentaID)
 	assert.True(t, desglose[0].Aporte.Equal(got.Ventas[0].Aporte))
 	assert.True(t, desglose[0].Vencidas.Equal(got.Ventas[0].Vencidas))
+	require.True(t, got.Ventas[0].AplicaPonderado, "la venta debe aplicar al ponderado para que la prueba distinga")
 	assert.Equal(t, desglose[0].AplicaPonderado, got.Ventas[0].AplicaPonderado)
-	assert.Equal(t, rutasdomain.CalcularResumenPonderado(desglose).Pct, got.PctPonderado)
+	esperado := rutasdomain.CalcularResumenPonderado(desglose).Pct
+	require.NotNil(t, esperado)
+	require.NotNil(t, got.PctPonderado, "el % ponderado se asigna")
+	assert.True(t, esperado.Equal(*got.PctPonderado), "%s vs %s", esperado, got.PctPonderado)
+}
+
+func TestService_UsuariosCobradores_DescartaCobradorIDNoPositivo(t *testing.T) {
+	t.Parallel()
+	svc := NewService(&fakeRutasRepo{}, &fakeCobranzaRepo{}, &fakeCalendario{usuarios: []outbound.UsuarioCobrador{
+		{UID: "cero", Nombre: "Pedro Salinas", CobradorID: 0, ZonaID: 1},
+		{UID: "negativo", Nombre: "Lucía Ortiz", CobradorID: -1, ZonaID: 1},
+		{UID: "juan", Nombre: "Juan Carlos Méndez", CobradorID: 11502, ZonaID: 1},
+	}})
+
+	got, err := svc.UsuariosCobradores(context.Background())
+	require.NoError(t, err)
+	require.Len(t, got, 1, "solo usuarios con COBRADOR_ID > 0 (D-API-9)")
+	assert.Equal(t, "juan", got[0].UID)
+}
+
+// calendarioNoConfigurado imita a rutasfirestore.NoopCalendarioClient: no
+// falla, pero tampoco está conectado a Firestore.
+type calendarioNoConfigurado struct{ fakeCalendario }
+
+func (calendarioNoConfigurado) Configurado() bool { return false }
+
+func TestService_UsuariosCobradores_CalendarioNoConfiguradoEs503(t *testing.T) {
+	t.Parallel()
+	svc := NewService(&fakeRutasRepo{}, &fakeCobranzaRepo{}, &calendarioNoConfigurado{})
+
+	_, err := svc.UsuariosCobradores(context.Background())
+	require.ErrorIs(t, err, rutas.ErrCalendarioNoDisponible, "sin Firestore no se inventa una flota vacía")
 }
 
 func TestService_CobranzaDeUsuario_SinConfigurarNoConsulta(t *testing.T) {

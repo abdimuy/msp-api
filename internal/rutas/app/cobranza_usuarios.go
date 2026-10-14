@@ -7,6 +7,7 @@ import (
 
 	"github.com/abdimuy/msp-api/internal/rutas"
 	rutasdomain "github.com/abdimuy/msp-api/internal/rutas/domain"
+	"github.com/abdimuy/msp-api/internal/rutas/ports/outbound"
 )
 
 // Compile-time check: *Service satisfies the cross-module contract.
@@ -15,7 +16,14 @@ var _ rutas.CobranzaUsuariosReader = (*Service)(nil)
 // UsuariosCobradores implements rutas.CobranzaUsuariosReader. Unlike
 // ListarReporteUsuarios it does NOT swallow a calendar failure: desempeno must
 // answer 503 instead of inventing an empty fleet (spec §6).
+//
+// The noop calendar (Firestore not configured or failed at boot) returns an
+// empty list without error; that is also ErrCalendarioNoDisponible here, never
+// an empty fleet.
 func (s *Service) UsuariosCobradores(ctx context.Context) ([]rutas.UsuarioCobrador, error) {
+	if c, ok := s.calendario.(outbound.CalendarioConfigurable); ok && !c.Configurado() {
+		return nil, rutas.ErrCalendarioNoDisponible
+	}
 	usuarios, err := s.calendario.ListarCobradores(ctx)
 	if err != nil {
 		return nil, rutas.ErrCalendarioNoDisponible.WithError(err)
@@ -30,6 +38,9 @@ func (s *Service) UsuariosCobradores(ctx context.Context) ([]rutas.UsuarioCobrad
 	}
 	out := make([]rutas.UsuarioCobrador, 0, len(usuarios))
 	for _, u := range usuarios {
+		if u.CobradorID <= 0 {
+			continue // the contract promises COBRADOR_ID > 0 (D-API-9)
+		}
 		c := rutas.UsuarioCobrador{
 			UID: u.UID, Nombre: u.Nombre, Email: u.Email,
 			CobradorID: u.CobradorID, ZonaID: u.ZonaID, ZonaNombre: nombrePorZona[u.ZonaID],
