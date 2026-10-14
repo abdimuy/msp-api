@@ -4,6 +4,8 @@ package desempenofb
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -52,24 +54,35 @@ func folioVentaDe(columnaCargo string) string {
 // sql.NullString); DOCTOS_CC.LAT/LON NONE (Win1252); MSP_PAGOS_RECIBIDOS.ID
 // NONE con UUID ASCII y COBRADOR UTF8 (sql.NullString); MSP_USUARIOS.
 // FIREBASE_UID ASCII. Usa IDX_MSP_PAGOS_ZONA_FECHA (ZONA_CLIENTE_ID, FECHA).
+//
+// Microsip manda sobre la caché: cargo, cliente, concepto, fecha, importe,
+// cancelado y aplicado salen con la MISMA regla que selectPagoColsP del sync
+// (COALESCE(i.*, dc.*, p.*)), escrita aquí aparte porque esa constante no se
+// toca (COBRANZA-SYNC.md). El filtro de concepto y el de cancelado se aplican
+// sobre esos mismos valores. El rango de fechas sigue sobre p.FECHA (índice).
+//
+// Liga con la captura de la app (MSP_PAGOS_RECIBIDOS): por IMPTE_DOCTO_CC_ID
+// y, si no hay ninguna así, por DOCTO_CC_ID con IMPTE_DOCTO_CC_ID nulo
+// (capturas viejas; IDX_PAGOS_REC_DOCTO_CC). MIN(ID) en cada rama: una fila
+// de salida por abono, sin fan-out.
 var queryPagosAplicados = `
 SELECT
   p.IMPTE_DOCTO_CC_ID,
-  p.DOCTO_CC_ID,
-  p.DOCTO_CC_ACR_ID,
-  p.CLIENTE_ID,
+  COALESCE(dc.DOCTO_CC_ID, p.DOCTO_CC_ID),
+  ` + cargoAplicado + `,
+  COALESCE(dc.CLIENTE_ID, p.CLIENTE_ID),
   c.NOMBRE,
-  p.CONCEPTO_CC_ID,
-  p.FECHA,
-  CAST(p.IMPORTE + p.IMPUESTO AS NUMERIC(18,2)),
-  p.APLICADO,
+  COALESCE(dc.CONCEPTO_CC_ID, p.CONCEPTO_CC_ID),
+  COALESCE(p.FECHA, CAST(dc.FECHA AS TIMESTAMP)),
+  CAST(COALESCE(i.IMPORTE + i.IMPUESTO, p.IMPORTE + p.IMPUESTO) AS NUMERIC(18,2)),
+  COALESCE(i.APLICADO, p.APLICADO),
   dc.LAT,
   dc.LON,
   dc.COBRADOR_ID,
   (SELECT MIN(fcd.FORMA_COBRO_ID) FROM FORMAS_COBRO_DOCTOS fcd
     WHERE fcd.NOM_TABLA_DOCTOS = 'DOCTOS_CC' AND fcd.DOCTO_ID = p.DOCTO_CC_ID),
-  ` + folioVentaDe("p.DOCTO_CC_ACR_ID") + `,
-  ` + doctoPVDe("p.DOCTO_CC_ACR_ID") + `,
+  ` + folioVentaDe(cargoAplicado) + `,
+  ` + doctoPVDe(cargoAplicado) + `,
   pr.ID,
   pr.COBRADOR_ID,
   pr.COBRADOR,
@@ -80,20 +93,35 @@ SELECT
   u.FIREBASE_UID,
   (SELECT COUNT(*) FROM MSP_PAGOS_IMAGENES im WHERE im.PAGO_ID = pr.ID)
 FROM MSP_PAGOS_VENTAS p
+LEFT JOIN IMPORTES_DOCTOS_CC i ON i.IMPTE_DOCTO_CC_ID = p.IMPTE_DOCTO_CC_ID
 LEFT JOIN DOCTOS_CC dc ON dc.DOCTO_CC_ID = p.DOCTO_CC_ID
-LEFT JOIN CLIENTES c   ON c.CLIENTE_ID  = p.CLIENTE_ID
-LEFT JOIN MSP_PAGOS_RECIBIDOS pr ON pr.ID = (
-  SELECT MIN(pr2.ID) FROM MSP_PAGOS_RECIBIDOS pr2 WHERE pr2.IMPTE_DOCTO_CC_ID = p.IMPTE_DOCTO_CC_ID)
+LEFT JOIN CLIENTES c   ON c.CLIENTE_ID  = COALESCE(dc.CLIENTE_ID, p.CLIENTE_ID)
+LEFT JOIN MSP_PAGOS_RECIBIDOS pr ON pr.ID = COALESCE(
+  (SELECT MIN(pr2.ID) FROM MSP_PAGOS_RECIBIDOS pr2 WHERE pr2.IMPTE_DOCTO_CC_ID = p.IMPTE_DOCTO_CC_ID),
+  (SELECT MIN(pr3.ID) FROM MSP_PAGOS_RECIBIDOS pr3
+    WHERE pr3.DOCTO_CC_ID = p.DOCTO_CC_ID AND pr3.IMPTE_DOCTO_CC_ID IS NULL))
 LEFT JOIN MSP_USUARIOS u ON u.ID = pr.CREATED_BY
 WHERE p.ZONA_CLIENTE_ID = ?
   AND p.FECHA >= ?
   AND p.FECHA <= ?
-  AND p.CANCELADO = 'N'
-  AND p.CONCEPTO_CC_ID IN (87327, 27969)`
+  AND COALESCE(i.CANCELADO, p.CANCELADO) = 'N'
+  AND COALESCE(dc.CONCEPTO_CC_ID, p.CONCEPTO_CC_ID) IN (87327, 27969)`
+
+// cargoAplicado es el cargo (venta) del abono, con Microsip sobre la caché.
+const cargoAplicado = `COALESCE(i.DOCTO_CC_ACR_ID, p.DOCTO_CC_ACR_ID)`
 
 // queryPagosPendientes: capturas de la app que todavía no llegan a Microsip
 // (ESTADO 'P'). La zona sale del cargo (MSP_SALDOS_VENTAS), porque
 // MSP_PAGOS_RECIBIDOS no la guarda. INTENTOS > 0 = Microsip ya lo rechazó.
+//
+// Una captura en 'P' cuyo abono YA está vivo en Microsip (el worker no
+// alcanzó a marcarla) no es pendiente: sale como aplicada en
+// queryPagosAplicados y aquí se excluye, por IMPTE_DOCTO_CC_ID (PK de la
+// caché) y por DOCTO_CC_ID vía IMPORTES_DOCTOS_CC (MSP_PAGOS_VENTAS no tiene
+// índice por DOCTO_CC_ID). "Vivo" = la misma regla de cancelado que arriba.
+//
+// CLIENTE_ID e IMPORTE son nullables (migración 000016): una fila sin ellos
+// se descarta con advertencia en vez de tumbar la respuesta.
 var queryPagosPendientes = `
 SELECT
   pr.ID,
@@ -121,7 +149,15 @@ LEFT JOIN MSP_USUARIOS u ON u.ID = pr.CREATED_BY
 WHERE pr.ESTADO = 'P'
   AND s.ZONA_CLIENTE_ID = ?
   AND pr.FECHA >= ?
-  AND pr.FECHA <= ?`
+  AND pr.FECHA <= ?
+  AND NOT EXISTS (SELECT 1 FROM MSP_PAGOS_VENTAS p2
+    LEFT JOIN IMPORTES_DOCTOS_CC i2 ON i2.IMPTE_DOCTO_CC_ID = p2.IMPTE_DOCTO_CC_ID
+    WHERE p2.IMPTE_DOCTO_CC_ID = pr.IMPTE_DOCTO_CC_ID
+      AND COALESCE(i2.CANCELADO, p2.CANCELADO) = 'N')
+  AND NOT EXISTS (SELECT 1 FROM IMPORTES_DOCTOS_CC i3
+    JOIN MSP_PAGOS_VENTAS p3 ON p3.IMPTE_DOCTO_CC_ID = i3.IMPTE_DOCTO_CC_ID
+    WHERE i3.DOCTO_CC_ID = pr.DOCTO_CC_ID
+      AND COALESCE(i3.CANCELADO, p3.CANCELADO) = 'N')`
 
 // queryVisitas: MSP_VISITAS es legacy (Node). Sus columnas de texto son
 // CHARACTER SET NONE con bytes UTF-8: se escanean como string plano, nunca
@@ -179,6 +215,10 @@ func (r *ActividadesRepo) ActividadesZona(ctx context.Context, zonaID int, desde
 	return out, nil
 }
 
+// errFilaDescartada lo devuelve un scan que decidió omitir la fila (ya dejó
+// su advertencia en el log); leer sigue con la siguiente.
+var errFilaDescartada = errors.New("desempenofb: fila descartada")
+
 func leer(ctx context.Context, q firebird.Querier, query string, args []any,
 	scan func(*sql.Rows) (domain.Actividad, error),
 ) ([]domain.Actividad, error) {
@@ -190,6 +230,9 @@ func leer(ctx context.Context, q firebird.Querier, query string, args []any,
 	var out []domain.Actividad
 	for rows.Next() {
 		a, err := scan(rows)
+		if errors.Is(err, errFilaDescartada) {
+			continue
+		}
 		if err != nil {
 			return nil, firebird.MapError(err)
 		}
@@ -291,18 +334,26 @@ func scanPagoAplicado(rows *sql.Rows) (domain.Actividad, error) {
 func scanPagoPendiente(rows *sql.Rows) (domain.Actividad, error) {
 	var (
 		id                                     string
-		cargoID, clienteID                     int
+		cargoID                                int
 		clienteNombre, cobrador, uid           sql.NullString
 		conceptoID, forma, cobradorID, doctoPV sql.NullInt64
+		clienteID                              sql.NullInt64
 		fechaRaw, importeRaw, recibido         any
 		lat                                    firebird.Win1252 // MSP_PAGOS_RECIBIDOS.LAT — NONE
 		lon                                    firebird.Win1252 // MSP_PAGOS_RECIBIDOS.LON — NONE
 		folio                                  firebird.Win1252 // DOCTOS_PV.FOLIO — NONE
-		intentos, numFotos                     int
+		numFotos                               int
+		intentos                               sql.NullInt64 // nullable (migración 000016)
 	)
 	if err := rows.Scan(&id, &cargoID, &clienteID, &clienteNombre, &conceptoID, &fechaRaw, &importeRaw,
 		&forma, &lat, &lon, &cobradorID, &cobrador, &intentos, &recibido, &uid, &numFotos, &folio, &doctoPV); err != nil {
 		return domain.Actividad{}, err
+	}
+	id = strings.TrimSpace(id)
+	if !clienteID.Valid || importeRaw == nil {
+		slog.Warn("desempenofb: pago pendiente sin cliente o sin importe; se omite",
+			"pago_recibido_id", id, "cliente_nulo", !clienteID.Valid, "importe_nulo", importeRaw == nil)
+		return domain.Actividad{}, errFilaDescartada
 	}
 	hora, err := firebird.ScanUTCTime(fechaRaw)
 	if err != nil {
@@ -312,10 +363,9 @@ func scanPagoPendiente(rows *sql.Rows) (domain.Actividad, error) {
 	if err != nil {
 		return domain.Actividad{}, err
 	}
-	id = strings.TrimSpace(id)
 	a := domain.Actividad{
 		ID: domain.IDPagoPendiente(id), Tipo: domain.ClasificarTipoPago(int(forma.Int64), int(conceptoID.Int64)),
-		Hora: hora, ClienteID: clienteID, ClienteNombre: clienteNombre.String,
+		Hora: hora, ClienteID: int(clienteID.Int64), ClienteNombre: clienteNombre.String,
 		VentaID: cargoID, DoctoPVID: int(doctoPV.Int64), Folio: strings.TrimSpace(string(folio)), NumFotos: numFotos,
 		Lat: coordenada(string(lat)), Lng: coordenada(string(lon)),
 		RegistradoPor: domain.RegistradoPor{
@@ -323,7 +373,7 @@ func scanPagoPendiente(rows *sql.Rows) (domain.Actividad, error) {
 		},
 		Pago: &domain.DatosPago{
 			Importe: importe, FormaCobroID: int(forma.Int64), Aplicado: false,
-			Rechazado: intentos > 0, PagoRecibidoID: id,
+			Rechazado: intentos.Int64 > 0, PagoRecibidoID: id,
 		},
 	}
 	if a.RecibidoAt, err = instanteNulo(recibido); err != nil {

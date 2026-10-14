@@ -288,3 +288,245 @@ func TestActividadesRepo_PagosDeOtraZonaNoAparecen(t *testing.T) {
 		assert.Empty(t, delCliente(acts, clienteB), "ni el pago aplicado ni el pendiente de la zona B aparecen en la zona A")
 	})
 }
+
+// Un pago de la app que ya llegó a Microsip pero cuya fila de
+// MSP_PAGOS_RECIBIDOS sigue en 'P' (el worker no alcanzó a marcarla) no puede
+// contar dos veces: la fila aplicada manda. Se cubren las dos ligas: por
+// IMPTE_DOCTO_CC_ID y, para capturas viejas sin él, por DOCTO_CC_ID.
+func TestActividadesRepo_AplicadoYPendienteNoDuplica(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		q := firebird.GetQuerier(ctx, pool.DB)
+		microsipseed.RequiereConceptos(t, q, domain.ConceptoCobranzaEnRuta)
+		zona := microsipseed.PrimeraZona(t, q)
+		usuarioID, _ := usuarioSembrado(ctx, t, q)
+		capturado := time.Date(2024, 3, 20, 16, 0, 0, 0, time.UTC)
+		// "impte": solo IMPTE_DOCTO_CC_ID (DOCTO_CC_ID nulo); "docto": solo
+		// DOCTO_CC_ID (captura vieja); "ambas": la fila normal.
+		for _, liga := range []string{"impte", "docto", "ambas"} {
+			cliente := microsipseed.ClienteEnZona(t, q, "TERESA ÁVILA RÍOS "+liga, zona)
+			venta := microsipseed.VentaCredito(t, q, cliente, microsipseed.OpcionesVenta{})
+			abono := microsipseed.AbonoAplicado(t, q, venta, microsipseed.OpcionesAbono{
+				ConceptoCCID: domain.ConceptoCobranzaEnRuta, Importe: decimal.NewFromInt(150), Fecha: diaAbono,
+				ConFormaCobro: true, FormaCobroID: domain.FormaCobroEfectivo,
+			})
+			pagoID := uuid.New()
+			sembrarPagoRecibido(ctx, t, q, pagoRecibidoSembrado{
+				id: pagoID, impteID: impteDe(ctx, t, q, abono.DoctoCCID), doctoCCID: abono.DoctoCCID,
+				cargoID: venta.CargoCCID, clienteID: cliente, cobradorID: 11502,
+				importe: decimal.NewFromInt(150), formaCobroID: domain.FormaCobroEfectivo,
+				conceptoID: domain.ConceptoCobranzaEnRuta, fecha: capturado, recibido: capturado,
+				estado: "P", createdBy: usuarioID,
+			})
+			switch liga {
+			case "docto":
+				_, err := q.ExecContext(ctx,
+					`UPDATE MSP_PAGOS_RECIBIDOS SET IMPTE_DOCTO_CC_ID = NULL WHERE ID = ?`, pagoID.String())
+				require.NoError(t, err)
+			case "impte":
+				_, err := q.ExecContext(ctx,
+					`UPDATE MSP_PAGOS_RECIBIDOS SET DOCTO_CC_ID = NULL WHERE ID = ?`, pagoID.String())
+				require.NoError(t, err)
+			}
+
+			desde, hasta := ventanaDelDia()
+			acts, err := desempenofb.NewActividadesRepo(pool).ActividadesZona(ctx, zona, desde, hasta)
+			require.NoError(t, err)
+			mias := delCliente(acts, cliente)
+			require.Len(t, mias, 1, "%s: aplicado + pendiente del mismo pago = una sola actividad", liga)
+			assert.True(t, mias[0].Pago.Aplicado, liga)
+			assert.Equal(t, domain.OrigenApp, mias[0].RegistradoPor.Origen, "%s: la liga atribuye el pago a la app", liga)
+			assert.Equal(t, pagoID.String(), mias[0].Pago.PagoRecibidoID, liga)
+		}
+	})
+}
+
+// Capturas viejas de la app quedaron ligadas solo por DOCTO_CC_ID (sin
+// IMPTE_DOCTO_CC_ID): no deben salir como "oficina".
+func TestActividadesRepo_PagoViejoDeLaAppLigadoPorDocto(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		q := firebird.GetQuerier(ctx, pool.DB)
+		microsipseed.RequiereConceptos(t, q, domain.ConceptoCobranzaEnRuta)
+		zona := microsipseed.PrimeraZona(t, q)
+		cliente := microsipseed.ClienteEnZona(t, q, "JOSÉ LUIS ARAGÓN", zona)
+		venta := microsipseed.VentaCredito(t, q, cliente, microsipseed.OpcionesVenta{})
+		abono := microsipseed.AbonoAplicado(t, q, venta, microsipseed.OpcionesAbono{
+			ConceptoCCID: domain.ConceptoCobranzaEnRuta, Importe: decimal.NewFromInt(200), Fecha: diaAbono,
+			ConFormaCobro: true, FormaCobroID: domain.FormaCobroEfectivo,
+		})
+		usuarioID, uid := usuarioSembrado(ctx, t, q)
+		pagoID := uuid.New()
+		capturado := time.Date(2024, 3, 20, 15, 0, 0, 0, time.UTC)
+		sembrarPagoRecibido(ctx, t, q, pagoRecibidoSembrado{
+			id: pagoID, impteID: impteDe(ctx, t, q, abono.DoctoCCID), doctoCCID: abono.DoctoCCID,
+			cargoID: venta.CargoCCID, clienteID: cliente, cobradorID: 11502,
+			importe: decimal.NewFromInt(200), formaCobroID: domain.FormaCobroEfectivo,
+			conceptoID: domain.ConceptoCobranzaEnRuta, fecha: capturado, recibido: capturado,
+			estado: "A", createdBy: usuarioID,
+		})
+		_, err := q.ExecContext(ctx, `UPDATE MSP_PAGOS_RECIBIDOS SET IMPTE_DOCTO_CC_ID = NULL WHERE ID = ?`, pagoID.String())
+		require.NoError(t, err)
+
+		desde, hasta := ventanaDelDia()
+		acts, err := desempenofb.NewActividadesRepo(pool).ActividadesZona(ctx, zona, desde, hasta)
+		require.NoError(t, err)
+		mias := delCliente(acts, cliente)
+		require.Len(t, mias, 1, "sin duplicar")
+		assert.Equal(t, domain.OrigenApp, mias[0].RegistradoPor.Origen)
+		assert.Equal(t, uid, mias[0].RegistradoPor.UsuarioUID)
+		assert.Equal(t, pagoID.String(), mias[0].Pago.PagoRecibidoID)
+		assert.Equal(t, capturado, mias[0].Hora)
+	})
+}
+
+func TestActividadesRepo_AbonoCanceladoNoAparece(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		q := firebird.GetQuerier(ctx, pool.DB)
+		microsipseed.RequiereConceptos(t, q, domain.ConceptoCobranzaEnRuta)
+		zona := microsipseed.PrimeraZona(t, q)
+		cliente := microsipseed.ClienteEnZona(t, q, "MARCO ANTONIO GÜEMES", zona)
+		venta := microsipseed.VentaCredito(t, q, cliente, microsipseed.OpcionesVenta{})
+		vivo := microsipseed.AbonoAplicado(t, q, venta, microsipseed.OpcionesAbono{
+			ConceptoCCID: domain.ConceptoCobranzaEnRuta, Importe: decimal.NewFromInt(100), Fecha: diaAbono,
+		})
+		cancelado := microsipseed.AbonoAplicado(t, q, venta, microsipseed.OpcionesAbono{
+			ConceptoCCID: domain.ConceptoCobranzaEnRuta, Importe: decimal.NewFromInt(300), Fecha: diaAbono,
+		})
+		cancelarAbono(ctx, t, q, cancelado.DoctoCCID)
+
+		desde, hasta := ventanaDelDia()
+		acts, err := desempenofb.NewActividadesRepo(pool).ActividadesZona(ctx, zona, desde, hasta)
+		require.NoError(t, err)
+		mias := delCliente(acts, cliente)
+		require.Len(t, mias, 1, "el abono cancelado no es actividad")
+		assert.Equal(t, vivo.DoctoCCID, mias[0].Pago.DoctoCCID)
+	})
+}
+
+func TestActividadesRepo_PagosEnElBordeHastaEntran(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		q := firebird.GetQuerier(ctx, pool.DB)
+		microsipseed.RequiereConceptos(t, q, domain.ConceptoCobranzaEnRuta)
+		zona := microsipseed.PrimeraZona(t, q)
+		cliente := microsipseed.ClienteEnZona(t, q, "ROCÍO PÉREZ IBARRA", zona)
+		venta := microsipseed.VentaCredito(t, q, cliente, microsipseed.OpcionesVenta{})
+		microsipseed.AbonoAplicado(t, q, venta, microsipseed.OpcionesAbono{
+			ConceptoCCID: domain.ConceptoCobranzaEnRuta, Importe: decimal.NewFromInt(100), Fecha: diaAbono,
+		})
+		// DOCTOS_CC.FECHA es DATE: el aplicado queda a las 00:00 CDMX = 06:00Z.
+		hasta := time.Date(2024, 3, 20, 6, 0, 0, 0, time.UTC)
+		usuarioID, _ := usuarioSembrado(ctx, t, q)
+		sembrarPagoRecibido(ctx, t, q, pagoRecibidoSembrado{
+			id: uuid.New(), cargoID: venta.CargoCCID, clienteID: cliente, cobradorID: 11502,
+			importe: decimal.NewFromInt(80), formaCobroID: domain.FormaCobroEfectivo,
+			conceptoID: domain.ConceptoCobranzaEnRuta, fecha: hasta, recibido: hasta,
+			estado: "P", createdBy: usuarioID,
+		})
+
+		acts, err := desempenofb.NewActividadesRepo(pool).ActividadesZona(ctx, zona, hasta.Add(-time.Hour), hasta)
+		require.NoError(t, err)
+		mias := delCliente(acts, cliente)
+		require.Len(t, mias, 2, "el aplicado y el pendiente exactamente en `hasta` entran")
+		for _, a := range mias {
+			assert.Equal(t, hasta, a.Hora)
+		}
+	})
+}
+
+// La caché MSP_PAGOS_VENTAS puede ir atrasada respecto a Microsip: importe,
+// concepto, cancelado y aplicado se toman de IMPORTES_DOCTOS_CC/DOCTOS_CC
+// cuando existen (misma regla que selectPagoColsP del sync).
+func TestActividadesRepo_MicrosipMandaSobreLaCacheDesfasada(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		q := firebird.GetQuerier(ctx, pool.DB)
+		microsipseed.RequiereConceptos(t, q, domain.ConceptoCobranzaEnRuta)
+		zona := microsipseed.PrimeraZona(t, q)
+		cliente := microsipseed.ClienteEnZona(t, q, "IGNACIO ZÚÑIGA LEÓN", zona)
+		venta := microsipseed.VentaCredito(t, q, cliente, microsipseed.OpcionesVenta{})
+		abono := microsipseed.AbonoAplicado(t, q, venta, microsipseed.OpcionesAbono{
+			ConceptoCCID: domain.ConceptoCobranzaEnRuta, Importe: decimal.NewFromInt(150), Fecha: diaAbono,
+			ConFormaCobro: true, FormaCobroID: domain.FormaCobroEfectivo,
+		})
+		const cobroEnMostrador = 155
+		_, err := q.ExecContext(ctx,
+			`UPDATE MSP_PAGOS_VENTAS SET IMPORTE = 999, IMPUESTO = 0, CONCEPTO_CC_ID = ?, CANCELADO = 'S', APLICADO = 'N'
+			 WHERE IMPTE_DOCTO_CC_ID = ?`, cobroEnMostrador, impteDe(ctx, t, q, abono.DoctoCCID))
+		require.NoError(t, err, "desfasar la caché")
+
+		desde, hasta := ventanaDelDia()
+		acts, err := desempenofb.NewActividadesRepo(pool).ActividadesZona(ctx, zona, desde, hasta)
+		require.NoError(t, err)
+		mias := delCliente(acts, cliente)
+		require.Len(t, mias, 1, "Microsip dice vivo y de cobranza en ruta: aparece")
+		a := mias[0]
+		assert.Equal(t, "150.00", a.Pago.Importe.StringFixed(2), "importe de IMPORTES_DOCTOS_CC, no de la caché")
+		assert.Equal(t, domain.TipoPago, a.Tipo, "concepto de DOCTOS_CC")
+		assert.True(t, a.Pago.Aplicado, "APLICADO de IMPORTES_DOCTOS_CC")
+	})
+}
+
+// Una fila de MSP_PAGOS_RECIBIDOS sin cliente o sin importe (columnas
+// nullables desde la migración 000016) no tumba la respuesta: se descarta y
+// el resto sale.
+func TestActividadesRepo_PendienteIncompletoSeDescarta(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		q := firebird.GetQuerier(ctx, pool.DB)
+		zona := microsipseed.PrimeraZona(t, q)
+		cliente := microsipseed.ClienteEnZona(t, q, "EUGENIA MUÑIZ ROBLES", zona)
+		venta := microsipseed.VentaCredito(t, q, cliente, microsipseed.OpcionesVenta{})
+		usuarioID, _ := usuarioSembrado(ctx, t, q)
+		capturado := time.Date(2024, 3, 20, 17, 0, 0, 0, time.UTC)
+		ids := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
+		for _, id := range ids {
+			sembrarPagoRecibido(ctx, t, q, pagoRecibidoSembrado{
+				id: id, cargoID: venta.CargoCCID, clienteID: cliente, cobradorID: 11502,
+				importe: decimal.NewFromInt(80), formaCobroID: domain.FormaCobroEfectivo,
+				conceptoID: domain.ConceptoCobranzaEnRuta, fecha: capturado, recibido: capturado,
+				estado: "P", createdBy: usuarioID,
+			})
+		}
+		_, err := q.ExecContext(ctx, `UPDATE MSP_PAGOS_RECIBIDOS SET CLIENTE_ID = NULL WHERE ID = ?`, ids[1].String())
+		require.NoError(t, err)
+		_, err = q.ExecContext(ctx, `UPDATE MSP_PAGOS_RECIBIDOS SET IMPORTE = NULL WHERE ID = ?`, ids[2].String())
+		require.NoError(t, err)
+
+		desde, hasta := ventanaDelDia()
+		acts, err := desempenofb.NewActividadesRepo(pool).ActividadesZona(ctx, zona, desde, hasta)
+		require.NoError(t, err, "un NULL no tumba la consulta")
+		var vistos []string
+		for _, a := range acts {
+			for _, id := range ids {
+				if a.ID == domain.IDPagoPendiente(id.String()) {
+					vistos = append(vistos, id.String())
+				}
+			}
+		}
+		assert.Equal(t, []string{ids[0].String()}, vistos, "solo sale la fila completa")
+	})
+}
+
+// cancelarAbono cancela un abono como lo deja Microsip: el documento y su
+// importe en 'S'. La caché MSP_PAGOS_VENTAS la mantienen los triggers.
+func cancelarAbono(ctx context.Context, t *testing.T, q firebird.Querier, doctoCCID int) {
+	t.Helper()
+	_, err := q.ExecContext(ctx, `UPDATE DOCTOS_CC SET CANCELADO = 'S' WHERE DOCTO_CC_ID = ?`, doctoCCID)
+	require.NoError(t, err, "cancelar DOCTOS_CC")
+	var cache, importe string
+	require.NoError(t, q.QueryRowContext(ctx,
+		`SELECT p.CANCELADO, i.CANCELADO FROM MSP_PAGOS_VENTAS p
+		 JOIN IMPORTES_DOCTOS_CC i ON i.IMPTE_DOCTO_CC_ID = p.IMPTE_DOCTO_CC_ID
+		 WHERE p.DOCTO_CC_ID = ?`, doctoCCID).Scan(&cache, &importe),
+		"el abono cancelado sigue en la caché (si no, la prueba no distinguiría el filtro)")
+	require.Equal(t, "S", importe, "Microsip propaga la cancelación al importe")
+}
