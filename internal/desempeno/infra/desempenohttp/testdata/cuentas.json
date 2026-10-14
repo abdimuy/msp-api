@@ -1,0 +1,39 @@
+{
+  "inicio_semana": "2026-10-09T14:46:00Z",
+  "conteos": {
+    "sin_visitar": 0,
+    "volver": 0,
+    "despues": 0,
+    "pagados": 1,
+    "sin_nada": 0,
+    "total": 1
+  },
+  "cuentas": [
+    {
+      "venta_id": 13785217,
+      "docto_pv_id": 9921,
+      "folio": "Z1677035",
+      "cliente_id": 1544855,
+      "cliente_nombre": "JUANA ANDRADE LECHUGA",
+      "producto": "ROPERO LABRADO CALIFORNIA VINO",
+      "estado": "pago",
+      "trato": "pagado",
+      "etiqueta": "Pagó esta semana",
+      "detalle": "No hace falta volver",
+      "segmento": "pagados",
+      "con_algo": true,
+      "determinado_por": "pago:15082369",
+      "ultima_actividad": {
+        "id": "pago:15082369",
+        "tipo": "pago",
+        "hora": "2026-10-14T16:31:00Z"
+      },
+      "saldo": "16650.00",
+      "parcialidad": "150.00",
+      "abono_semana": "150.00",
+      "num_atrasos": 83,
+      "nueva": false
+    }
+  ]
+}
+

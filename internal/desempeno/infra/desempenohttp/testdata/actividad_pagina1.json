@@ -1,0 +1,47 @@
+{
+  "items": [
+    {
+      "id": "pago:15082369",
+      "tipo": "pago",
+      "hora": "2026-10-14T16:31:00Z",
+      "recibido_at": "2026-10-14T16:31:05Z",
+      "cliente_id": 1544855,
+      "cliente_nombre": "JUANA ANDRADE LECHUGA",
+      "venta_id": 13785217,
+      "folio": "Z1677035",
+      "registrado_por": {
+        "usuario_uid": "abc123",
+        "cobrador_id": 11502,
+        "nombre": "Juan Carlos Méndez",
+        "origen": "app"
+      },
+      "lat": 18.4617,
+      "lng": -97.3928,
+      "con_gps": true,
+      "num_fotos": 2,
+      "docto_pv_id": 9921,
+      "captura_tardia": false,
+      "pago": {
+        "importe": "150.00",
+        "forma_cobro": "efectivo",
+        "forma_cobro_id": 157,
+        "aplicado": true,
+        "rechazado": false,
+        "docto_cc_id": 15082300,
+        "pago_recibido_id": "7a1f39e4-0000-4000-8000-000000000001"
+      },
+      "visita": null
+    }
+  ],
+  "siguiente_cursor": "eyJvIjoiaG9yYSIsImQiOiJkZXNjIiwiaCI6IjIwMjYtMTAtMTRUMTY6MzE6MDBaIiwidCI6IiIsIm0iOiIwIiwiaSI6InBhZ286MTUwODIzNjkifQ",
+  "totales": {
+    "n": 2,
+    "importe": "150.00",
+    "por_tipo": {
+      "pago": 1,
+      "visita": 1,
+      "condonacion": 0
+    }
+  }
+}
+
