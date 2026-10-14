@@ -248,3 +248,58 @@ func TestCuentasRepo_SinPagosNiFrecuencia(t *testing.T) {
 		require.NotNil(t, c.FechaVenta)
 	})
 }
+
+func TestCuentasRepo_CanceladaYContadoFuera(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		q := firebird.GetQuerier(ctx, pool.DB)
+		zona := microsipseed.PrimeraZona(t, q)
+		viva := microsipseed.VentaCredito(t, q, microsipseed.ClienteEnZona(t, q, "OFELIA SÁNCHEZ ROA", zona), microsipseed.OpcionesVenta{})
+		cancelada := microsipseed.VentaCredito(t, q, microsipseed.ClienteEnZona(t, q, "RAÚL ESPAÑA VEGA", zona), microsipseed.OpcionesVenta{})
+		contado := microsipseed.VentaCredito(t, q, microsipseed.ClienteEnZona(t, q, "NOÉ CASTAÑEDA GIL", zona), microsipseed.OpcionesVenta{})
+		_, err := q.ExecContext(ctx, `UPDATE MSP_SALDOS_VENTAS SET CARGO_CANCELADO = 'S' WHERE DOCTO_CC_ID = ?`, cancelada.CargoCCID)
+		require.NoError(t, err)
+		// "Contado" en minúsculas en el catálogo: el filtro compara con UPPER.
+		fijarFrecuencia(ctx, t, q, contado.CargoCCID, "CONTADO")
+
+		cs, err := desempenofb.NewCuentasRepo(pool).UniversoSemana(ctx, zona, time.Date(2026, 10, 9, 0, 0, 0, 0, time.UTC))
+		require.NoError(t, err)
+		_, ok := cuentaDe(cs, viva.CargoCCID)
+		assert.True(t, ok, "control positivo: la venta viva a crédito sí sale")
+		_, ok = cuentaDe(cs, cancelada.CargoCCID)
+		assert.False(t, ok, "cargo cancelado: fuera, aunque tenga saldo")
+		_, ok = cuentaDe(cs, contado.CargoCCID)
+		assert.False(t, ok, "venta de contado: fuera, como en rutas")
+	})
+}
+
+// FECHA_ULT_PAGO queda a las 00:00 de CDMX (06:00Z). Un inicio de semana a las
+// 05:59Z (23:59 del día anterior en CDMX) debe incluir la venta saldada ese
+// día: solo pasa si el parámetro se enlaza en hora de pared de CDMX
+// (firebird.ToWallClock), no en UTC.
+func TestCuentasRepo_InicioDeSemanaEnHoraDeCDMX(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		q := firebird.GetQuerier(ctx, pool.DB)
+		microsipseed.RequiereConceptos(t, q, domain.ConceptoCobranzaEnRuta)
+		zona := microsipseed.PrimeraZona(t, q)
+		total := decimal.NewFromInt(1200)
+		venta := microsipseed.VentaCredito(t, q, microsipseed.ClienteEnZona(t, q, "DIANA LAGUNA PIÑA", zona), microsipseed.OpcionesVenta{Total: total})
+		microsipseed.AbonoAplicado(t, q, venta, microsipseed.OpcionesAbono{
+			ConceptoCCID: domain.ConceptoCobranzaEnRuta, Importe: total, Fecha: time.Date(2024, 3, 20, 0, 0, 0, 0, time.UTC),
+		})
+		repo := desempenofb.NewCuentasRepo(pool)
+
+		cs, err := repo.UniversoSemana(ctx, zona, time.Date(2024, 3, 20, 5, 59, 0, 0, time.UTC))
+		require.NoError(t, err)
+		_, ok := cuentaDe(cs, venta.CargoCCID)
+		assert.True(t, ok, "saldada el 20 a las 00:00 CDMX, semana desde el 19 a las 23:59 CDMX: entra")
+
+		cs, err = repo.UniversoSemana(ctx, zona, time.Date(2024, 3, 20, 6, 1, 0, 0, time.UTC))
+		require.NoError(t, err)
+		_, ok = cuentaDe(cs, venta.CargoCCID)
+		assert.False(t, ok, "semana desde el 20 a las 00:01 CDMX: ya no entra")
+	})
+}
