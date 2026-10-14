@@ -270,3 +270,55 @@ func TestE2E_VisitasImagenes_FindImagenIDsNoDevuelveLasDeOtraVisita(t *testing.T
 		assert.Equal(t, mineImg.ID(), got[0])
 	})
 }
+
+// TestE2E_VisitasImagenes_ListYPertenencia fija la lectura de fotos: la lista
+// de una visita trae solo las suyas, en orden de CREATED_AT, con todas sus
+// columnas; y pedir la foto de A con el id de B es ErrImagenNoEncontrada.
+//
+//nolint:paralleltest // serial: shares rollback-only tx.
+func TestE2E_VisitasImagenes_ListYPertenencia(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		repo := newVisitasRepo(pool)
+		a := buildValidVisita(t)
+		b := buildValidVisita(t)
+		require.NoError(t, repo.Insert(ctx, a))
+		require.NoError(t, repo.Insert(ctx, b))
+		desc := "fachada con portón café"
+		primera := attachImagen(t, a, "visitas/"+a.ID().String()+"/1.jpg", func(p *domain.AdjuntarImagenParams) {
+			p.Descripcion = &desc
+			p.Now = time.Date(2026, 10, 14, 16, 0, 0, 0, time.UTC)
+		})
+		segunda := attachImagen(t, a, "visitas/"+a.ID().String()+"/2.jpg", func(p *domain.AdjuntarImagenParams) {
+			p.Now = time.Date(2026, 10, 14, 16, 5, 0, 0, time.UTC)
+		})
+		require.NoError(t, repo.InsertImagen(ctx, a.ID(), segunda))
+		require.NoError(t, repo.InsertImagen(ctx, a.ID(), primera))
+		deB := attachImagen(t, b, "visitas/"+b.ID().String()+"/b.jpg")
+		require.NoError(t, repo.InsertImagen(ctx, b.ID(), deB))
+
+		got, err := repo.ListImagenes(ctx, a.ID())
+		require.NoError(t, err)
+		require.Len(t, got, 2, "solo las de A")
+		assert.Equal(t, primera.ID(), got[0].ID(), "orden por CREATED_AT")
+		require.NotNil(t, got[0].Descripcion())
+		assert.Equal(t, desc, *got[0].Descripcion(), "UTF8 con acento")
+		assert.True(t, primera.Storage().Equals(got[0].Storage()))
+		creada, leida := primera.Audit(), got[0].Audit()
+		assert.Equal(t, creada.CreatedAt(), leida.CreatedAt(), "CREATED_AT de Go, ida y vuelta en UTC")
+		assert.Nil(t, got[1].Descripcion())
+
+		_, err = repo.FindImagenDeVisita(ctx, b.ID(), primera.ID())
+		require.ErrorIs(t, err, domain.ErrImagenNoEncontrada, "la foto de A pedida por B")
+		img, err := repo.FindImagenDeVisita(ctx, a.ID(), primera.ID())
+		require.NoError(t, err, "control positivo")
+		assert.Equal(t, primera.ID(), img.ID())
+
+		vacia, err := repo.ListImagenes(ctx, uuid.New())
+		require.NoError(t, err)
+		assert.NotNil(t, vacia)
+		assert.Empty(t, vacia)
+	})
+}

@@ -146,19 +146,20 @@ func (s *Service) EliminarImagenPago(ctx context.Context, pagoID, imagenID, by u
 		return errWriteDepsMissing("storage_provider")
 	}
 
-	img, err := s.pagosImagenes.FindImagenByID(ctx, imagenID)
+	// La imagen debe pertenecer a ESTE pago: una de otro pago es un 404 y no
+	// se toca (antes se ignoraba pagoID y se borraba la imagen de cualquiera).
+	img, err := s.pagosImagenes.FindImagenDePago(ctx, pagoID, imagenID)
 	if err != nil {
 		return err
 	}
 	key := img.Storage().Key()
 
-	if err := s.pagosImagenes.DeleteImagen(ctx, imagenID); err != nil {
+	if err := s.pagosImagenes.DeleteImagenDePago(ctx, pagoID, imagenID); err != nil {
 		return err
 	}
 	// Best-effort blob removal; if the blob fails the row is gone and a
 	// reconciler can clean up dangling files later.
 	s.bestEffortDeleteBlob(ctx, key)
-	_ = pagoID // pagoID validated by the handler via the imagen's FK; no extra check needed here.
 	_ = by
 	return nil
 }
@@ -183,7 +184,8 @@ func (s *Service) ObtenerImagenPago(ctx context.Context, pagoID, imagenID uuid.U
 		return nil, errWriteDepsMissing("storage_provider")
 	}
 
-	img, err := s.pagosImagenes.FindImagenByID(ctx, imagenID)
+	// Pertenencia: una imagen de otro pago es 404 (antes `_ = pagoID`).
+	img, err := s.pagosImagenes.FindImagenDePago(ctx, pagoID, imagenID)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +197,6 @@ func (s *Service) ObtenerImagenPago(ctx context.Context, pagoID, imagenID uuid.U
 	out.Object.Body = obj.Body
 	out.Object.ContentType = obj.ContentType
 	out.Object.SizeBytes = obj.SizeBytes
-	_ = pagoID
 	return out, nil
 }
 

@@ -73,6 +73,20 @@ func (r *fakeImagenesRepo) FindImagenIDs(_ context.Context, visitaID uuid.UUID) 
 	return out, nil
 }
 
+func (r *fakeImagenesRepo) ListImagenes(_ context.Context, visitaID uuid.UUID) ([]*domain.Imagen, error) {
+	return append([]*domain.Imagen{}, r.porVisita[visitaID]...), nil
+}
+
+// FindImagenDeVisita replica el WHERE ID = ? AND VISITA_ID = ? del repo real.
+func (r *fakeImagenesRepo) FindImagenDeVisita(_ context.Context, visitaID, imagenID uuid.UUID) (*domain.Imagen, error) {
+	for _, img := range r.porVisita[visitaID] {
+		if img.ID() == imagenID {
+			return img, nil
+		}
+	}
+	return nil, domain.ErrImagenNoEncontrada
+}
+
 func (r *fakeImagenesRepo) count(visitaID uuid.UUID) int { return len(r.porVisita[visitaID]) }
 
 // fakeStorage is an in-memory blob store that records every Store and Delete

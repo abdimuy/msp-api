@@ -684,11 +684,11 @@ func TestE2E_PagosImagenes_Insert_HappyPath(t *testing.T) {
 	})
 }
 
-// TestE2E_PagosImagenes_FindImagenByID_HappyPath verifies that FindImagenByID
+// TestE2E_PagosImagenes_FindImagenDePago_HappyPath verifies that FindImagenDePago
 // returns the correct imagen with all fields bit-exact.
 //
 //nolint:paralleltest // serial: shares rollback-only tx.
-func TestE2E_PagosImagenes_FindImagenByID_HappyPath(t *testing.T) {
+func TestE2E_PagosImagenes_FindImagenDePago_HappyPath(t *testing.T) {
 	requireFBEnv(t)
 	pool := fbtestutil.NewTestFirebirdPool(t)
 
@@ -700,7 +700,7 @@ func TestE2E_PagosImagenes_FindImagenByID_HappyPath(t *testing.T) {
 		img := buildAndAttachImagen(t, pago, "pagos/2026/recibo.jpg")
 		require.NoError(t, repo.InsertImagen(ctx, pago.ID(), img))
 
-		found, err := repo.FindImagenByID(ctx, img.ID())
+		found, err := repo.FindImagenDePago(ctx, pago.ID(), img.ID())
 		require.NoError(t, err)
 
 		assert.Equal(t, img.ID(), found.ID())
@@ -715,28 +715,28 @@ func TestE2E_PagosImagenes_FindImagenByID_HappyPath(t *testing.T) {
 	})
 }
 
-// TestE2E_PagosImagenes_FindImagenByID_NotFound verifies that looking up a
+// TestE2E_PagosImagenes_FindImagenDePago_NotFound verifies that looking up a
 // random UUID returns ErrImagenNoEncontrada.
 //
 //nolint:paralleltest // serial: shares rollback-only tx.
-func TestE2E_PagosImagenes_FindImagenByID_NotFound(t *testing.T) {
+func TestE2E_PagosImagenes_FindImagenDePago_NotFound(t *testing.T) {
 	requireFBEnv(t)
 	pool := fbtestutil.NewTestFirebirdPool(t)
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		repo := newPagosRecibidosRepo(pool)
 
-		_, err := repo.FindImagenByID(ctx, uuid.New())
+		_, err := repo.FindImagenDePago(ctx, uuid.New(), uuid.New())
 		require.ErrorIs(t, err, domain.ErrImagenNoEncontrada,
-			"FindImagenByID for unknown UUID must return ErrImagenNoEncontrada; got: %v", err)
+			"FindImagenDePago for unknown UUID must return ErrImagenNoEncontrada; got: %v", err)
 	})
 }
 
-// TestE2E_PagosImagenes_DeleteImagen_HappyPath verifies that DeleteImagen
-// removes the row and a subsequent FindImagenByID returns ErrImagenNoEncontrada.
+// TestE2E_PagosImagenes_DeleteImagenDePago_HappyPath verifies that DeleteImagenDePago
+// removes the row and a subsequent FindImagenDePago returns ErrImagenNoEncontrada.
 //
 //nolint:paralleltest // serial: shares rollback-only tx.
-func TestE2E_PagosImagenes_DeleteImagen_HappyPath(t *testing.T) {
+func TestE2E_PagosImagenes_DeleteImagenDePago_HappyPath(t *testing.T) {
 	requireFBEnv(t)
 	pool := fbtestutil.NewTestFirebirdPool(t)
 
@@ -748,28 +748,28 @@ func TestE2E_PagosImagenes_DeleteImagen_HappyPath(t *testing.T) {
 		img := buildAndAttachImagen(t, pago, "pagos/2026/a-borrar.jpg")
 		require.NoError(t, repo.InsertImagen(ctx, pago.ID(), img))
 
-		require.NoError(t, repo.DeleteImagen(ctx, img.ID()), "DeleteImagen must succeed")
+		require.NoError(t, repo.DeleteImagenDePago(ctx, pago.ID(), img.ID()), "DeleteImagenDePago must succeed")
 
-		_, err := repo.FindImagenByID(ctx, img.ID())
+		_, err := repo.FindImagenDePago(ctx, pago.ID(), img.ID())
 		require.ErrorIs(t, err, domain.ErrImagenNoEncontrada,
-			"FindImagenByID after DeleteImagen must return ErrImagenNoEncontrada; got: %v", err)
+			"FindImagenDePago after DeleteImagenDePago must return ErrImagenNoEncontrada; got: %v", err)
 	})
 }
 
-// TestE2E_PagosImagenes_DeleteImagen_NotFound verifies that deleting a
+// TestE2E_PagosImagenes_DeleteImagenDePago_NotFound verifies that deleting a
 // non-existent imagen returns ErrImagenNoEncontrada.
 //
 //nolint:paralleltest // serial: shares rollback-only tx.
-func TestE2E_PagosImagenes_DeleteImagen_NotFound(t *testing.T) {
+func TestE2E_PagosImagenes_DeleteImagenDePago_NotFound(t *testing.T) {
 	requireFBEnv(t)
 	pool := fbtestutil.NewTestFirebirdPool(t)
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		repo := newPagosRecibidosRepo(pool)
 
-		err := repo.DeleteImagen(ctx, uuid.New())
+		err := repo.DeleteImagenDePago(ctx, uuid.New(), uuid.New())
 		require.ErrorIs(t, err, domain.ErrImagenNoEncontrada,
-			"DeleteImagen for unknown UUID must return ErrImagenNoEncontrada; got: %v", err)
+			"DeleteImagenDePago for unknown UUID must return ErrImagenNoEncontrada; got: %v", err)
 	})
 }
 
@@ -873,5 +873,35 @@ func TestE2E_PagosRecibidos_UTC_Roundtrip(t *testing.T) {
 			input, got, delta)
 		assert.Equal(t, time.UTC, got.Location(),
 			"FechaHoraPago must be in UTC after round-trip")
+	})
+}
+
+// TestE2E_PagosImagenes_ImagenDeOtroPagoEs404 fija el arreglo de pertenencia:
+// pedir o borrar la imagen de un pago A con el id de un pago B es "no
+// encontrada", y la fila de A sigue ahí. Antes de la corrección se buscaba
+// solo por ID de imagen.
+//
+//nolint:paralleltest // serial: shares rollback-only tx.
+func TestE2E_PagosImagenes_ImagenDeOtroPagoEs404(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		repo := newPagosRecibidosRepo(pool)
+		pagoA := buildValidPagoRecibido(t)
+		require.NoError(t, repo.Insert(ctx, pagoA))
+		pagoB := buildValidPagoRecibido(t)
+		require.NoError(t, repo.Insert(ctx, pagoB))
+		img := buildAndAttachImagen(t, pagoA, "pagos/2026/de-a.jpg")
+		require.NoError(t, repo.InsertImagen(ctx, pagoA.ID(), img))
+
+		_, err := repo.FindImagenDePago(ctx, pagoB.ID(), img.ID())
+		require.ErrorIs(t, err, domain.ErrImagenNoEncontrada)
+		require.ErrorIs(t, repo.DeleteImagenDePago(ctx, pagoB.ID(), img.ID()), domain.ErrImagenNoEncontrada)
+
+		q := firebird.GetQuerier(ctx, pool.DB)
+		assert.Equal(t, 1, directCountImagen(ctx, t, q, img.ID()), "la imagen de A no se borró")
+		_, err = repo.FindImagenDePago(ctx, pagoA.ID(), img.ID())
+		require.NoError(t, err, "control positivo: con su pago sí se encuentra")
 	})
 }
