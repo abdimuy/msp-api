@@ -50,7 +50,11 @@ func cuentasPeriodo(universo []domain.CuentaUniverso) []domain.CuentaPeriodo {
 
 // aPeriodo traduce actividades a las entradas del deriver. Una condonación
 // siempre entra con la forma 137026, aunque Microsip le haya puesto otra forma:
-// así nunca cuenta como dinero (spec §2).
+// así nunca cuenta como dinero (spec §2). Un pago aún no aplicado entra igual
+// que uno aplicado (D-API-8, resolución del arquitecto): el teléfono deriva con
+// lo capturado en Room sin esperar a Microsip (msp-app-kt
+// feature/pagos/.../application/DerivarEstadoDelPeriodo.kt:73,105-110); solo el
+// rechazado queda fuera del dinero (RoomPagosAdapter.kt:105-109).
 func aPeriodo(acts []domain.Actividad) ([]domain.PagoPeriodo, []domain.VisitaPeriodo) {
 	pagos := make([]domain.PagoPeriodo, 0, len(acts))
 	visitas := make([]domain.VisitaPeriodo, 0, len(acts))

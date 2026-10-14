@@ -168,6 +168,7 @@ func cuenta(ventaID, clienteID int, parcialidad, saldo string) domain.CuentaUniv
 	return domain.CuentaUniverso{
 		VentaID: ventaID, ClienteID: clienteID, ClienteNombre: "CLIENTE " + dos(clienteID%100),
 		Folio: "Z" + dos(ventaID%100), Parcialidad: dinero(parcialidad), Saldo: dinero(saldo),
+		PrecioTotal: dinero("4000"), Enganche: dinero("400"), FrecPago: "SEMANAL",
 		FechaCargo: time.Date(2025, 1, 10, 0, 0, 0, 0, time.UTC),
 	}
 }
