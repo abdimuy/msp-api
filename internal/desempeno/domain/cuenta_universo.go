@@ -26,6 +26,18 @@ type CuentaUniverso struct {
 	// Enganche es lo que se dio de entrada (`enganche` en el teléfono).
 	Enganche   decimal.Decimal
 	FechaCargo time.Time
+	// Los tres campos siguientes alimentan NumAtrasos (fórmula del teléfono,
+	// resolución del arquitecto sobre D-API-7). Los llena el repositorio del
+	// universo (carril B, Tarea B4):
+	//   - FrecPago: UPPER(LISTAS_ATRIBUTOS.VALOR_DESPLEGADO) de
+	//     LIBRES_CARGOS_CC.FORMA_DE_PAGO — "SEMANAL", "QUINCENAL", "MENSUAL"; el
+	//     mismo literal que el sync manda al teléfono como `frec_pago`.
+	//   - FechaVenta: fecha del documento PV (el `fecha_venta` del sync); nil =
+	//     sin PV, y entonces cuenta FechaCargo (VentaDto.kt: fecha_venta ?: fecha_cargo).
+	//   - FechaUltPago: MSP_SALDOS_VENTAS.FECHA_ULT_PAGO; nil = sin pagos.
+	FrecPago     string
+	FechaVenta   *time.Time
+	FechaUltPago *time.Time
 }
 
 // EsNueva dice si nadie ha abonado a la venta: el saldo sigue siendo la
