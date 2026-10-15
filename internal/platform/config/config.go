@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"path/filepath"
 	"strconv"
@@ -34,8 +35,6 @@ var (
 	errMicrosipVentaJuegosLinea = errors.New("config: invalid MICROSIP_VENTA_JUEGOS_* configuration")
 	errWhatsAppCredsRequired    = errors.New("config: WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID and " +
 		"WHATSAPP_BUSINESS_ACCOUNT_ID are all required when WHATSAPP_ENABLED=true")
-	errSlowQueryThreshold        = errors.New("config: FB_SLOW_QUERY_THRESHOLD must be >= 0")
-	errDesempenoStatementTimeout = errors.New("config: DESEMPENO_STATEMENT_TIMEOUT must be >= 1s and below HTTP_WRITE_TIMEOUT")
 )
 
 // Environment is the runtime environment.
@@ -86,21 +85,50 @@ type Config struct {
 // Desempeno holds the knobs of the read-only cobrador performance dashboard.
 type Desempeno struct {
 	// StatementTimeout is the Firebird server-side ceiling applied to every
-	// statement the dashboard runs (SET STATEMENT TIMEOUT for the duration of
-	// that statement, restored afterwards). It must stay below
-	// HTTP_WRITE_TIMEOUT: the driver ignores context cancellation by design,
-	// so without it a request the HTTP layer already answered with 503 keeps
-	// its statement running in Firebird (measured: a 78s 503 in production).
-	StatementTimeout time.Duration `env:"DESEMPENO_STATEMENT_TIMEOUT" envDefault:"25s"`
+	// statement the dashboard runs (SET STATEMENT TIMEOUT for that statement,
+	// restored afterwards). It must stay below HTTP_WRITE_TIMEOUT: the driver
+	// ignores context cancellation by design, so without it a request the
+	// HTTP layer already answered with 503 keeps its statement running in
+	// Firebird (measured: a 78s 503 in production).
+	//
+	// Unset (or 0), it is derived: min(25s, HTTP_WRITE_TIMEOUT − 5s), never
+	// below 1s. An explicit value that does not fit is corrected to that
+	// derived value with a WARN. It NEVER stops the API from booting: the
+	// phones depend on this server, and a dashboard knob is not worth that.
+	StatementTimeout time.Duration `env:"DESEMPENO_STATEMENT_TIMEOUT"`
 }
 
-// validate keeps the dashboard ceiling inside the HTTP budget.
-func (d Desempeno) validate(httpWriteTimeout time.Duration) error {
-	if d.StatementTimeout < time.Second || d.StatementTimeout >= httpWriteTimeout {
-		return fmt.Errorf("%w: %s (HTTP_WRITE_TIMEOUT=%s)",
-			errDesempenoStatementTimeout, d.StatementTimeout, httpWriteTimeout)
+const (
+	desempenoTopeMaximo = 25 * time.Second
+	desempenoTopeMargen = 5 * time.Second
+	desempenoTopeMinimo = time.Second
+)
+
+// derivedStatementTimeout is the ceiling that fits httpWriteTimeout.
+func derivedStatementTimeout(httpWriteTimeout time.Duration) time.Duration {
+	if httpWriteTimeout <= 0 {
+		return desempenoTopeMaximo // no HTTP deadline to stay under.
 	}
-	return nil
+	d := min(desempenoTopeMaximo, httpWriteTimeout-desempenoTopeMargen)
+	return max(d, desempenoTopeMinimo)
+}
+
+// normalize resolves StatementTimeout against the HTTP budget. It returns a
+// non-empty warning when an explicit value had to be corrected.
+func (d *Desempeno) normalize(httpWriteTimeout time.Duration) string {
+	derived := derivedStatementTimeout(httpWriteTimeout)
+	explicit := d.StatementTimeout
+	if explicit == 0 {
+		d.StatementTimeout = derived
+		return ""
+	}
+	fits := explicit >= desempenoTopeMinimo && (httpWriteTimeout <= 0 || explicit < httpWriteTimeout)
+	if fits {
+		return ""
+	}
+	d.StatementTimeout = derived
+	return fmt.Sprintf("DESEMPENO_STATEMENT_TIMEOUT=%s no cabe en HTTP_WRITE_TIMEOUT=%s (debe ser >= 1s y menor); se usa %s",
+		explicit, httpWriteTimeout, derived)
 }
 
 // Flota holds the knobs of the roster snapshot worker — the process that
@@ -684,6 +712,16 @@ func Load() (*Config, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("config: validate: %w", err)
 	}
+	// Performance and logging knobs are corrected, never fatal: the phones
+	// depend on this API being up.
+	if warn := cfg.Desempeno.normalize(cfg.HTTP.WriteTimeout); warn != "" {
+		slog.Warn("config: valor corregido", "detalle", warn)
+	}
+	if cfg.Firebird.SlowQueryThreshold < 0 {
+		slog.Warn("config: valor corregido", "detalle",
+			fmt.Sprintf("FB_SLOW_QUERY_THRESHOLD=%s es negativo; se usa 1s", cfg.Firebird.SlowQueryThreshold))
+		cfg.Firebird.SlowQueryThreshold = time.Second
+	}
 	return cfg, nil
 }
 
@@ -726,13 +764,6 @@ func (c *Config) validate() error {
 		c.ImageProcessor.validate,
 		c.MicrosipVenta.validate,
 		c.WhatsApp.validate,
-		func() error { return c.Desempeno.validate(c.HTTP.WriteTimeout) },
-		func() error {
-			if c.Firebird.SlowQueryThreshold < 0 {
-				return fmt.Errorf("%w: %s", errSlowQueryThreshold, c.Firebird.SlowQueryThreshold)
-			}
-			return nil
-		},
 	} {
 		if err := validate(); err != nil {
 			errs = append(errs, err)

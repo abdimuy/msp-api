@@ -1,6 +1,8 @@
 package config_test
 
 import (
+	"bytes"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -352,12 +354,15 @@ func TestLoad_SlowQueryThreshold_Override(t *testing.T) { //nolint:paralleltest 
 	assert.Equal(t, 250*time.Millisecond, cfg.Firebird.SlowQueryThreshold)
 }
 
-func TestLoad_SlowQueryThreshold_RejectsNegative(t *testing.T) { //nolint:paralleltest // uses t.Setenv
+// Same rule as the dashboard ceiling: a logging knob never stops the API.
+func TestLoad_SlowQueryThreshold_NegativeIsCorrectedNotFatal(t *testing.T) { //nolint:paralleltest // uses t.Setenv
 	setMinimal(t)
 	t.Setenv("FB_SLOW_QUERY_THRESHOLD", "-1s")
-	_, err := config.Load()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "FB_SLOW_QUERY_THRESHOLD")
+	buf := captureWarn(t)
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, time.Second, cfg.Firebird.SlowQueryThreshold)
+	assert.Contains(t, buf.String(), "FB_SLOW_QUERY_THRESHOLD")
 }
 
 func TestLoad_DesempenoStatementTimeout_DefaultBelowHTTPWriteTimeout(t *testing.T) { //nolint:paralleltest // uses t.Setenv
@@ -377,14 +382,77 @@ func TestLoad_DesempenoStatementTimeout_Override(t *testing.T) { //nolint:parall
 	assert.Equal(t, 12*time.Second, cfg.Desempeno.StatementTimeout)
 }
 
-func TestLoad_DesempenoStatementTimeout_RejectsOutOfRange(t *testing.T) { //nolint:paralleltest // uses t.Setenv
-	for _, v := range []string{"0s", "500ms", "30s", "45s"} {
-		t.Run(v, func(t *testing.T) {
+// captureWarn swaps the default slog logger for the duration of the test.
+// Safe here: tests in this file never run in parallel (t.Setenv).
+func captureWarn(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return buf
+}
+
+// The default is derived from HTTP_WRITE_TIMEOUT so a production box with a
+// shorter HTTP budget than ours still gets a ceiling below it — and boots.
+func TestLoad_DesempenoStatementTimeout_DefaultDerivesFromHTTPWriteTimeout(t *testing.T) { //nolint:paralleltest // uses t.Setenv
+	for _, c := range []struct {
+		write, want string
+	}{
+		{"30s", "25s"}, // min(25 s, 30−5)
+		{"60s", "25s"},
+		{"20s", "15s"}, // 20−5
+		{"6s", "1s"},
+		{"3s", "1s"},  // floor of 1 s
+		{"0s", "25s"}, // no HTTP deadline at all
+	} {
+		t.Run(c.write, func(t *testing.T) {
 			setMinimal(t)
-			t.Setenv("DESEMPENO_STATEMENT_TIMEOUT", v)
-			_, err := config.Load()
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), "DESEMPENO_STATEMENT_TIMEOUT")
+			t.Setenv("HTTP_WRITE_TIMEOUT", c.write)
+			buf := captureWarn(t)
+			cfg, err := config.Load()
+			require.NoError(t, err, "un tope derivado nunca impide arrancar")
+			want, _ := time.ParseDuration(c.want)
+			assert.Equal(t, want, cfg.Desempeno.StatementTimeout)
+			assert.NotContains(t, buf.String(), "DESEMPENO_STATEMENT_TIMEOUT", "el derivado no es un error de configuración")
 		})
 	}
+}
+
+// An explicit value that would not fit the HTTP budget is CORRECTED with a
+// WARN, never a refusal to boot: phones depend on this API being up.
+func TestLoad_DesempenoStatementTimeout_InvalidExplicitIsCorrectedNotFatal(t *testing.T) { //nolint:paralleltest // uses t.Setenv
+	for _, c := range []struct {
+		write, value, want string
+	}{
+		{"30s", "500ms", "25s"},
+		{"30s", "30s", "25s"},
+		{"30s", "45s", "25s"},
+		{"20s", "25s", "15s"},
+		{"30s", "-3s", "25s"},
+	} {
+		t.Run(c.write+"/"+c.value, func(t *testing.T) {
+			setMinimal(t)
+			t.Setenv("HTTP_WRITE_TIMEOUT", c.write)
+			t.Setenv("DESEMPENO_STATEMENT_TIMEOUT", c.value)
+			buf := captureWarn(t)
+			cfg, err := config.Load()
+			require.NoError(t, err, "un valor inválido nunca impide arrancar")
+			want, _ := time.ParseDuration(c.want)
+			assert.Equal(t, want, cfg.Desempeno.StatementTimeout)
+			assert.Contains(t, buf.String(), "level=WARN")
+			assert.Contains(t, buf.String(), "DESEMPENO_STATEMENT_TIMEOUT")
+		})
+	}
+}
+
+func TestLoad_DesempenoStatementTimeout_ValidExplicitDoesNotWarn(t *testing.T) { //nolint:paralleltest // uses t.Setenv
+	setMinimal(t)
+	t.Setenv("HTTP_WRITE_TIMEOUT", "0s")
+	t.Setenv("DESEMPENO_STATEMENT_TIMEOUT", "40s")
+	buf := captureWarn(t)
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, 40*time.Second, cfg.Desempeno.StatementTimeout, "sin tope HTTP cualquier valor >= 1 s vale")
+	assert.Empty(t, buf.String())
 }
