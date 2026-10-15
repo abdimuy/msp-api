@@ -222,8 +222,8 @@ type filaZona struct {
 
 // ActividadesZonas implementa outbound.ActividadesLoteRepo: TRES sentencias
 // para todas las consultas (aplicados, pendientes, visitas), sobre el
-// conjunto de zonas y la ventana mínima que las cubre, en una transacción de
-// solo lectura (una misma foto de la base). El reparto por consulta se hace
+// conjunto de zonas y la ventana mínima que las cubre (partidas si hay muchos
+// grupos de inicio, ver ramasPorSentencia). El reparto por consulta se hace
 // en Go con la misma regla de ventana inclusiva; cada consulta conserva el
 // orden de siempre: aplicados, luego pendientes, luego visitas.
 func (r *ActividadesRepo) ActividadesZonas(
@@ -234,18 +234,7 @@ func (r *ActividadesRepo) ActividadesZonas(
 		return out, nil
 	}
 	grupos, hasta := cubrirConsultas(consultas)
-	var porTipo [3][]filaZona
-	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
-		q := firebird.GetQuerier(ctx, r.pool.DB)
-		for i, lectura := range lecturasActividades(grupos, hasta) {
-			filas, err := leer(ctx, q, lectura.sql, lectura.args, lectura.scan)
-			if err != nil {
-				return err
-			}
-			porTipo[i] = filas
-		}
-		return nil
-	})
+	porTipo, err := r.leerLote(ctx, lecturasActividades(grupos, hasta))
 	if err != nil {
 		return nil, err
 	}
@@ -265,6 +254,29 @@ func (r *ActividadesRepo) ActividadesZonas(
 		out[i] = acts
 	}
 	return out, nil
+}
+
+// leerLote corre las sentencias de cada tipo una tras otra en una sola
+// transacción de solo lectura. Correrlas a la vez en varias conexiones se
+// midió PEOR (E-INF-014, tablero en dev con la base compartida: peor caso de
+// un grupo por zona 6.0–10.3 s en serie contra 10.9–11.2 s con tres a la vez;
+// caso normal 1.4–1.9 s contra 2.1–2.2 s).
+func (r *ActividadesRepo) leerLote(ctx context.Context, lecturas [3][]lecturaActividades) ([3][]filaZona, error) {
+	var porTipo [3][]filaZona
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+		for i, sentencias := range lecturas {
+			for _, lectura := range sentencias {
+				filas, err := leer(ctx, q, lectura.sql, lectura.args, lectura.scan)
+				if err != nil {
+					return err
+				}
+				porTipo[i] = append(porTipo[i], filas...)
+			}
+		}
+		return nil
+	})
+	return porTipo, err
 }
 
 // ordenarEmpates fija el orden de cada tipo por (hora, id). La derivación
@@ -309,19 +321,42 @@ type lecturaActividades struct {
 	scan func(*sql.Rows, *claveFila) (domain.Actividad, error)
 }
 
-// lecturasActividades: las tres sentencias por lote, cada una filtrada por la
-// columna de zona y la de fecha de SU tabla (las mismas del WHERE por zona),
-// una rama UNION ALL por grupo de zonas, en el orden de siempre: aplicados,
-// pendientes, visitas.
-func lecturasActividades(grupos []grupoDesde, hasta time.Time) [3]lecturaActividades {
-	fa, aa := unirRamas(ramasPorGrupo("p.ZONA_CLIENTE_ID", "p.FECHA", grupos, hasta), queryPagosAplicados)
-	fp, ap := unirRamas(ramasPorGrupo("s.ZONA_CLIENTE_ID", "pr.FECHA", grupos, hasta), queryPagosPendientes)
-	fv, av := unirRamas(ramasPorGrupo("v.ZONA_CLIENTE_ID", "v.FECHA", grupos, hasta), queryVisitas)
-	return [3]lecturaActividades{
-		{fa, aa, scanPagoAplicado},
-		{fp, ap, scanPagoPendiente},
-		{fv, av, scanVisita},
+// Contextos por rama de cada consulta (ver ramasPorSentencia):
+//   - aplicados: p, i, dc, c, pr, u + pr2, pr3, fcd, pv, des (folio), des
+//     (docto PV), im = 13;
+//   - pendientes: pr, s, c, u + im, pv, des (folio), des (docto PV), p2, i2,
+//     i3, p3 = 12;
+//   - visitas: v, c + im, pv, des (folio), des (docto PV) = 6.
+const (
+	contextosAplicados  = 13
+	contextosPendientes = 12
+	contextosVisitas    = 6
+)
+
+// lecturasActividades: las sentencias por lote de cada tipo, en el orden de
+// siempre (aplicados, pendientes, visitas). Cada una filtra por la columna de
+// zona y la de fecha de SU tabla (las mismas del WHERE por zona), con una rama
+// UNION ALL por grupo de zonas y a lo más ramasPorSentencia ramas por
+// sentencia. Una zona está en un solo grupo: ninguna fila sale dos veces.
+func lecturasActividades(grupos []grupoDesde, hasta time.Time) [3][]lecturaActividades {
+	tipos := [3]struct {
+		colZona, colFecha string
+		contextos         int
+		consulta          func(string) string
+		scan              func(*sql.Rows, *claveFila) (domain.Actividad, error)
+	}{
+		{"p.ZONA_CLIENTE_ID", "p.FECHA", contextosAplicados, queryPagosAplicados, scanPagoAplicado},
+		{"s.ZONA_CLIENTE_ID", "pr.FECHA", contextosPendientes, queryPagosPendientes, scanPagoPendiente},
+		{"v.ZONA_CLIENTE_ID", "v.FECHA", contextosVisitas, queryVisitas, scanVisita},
 	}
+	var out [3][]lecturaActividades
+	for i, tp := range tipos {
+		for _, tramo := range partir(grupos, ramasPorSentencia(tp.contextos)) {
+			q, args := unirRamas(ramasPorGrupo(tp.colZona, tp.colFecha, tramo, hasta), tp.consulta)
+			out[i] = append(out[i], lecturaActividades{sql: q, args: args, scan: tp.scan})
+		}
+	}
+	return out
 }
 
 // errFilaDescartada lo devuelve un scan que decidió omitir la fila (ya dejó

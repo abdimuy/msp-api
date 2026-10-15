@@ -4,6 +4,7 @@ package rutasfb
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -83,15 +84,35 @@ const filtroAbonoRuta = `p.CANCELADO = 'N'
 // La regla final de VentasPorZona —SALDO > 0 OR abono de la ventana > 0— se
 // aplica en Go por consulta. SALDO es NUMERIC(14,2): el CAST a (18,2) no
 // redondea y Saldo.IsPositive() en Go es exactamente SALDO > 0.
+// Contextos por rama (ver ramasPorSentencia): ventas con saldo s, l, lfp, c +
+// des, pv, des = 7; saldadas con abono p + esos 7 = 8; abonos p = 1.
+const (
+	contextosVentas = 8
+	contextosAbonos = 1
+)
+
+// partirVentas: tramos de ramas de saldadas; el primero deja lugar a la rama
+// de saldo > 0.
+func partirVentas(ramas []ramaGrupo) [][]ramaGrupo {
+	n := ramasPorSentencia(contextosVentas)
+	primero := ramas[:min(len(ramas), n-1)]
+	return append([][]ramaGrupo{primero}, partir(ramas[len(primero):], n)...)
+}
+
+// queryVentasLote: la rama de saldo > 0 de las zonas (si zonas no está vacío)
+// y una rama de saldadas por grupo.
 func queryVentasLote(zonas []int, ramas []ramaGrupo) (string, []any) {
 	args := make([]any, 0, len(zonas))
 	for _, z := range zonas {
 		args = append(args, z)
 	}
-	q := `SELECT` + columnasVentaLote + `
-FROM MSP_SALDOS_VENTAS s` + unionesVentaLote + `
-WHERE s.ZONA_CLIENTE_ID IN (` + marcadores(len(zonas)) + `)
-  AND s.SALDO > 0` + filtroCreditoVivo
+	var partes []string
+	if len(zonas) > 0 {
+		partes = append(partes, `SELECT`+columnasVentaLote+`
+FROM MSP_SALDOS_VENTAS s`+unionesVentaLote+`
+WHERE s.ZONA_CLIENTE_ID IN (`+marcadores(len(zonas))+`)
+  AND s.SALDO > 0`+filtroCreditoVivo)
+	}
 	saldadas, argsSaldadas := unirRamas(ramas, func(filtro string) string {
 		return `SELECT` + columnasVentaLote + `
 FROM MSP_PAGOS_VENTAS p
@@ -101,7 +122,10 @@ WHERE ` + filtro + `
   AND ` + filtroAbonoRuta + `
   AND NOT (s.SALDO > 0)` + filtroCreditoVivo
 	})
-	return q + "\nUNION ALL\n" + saldadas, append(args, argsSaldadas...)
+	if saldadas != "" {
+		partes = append(partes, saldadas)
+	}
+	return strings.Join(partes, "\nUNION ALL\n"), append(args, argsSaldadas...)
 }
 
 // queryAbonosLote trae cada abono de ruta desde el inicio más antiguo de su
@@ -142,16 +166,32 @@ func (r *CobranzaRepo) VentasPorZonas(
 		candidatas []rutasdomain.VentaCobranza
 		abonos     map[claveVentaZona][]abonoRuta
 	)
+	abonos = map[claveVentaZona][]abonoRuta{}
 	err := firebird.RunInSnapshotTx(ctx, r.pool.DB, func(ctx context.Context) error {
 		q := firebird.GetQuerier(ctx, r.pool.DB)
-		qa, aa := queryAbonosLote(ramas)
-		var err error
-		if abonos, err = leerAbonos(ctx, q, qa, aa); err != nil {
-			return err
+		for _, tramo := range partir(ramas, ramasPorSentencia(contextosAbonos)) {
+			qa, aa := queryAbonosLote(tramo)
+			leidos, err := leerAbonos(ctx, q, qa, aa)
+			if err != nil {
+				return err
+			}
+			for k, v := range leidos { // una zona está en un solo tramo: no se pisan
+				abonos[k] = append(abonos[k], v...)
+			}
 		}
-		qv, av := queryVentasLote(zonas, ramas)
-		candidatas, err = leerVentas(ctx, q, qv, av)
-		return err
+		for i, tramo := range partirVentas(ramas) {
+			zs := zonas
+			if i > 0 {
+				zs = nil // la rama de saldo > 0 va solo en la primera sentencia
+			}
+			qv, av := queryVentasLote(zs, tramo)
+			leidas, err := leerVentas(ctx, q, qv, av)
+			if err != nil {
+				return err
+			}
+			candidatas = append(candidatas, leidas...)
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err

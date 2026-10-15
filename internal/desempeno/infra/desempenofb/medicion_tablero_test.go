@@ -271,6 +271,14 @@ func armarEscenarioMed(t *testing.T) escenarioMed {
 			ZonaID: z, ZonaNombre: fmt.Sprintf("ZONA %d", z), InicioSemana: &ini,
 		})
 	}
+	if os.Getenv("MEDIR_GRUPOS") != "" {
+		// Peor caso: cada usuario con su propio inicio, a 25 h del anterior
+		// (más allá de la tolerancia de agrupación): un grupo por zona.
+		for i := range us {
+			ini := inicio.Add(-time.Duration(i) * 25 * time.Hour)
+			us[i].InicioSemana = &ini
+		}
+	}
 	if os.Getenv("MEDIR_UNO_VIEJO") != "" {
 		// Un usuario con la semana de hace 30 días: no debe ensanchar la
 		// lectura de las demás zonas.
@@ -402,12 +410,15 @@ func TestMedirLoteParalelo(t *testing.T) {
 			leerTodo(false).Round(time.Millisecond), leerTodo(true).Round(time.Millisecond))
 	}
 	grupos, hasta := cubrirConsultas(acts)
-	for i, l := range lecturasActividades(grupos, hasta) {
-		t0 := time.Now()
-		filas, err := leer(ctx, pool, l.sql, l.args, l.scan)
-		require.NoError(t, err)
-		t.Logf("sentencia %s (%d zonas): %v, %d filas", []string{"aplicados", "pendientes", "visitas"}[i],
-			len(uni), time.Since(t0).Round(time.Millisecond), len(filas))
+	for i, ls := range lecturasActividades(grupos, hasta) {
+		t0, n := time.Now(), 0
+		for _, l := range ls {
+			filas, err := leer(ctx, pool, l.sql, l.args, l.scan)
+			require.NoError(t, err)
+			n += len(filas)
+		}
+		t.Logf("%s (%d zonas, %d sentencias): %v, %d filas", []string{"aplicados", "pendientes", "visitas"}[i],
+			len(uni), len(ls), time.Since(t0).Round(time.Millisecond), n)
 	}
 	t0 := time.Now()
 	_, err := cr.UniversoZonas(ctx, uni)

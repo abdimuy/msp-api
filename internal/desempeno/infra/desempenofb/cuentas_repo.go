@@ -102,6 +102,54 @@ const filtroUniverso = `
   AND s.CARGO_CANCELADO <> 'S'
   AND COALESCE(UPPER(lfp.VALOR_DESPLEGADO), 'SEMANAL') <> 'CONTADO'`
 
+// contextosUniverso: s, l, lfp, c, dc + des (docto PV), pv, des (folio), det,
+// a, des (producto) = 11 por rama (ver ramasPorSentencia).
+const contextosUniverso = 11
+
+type sentenciaUniverso struct {
+	sql  string
+	args []any
+}
+
+// sentenciasUniverso parte el universo en sentencias de a lo más
+// ramasPorSentencia ramas: la primera lleva la rama de saldo > 0 (todas las
+// zonas, una sola vez) y las ramas de saldadas se reparten por grupos. Una
+// zona está en un solo grupo: ninguna fila sale dos veces.
+func sentenciasUniverso(zonas []int, grupos []grupoDesde) []sentenciaUniverso {
+	n := ramasPorSentencia(contextosUniverso)
+	out := make([]sentenciaUniverso, 0, 1+len(grupos)/n)
+	primero := grupos[:min(len(grupos), n-1)]
+	q, args := queryUniverso(zonas, primero)
+	out = append(out, sentenciaUniverso{q, args})
+	for _, tramo := range partir(grupos[len(primero):], n) {
+		q, args := querySaldadas(tramo)
+		out = append(out, sentenciaUniverso{q, args})
+	}
+	return out
+}
+
+// querySaldadas: solo ramas de saldadas, una por grupo.
+func querySaldadas(grupos []grupoDesde) (string, []any) {
+	ramas := make([]string, 0, len(grupos))
+	var args []any
+	for _, g := range grupos {
+		ramas = append(ramas, ramaSaldadas(g))
+		for _, z := range g.zonas {
+			args = append(args, z)
+		}
+		args = append(args, firebird.ToWallClock(g.desde))
+	}
+	return strings.Join(ramas, "\nUNION ALL"), args
+}
+
+func ramaSaldadas(g grupoDesde) string {
+	return `
+SELECT` + columnasUniverso + `
+WHERE s.ZONA_CLIENTE_ID IN (` + marcadores(len(g.zonas)) + `)
+  AND s.FECHA_ULT_PAGO >= ?
+  AND NOT (s.SALDO > 0)` + filtroUniverso
+}
+
 // queryUniverso: rama de saldo > 0 con todas las zonas y, por grupo de zonas
 // (agruparZonas), una rama de saldadas desde el inicio más antiguo del grupo.
 func queryUniverso(zonas []int, grupos []grupoDesde) (string, []any) {
@@ -115,11 +163,7 @@ SELECT`+columnasUniverso+`
 WHERE s.ZONA_CLIENTE_ID IN (`+marcadores(len(zonas))+`)
   AND s.SALDO > 0`+filtroUniverso)
 	for _, g := range grupos {
-		ramas = append(ramas, `
-SELECT`+columnasUniverso+`
-WHERE s.ZONA_CLIENTE_ID IN (`+marcadores(len(g.zonas))+`)
-  AND s.FECHA_ULT_PAGO >= ?
-  AND NOT (s.SALDO > 0)`+filtroUniverso)
+		ramas = append(ramas, ramaSaldadas(g))
 		for _, z := range g.zonas {
 			args = append(args, z)
 		}
@@ -169,24 +213,17 @@ func (r *CuentasRepo) UniversoZonas(ctx context.Context, consultas []outbound.Co
 		zonas = append(zonas, z)
 	}
 	sort.Ints(zonas)
-	consulta, args := queryUniverso(zonas, agruparZonas(inicioPorZona))
 	var filas []cuentaZona
 	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
 		q := firebird.GetQuerier(ctx, r.pool.DB)
-		rows, err := q.QueryContext(ctx, consulta, args...)
-		if err != nil {
-			return firebird.MapError(err)
-		}
-		defer func() { _ = rows.Close() }()
-		for rows.Next() {
-			var k claveCuenta
-			c, err := scanCuenta(rows, &k)
+		for _, st := range sentenciasUniverso(zonas, agruparZonas(inicioPorZona)) {
+			leidas, err := leerUniverso(ctx, q, st)
 			if err != nil {
-				return firebird.MapError(err)
+				return err
 			}
-			filas = append(filas, cuentaZona{clave: k, cuenta: c})
+			filas = append(filas, leidas...)
 		}
-		return firebird.MapError(rows.Err())
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -195,6 +232,24 @@ func (r *CuentasRepo) UniversoZonas(ctx context.Context, consultas []outbound.Co
 		out[i] = universoDe(filas, c.ZonaID, c.InicioSemana)
 	}
 	return out, nil
+}
+
+func leerUniverso(ctx context.Context, q firebird.Querier, st sentenciaUniverso) ([]cuentaZona, error) {
+	rows, err := q.QueryContext(ctx, st.sql, st.args...)
+	if err != nil {
+		return nil, firebird.MapError(err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []cuentaZona
+	for rows.Next() {
+		var k claveCuenta
+		c, err := scanCuenta(rows, &k)
+		if err != nil {
+			return nil, firebird.MapError(err)
+		}
+		out = append(out, cuentaZona{clave: k, cuenta: c})
+	}
+	return out, firebird.MapError(rows.Err())
 }
 
 // universoDe: las cuentas de la zona con SALDO > 0 o FECHA_ULT_PAGO >= inicio

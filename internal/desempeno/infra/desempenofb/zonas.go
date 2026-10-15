@@ -94,6 +94,36 @@ func unirRamas(ramas []ramaGrupo, consulta func(filtro string) string) (string, 
 	return strings.Join(partes, "\nUNION ALL\n"), args
 }
 
+// limiteContextosFirebird es el máximo de contextos (cada aparición de una
+// tabla, vista o procedimiento, también dentro de subconsultas) que Firebird
+// admite en UNA sentencia; pasarlo da "Too many Contexts of
+// Relation/Procedure/Views. Maximum allowed is 256" (medido en dev, FB 4.0.2:
+// con 16 grupos los aplicados ya fallaban). Cada rama UNION ALL repite todos
+// los contextos de la consulta, así que un lote se parte en sentencias de a lo
+// más N ramas, con N calculado por consulta para quedar en la mitad del
+// límite (margen para cambios futuros de la consulta).
+const limiteContextosFirebird = 256
+
+// ramasPorSentencia: cuántas ramas de una consulta caben en una sentencia
+// dejando la mitad del límite de margen. contextosPorRama se cuenta a mano
+// en cada consulta (tablas del FROM y los JOIN más las de cada subconsulta).
+func ramasPorSentencia(contextosPorRama int) int {
+	return max(1, limiteContextosFirebird/2/contextosPorRama)
+}
+
+// partir divide xs en tramos consecutivos de a lo más n elementos.
+func partir[T any](xs []T, n int) [][]T {
+	var out [][]T
+	for len(xs) > n {
+		out = append(out, xs[:n])
+		xs = xs[n:]
+	}
+	if len(xs) > 0 {
+		out = append(out, xs)
+	}
+	return out
+}
+
 func marcadores(n int) string {
 	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
 }
