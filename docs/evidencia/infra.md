@@ -34,7 +34,7 @@ una prueba está configurada de una forma rara, o desde el mensaje del commit:
 Los números son correlativos y **nunca se reutilizan ni se renumeran**. Lo
 refutado **no se borra**: cambia de estado a REFUTADA y se queda.
 
-**Siguiente identificador libre: `E-INF-013`.**
+**Siguiente identificador libre: `E-INF-016`.**
 
 ---
 
@@ -502,3 +502,75 @@ EMPIEZA`, que se pone roja con **un solo dp** de más.
   hay prueba automática que la fije)
 - **Caduca si:** los goldens dejan de tener variante oscura, o se adopta una
   utilidad compartida de análisis que resuelva el umbral por tema
+
+### E-INF-015 · Con la migración 000065 las subconsultas `MIN(ID)` sobre `MSP_PAGOS_RECIBIDOS` navegan el índice compuesto y no la PK, con resultados idénticos
+
+- **Nivel:** MEDIDO (dev) · INFERIDO (producción) · **Estado:** VIGENTE
+- **Nota de numeración:** `E-INF-013` aparece reclamado a la vez en las ramas
+  `perf/desempeno-lote` y `perf/desempeno-robustez`, y `E-INF-014` sería el
+  siguiente de una de ellas; este registro toma `E-INF-015` para no chocar. Si
+  al fusionar queda un hueco, el hueco se queda (los números no se reutilizan).
+- **Medido:** 2026-10-15, base de dev (`mueblera-firebird`, Firebird **4.0.2**,
+  `MON$PAGE_BUFFERS` = 2048 × 8 KB = 16 MB, `DefaultDbCachePages` sin fijar),
+  después del respaldo `data/firebird-snapshots/antes_idx_desempeno_20261014.fbk`.
+- **El defecto (antes de 000065):** `queryPagosAplicados`
+  (`internal/desempeno/infra/desempenofb/actividades_repo.go`) y
+  `pagoRecibidoDelAbono` (`internal/clientes/infra/clientesfb/queries.go`) se
+  resolvían con `PLAN (PR2 ORDER PK_MSP_PAGOS_RECIBIDOS INDEX
+  (IDX_MSP_PAGOS_RECIB_IMPTE))` y `PLAN (PR3 ORDER PK_MSP_PAGOS_RECIBIDOS INDEX
+  (IDX_MSP_PAGOS_RECIBIDOS_DOCTO_CC))`: recorrer la PK en orden hasta el primer
+  ID que pase el filtro, y entera cuando no hay ninguno.
+- **Recalcular sólo las estadísticas NO lo arregla** (medido): con
+  `IDX_MSP_PAGOS_RECIB_IMPTE` en 0.05 (antes 0.333) y el índice de
+  `DOCTO_CC_ID` en 2.9e-6, el plan de `PR2`/`PR3` siguió en `ORDER
+  PK_MSP_PAGOS_RECIBIDOS`. Sí arregla pendientes (abajo).
+- **Después de 000065:** `PLAN (PR2 ORDER IDX_MSP_PAGOS_REC_IMPTE_ID)` y
+  `PLAN (PR3 ORDER IDX_MSP_PAGOS_REC_DOCTO_IMPTE_ID)` — navegación acotada por
+  el prefijo de igualdad, incluido `IMPTE_DOCTO_CC_ID IS NULL` como segundo
+  segmento de `(DOCTO_CC_ID, IMPTE_DOCTO_CC_ID, ID)`. Visitas pasa a
+  `V INDEX (IDX_MSP_VISITAS_ZONA_FECHA)`; pendientes, con estadísticas al día, a
+  `PR INDEX (IDX_MSP_PAGOS_RECIBIDOS, IDX_MSP_PAGOS_REC_ESTADO)`.
+- **Cifras, base quieta (sin otras sentencias activas), A/B intercalado; el
+  "antes" es el mismo texto con el plan viejo forzado por `PLAN` en la
+  subconsulta (los índices viejos siguen existiendo):**
+
+  | Consulta (zona, ventana) | Filas | Antes: s / fetches / reads | Después: s / fetches / reads |
+  |---|---|---|---|
+  | aplicados 21552, 13–19 feb 2026 | 206 | 1.50–1.57 / 916,599 / 496,896 | 0.039–0.044 / 21,590 / 1,347 |
+  | aplicados 21552, 92 días | 2,820 | 24.4 / 13,918,297 / 8,356,971 | 0.36–0.40 / 232,439 / 9,515 |
+  | pendientes 21563, desde 20 nov 2025 | 0 | 0.53–0.55 / 952,220 / 4,841 | 0.010 / 4,189 / 372 |
+  | visitas 21557, 92 días | 3,919 | 0.34–0.37 / 170,083 | 0.22–0.24 / 116,433 |
+  | visitas 21552, 7 días | 205 | 0.027–0.028 / 13,117 | 0.018–0.020 / 8,746 |
+  | detalle de pago (lote), 7 días | 210 | 0.52 / 313,361 / 174,392 | 0.011 / 6,640 / 490 |
+  | detalle de pago (lote), 92 días | 2,909 | 8.39 / 4,804,536 / 2,962,466 | 0.093 / 62,015 / 4,935 |
+
+  Lecturas de registro (`MON$RECORD_IDX_READS`) de `MSP_PAGOS_RECIBIDOS` en
+  pendientes: 84,873 → 2. De `MSP_VISITAS` en visitas 92 días: 55,881 → 3,919.
+- **Trampa de método encontrada al medir:** con otro agente corriendo 4–9
+  consultas pesadas en paralelo contra la misma base, **los fetches no son
+  estables** (aplicados 92 días, mismo plan nuevo: 232 mil en quieto, 1.5 y 2.2
+  millones con carga; el plan viejo llegó a 86.9 millones y 719 s). Sólo valen
+  las cifras de la tabla, tomadas con `MON$STATEMENTS` vacío. Y en el script
+  de producción la zona NO puede ir como subconsulta dentro de cada consulta:
+  esa subconsulta sola cuesta 5.35 millones de fetches en dev.
+- **Control positivo de equivalencia:** salida `SET LIST` completa de cada
+  consulta (con `ORDER BY` añadido sólo para comparar) **idéntica byte a byte**
+  antes de 000065, después, y con el plan viejo forzado, en las siete
+  consultas; `cmp` sí distingue dos salidas distintas. Las salidas no son
+  triviales: aplicados 7 días trae 199 de 206 filas con captura ligada; 92
+  días, 2,729 de 2,820; detalle 92 días, 2,730 de 2,909. Como en dev casi todas
+  las capturas ligan por `DOCTO_CC_ID` (sólo 19 claves no nulas de
+  `IMPTE_DOCTO_CC_ID`), cada rama se probó además sobre la tabla entera contra
+  una agregación por recorrido natural (`PLAN (... NATURAL)`): `PR2`, 19 de 19
+  claves iguales; `PR3`, 348,012 `DOCTO_CC_ID` con captura iguales y 19 sin
+  captura de ese tipo (las que sólo tienen capturas con importe). Pendientes
+  da 0 filas en dev; su control es la misma condición sin la zona: 2 filas
+  iguales con el plan viejo forzado y con el nuevo.
+- **Qué lo volvería MEDIDO en producción:** correr
+  `scripts/medicion/desempeno-indices-produccion.sql` antes y después de
+  aplicar 000065 (Firebird **5.0**, con otro optimizador y otra distribución de
+  `IMPTE_DOCTO_CC_ID`) y ver en `P4a`/`P4b`/`P5` las líneas `PLAN (PR2 ORDER
+  IDX_MSP_PAGOS_REC_IMPTE_ID)` y `PLAN (PR3 ORDER IDX_MSP_PAGOS_REC_DOCTO_IMPTE_ID)`.
+- **Caduca si:** cambia la forma de las subconsultas (`MIN` → otra cosa), se
+  borran o renombran los índices de 000065, o producción muestra otro plan
+
