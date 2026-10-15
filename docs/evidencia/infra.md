@@ -34,7 +34,7 @@ una prueba está configurada de una forma rara, o desde el mensaje del commit:
 Los números son correlativos y **nunca se reutilizan ni se renumeran**. Lo
 refutado **no se borra**: cambia de estado a REFUTADA y se queda.
 
-**Siguiente identificador libre: `E-INF-013`.**
+**Siguiente identificador libre: `E-INF-014`.**
 
 ---
 
@@ -502,3 +502,69 @@ EMPIEZA`, que se pone roja con **un solo dp** de más.
   hay prueba automática que la fije)
 - **Caduca si:** los goldens dejan de tener variante oscura, o se adopta una
   utilidad compartida de análisis que resuelva el umbral por tema
+
+### E-INF-013 · El tablero de desempeño leído por lote da EXACTAMENTE lo mismo que zona por zona, con 6 sentencias en vez de 220
+
+- **Nivel:** MEDIDO · **Estado:** VIGENTE
+- **Medido:** 2026-10-14/15, base de **desarrollo** (`mueblera-firebird`, datos
+  reales hasta feb-2026), reloj fijo 18-feb-2026 20:00 CDMX. Rama
+  `perf/desempeno-lote`. **Ojo:** a mitad de la medición otro carril creó en la
+  misma base `IDX_MSP_VISITAS_ZONA_FECHA`, `IDX_MSP_PAGOS_REC_IMPTE_ID` e
+  `IDX_MSP_PAGOS_REC_DOCTO_IMPTE_ID`; las cifras de antes y después de abajo se
+  tomaron una tras otra con esos índices ya presentes. Producción no se tocó.
+- **Antes / después** (`TestMedirTablero`, 55 usuarios sintéticos en 44 zonas,
+  semana de 6 días; binario de `873a81c` contra esta rama, 00:28–00:31):
+
+  | | sentencias | tiempo por petición |
+  |---|---|---|
+  | `873a81c` (por zona, 4 filas en paralelo) | 220 (44 × 5) | 7.9 – 9.0 s |
+  | por lote, 3 lecturas en paralelo | 6 | 1.6 – 1.9 s |
+  | por lote, con UN usuario de semana de 30 días | 6 | 1.8 – 2.7 s |
+
+  Por sentencia (44 zonas): aplicados 0.8 s, visitas 0.23 s, pendientes 0.01 s,
+  universo 1.1 s, cobro de rutas ≈ 1.3 s. Las tres lecturas en serie suman
+  3.1 s; a la vez (tres conexiones) 1.6 s — Firebird de dev **no** serializa.
+- **Equivalencia** (`TestEquivalenciaDesempeno`): 48 zonas reales, 173
+  usuarios (uid real de app, COBRADOR_ID compartido, inicios de hace 6 días,
+  hace 2 días, HOY 10:00 —la consulta aparte de "hoy"—, hace 30 días, y tres
+  sin configurar), 791 casos (tablero hoy y semana, jornada de hoy y de una
+  fecha pasada, cuentas con y sin filtro, actividad paginada completa en los
+  cinco órdenes y seis filtros): **2,927,700 líneas de JSON, 0 diferencias**
+  contra el código anterior con el desempate de abajo. Rutas
+  (`TestCobranzaRepo_VentasPorZonas_EquivaleZonaPorZona`): 192 consultas (48
+  zonas × 4 inicios) × 2 cortes, 45,860 filas idénticas campo por campo, 23,172
+  con abono en la ventana y 1,436 de ellas **saldadas** (la rama que sale de
+  los pagos); `CobranzaDeUsuarios` = `CobranzaDeUsuario` =
+  `DesglosePorUsuario` para 98 usuarios, 22,438 ventas.
+- **Controles positivos:** quitar del universo las saldadas por fecha → el
+  arnés falla (`VentasUniverso` 174 → 169); quitar el desempate → falla en 3
+  casos; contar condonaciones en el abono de rutas → la equivalencia de rutas
+  falla en la primera zona. Cada prueba unitaria nueva se puso roja con su
+  mutación (truncado a 100 µs, hora de pared, tolerancia de grupo, regla
+  saldo/abono, deduplicado).
+- **Empates (hallazgo):** ninguna de las tres consultas de actividades tiene
+  ORDER BY y la derivación resuelve empates por orden de entrada
+  (`deriver.go` `masReciente`, visitas "la primera de la entrada"), así que
+  quién "determina" una venta en un empate exacto dependía del plan. En la
+  ventana de 30 días de dev: 1 grupo de 2 pagos de la misma venta a la misma
+  hora, 52 grupos (104 visitas) del mismo cliente a la misma hora, 0
+  pendientes. Desempate fijado: (hora, id), gana el id menor. Contra la salida
+  del código anterior **sin** desempate cambia el `DeterminadoPor` de **una**
+  venta (zona 2990693, 3 casos del arnés: los tres usuarios de esa zona).
+- **Trampa medida:** un OR por zona en el WHERE (`(zona = ? AND fecha >= ?) OR
+  …`) para no ensanchar la ventana hace que Firebird deje de usar el rango de
+  fechas del índice: con un usuario de 30 días, aplicados 0.8 → 15.9 s y cobro
+  de rutas 29 s. Con una rama `UNION ALL` por grupo de zonas (inicios a menos
+  de 24 h entre sí) vuelve a 0.9 s.
+- **Lo que NO se midió:** producción (índices distintos: dev tiene
+  `IDX_MSP_PAGOS_RECIBIDOS_DOCTO_CC`, producción `IDX_PAGOS_REC_DOCTO_CC` e
+  `IDX_MSP_PAGOS_DOCTO_CC_ID`; no se fijó ningún `PLAN`); la base sin los
+  índices del otro carril (se crearon durante la medición); el tablero con
+  usuarios reales de Firestore.
+- **Guardada por:** `TestEquivalenciaDesempeno` (con `EQUIV_GRABAR` /
+  `EQUIV_COMPARAR`, grabación fuera del repo), las dos pruebas de equivalencia
+  de rutas, `lote_internal_test.go`, `cobranza_lote_internal_test.go` y
+  `TestTablero_PorLoteUnaLecturaDeCadaTipoYMismoResultado`.
+- **Caduca si:** cambian las consultas por zona de desempeño o
+  `queryVentasPorZona` de rutas sin volver a correr el arnés.
+
