@@ -284,9 +284,11 @@ func (r *ActividadesRepo) leerLote(ctx context.Context, lecturas [3][]lecturaAct
 // queda con el PRIMERO de dos pagos de la misma venta a la misma hora, y entre
 // visitas iguales gana la primera), y ninguna de las tres consultas tiene
 // ORDER BY: sin este orden, quién "determina" una venta en un empate exacto
-// dependía del plan de Firebird. Desempate documentado: gana el id menor
-// (E-INF-014: en dev cambia el DeterminadoPor de UNA venta respecto al orden
-// que daba el plan de antes).
+// dependía del plan de Firebird. Desempate documentado: gana el id menor,
+// en orden lexicográfico del ID completo, como domain.OrdenarActividades
+// (E-INF-014: en dev cambia el DeterminadoPor de tres ventas respecto al plan
+// de antes, siempre entre dos visitas duplicadas del mismo cliente en el
+// mismo segundo).
 // Ordenar en Go y no en SQL: un ORDER BY sobre la fecha haría que Firebird
 // recorriera el índice en orden en vez de usar el de zona y fecha.
 func ordenarEmpates(filas []filaZona) {
