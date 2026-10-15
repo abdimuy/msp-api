@@ -96,3 +96,39 @@ func TestRutasUsuariosClient_CobroSemana(t *testing.T) {
 	_, err = desempenoclients.NewRutasUsuariosClient(&fakeRutas{errCob: boom}).CobroSemana(context.Background(), u)
 	require.ErrorIs(t, err, boom)
 }
+
+func TestRutasUsuariosClient_CobrosSemanaEnUnaSolaLectura(t *testing.T) {
+	t.Parallel()
+	pct := decimal.RequireFromString("40")
+	inicio := time.Date(2026, 10, 9, 14, 46, 0, 0, time.UTC)
+	f := &fakeRutas{cobranza: rutas.CobranzaUsuario{
+		PctPonderado: &pct,
+		Ventas: []rutas.VentaCobro{{
+			VentaID: 7, Parcialidad: decimal.NewFromInt(200), AbonoSemana: decimal.NewFromInt(100),
+			Vencidas: decimal.NewFromInt(1), AplicaPonderado: true,
+		}},
+	}}
+	us := []domain.UsuarioCobranza{
+		{UID: "uid-juan", Nombre: "Juan Carlos Méndez", CobradorID: 11502, ZonaID: 21563, ZonaNombre: "RUTA 21", InicioSemana: &inicio},
+		{UID: "uid-rosa", Nombre: "Rosa Elena Torres", CobradorID: 11503, ZonaID: 21564, InicioSemana: &inicio},
+	}
+	got, err := desempenoclients.NewRutasUsuariosClient(f).(interface {
+		CobrosSemana(context.Context, []domain.UsuarioCobranza) ([]domain.CobroSemana, error)
+	}).CobrosSemana(context.Background(), us)
+	require.NoError(t, err)
+	require.Len(t, f.pedidos, 2, "una sola llamada a rutas con los dos usuarios")
+	assert.Equal(t, "uid-rosa", f.pedidos[1].UID)
+	assert.Equal(t, 21564, f.pedidos[1].ZonaID)
+	assert.Equal(t, &inicio, f.pedidos[0].InicioSemana)
+	require.Len(t, got, 2)
+	require.Len(t, got[1].Ventas, 1)
+	assert.Equal(t, 7, got[1].Ventas[0].VentaID)
+	assert.True(t, got[1].Ventas[0].AbonoSemana.Equal(decimal.NewFromInt(100)))
+	assert.Equal(t, &pct, got[0].PctPonderado)
+
+	boom := errors.New("boom")
+	_, err = desempenoclients.NewRutasUsuariosClient(&fakeRutas{errCob: boom}).(interface {
+		CobrosSemana(context.Context, []domain.UsuarioCobranza) ([]domain.CobroSemana, error)
+	}).CobrosSemana(context.Background(), us)
+	require.ErrorIs(t, err, boom)
+}

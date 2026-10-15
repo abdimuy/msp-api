@@ -4,6 +4,7 @@ package desempenofb
 import (
 	"context"
 	"database/sql"
+	"sort"
 	"strings"
 	"time"
 
@@ -12,7 +13,10 @@ import (
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 )
 
-var _ outbound.CuentasRepo = (*CuentasRepo)(nil)
+var (
+	_ outbound.CuentasRepo     = (*CuentasRepo)(nil)
+	_ outbound.CuentasLoteRepo = (*CuentasRepo)(nil)
+)
 
 // frecuenciaPorOmision es la que el teléfono asume si frec_pago llega vacío.
 const frecuenciaPorOmision = "SEMANAL"
@@ -58,8 +62,21 @@ const puentePV = `(SELECT des.DOCTO_FTE_ID FROM DOCTOS_ENTRE_SIS des
 // Charsets: CLIENTES.NOMBRE ISO8859_1 y ARTICULOS.NOMBRE ISO8859_1 →
 // sql.NullString; DOCTOS_PV.FOLIO NONE → firebird.Win1252 (sin COALESCE con
 // literal: revienta con acentos, ENCODING_HANDLING.md).
-var queryUniverso = `
-SELECT
+//
+// Por lote (UniversoZonas) la consulta cubre un CONJUNTO de zonas y el inicio
+// de semana más antiguo, en dos ramas que usan cada una su índice en vez de
+// recorrer el historial de la zona (antes, el ORDER BY s.DOCTO_CC_ID obligaba
+// a recorrer la PK):
+//
+//   - rama 1: SALDO > 0 (IDX_MSP_SALDOS_ZONA_SALDO);
+//   - rama 2: saldadas con FECHA_ULT_PAGO >= inicio (IDX_MSP_SALDOS_ZONA_FUP).
+//
+// El predicado de cada consulta —SALDO > 0 OR FECHA_ULT_PAGO >= su inicio—
+// y el orden por DOCTO_CC_ID se aplican en Go. SALDO es NUMERIC(14,2): el CAST
+// a (18,2) no redondea y Saldo.IsPositive() es exactamente SALDO > 0.
+const columnasUniverso = `
+  s.ZONA_CLIENTE_ID,
+  s.FECHA_ULT_PAGO,
   s.DOCTO_CC_ID,
   s.CLIENTE_ID,
   c.NOMBRE,
@@ -79,39 +96,127 @@ FROM MSP_SALDOS_VENTAS s
 LEFT JOIN LIBRES_CARGOS_CC l   ON l.DOCTO_CC_ID      = s.DOCTO_CC_ID
 LEFT JOIN LISTAS_ATRIBUTOS lfp ON lfp.LISTA_ATRIB_ID = l.FORMA_DE_PAGO
 LEFT JOIN CLIENTES c           ON c.CLIENTE_ID       = s.CLIENTE_ID
-LEFT JOIN DOCTOS_PV dc         ON dc.DOCTO_PV_ID     = s.DOCTO_PV_ID
-WHERE s.ZONA_CLIENTE_ID = ?
-  AND s.CARGO_CANCELADO <> 'S'
-  AND COALESCE(UPPER(lfp.VALOR_DESPLEGADO), 'SEMANAL') <> 'CONTADO'
-  AND (s.SALDO > 0 OR s.FECHA_ULT_PAGO >= ?)
-ORDER BY s.DOCTO_CC_ID`
+LEFT JOIN DOCTOS_PV dc         ON dc.DOCTO_PV_ID     = s.DOCTO_PV_ID`
 
-// UniversoSemana implementa outbound.CuentasRepo.
+const filtroUniverso = `
+  AND s.CARGO_CANCELADO <> 'S'
+  AND COALESCE(UPPER(lfp.VALOR_DESPLEGADO), 'SEMANAL') <> 'CONTADO'`
+
+// queryUniverso: rama de saldo > 0 con todas las zonas y, por grupo de zonas
+// (agruparZonas), una rama de saldadas desde el inicio más antiguo del grupo.
+func queryUniverso(zonas []int, grupos []grupoDesde) (string, []any) {
+	args := make([]any, 0, 2*len(zonas)+len(grupos))
+	for _, z := range zonas {
+		args = append(args, z)
+	}
+	ramas := make([]string, 0, 1+len(grupos))
+	ramas = append(ramas, `
+SELECT`+columnasUniverso+`
+WHERE s.ZONA_CLIENTE_ID IN (`+marcadores(len(zonas))+`)
+  AND s.SALDO > 0`+filtroUniverso)
+	for _, g := range grupos {
+		ramas = append(ramas, `
+SELECT`+columnasUniverso+`
+WHERE s.ZONA_CLIENTE_ID IN (`+marcadores(len(g.zonas))+`)
+  AND s.FECHA_ULT_PAGO >= ?
+  AND NOT (s.SALDO > 0)`+filtroUniverso)
+		for _, z := range g.zonas {
+			args = append(args, z)
+		}
+		args = append(args, firebird.ToWallClock(g.desde))
+	}
+	return strings.Join(ramas, "\nUNION ALL"), args
+}
+
+// UniversoSemana implementa outbound.CuentasRepo: es la lectura por lote con
+// una sola consulta.
 func (r *CuentasRepo) UniversoSemana(ctx context.Context, zonaID int, inicioSemana time.Time) ([]domain.CuentaUniverso, error) {
-	var out []domain.CuentaUniverso
+	out, err := r.UniversoZonas(ctx, []outbound.ConsultaUniverso{{ZonaID: zonaID, InicioSemana: inicioSemana}})
+	if err != nil {
+		return nil, err
+	}
+	return out[0], nil
+}
+
+// claveCuenta son las dos primeras columnas del universo por lote: la zona por
+// la que se reparte y FECHA_ULT_PAGO tal como la entrega el driver (hora de
+// pared), la columna exacta del `FECHA_ULT_PAGO >= ?`.
+type claveCuenta struct {
+	zona int
+	fup  sql.NullTime
+}
+
+type cuentaZona struct {
+	clave  claveCuenta
+	cuenta domain.CuentaUniverso
+}
+
+// UniversoZonas implementa outbound.CuentasLoteRepo: UNA sentencia para todas
+// las consultas y el reparto en Go.
+func (r *CuentasRepo) UniversoZonas(ctx context.Context, consultas []outbound.ConsultaUniverso) ([][]domain.CuentaUniverso, error) {
+	out := make([][]domain.CuentaUniverso, len(consultas))
+	if len(consultas) == 0 {
+		return out, nil
+	}
+	inicioPorZona := map[int]time.Time{}
+	for _, c := range consultas {
+		if d, ok := inicioPorZona[c.ZonaID]; !ok || c.InicioSemana.Before(d) {
+			inicioPorZona[c.ZonaID] = c.InicioSemana
+		}
+	}
+	zonas := make([]int, 0, len(inicioPorZona))
+	for z := range inicioPorZona {
+		zonas = append(zonas, z)
+	}
+	sort.Ints(zonas)
+	consulta, args := queryUniverso(zonas, agruparZonas(inicioPorZona))
+	var filas []cuentaZona
 	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
 		q := firebird.GetQuerier(ctx, r.pool.DB)
-		rows, err := q.QueryContext(ctx, queryUniverso, zonaID, firebird.ToWallClock(inicioSemana))
+		rows, err := q.QueryContext(ctx, consulta, args...)
 		if err != nil {
 			return firebird.MapError(err)
 		}
 		defer func() { _ = rows.Close() }()
 		for rows.Next() {
-			c, err := scanCuenta(rows)
+			var k claveCuenta
+			c, err := scanCuenta(rows, &k)
 			if err != nil {
 				return firebird.MapError(err)
 			}
-			out = append(out, c)
+			filas = append(filas, cuentaZona{clave: k, cuenta: c})
 		}
 		return firebird.MapError(rows.Err())
 	})
 	if err != nil {
 		return nil, err
 	}
+	for i, c := range consultas {
+		out[i] = universoDe(filas, c.ZonaID, c.InicioSemana)
+	}
 	return out, nil
 }
 
-func scanCuenta(rows *sql.Rows) (domain.CuentaUniverso, error) {
+// universoDe: las cuentas de la zona con SALDO > 0 o FECHA_ULT_PAGO >= inicio
+// (el predicado de la consulta por zona, repetido por clave), por DOCTO_CC_ID
+// como la consulta por zona de antes.
+func universoDe(filas []cuentaZona, zona int, inicio time.Time) []domain.CuentaUniverso {
+	var out []domain.CuentaUniverso
+	for _, f := range filas {
+		c := f.cuenta
+		if f.clave.zona != zona {
+			continue
+		}
+		if !c.Saldo.IsPositive() && (!f.clave.fup.Valid || !desdePared(f.clave.fup.Time, inicio)) {
+			continue
+		}
+		out = append(out, c)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].VentaID < out[j].VentaID })
+	return out
+}
+
+func scanCuenta(rows *sql.Rows, k *claveCuenta) (domain.CuentaUniverso, error) {
 	var (
 		c                                  domain.CuentaUniverso
 		clienteNombre, producto            sql.NullString
@@ -121,7 +226,7 @@ func scanCuenta(rows *sql.Rows) (domain.CuentaUniverso, error) {
 		frecPago                           firebird.Win1252 // LISTAS_ATRIBUTOS.VALOR_DESPLEGADO — NONE
 		fechaVentaRaw, fechaUltPagoRaw     any
 	)
-	if err := rows.Scan(&c.VentaID, &c.ClienteID, &clienteNombre, &parcialidadRaw, &saldoRaw,
+	if err := rows.Scan(&k.zona, &k.fup, &c.VentaID, &c.ClienteID, &clienteNombre, &parcialidadRaw, &saldoRaw,
 		&precioTotalRaw, &engancheRaw, &cargoRaw, &frecPago, &fechaVentaRaw, &fechaUltPagoRaw, &c.DoctoPVID, &folio, &producto); err != nil {
 		return c, err
 	}

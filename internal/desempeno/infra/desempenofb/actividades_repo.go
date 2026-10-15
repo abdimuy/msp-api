@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -15,7 +16,10 @@ import (
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 )
 
-var _ outbound.ActividadesRepo = (*ActividadesRepo)(nil)
+var (
+	_ outbound.ActividadesRepo     = (*ActividadesRepo)(nil)
+	_ outbound.ActividadesLoteRepo = (*ActividadesRepo)(nil)
+)
 
 // ActividadesRepo lee pagos aplicados (MSP_PAGOS_VENTAS), pagos pendientes
 // (MSP_PAGOS_RECIBIDOS en 'P') y visitas (MSP_VISITAS) de una zona.
@@ -65,8 +69,11 @@ func folioVentaDe(columnaCargo string) string {
 // y, si no hay ninguna así, por DOCTO_CC_ID con IMPTE_DOCTO_CC_ID nulo
 // (capturas viejas; IDX_PAGOS_REC_DOCTO_CC). MIN(ID) en cada rama: una fila
 // de salida por abono, sin fan-out.
-var queryPagosAplicados = `
+func queryPagosAplicados(filtro string) string {
+	return `
 SELECT
+  p.ZONA_CLIENTE_ID,
+  p.FECHA,
   p.IMPTE_DOCTO_CC_ID,
   COALESCE(dc.DOCTO_CC_ID, p.DOCTO_CC_ID),
   ` + cargoAplicado + `,
@@ -101,11 +108,10 @@ LEFT JOIN MSP_PAGOS_RECIBIDOS pr ON pr.ID = COALESCE(
   (SELECT MIN(pr3.ID) FROM MSP_PAGOS_RECIBIDOS pr3
     WHERE pr3.DOCTO_CC_ID = p.DOCTO_CC_ID AND pr3.IMPTE_DOCTO_CC_ID IS NULL))
 LEFT JOIN MSP_USUARIOS u ON u.ID = pr.CREATED_BY
-WHERE p.ZONA_CLIENTE_ID = ?
-  AND p.FECHA >= ?
-  AND p.FECHA <= ?
+WHERE ` + filtro + `
   AND COALESCE(i.CANCELADO, p.CANCELADO) = 'N'
   AND COALESCE(dc.CONCEPTO_CC_ID, p.CONCEPTO_CC_ID) IN (87327, 27969)`
+}
 
 // cargoAplicado es el cargo (venta) del abono, con Microsip sobre la caché.
 const cargoAplicado = `COALESCE(i.DOCTO_CC_ACR_ID, p.DOCTO_CC_ACR_ID)`
@@ -122,8 +128,11 @@ const cargoAplicado = `COALESCE(i.DOCTO_CC_ACR_ID, p.DOCTO_CC_ACR_ID)`
 //
 // CLIENTE_ID e IMPORTE son nullables (migración 000016): una fila sin ellos
 // se descarta con advertencia en vez de tumbar la respuesta.
-var queryPagosPendientes = `
+func queryPagosPendientes(filtro string) string {
+	return `
 SELECT
+  s.ZONA_CLIENTE_ID,
+  pr.FECHA,
   pr.ID,
   pr.CARGO_DOCTO_CC_ID,
   pr.CLIENTE_ID,
@@ -147,9 +156,7 @@ JOIN MSP_SALDOS_VENTAS s ON s.DOCTO_CC_ID = pr.CARGO_DOCTO_CC_ID
 LEFT JOIN CLIENTES c     ON c.CLIENTE_ID  = pr.CLIENTE_ID
 LEFT JOIN MSP_USUARIOS u ON u.ID = pr.CREATED_BY
 WHERE pr.ESTADO = 'P'
-  AND s.ZONA_CLIENTE_ID = ?
-  AND pr.FECHA >= ?
-  AND pr.FECHA <= ?
+  AND ` + filtro + `
   AND NOT EXISTS (SELECT 1 FROM MSP_PAGOS_VENTAS p2
     LEFT JOIN IMPORTES_DOCTOS_CC i2 ON i2.IMPTE_DOCTO_CC_ID = p2.IMPTE_DOCTO_CC_ID
     WHERE p2.IMPTE_DOCTO_CC_ID = pr.IMPTE_DOCTO_CC_ID
@@ -158,14 +165,18 @@ WHERE pr.ESTADO = 'P'
     JOIN MSP_PAGOS_VENTAS p3 ON p3.IMPTE_DOCTO_CC_ID = i3.IMPTE_DOCTO_CC_ID
     WHERE i3.DOCTO_CC_ID = pr.DOCTO_CC_ID
       AND COALESCE(i3.CANCELADO, p3.CANCELADO) = 'N')`
+}
 
 // queryVisitas: MSP_VISITAS es legacy (Node). Sus columnas de texto son
 // CHARACTER SET NONE con bytes UTF-8: se escanean como string plano, nunca
 // Win1252 (visitasfb/repo.go). IMPTE_DOCTO_CC_ID es la VENTA (cargo) a la que
 // se ligó la visita, como en el teléfono (DerivacionModelos.kt): el nombre
 // miente y C0 lo mide (consulta 5).
-var queryVisitas = `
+func queryVisitas(filtro string) string {
+	return `
 SELECT
+  v.ZONA_CLIENTE_ID,
+  v.FECHA,
   v.ID,
   v.CLIENTE_ID,
   c.NOMBRE,
@@ -182,37 +193,135 @@ SELECT
   ` + doctoPVDe("v.IMPTE_DOCTO_CC_ID") + `
 FROM MSP_VISITAS v
 LEFT JOIN CLIENTES c ON c.CLIENTE_ID = v.CLIENTE_ID
-WHERE v.ZONA_CLIENTE_ID = ?
-  AND v.FECHA >= ?
-  AND v.FECHA <= ?`
+WHERE ` + filtro
+}
 
-// ActividadesZona implementa outbound.ActividadesRepo. Las tres lecturas van
-// en una transacción de solo lectura (una misma foto de la base).
+// ActividadesZona implementa outbound.ActividadesRepo: es la lectura por lote
+// con una sola consulta.
 func (r *ActividadesRepo) ActividadesZona(ctx context.Context, zonaID int, desde, hasta time.Time) ([]domain.Actividad, error) {
-	var out []domain.Actividad
+	out, err := r.ActividadesZonas(ctx, []outbound.ConsultaActividades{{ZonaID: zonaID, Desde: desde, Hasta: hasta}})
+	if err != nil {
+		return nil, err
+	}
+	return out[0], nil
+}
+
+// claveFila son las dos primeras columnas de cada lectura por lote: la zona
+// por la que se reparte y la columna EXACTA del filtro de fechas del WHERE
+// (p.FECHA, pr.FECHA, v.FECHA) tal como la entrega el driver, en hora de pared.
+type claveFila struct {
+	zona  int
+	fecha time.Time
+}
+
+// filaZona es una actividad con la clave de la fila que la trajo.
+type filaZona struct {
+	clave claveFila
+	act   domain.Actividad
+}
+
+// ActividadesZonas implementa outbound.ActividadesLoteRepo: TRES sentencias
+// para todas las consultas (aplicados, pendientes, visitas), sobre el
+// conjunto de zonas y la ventana mínima que las cubre, en una transacción de
+// solo lectura (una misma foto de la base). El reparto por consulta se hace
+// en Go con la misma regla de ventana inclusiva; cada consulta conserva el
+// orden de siempre: aplicados, luego pendientes, luego visitas.
+func (r *ActividadesRepo) ActividadesZonas(
+	ctx context.Context, consultas []outbound.ConsultaActividades,
+) ([][]domain.Actividad, error) {
+	out := make([][]domain.Actividad, len(consultas))
+	if len(consultas) == 0 {
+		return out, nil
+	}
+	grupos, hasta := cubrirConsultas(consultas)
+	var porTipo [3][]filaZona
 	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
 		q := firebird.GetQuerier(ctx, r.pool.DB)
-		args := []any{zonaID, firebird.ToWallClock(desde), firebird.ToWallClock(hasta)}
-		for _, lectura := range []struct {
-			sql  string
-			scan func(*sql.Rows) (domain.Actividad, error)
-		}{
-			{queryPagosAplicados, scanPagoAplicado},
-			{queryPagosPendientes, scanPagoPendiente},
-			{queryVisitas, scanVisita},
-		} {
-			acts, err := leer(ctx, q, lectura.sql, args, lectura.scan)
+		for i, lectura := range lecturasActividades(grupos, hasta) {
+			filas, err := leer(ctx, q, lectura.sql, lectura.args, lectura.scan)
 			if err != nil {
 				return err
 			}
-			out = append(out, acts...)
+			porTipo[i] = filas
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
+	for _, filas := range porTipo {
+		ordenarEmpates(filas)
+	}
+	for i, c := range consultas {
+		v := nuevaVentanaPared(c.Desde, c.Hasta)
+		var acts []domain.Actividad
+		for _, filas := range porTipo {
+			for _, f := range filas {
+				if f.clave.zona == c.ZonaID && v.contiene(f.clave.fecha) {
+					acts = append(acts, f.act)
+				}
+			}
+		}
+		out[i] = acts
+	}
 	return out, nil
+}
+
+// ordenarEmpates fija el orden de cada tipo por (hora, id). La derivación
+// resuelve los empates por el orden de entrada (deriver.go: masReciente se
+// queda con el PRIMERO de dos pagos de la misma venta a la misma hora, y entre
+// visitas iguales gana la primera), y ninguna de las tres consultas tiene
+// ORDER BY: sin este orden, quién "determina" una venta en un empate exacto
+// dependía del plan de Firebird. Desempate documentado: gana el id menor
+// (E-INF-013: en dev cambia el DeterminadoPor de UNA venta respecto al orden
+// que daba el plan de antes).
+// Ordenar en Go y no en SQL: un ORDER BY sobre la fecha haría que Firebird
+// recorriera el índice en orden en vez de usar el de zona y fecha.
+func ordenarEmpates(filas []filaZona) {
+	sort.SliceStable(filas, func(i, j int) bool {
+		a, b := filas[i].act, filas[j].act
+		if !a.Hora.Equal(b.Hora) {
+			return a.Hora.Before(b.Hora)
+		}
+		return a.ID < b.ID
+	})
+}
+
+// cubrirConsultas: por zona, el desde más antiguo que se le pide (agrupado
+// por desde) y el hasta más reciente de todas.
+func cubrirConsultas(consultas []outbound.ConsultaActividades) ([]grupoDesde, time.Time) {
+	desdePorZona := map[int]time.Time{}
+	hasta := consultas[0].Hasta
+	for _, c := range consultas {
+		if d, ok := desdePorZona[c.ZonaID]; !ok || c.Desde.Before(d) {
+			desdePorZona[c.ZonaID] = c.Desde
+		}
+		if c.Hasta.After(hasta) {
+			hasta = c.Hasta
+		}
+	}
+	return agruparZonas(desdePorZona), hasta
+}
+
+type lecturaActividades struct {
+	sql  string
+	args []any
+	scan func(*sql.Rows, *claveFila) (domain.Actividad, error)
+}
+
+// lecturasActividades: las tres sentencias por lote, cada una filtrada por la
+// columna de zona y la de fecha de SU tabla (las mismas del WHERE por zona),
+// una rama UNION ALL por grupo de zonas, en el orden de siempre: aplicados,
+// pendientes, visitas.
+func lecturasActividades(grupos []grupoDesde, hasta time.Time) [3]lecturaActividades {
+	fa, aa := unirRamas(ramasPorGrupo("p.ZONA_CLIENTE_ID", "p.FECHA", grupos, hasta), queryPagosAplicados)
+	fp, ap := unirRamas(ramasPorGrupo("s.ZONA_CLIENTE_ID", "pr.FECHA", grupos, hasta), queryPagosPendientes)
+	fv, av := unirRamas(ramasPorGrupo("v.ZONA_CLIENTE_ID", "v.FECHA", grupos, hasta), queryVisitas)
+	return [3]lecturaActividades{
+		{fa, aa, scanPagoAplicado},
+		{fp, ap, scanPagoPendiente},
+		{fv, av, scanVisita},
+	}
 }
 
 // errFilaDescartada lo devuelve un scan que decidió omitir la fila (ya dejó
@@ -220,23 +329,24 @@ func (r *ActividadesRepo) ActividadesZona(ctx context.Context, zonaID int, desde
 var errFilaDescartada = errors.New("desempenofb: fila descartada")
 
 func leer(ctx context.Context, q firebird.Querier, query string, args []any,
-	scan func(*sql.Rows) (domain.Actividad, error),
-) ([]domain.Actividad, error) {
+	scan func(*sql.Rows, *claveFila) (domain.Actividad, error),
+) ([]filaZona, error) {
 	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, firebird.MapError(err)
 	}
 	defer func() { _ = rows.Close() }()
-	var out []domain.Actividad
+	var out []filaZona
 	for rows.Next() {
-		a, err := scan(rows)
+		var k claveFila
+		a, err := scan(rows, &k)
 		if errors.Is(err, errFilaDescartada) {
 			continue
 		}
 		if err != nil {
 			return nil, firebird.MapError(err)
 		}
-		out = append(out, a)
+		out = append(out, filaZona{clave: k, act: a})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, firebird.MapError(err)
@@ -275,7 +385,7 @@ func instanteNulo(raw any) (*time.Time, error) {
 	return &t, nil
 }
 
-func scanPagoAplicado(rows *sql.Rows) (domain.Actividad, error) {
+func scanPagoAplicado(rows *sql.Rows, k *claveFila) (domain.Actividad, error) {
 	var (
 		impteID, doctoCCID, cargoID, clienteID, conceptoID int
 		clienteNombre                                      sql.NullString
@@ -291,7 +401,7 @@ func scanPagoAplicado(rows *sql.Rows) (domain.Actividad, error) {
 		prID, prCobrador, uid                              sql.NullString
 		numFotos                                           int
 	)
-	if err := rows.Scan(&impteID, &doctoCCID, &cargoID, &clienteID, &clienteNombre, &conceptoID,
+	if err := rows.Scan(&k.zona, &k.fecha, &impteID, &doctoCCID, &cargoID, &clienteID, &clienteNombre, &conceptoID,
 		&fechaRaw, &importeRaw, &aplicado, &dcLat, &dcLon, &dcCobradorID, &fcdForma, &folio,
 		&doctoPV, &prID, &prCobradorID, &prCobrador, &prForma, &prLat, &prLon, &recibidoRaw, &uid, &numFotos); err != nil {
 		return domain.Actividad{}, err
@@ -331,7 +441,7 @@ func scanPagoAplicado(rows *sql.Rows) (domain.Actividad, error) {
 	return a, nil
 }
 
-func scanPagoPendiente(rows *sql.Rows) (domain.Actividad, error) {
+func scanPagoPendiente(rows *sql.Rows, k *claveFila) (domain.Actividad, error) {
 	var (
 		id                                     string
 		cargoID                                int
@@ -345,7 +455,7 @@ func scanPagoPendiente(rows *sql.Rows) (domain.Actividad, error) {
 		numFotos                               int
 		intentos                               sql.NullInt64 // nullable (migración 000016)
 	)
-	if err := rows.Scan(&id, &cargoID, &clienteID, &clienteNombre, &conceptoID, &fechaRaw, &importeRaw,
+	if err := rows.Scan(&k.zona, &k.fecha, &id, &cargoID, &clienteID, &clienteNombre, &conceptoID, &fechaRaw, &importeRaw,
 		&forma, &lat, &lon, &cobradorID, &cobrador, &intentos, &recibido, &uid, &numFotos, &folio, &doctoPV); err != nil {
 		return domain.Actividad{}, err
 	}
@@ -382,7 +492,7 @@ func scanPagoPendiente(rows *sql.Rows) (domain.Actividad, error) {
 	return a, nil
 }
 
-func scanVisita(rows *sql.Rows) (domain.Actividad, error) {
+func scanVisita(rows *sql.Rows, k *claveFila) (domain.Actividad, error) {
 	var (
 		id, tipoVisita, cobrador string
 		clienteID, cobradorID    int
@@ -393,7 +503,7 @@ func scanVisita(rows *sql.Rows) (domain.Actividad, error) {
 		numFotos                 int
 		folio                    firebird.Win1252 // DOCTOS_PV.FOLIO — NONE
 	)
-	if err := rows.Scan(&id, &clienteID, &clienteNombre, &fechaRaw, &tipoVisita, &nota, &lat, &lng,
+	if err := rows.Scan(&k.zona, &k.fecha, &id, &clienteID, &clienteNombre, &fechaRaw, &tipoVisita, &nota, &lat, &lng,
 		&cobradorID, &cobrador, &ventaID, &numFotos, &folio, &doctoPV); err != nil {
 		return domain.Actividad{}, err
 	}
