@@ -24,7 +24,10 @@ func NewRutasUsuariosClient(r rutas.CobranzaUsuariosReader) outbound.UsuariosCob
 	return &rutasUsuariosClient{rutas: r}
 }
 
-var _ outbound.UsuariosCobranza = (*rutasUsuariosClient)(nil)
+var (
+	_ outbound.UsuariosCobranza = (*rutasUsuariosClient)(nil)
+	_ outbound.CobrosLote       = (*rutasUsuariosClient)(nil)
+)
 
 // ListarUsuarios traduce la falla de Firestore al 503 del contrato.
 func (c *rutasUsuariosClient) ListarUsuarios(ctx context.Context) ([]domain.UsuarioCobranza, error) {
@@ -44,13 +47,39 @@ func (c *rutasUsuariosClient) ListarUsuarios(ctx context.Context) ([]domain.Usua
 
 // CobroSemana pide a rutas el desglose de la semana del usuario.
 func (c *rutasUsuariosClient) CobroSemana(ctx context.Context, u domain.UsuarioCobranza) (domain.CobroSemana, error) {
-	cu, err := c.rutas.CobranzaDeUsuario(ctx, rutas.UsuarioCobrador{
-		UID: u.UID, Nombre: u.Nombre, Email: u.Email, CobradorID: u.CobradorID,
-		ZonaID: u.ZonaID, ZonaNombre: u.ZonaNombre, InicioSemana: u.InicioSemana,
-	})
+	cu, err := c.rutas.CobranzaDeUsuario(ctx, aRutas(u))
 	if err != nil {
 		return domain.CobroSemana{}, err
 	}
+	return aCobro(cu), nil
+}
+
+// CobrosSemana pide a rutas el desglose de todos los usuarios en una sola
+// lectura (rutas.CobranzaDeUsuarios); out[i] corresponde a us[i].
+func (c *rutasUsuariosClient) CobrosSemana(ctx context.Context, us []domain.UsuarioCobranza) ([]domain.CobroSemana, error) {
+	ru := make([]rutas.UsuarioCobrador, len(us))
+	for i, u := range us {
+		ru[i] = aRutas(u)
+	}
+	cs, err := c.rutas.CobranzaDeUsuarios(ctx, ru)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.CobroSemana, len(cs))
+	for i, cu := range cs {
+		out[i] = aCobro(cu)
+	}
+	return out, nil
+}
+
+func aRutas(u domain.UsuarioCobranza) rutas.UsuarioCobrador {
+	return rutas.UsuarioCobrador{
+		UID: u.UID, Nombre: u.Nombre, Email: u.Email, CobradorID: u.CobradorID,
+		ZonaID: u.ZonaID, ZonaNombre: u.ZonaNombre, InicioSemana: u.InicioSemana,
+	}
+}
+
+func aCobro(cu rutas.CobranzaUsuario) domain.CobroSemana {
 	out := domain.CobroSemana{PctPonderado: cu.PctPonderado, Ventas: make([]domain.CobroVenta, 0, len(cu.Ventas))}
 	for _, v := range cu.Ventas {
 		out.Ventas = append(out.Ventas, domain.CobroVenta{
@@ -58,7 +87,7 @@ func (c *rutasUsuariosClient) CobroSemana(ctx context.Context, u domain.UsuarioC
 			Vencidas: v.Vencidas, AplicaPonderado: v.AplicaPonderado,
 		})
 	}
-	return out, nil
+	return out
 }
 
 func aDominio(u rutas.UsuarioCobrador) domain.UsuarioCobranza {

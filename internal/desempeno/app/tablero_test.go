@@ -156,59 +156,61 @@ func TestTablero_SemanaQueEmpiezaHoyConsultaDesdeMedianoche(t *testing.T) {
 	assert.Equal(t, 2, f.Pagos.N)
 }
 
-// Resolución del arquitecto (2026-10-14): los cálculos por usuario corren en
-// paralelo acotado. Con 3 × el límite de usuarios configurados, retenidos
-// dentro del repositorio, a la vez corren exactamente LimiteParaleloTablero.
-func TestTablero_CalculoPorUsuarioEnParaleloAcotado(t *testing.T) {
+// Lecturas por lote (2026-10-14): con repositorios que saben leer por lote,
+// el tablero hace UNA lectura de cada tipo para toda la flota, sea cual sea
+// el número de zonas e inicios — incluida la ventana de hoy de una semana que
+// empezó a media jornada —, y el resultado es idéntico al de leer zona por
+// zona.
+func TestTablero_PorLoteUnaLecturaDeCadaTipoYMismoResultado(t *testing.T) {
+	t.Parallel()
+	for _, periodo := range []string{"hoy", "semana"} {
+		armar := func() mundo {
+			m := nuevoMundo(t)
+			us := []domain.UsuarioCobranza{m.juan, m.rosa}
+			for i := range 6 {
+				u := m.juan
+				u.UID, u.Nombre = "uid-"+dos(i), "Cobrador "+dos(i)
+				u.ZonaID = []int{zonaRuta21, zonaRuta34, 50000 + i}[i%3]
+				if i == 4 {
+					hoy := local(t, 14, "10:00") // empezó hoy a media jornada
+					u.InicioSemana = &hoy
+				}
+				us = append(us, u)
+			}
+			m.usuarios.usuarios = append(us, m.lupe)
+			return m
+		}
+		zonaPorZona := armar()
+		esperado, err := nuevoServicio(t, zonaPorZona.usuarios, zonaPorZona.actividades, zonaPorZona.cuentas, zonaPorZona.ahora).
+			Tablero(context.Background(), desempenoapp.TableroInput{Periodo: periodo})
+		require.NoError(t, err)
+		require.Greater(t, len(zonaPorZona.actividades.llamadas), 1, "sin lote se lee por zona")
+
+		m := armar()
+		usu := &fakeUsuariosLote{fakeUsuarios: m.usuarios}
+		acts := &fakeActividadesLote{fakeActividades: m.actividades}
+		cs := &fakeCuentasLote{fakeCuentas: m.cuentas}
+		got, err := desempenoapp.NewService(usu, acts, cs, relojFijo{m.ahora}, cdmx(t)).
+			Tablero(context.Background(), desempenoapp.TableroInput{Periodo: periodo})
+		require.NoError(t, err)
+		assert.Equal(t, esperado, got, "%s: por lote da exactamente lo mismo", periodo)
+		assert.Len(t, acts.lotes, 1, "%s: una sola lectura de actividades", periodo)
+		assert.Len(t, cs.lotes, 1, "%s: una sola lectura de universo", periodo)
+		assert.Len(t, usu.lotes, 1, "%s: una sola lectura de cobro de rutas", periodo)
+		assert.Len(t, acts.lotes[0], len(zonaPorZona.actividades.llamadas),
+			"%s: las mismas ventanas que zona por zona, en una lectura", periodo)
+	}
+}
+
+// Un lote que devuelve otro número de respuestas es un defecto del adaptador:
+// falla la consulta, nunca reparte cifras a la zona equivocada.
+func TestTablero_LoteIncompletoFalla(t *testing.T) {
 	t.Parallel()
 	m := nuevoMundo(t)
-	base := m.juan
-	n := 3 * desempenoapp.LimiteParaleloTablero
-	us := make([]domain.UsuarioCobranza, 0, n)
-	for i := range n {
-		u := base
-		u.UID = "uid-" + dos(i)
-		u.ZonaID = 50000 + i // zonas distintas: la semana se calcula una vez por zona
-		us = append(us, u)
-	}
-	m.usuarios.usuarios = us
-	m.actividades.espera = make(chan struct{})
-	m.actividades.empezadas = make(chan struct{}, 4*n)
-	svc := nuevoServicio(t, m.usuarios, m.actividades, m.cuentas, m.ahora)
-
-	type res struct {
-		tb  desempenoapp.Tablero
-		err error
-	}
-	fin := make(chan res, 1)
-	go func() {
-		tb, err := svc.Tablero(context.Background(), desempenoapp.TableroInput{})
-		fin <- res{tb, err}
-	}()
-	for i := range desempenoapp.LimiteParaleloTablero {
-		select {
-		case <-m.actividades.empezadas: // llegan "límite" llamadas retenidas a la vez
-		case <-time.After(5 * time.Second):
-			close(m.actividades.espera)
-			t.Fatalf("solo %d llamadas simultáneas: el tablero no calcula en paralelo", i)
-		}
-	}
-	// Con los "límite" lugares ocupados y retenidos, nadie más debe arrancar.
-	select {
-	case <-m.actividades.empezadas:
-		close(m.actividades.espera)
-		t.Fatalf("arrancó una fila más con %d retenidas: el paralelo no está acotado",
-			desempenoapp.LimiteParaleloTablero)
-	case <-time.After(200 * time.Millisecond):
-	}
-	close(m.actividades.espera)
-	r := <-fin
-	require.NoError(t, r.err)
-	require.Len(t, r.tb.Filas, n)
-	m.actividades.mu.Lock()
-	defer m.actividades.mu.Unlock()
-	assert.Equal(t, desempenoapp.LimiteParaleloTablero, m.actividades.maxAVez,
-		"ni más del límite a la vez, ni en serie")
+	acts := &fakeActividadesLote{fakeActividades: m.actividades, recortar: true}
+	_, err := desempenoapp.NewService(m.usuarios, acts, m.cuentas, relojFijo{m.ahora}, cdmx(t)).
+		Tablero(context.Background(), desempenoapp.TableroInput{})
+	require.ErrorIs(t, err, domain.ErrLoteIncompleto)
 }
 
 // Revisión del carril A (punto 3): el pool de Firebird es de 10 conexiones; la
@@ -229,7 +231,6 @@ func TestTablero_DosUsuariosDeLaMismaZonaHacenUnaConsultaDeCadaTipo(t *testing.T
 		assert.Equal(t, 1, rosa.Pagos.N, "%s: Rosa solo registró pago:1003 hoy", periodo)
 		assert.Equal(t, juan.CoberturaConAlgo, rosa.CoberturaConAlgo, "%s: misma zona, misma cobertura", periodo)
 	}
-	assert.Equal(t, 4, desempenoapp.LimiteParaleloTablero)
 }
 
 // Inicio de semana distinto en la misma zona = otra ventana: no se comparte.

@@ -12,6 +12,7 @@ import (
 
 	desempenoapp "github.com/abdimuy/msp-api/internal/desempeno/app"
 	"github.com/abdimuy/msp-api/internal/desempeno/domain"
+	"github.com/abdimuy/msp-api/internal/desempeno/ports/outbound"
 )
 
 // ─── fakes de los puertos (sin librerías de mocks) ───────────────────────────
@@ -99,6 +100,69 @@ func (f *fakeCuentas) UniversoSemana(_ context.Context, zona int, _ time.Time) (
 	defer f.mu.Unlock()
 	f.llamadas++
 	return f.porZona[zona], f.err
+}
+
+// ─── fakes por lote: delegan en los de arriba, una consulta a la vez, y
+// cuentan las lecturas por lote ───────────────────────────────────────────────
+
+type fakeActividadesLote struct {
+	*fakeActividades
+	lotes    [][]outbound.ConsultaActividades
+	recortar bool // devuelve una respuesta menos que consultas
+}
+
+func (f *fakeActividadesLote) ActividadesZonas(
+	ctx context.Context, cs []outbound.ConsultaActividades,
+) ([][]domain.Actividad, error) {
+	f.lotes = append(f.lotes, cs)
+	out := make([][]domain.Actividad, 0, len(cs))
+	for _, c := range cs {
+		acts, err := f.ActividadesZona(ctx, c.ZonaID, c.Desde, c.Hasta)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, acts)
+	}
+	if f.recortar {
+		out = out[:len(out)-1]
+	}
+	return out, nil
+}
+
+type fakeCuentasLote struct {
+	*fakeCuentas
+	lotes [][]outbound.ConsultaUniverso
+}
+
+func (f *fakeCuentasLote) UniversoZonas(ctx context.Context, cs []outbound.ConsultaUniverso) ([][]domain.CuentaUniverso, error) {
+	f.lotes = append(f.lotes, cs)
+	out := make([][]domain.CuentaUniverso, 0, len(cs))
+	for _, c := range cs {
+		u, err := f.UniversoSemana(ctx, c.ZonaID, c.InicioSemana)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, nil
+}
+
+type fakeUsuariosLote struct {
+	*fakeUsuarios
+	lotes [][]domain.UsuarioCobranza
+}
+
+func (f *fakeUsuariosLote) CobrosSemana(ctx context.Context, us []domain.UsuarioCobranza) ([]domain.CobroSemana, error) {
+	f.lotes = append(f.lotes, us)
+	out := make([]domain.CobroSemana, 0, len(us))
+	for _, u := range us {
+		c, err := f.CobroSemana(ctx, u)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, nil
 }
 
 type relojFijo struct{ t time.Time }

@@ -33,4 +33,11 @@ var (
 		"desempeno_firestore_unavailable",
 		"no se pudo consultar a los usuarios, intente de nuevo",
 	)
+	// ErrLoteIncompleto: un repositorio por lote devolvió otro número de
+	// respuestas que de consultas. Defecto del adaptador, nunca de datos: la
+	// consulta falla antes que repartir cifras a la zona equivocada.
+	ErrLoteIncompleto = apperror.NewInternal(
+		"desempeno_lote_incompleto",
+		"no se pudo armar el tablero, intente de nuevo",
+	)
 )

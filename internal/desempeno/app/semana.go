@@ -21,10 +21,7 @@ type semana struct {
 // (contrato v2.1: 409, nunca el 422 de una ventana invertida). La ventana es
 // [FECHA_CARGA_INICIAL, ahora], inclusiva (VentanaCobro.kt).
 func (s *Service) calcularSemana(ctx context.Context, c contexto) (semana, error) {
-	if err := c.usuario.ExigirConfiguradoEn(c.ahora); err != nil {
-		return semana{}, err
-	}
-	v, err := domain.NuevaVentana(*c.usuario.InicioSemana, c.ahora)
+	v, err := ventanaDe(c)
 	if err != nil {
 		return semana{}, err
 	}
@@ -32,14 +29,30 @@ func (s *Service) calcularSemana(ctx context.Context, c contexto) (semana, error
 	if err != nil {
 		return semana{}, err
 	}
-	universo = sinVentasRepetidas(universo)
 	acts, err := s.actividadesCompletas(ctx, c.indice, c.usuario.ZonaID, v.Inicio(), v.Fin())
 	if err != nil {
 		return semana{}, err
 	}
+	return armarSemana(v, universo, acts), nil
+}
+
+// ventanaDe valida la configuración del usuario y arma su ventana de semana.
+func ventanaDe(c contexto) (domain.Ventana, error) {
+	if err := c.usuario.ExigirConfiguradoEn(c.ahora); err != nil {
+		return domain.Ventana{}, err
+	}
+	return domain.NuevaVentana(*c.usuario.InicioSemana, c.ahora)
+}
+
+// armarSemana deriva la semana con lo ya leído: el universo de la zona para
+// el inicio de la ventana y TODAS las actividades de la zona en la ventana
+// (ya completadas). Lo comparten Cuentas (lectura por zona) y el tablero
+// (lectura por lote).
+func armarSemana(v domain.Ventana, universo []domain.CuentaUniverso, acts []domain.Actividad) semana {
+	universo = sinVentasRepetidas(universo)
 	pagos, visitas := aPeriodo(acts)
 	d := domain.Derivar(cuentasPeriodo(universo), pagos, visitas, v)
-	return semana{ventana: v, universo: universo, actividades: acts, derivacion: d}, nil
+	return semana{ventana: v, universo: universo, actividades: acts, derivacion: d}
 }
 
 // sinVentasRepetidas deja la primera aparición de cada VentaID. Derivar indexa

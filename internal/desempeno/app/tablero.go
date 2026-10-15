@@ -4,13 +4,13 @@ package app
 import (
 	"context"
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/shopspring/decimal"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/abdimuy/msp-api/internal/desempeno/domain"
+	"github.com/abdimuy/msp-api/internal/desempeno/ports/outbound"
 )
 
 // Periodo del tablero (contrato §2).
@@ -29,14 +29,6 @@ type TableroInput struct {
 	DesdeHora string
 	HastaHora string
 }
-
-// LimiteParaleloTablero acota cuántas filas del tablero se calculan a la vez
-// (resolución del arquitecto del 2026-10-14: paralelo acotado con errgroup).
-// El pool de Firebird es de 10 conexiones y lo comparte todo el API; con la
-// semana calculada una vez por zona (semanasPorZona), una fila nueva hace a lo
-// más tres lecturas de Firebird y una de rutas. Cuatro a la vez deja aire al
-// resto del API (revisión del carril A). La latencia real se mide en C4.
-const LimiteParaleloTablero = 4
 
 // Tablero tiene una fila por usuario, sin totales del equipo (D14).
 type Tablero struct {
@@ -108,10 +100,15 @@ func parsePeriodo(s string) (Periodo, error) {
 	return "", domain.ErrParametroInvalido.WithField("parametro", "periodo")
 }
 
-// Tablero arma una fila por usuario, calculadas en paralelo con a lo más
-// LimiteParaleloTablero a la vez. Un error de Firebird en cualquier fila
-// falla la consulta completa (y cancela las demás): el tablero nunca muestra
-// cifras a medias.
+// Tablero arma una fila por usuario. Las lecturas son por lote y no por
+// usuario ni por zona: una de actividades (tres sentencias), una de universo
+// (una sentencia) y una de cobro de rutas (dos sentencias) para TODA la flota,
+// las tres a la vez,
+// sea cual sea el número de zonas; el reparto por zona, inicio de semana y
+// usuario se hace en Go con las mismas reglas de ventana de la lectura por
+// zona (E-INF-014: antes 220 sentencias y 8–9 s por petición con 44 zonas
+// en dev; por lote 6 sentencias y 1.6–1.9 s). Un error de Firebird falla la consulta
+// completa: el tablero nunca muestra cifras a medias.
 func (s *Service) Tablero(ctx context.Context, in TableroInput) (Tablero, error) {
 	periodo, err := parsePeriodo(in.Periodo)
 	if err != nil {
@@ -127,22 +124,13 @@ func (s *Service) Tablero(ctx context.Context, in TableroInput) (Tablero, error)
 	}
 	ix := domain.NuevoIndiceUsuarios(us)
 	ahora := s.clock.Now()
-	cache := &semanasPorZona{m: map[claveSemana]*semanaDeZona{}}
-	t := Tablero{GeneradoAt: ahora, Periodo: periodo, PausaMin: p.PausaMin, Filas: make([]FilaTablero, len(us))}
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(LimiteParaleloTablero)
-	for i, u := range us {
-		g.Go(func() error {
-			fila, err := s.filaTablero(gctx, cache, contexto{usuario: u, indice: ix, ahora: ahora}, periodo, p)
-			if err != nil {
-				return err
-			}
-			t.Filas[i] = fila // cada goroutine escribe solo su índice
-			return nil
-		})
-	}
-	if err := g.Wait(); err != nil {
+	semanas, err := s.semanasDelTablero(ctx, us, ix, ahora)
+	if err != nil {
 		return Tablero{}, err
+	}
+	t := Tablero{GeneradoAt: ahora, Periodo: periodo, PausaMin: p.PausaMin, Filas: make([]FilaTablero, len(us))}
+	for i, u := range us {
+		t.Filas[i] = s.filaTablero(semanas, contexto{usuario: u, indice: ix, ahora: ahora}, periodo, p)
 	}
 	sort.SliceStable(t.Filas, func(i, j int) bool {
 		a, b := t.Filas[i].Usuario, t.Filas[j].Usuario
@@ -174,68 +162,112 @@ type claveSemana struct {
 	inicio int64
 }
 
-// semanaDeZona se calcula una sola vez por petición del tablero (sync.Once),
-// la pida la fila que la pida primero; las demás esperan y la reutilizan. Es de
-// solo lectura una vez calculada: cada fila filtra con registradasPor, que
-// copia.
+func claveSemanaDe(u domain.UsuarioCobranza) claveSemana {
+	return claveSemana{zona: u.ZonaID, inicio: u.InicioSemana.UnixNano()}
+}
+
+// semanaDeZona es de solo lectura una vez armada: cada fila filtra con
+// registradasPor, que copia.
 type semanaDeZona struct {
-	once  sync.Once
 	sem   semana
 	cobro domain.Cobro
 	hoy   []domain.Actividad // actividades de hoy de TODA la zona
-	err   error
 }
 
-type semanasPorZona struct {
-	mu sync.Mutex
-	m  map[claveSemana]*semanaDeZona
-}
-
-func (sz *semanasPorZona) de(u domain.UsuarioCobranza) *semanaDeZona {
-	k := claveSemana{zona: u.ZonaID, inicio: u.InicioSemana.UnixNano()}
-	sz.mu.Lock()
-	defer sz.mu.Unlock()
-	e, ok := sz.m[k]
-	if !ok {
-		e = &semanaDeZona{}
-		sz.m[k] = e
+// semanasDelTablero arma la semana de cada (zona, inicio) de los usuarios
+// configurados con tres lecturas por lote. Las de hoy: si la semana empezó
+// antes de hoy ya están en la semana; si empezó hoy a media jornada, se piden
+// desde las 00:00 como una ventana más del mismo lote.
+func (s *Service) semanasDelTablero(
+	ctx context.Context, us []domain.UsuarioCobranza, ix domain.IndiceUsuarios, ahora time.Time,
+) (map[claveSemana]*semanaDeZona, error) {
+	inicioHoy := domain.DiaDe(ahora, s.loc).InicioDelDia(s.loc)
+	var (
+		claves    []claveSemana
+		ventanas  []domain.Ventana
+		repres    []domain.UsuarioCobranza
+		consAct   []outbound.ConsultaActividades
+		consUni   []outbound.ConsultaUniverso
+		hoyAparte = map[int]int{} // índice de clave → índice de su consulta de hoy
+		vistas    = map[claveSemana]bool{}
+	)
+	for _, u := range us {
+		if ok, _ := u.ConfiguracionEn(ahora); !ok {
+			continue
+		}
+		k := claveSemanaDe(u)
+		if vistas[k] {
+			continue
+		}
+		vistas[k] = true
+		v, err := ventanaDe(contexto{usuario: u, indice: ix, ahora: ahora})
+		if err != nil {
+			return nil, err
+		}
+		claves, ventanas, repres = append(claves, k), append(ventanas, v), append(repres, u)
+		consUni = append(consUni, outbound.ConsultaUniverso{ZonaID: u.ZonaID, InicioSemana: v.Inicio()})
+		consAct = append(consAct, outbound.ConsultaActividades{ZonaID: u.ZonaID, Desde: v.Inicio(), Hasta: v.Fin()})
 	}
-	return e
-}
-
-// semanaCompartida devuelve la semana de la zona del usuario, calculándola si
-// es la primera fila que la pide.
-func (s *Service) semanaCompartida(ctx context.Context, cache *semanasPorZona, c contexto, hoy domain.Fecha) *semanaDeZona {
-	e := cache.de(c.usuario)
-	e.once.Do(func() {
-		if e.sem, e.err = s.calcularSemana(ctx, c); e.err != nil {
-			return
+	for i, v := range ventanas {
+		if v.Inicio().After(inicioHoy) {
+			hoyAparte[i] = len(consAct)
+			consAct = append(consAct, outbound.ConsultaActividades{ZonaID: claves[i].zona, Desde: inicioHoy, Hasta: ahora})
 		}
-		var cs domain.CobroSemana
-		if cs, e.err = s.usuarios.CobroSemana(ctx, c.usuario); e.err != nil {
-			return
-		}
-		e.cobro = domain.CalcularCobro(cs)
-		e.hoy, e.err = s.actividadesDeHoy(ctx, c, e.sem, hoy)
+	}
+	out := make(map[claveSemana]*semanaDeZona, len(claves))
+	if len(claves) == 0 {
+		return out, nil
+	}
+	// Las tres lecturas van a la vez, cada una en su conexión (E-INF-014,
+	// TestMedirLoteParalelo con 55 usuarios / 44 zonas: en serie 3.1 s, en
+	// paralelo 1.6 s). Si una falla, la consulta completa falla.
+	var (
+		universos [][]domain.CuentaUniverso
+		acts      [][]domain.Actividad
+		cobros    []domain.CobroSemana
+	)
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		var err error
+		universos, err = s.universoLote(gctx, consUni)
+		return err
 	})
-	return e
+	g.Go(func() error {
+		var err error
+		acts, err = s.actividadesLote(gctx, ix, consAct)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		cobros, err = s.cobrosLote(gctx, repres)
+		return err
+	})
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	for i, k := range claves {
+		e := &semanaDeZona{sem: armarSemana(ventanas[i], universos[i], acts[i]), cobro: domain.CalcularCobro(cobros[i])}
+		e.hoy = e.sem.actividades
+		if j, ok := hoyAparte[i]; ok {
+			e.hoy = acts[j]
+		}
+		out[k] = e
+	}
+	return out, nil
 }
 
 func (s *Service) filaTablero(
-	ctx context.Context, cache *semanasPorZona, c contexto, periodo Periodo, p domain.ParametrosJornada,
-) (FilaTablero, error) {
+	semanas map[claveSemana]*semanaDeZona, c contexto, periodo Periodo, p domain.ParametrosJornada,
+) FilaTablero {
 	u := c.usuario
 	if ok, motivo := u.ConfiguracionEn(c.ahora); !ok {
-		return filaVacia(u, motivo), nil
+		return filaVacia(u, motivo)
 	}
 	fila := filaVacia(u, "")
 	fila.Configurado = true
 
 	hoy := domain.DiaDe(c.ahora, s.loc)
-	e := s.semanaCompartida(ctx, cache, c, hoy)
-	if e.err != nil {
-		return FilaTablero{}, e.err
-	}
+	e := semanas[claveSemanaDe(u)]
 	sem := e.sem
 	fila.Cobro = e.cobro
 	s.llenarCobertura(&fila, sem, c.ahora)
@@ -250,7 +282,7 @@ func (s *Service) filaTablero(
 		acumularResumen(&fila, jHoy.Resumen)
 		fila.Pausas = jHoy.Resumen.Pausas
 		llenarPeriodo(&fila, jHoy.Actividades)
-		return fila, nil
+		return fila
 	}
 	for d := domain.DiaDe(sem.ventana.Inicio(), s.loc); !d.Despues(hoy); d = d.Siguiente() {
 		j := domain.CalcularJornada(propiasSemana, p, d, s.loc, c.ahora)
@@ -262,17 +294,7 @@ func (s *Service) filaTablero(
 	}
 	domain.OrdenarActividades(propiasSemana)
 	llenarPeriodo(&fila, propiasSemana)
-	return fila, nil
-}
-
-// actividadesDeHoy resuelve las de hoy de toda la zona: si la semana empezó antes de hoy,
-// las de hoy ya están en la semana; si empezó hoy a media jornada, se consultan desde las 00:00.
-func (s *Service) actividadesDeHoy(ctx context.Context, c contexto, sem semana, hoy domain.Fecha) ([]domain.Actividad, error) {
-	inicioHoy := hoy.InicioDelDia(s.loc)
-	if !sem.ventana.Inicio().After(inicioHoy) {
-		return sem.actividades, nil
-	}
-	return s.actividadesCompletas(ctx, c.indice, c.usuario.ZonaID, inicioHoy, c.ahora)
+	return fila
 }
 
 func (s *Service) llenarCobertura(fila *FilaTablero, sem semana, ahora time.Time) {
