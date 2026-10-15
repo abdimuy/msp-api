@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"strconv"
 	"sync"
@@ -36,9 +37,9 @@ var (
 // statement timeout to every new connection. It returns the name to hand to
 // sql.Open / otelsql.Register.
 //
-// statementTimeout is captured on the first call: the process has a single
-// Firebird configuration, so later calls with a different value are ignored.
-func registerCancelProofDriver(statementTimeout time.Duration) (string, error) {
+// opts is captured on the first call: the process has a single Firebird
+// configuration, so later calls with different values are ignored.
+func registerCancelProofDriver(opts driverOptions) (string, error) {
 	cancelProofOnce.Do(func() {
 		base, err := baseFirebirdDriver()
 		if err != nil {
@@ -46,8 +47,9 @@ func registerCancelProofDriver(statementTimeout time.Duration) (string, error) {
 			return
 		}
 		sql.Register(cancelProofDriverName, &cancelProofDriver{
-			base:             base,
-			statementTimeout: statementTimeout,
+			base:               base,
+			statementTimeout:   opts.statementTimeout,
+			slowQueryThreshold: opts.slowQueryThreshold,
 		})
 	})
 	if errCancelProofDriver != nil {
@@ -74,7 +76,15 @@ func baseFirebirdDriver() (driver.Driver, error) {
 	return d, nil
 }
 
-// cancelProofDriver wraps the firebirdsql driver with two responsibilities.
+// driverOptions are the process-wide knobs of the wrapper driver.
+type driverOptions struct {
+	// statementTimeout is the default server-side ceiling (FB_STATEMENT_TIMEOUT).
+	statementTimeout time.Duration
+	// slowQueryThreshold logs statements slower than this (0 disables).
+	slowQueryThreshold time.Duration
+}
+
+// cancelProofDriver wraps the firebirdsql driver with three responsibilities.
 //
 // First, it strips cancellation from every context before it reaches the
 // driver. firebirdsql v0.9.19 reacts to a cancelled context by writing an
@@ -87,11 +97,18 @@ func baseFirebirdDriver() (driver.Driver, error) {
 // Second, it issues SET STATEMENT TIMEOUT once per connection so the server —
 // not the client — enforces the ceiling on runaway statements. The server
 // reports the expiry through the normal protocol path, which leaves the
-// connection healthy and reusable.
+// connection healthy and reusable. A caller can narrow that ceiling for its
+// own statements with WithStatementTimeout; the conn restores the default
+// before the next statement that does not ask for it.
+//
+// Third, it times every statement and logs the ones above slowQueryThreshold
+// (see slowQueryLog).
 type cancelProofDriver struct {
-	base             driver.Driver
-	statementTimeout time.Duration
-	warnOnce         sync.Once
+	base               driver.Driver
+	statementTimeout   time.Duration
+	slowQueryThreshold time.Duration
+	logger             *slog.Logger // nil → slog.Default().
+	warnOnce           sync.Once
 }
 
 // Open opens a connection through the base driver and applies the statement
@@ -102,7 +119,16 @@ func (d *cancelProofDriver) Open(dsn string) (driver.Conn, error) {
 		return nil, err //nolint:wrapcheck // driver errors must reach database/sql verbatim (driver.ErrBadConn).
 	}
 	d.applyStatementTimeout(conn)
-	return &cancelProofConn{base: conn}, nil
+	return &cancelProofConn{
+		base:           conn,
+		defaultTimeout: d.statementTimeout,
+		// Even when the SET above failed we record the default: the conn has
+		// no override to undo, and retrying a SET the server rejects on every
+		// statement would only add round-trips.
+		currentTimeout: d.statementTimeout,
+		warn:           d.warnStatementTimeout,
+		slow:           slowQueryLog{threshold: d.slowQueryThreshold, logger: d.logger},
+	}, nil
 }
 
 // applyStatementTimeout runs SET STATEMENT TIMEOUT on a freshly opened
@@ -118,13 +144,55 @@ func (d *cancelProofDriver) applyStatementTimeout(conn driver.Conn) {
 		d.warnStatementTimeout(errNoBaseDriver)
 		return
 	}
-	// Firebird accepts whole seconds; round up so sub-second configs do not
-	// collapse into "no timeout".
-	seconds := int64((d.statementTimeout + time.Second - 1) / time.Second)
-	stmt := "SET STATEMENT TIMEOUT " + strconv.FormatInt(seconds, 10) + " SECOND"
-	if _, err := execer.ExecContext(context.Background(), stmt, nil); err != nil {
+	if _, err := execer.ExecContext(context.Background(), statementTimeoutSQL(d.statementTimeout), nil); err != nil {
 		d.warnStatementTimeout(err)
 	}
+}
+
+// timeoutSeconds converts d to the whole seconds Firebird is told. It rounds
+// up so sub-second values do not collapse into 0 (= no timeout); 0 and
+// negatives map to 0.
+func timeoutSeconds(d time.Duration) int64 {
+	if d <= 0 {
+		return 0
+	}
+	return int64((d + time.Second - 1) / time.Second)
+}
+
+// statementTimeoutSQL renders the session statement for d.
+func statementTimeoutSQL(d time.Duration) string {
+	return "SET STATEMENT TIMEOUT " + strconv.FormatInt(timeoutSeconds(d), 10) + " SECOND"
+}
+
+// statementTimeoutKey is the context key of WithStatementTimeout.
+type statementTimeoutKey struct{}
+
+// WithStatementTimeout returns a context whose Firebird statements run under a
+// server-side ceiling of d instead of the process default (FB_STATEMENT_TIMEOUT).
+//
+// The driver ignores context cancellation by design (see cancelProofDriver),
+// so a request deadline alone never stops a statement already in Firebird.
+// This is the mechanism that does: before each statement issued with this
+// context the connection runs SET STATEMENT TIMEOUT d, and the next statement
+// issued without it (any other module, the phone sync) first gets the default
+// back. A connection that cannot restore its default is discarded. Firebird
+// counts the ceiling from execution start to the last fetch, and aborts the
+// statement itself when it expires (gds 335545128, mapped to
+// firebird_timeout), leaving the connection healthy.
+//
+// Firebird works in whole seconds: d is rounded up. d <= 0 returns ctx
+// unchanged.
+func WithStatementTimeout(ctx context.Context, d time.Duration) context.Context {
+	if d <= 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, statementTimeoutKey{}, d)
+}
+
+// StatementTimeout returns the override WithStatementTimeout put in ctx, if any.
+func StatementTimeout(ctx context.Context) (time.Duration, bool) {
+	d, ok := ctx.Value(statementTimeoutKey{}).(time.Duration)
+	return d, ok
 }
 
 // warnStatementTimeout emits a single WARN per process for a failed SET.
@@ -139,9 +207,72 @@ func (d *cancelProofDriver) warnStatementTimeout(err error) {
 }
 
 // cancelProofConn wraps a driver.Conn, detaching cancellation from every
-// context it forwards.
+// context it forwards, keeping the attachment's statement timeout in line with
+// what each statement asked for, and timing statements for the slow log.
+//
+// database/sql never uses one driver.Conn from two goroutines at once, so the
+// mutable fields need no lock.
 type cancelProofConn struct {
 	base driver.Conn
+	// defaultTimeout is the process ceiling every statement without an
+	// override must run under.
+	defaultTimeout time.Duration
+	// currentTimeout is what the attachment was last told.
+	currentTimeout time.Duration
+	// broken marks a conn that could not restore its default; it refuses
+	// every statement and reports itself invalid so the pool drops it.
+	broken bool
+	warn   func(error) // nil → no warning (tests).
+	slow   slowQueryLog
+}
+
+// syncStatementTimeout makes the attachment's statement timeout match what ctx
+// asks for (its override, or the default) before a statement runs.
+func (c *cancelProofConn) syncStatementTimeout(ctx context.Context) error {
+	if c.broken {
+		return driver.ErrBadConn
+	}
+	want, override := StatementTimeout(ctx)
+	if !override {
+		want = c.defaultTimeout
+	}
+	if timeoutSeconds(want) == timeoutSeconds(c.currentTimeout) {
+		return nil
+	}
+	execer, ok := c.base.(driver.ExecerContext)
+	if !ok {
+		return nil // nothing to talk to; a test-only shape.
+	}
+	if _, err := execer.ExecContext(context.WithoutCancel(ctx), statementTimeoutSQL(want), nil); err != nil {
+		if override {
+			// The narrow ceiling is defence in depth: the statement still runs
+			// under the default, which the attachment demonstrably still has.
+			if c.warn != nil {
+				c.warn(err)
+			}
+			return nil
+		}
+		// The attachment keeps somebody else's narrow ceiling: it must not
+		// serve anyone again.
+		c.broken = true
+		return driver.ErrBadConn
+	}
+	c.currentTimeout = want
+	return nil
+}
+
+// IsValid implements driver.Validator: database/sql drops a conn that could
+// not restore its default statement timeout instead of pooling it.
+func (c *cancelProofConn) IsValid() bool { return !c.broken }
+
+// ResetSession implements driver.SessionResetter. otelsql forwards this one
+// (not IsValid), so it is what tells database/sql in production to drop a
+// conn that kept somebody else's narrow statement timeout.
+func (c *cancelProofConn) ResetSession(_ context.Context) error {
+	if c.broken {
+		return driver.ErrBadConn
+	}
+	return nil
 }
 
 // Compile-time proof that the wrapper exposes the same optional interfaces as
@@ -154,6 +285,8 @@ var (
 	_ driver.ExecerContext      = (*cancelProofConn)(nil)
 	_ driver.QueryerContext     = (*cancelProofConn)(nil)
 	_ driver.Pinger             = (*cancelProofConn)(nil)
+	_ driver.Validator          = (*cancelProofConn)(nil)
+	_ driver.SessionResetter    = (*cancelProofConn)(nil)
 	_ driver.Stmt               = (*cancelProofStmt)(nil)
 	_ driver.StmtExecContext    = (*cancelProofStmt)(nil)
 	_ driver.StmtQueryContext   = (*cancelProofStmt)(nil)
@@ -165,7 +298,7 @@ func (c *cancelProofConn) Prepare(query string) (driver.Stmt, error) {
 	if err != nil {
 		return nil, err //nolint:wrapcheck // verbatim driver error.
 	}
-	return &cancelProofStmt{base: st}, nil
+	return &cancelProofStmt{base: st, conn: c, query: query}, nil
 }
 
 // Close implements driver.Conn.
@@ -188,7 +321,7 @@ func (c *cancelProofConn) PrepareContext(ctx context.Context, query string) (dri
 	if err != nil {
 		return nil, err //nolint:wrapcheck // verbatim driver error.
 	}
-	return &cancelProofStmt{base: st}, nil
+	return &cancelProofStmt{base: st, conn: c, query: query}, nil
 }
 
 // BeginTx implements driver.ConnBeginTx.
@@ -207,7 +340,17 @@ func (c *cancelProofConn) ExecContext(ctx context.Context, query string, args []
 	if !ok {
 		return nil, driver.ErrSkip
 	}
-	return execer.ExecContext(context.WithoutCancel(ctx), query, args) //nolint:wrapcheck // verbatim driver error.
+	if err := c.syncStatementTimeout(ctx); err != nil {
+		return nil, err
+	}
+	ctx = context.WithoutCancel(ctx)
+	if !c.slow.enabled() {
+		return execer.ExecContext(ctx, query, args) //nolint:wrapcheck // verbatim driver error.
+	}
+	start := c.slow.clock()
+	res, err := execer.ExecContext(ctx, query, args)
+	c.slow.observe(ctx, "exec", query, start, -1, err != nil)
+	return res, err //nolint:wrapcheck // verbatim driver error.
 }
 
 // QueryContext implements driver.QueryerContext. Returns driver.ErrSkip when
@@ -217,7 +360,20 @@ func (c *cancelProofConn) QueryContext(ctx context.Context, query string, args [
 	if !ok {
 		return nil, driver.ErrSkip
 	}
-	return queryer.QueryContext(context.WithoutCancel(ctx), query, args) //nolint:wrapcheck // verbatim driver error.
+	if err := c.syncStatementTimeout(ctx); err != nil {
+		return nil, err
+	}
+	ctx = context.WithoutCancel(ctx)
+	if !c.slow.enabled() {
+		return queryer.QueryContext(ctx, query, args) //nolint:wrapcheck // verbatim driver error.
+	}
+	start := c.slow.clock()
+	rows, err := queryer.QueryContext(ctx, query, args)
+	if err != nil {
+		c.slow.observe(ctx, "query", query, start, 0, true)
+		return nil, err //nolint:wrapcheck // verbatim driver error.
+	}
+	return &timedRows{base: rows, log: &c.slow, ctx: ctx, query: query, start: start}, nil
 }
 
 // Ping implements driver.Pinger.
@@ -232,7 +388,9 @@ func (c *cancelProofConn) Ping(ctx context.Context) error {
 // cancelProofStmt wraps a driver.Stmt so the statement-level context paths get
 // the same treatment as the connection-level ones.
 type cancelProofStmt struct {
-	base driver.Stmt
+	base  driver.Stmt
+	conn  *cancelProofConn
+	query string
 }
 
 // Close implements driver.Stmt.
@@ -245,11 +403,28 @@ func (s *cancelProofStmt) NumInput() int { return s.base.NumInput() }
 
 // Exec implements driver.Stmt (legacy path).
 func (s *cancelProofStmt) Exec(args []driver.Value) (driver.Result, error) {
-	return s.base.Exec(args) //nolint:staticcheck,wrapcheck // required by driver.Stmt.
+	return s.execLegacy(context.Background(), args)
 }
 
 // Query implements driver.Stmt (legacy path).
 func (s *cancelProofStmt) Query(args []driver.Value) (driver.Rows, error) {
+	return s.queryLegacy(context.Background(), args)
+}
+
+// execLegacy runs the context-less driver path, still honouring the
+// statement timeout ctx asks for.
+func (s *cancelProofStmt) execLegacy(ctx context.Context, args []driver.Value) (driver.Result, error) {
+	if err := s.conn.syncStatementTimeout(ctx); err != nil {
+		return nil, err
+	}
+	return s.base.Exec(args) //nolint:staticcheck,wrapcheck // required by driver.Stmt.
+}
+
+// queryLegacy is execLegacy's query counterpart.
+func (s *cancelProofStmt) queryLegacy(ctx context.Context, args []driver.Value) (driver.Rows, error) {
+	if err := s.conn.syncStatementTimeout(ctx); err != nil {
+		return nil, err
+	}
 	return s.base.Query(args) //nolint:staticcheck,wrapcheck // required by driver.Stmt.
 }
 
@@ -261,9 +436,19 @@ func (s *cancelProofStmt) ExecContext(ctx context.Context, args []driver.NamedVa
 		if err != nil {
 			return nil, err
 		}
-		return s.Exec(values)
+		return s.execLegacy(ctx, values)
 	}
-	return execer.ExecContext(context.WithoutCancel(ctx), args) //nolint:wrapcheck // verbatim driver error.
+	if err := s.conn.syncStatementTimeout(ctx); err != nil {
+		return nil, err
+	}
+	ctx = context.WithoutCancel(ctx)
+	if !s.conn.slow.enabled() {
+		return execer.ExecContext(ctx, args) //nolint:wrapcheck // verbatim driver error.
+	}
+	start := s.conn.slow.clock()
+	res, err := execer.ExecContext(ctx, args)
+	s.conn.slow.observe(ctx, "exec", s.query, start, -1, err != nil)
+	return res, err //nolint:wrapcheck // verbatim driver error.
 }
 
 // QueryContext implements driver.StmtQueryContext.
@@ -274,9 +459,22 @@ func (s *cancelProofStmt) QueryContext(ctx context.Context, args []driver.NamedV
 		if err != nil {
 			return nil, err
 		}
-		return s.Query(values)
+		return s.queryLegacy(ctx, values)
 	}
-	return queryer.QueryContext(context.WithoutCancel(ctx), args) //nolint:wrapcheck // verbatim driver error.
+	if err := s.conn.syncStatementTimeout(ctx); err != nil {
+		return nil, err
+	}
+	ctx = context.WithoutCancel(ctx)
+	if !s.conn.slow.enabled() {
+		return queryer.QueryContext(ctx, args) //nolint:wrapcheck // verbatim driver error.
+	}
+	start := s.conn.slow.clock()
+	rows, err := queryer.QueryContext(ctx, args)
+	if err != nil {
+		s.conn.slow.observe(ctx, "query", s.query, start, 0, true)
+		return nil, err //nolint:wrapcheck // verbatim driver error.
+	}
+	return &timedRows{base: rows, log: &s.conn.slow, ctx: ctx, query: s.query, start: start}, nil
 }
 
 // errNamedArgsUnsupported mirrors database/sql's own message for drivers that
@@ -296,3 +494,6 @@ func namedToValues(args []driver.NamedValue) ([]driver.Value, error) {
 	}
 	return values, nil
 }
+
+// isEOF reports the driver's end-of-rows signal.
+func isEOF(err error) bool { return errors.Is(err, io.EOF) }

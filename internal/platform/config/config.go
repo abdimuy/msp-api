@@ -34,6 +34,8 @@ var (
 	errMicrosipVentaJuegosLinea = errors.New("config: invalid MICROSIP_VENTA_JUEGOS_* configuration")
 	errWhatsAppCredsRequired    = errors.New("config: WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID and " +
 		"WHATSAPP_BUSINESS_ACCOUNT_ID are all required when WHATSAPP_ENABLED=true")
+	errSlowQueryThreshold        = errors.New("config: FB_SLOW_QUERY_THRESHOLD must be >= 0")
+	errDesempenoStatementTimeout = errors.New("config: DESEMPENO_STATEMENT_TIMEOUT must be >= 1s and below HTTP_WRITE_TIMEOUT")
 )
 
 // Environment is the runtime environment.
@@ -78,6 +80,27 @@ type Config struct {
 	WhatsApp       WhatsApp
 	Canal          Canal
 	Winback        Winback
+	Desempeno      Desempeno
+}
+
+// Desempeno holds the knobs of the read-only cobrador performance dashboard.
+type Desempeno struct {
+	// StatementTimeout is the Firebird server-side ceiling applied to every
+	// statement the dashboard runs (SET STATEMENT TIMEOUT for the duration of
+	// that statement, restored afterwards). It must stay below
+	// HTTP_WRITE_TIMEOUT: the driver ignores context cancellation by design,
+	// so without it a request the HTTP layer already answered with 503 keeps
+	// its statement running in Firebird (measured: a 78s 503 in production).
+	StatementTimeout time.Duration `env:"DESEMPENO_STATEMENT_TIMEOUT" envDefault:"25s"`
+}
+
+// validate keeps the dashboard ceiling inside the HTTP budget.
+func (d Desempeno) validate(httpWriteTimeout time.Duration) error {
+	if d.StatementTimeout < time.Second || d.StatementTimeout >= httpWriteTimeout {
+		return fmt.Errorf("%w: %s (HTTP_WRITE_TIMEOUT=%s)",
+			errDesempenoStatementTimeout, d.StatementTimeout, httpWriteTimeout)
+	}
+	return nil
 }
 
 // Flota holds the knobs of the roster snapshot worker — the process that
@@ -401,6 +424,9 @@ type Firebird struct {
 	// runs for minutes, so the default is deliberately generous. Set to 0 to
 	// disable the SET entirely.
 	StatementTimeout time.Duration `env:"FB_STATEMENT_TIMEOUT" envDefault:"10m"`
+	// SlowQueryThreshold logs (WARN "firebird.consulta_lenta") every statement
+	// whose execution plus fetch takes longer than this. Set to 0 to disable.
+	SlowQueryThreshold time.Duration `env:"FB_SLOW_QUERY_THRESHOLD" envDefault:"1s"`
 }
 
 // DSN returns the connection string for the Firebird driver.
@@ -700,6 +726,13 @@ func (c *Config) validate() error {
 		c.ImageProcessor.validate,
 		c.MicrosipVenta.validate,
 		c.WhatsApp.validate,
+		func() error { return c.Desempeno.validate(c.HTTP.WriteTimeout) },
+		func() error {
+			if c.Firebird.SlowQueryThreshold < 0 {
+				return fmt.Errorf("%w: %s", errSlowQueryThreshold, c.Firebird.SlowQueryThreshold)
+			}
+			return nil
+		},
 	} {
 		if err := validate(); err != nil {
 			errs = append(errs, err)

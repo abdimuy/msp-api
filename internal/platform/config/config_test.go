@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,6 +35,7 @@ func clearAmbientEnv(t *testing.T) {
 		"WHATSAPP_ENABLED", "WHATSAPP_TOKEN", "WHATSAPP_PHONE_NUMBER_ID",
 		"WHATSAPP_BUSINESS_ACCOUNT_ID", "WHATSAPP_APP_SECRET",
 		"WHATSAPP_API_VERSION", "WHATSAPP_TIMEOUT", "WHATSAPP_BASE_URL",
+		"FB_SLOW_QUERY_THRESHOLD", "DESEMPENO_STATEMENT_TIMEOUT", "HTTP_WRITE_TIMEOUT",
 	} {
 		t.Setenv(k, "")
 	}
@@ -331,4 +333,58 @@ func TestLoad_MicrosipVenta_ReactivarClienteEnabled_True(t *testing.T) { //nolin
 	cfg, err := config.Load()
 	require.NoError(t, err)
 	assert.True(t, cfg.MicrosipVenta.ReactivarClienteEnabled)
+}
+
+// ─── Firebird.SlowQueryThreshold / Desempeno.StatementTimeout ───────────────
+
+func TestLoad_SlowQueryThreshold_DefaultOneSecond(t *testing.T) { //nolint:paralleltest // uses t.Setenv
+	setMinimal(t)
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, time.Second, cfg.Firebird.SlowQueryThreshold)
+}
+
+func TestLoad_SlowQueryThreshold_Override(t *testing.T) { //nolint:paralleltest // uses t.Setenv
+	setMinimal(t)
+	t.Setenv("FB_SLOW_QUERY_THRESHOLD", "250ms")
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, 250*time.Millisecond, cfg.Firebird.SlowQueryThreshold)
+}
+
+func TestLoad_SlowQueryThreshold_RejectsNegative(t *testing.T) { //nolint:paralleltest // uses t.Setenv
+	setMinimal(t)
+	t.Setenv("FB_SLOW_QUERY_THRESHOLD", "-1s")
+	_, err := config.Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "FB_SLOW_QUERY_THRESHOLD")
+}
+
+func TestLoad_DesempenoStatementTimeout_DefaultBelowHTTPWriteTimeout(t *testing.T) { //nolint:paralleltest // uses t.Setenv
+	setMinimal(t)
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, 25*time.Second, cfg.Desempeno.StatementTimeout)
+	assert.Less(t, cfg.Desempeno.StatementTimeout, cfg.HTTP.WriteTimeout,
+		"el servidor debe abortar la sentencia antes de que el HTTP corte")
+}
+
+func TestLoad_DesempenoStatementTimeout_Override(t *testing.T) { //nolint:paralleltest // uses t.Setenv
+	setMinimal(t)
+	t.Setenv("DESEMPENO_STATEMENT_TIMEOUT", "12s")
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, 12*time.Second, cfg.Desempeno.StatementTimeout)
+}
+
+func TestLoad_DesempenoStatementTimeout_RejectsOutOfRange(t *testing.T) { //nolint:paralleltest // uses t.Setenv
+	for _, v := range []string{"0s", "500ms", "30s", "45s"} {
+		t.Run(v, func(t *testing.T) {
+			setMinimal(t)
+			t.Setenv("DESEMPENO_STATEMENT_TIMEOUT", v)
+			_, err := config.Load()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "DESEMPENO_STATEMENT_TIMEOUT")
+		})
+	}
 }
