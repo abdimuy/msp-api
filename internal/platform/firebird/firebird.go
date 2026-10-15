@@ -25,12 +25,12 @@ var (
 	errOtelDriver  error
 )
 
-func registerOtelDriver(statementTimeout time.Duration) (string, error) {
+func registerOtelDriver(opts driverOptions) (string, error) {
 	otelDriverOnce.Do(func() {
 		// Order matters: otelsql(cancelProof(firebirdsql)). Tracing wraps the
 		// cancellation-proof driver so every span still sees the real calls,
 		// while the driver underneath never receives a cancelled context.
-		wrapped, err := registerCancelProofDriver(statementTimeout)
+		wrapped, err := registerCancelProofDriver(opts)
 		if err != nil {
 			errOtelDriver = err
 			return
@@ -61,7 +61,10 @@ type Pool struct {
 // New opens a Pool against the configured Firebird instance. It does not yet
 // verify connectivity; call Start() to ping.
 func New(cfg config.Firebird) (*Pool, error) {
-	name, err := registerOtelDriver(cfg.StatementTimeout)
+	name, err := registerOtelDriver(driverOptions{
+		statementTimeout:   cfg.StatementTimeout,
+		slowQueryThreshold: cfg.SlowQueryThreshold,
+	})
 	if err != nil {
 		return nil, err
 	}

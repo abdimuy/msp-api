@@ -4,7 +4,6 @@ package desempenohttp
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -37,15 +36,25 @@ func autorizar(ctx context.Context) error {
 // detalle, igual que rutas; el parámetro inválido viaja en Location
 // ("query.<parametro>"). Lo que no es apperror es 500 SIN el texto interno
 // (puede traer SQL): se registra en el log y al cliente va un mensaje fijo.
-func mapAppError(ctx context.Context, err error) error {
+//
+// Un apperror 5xx (el 503 de Firestore caído o de Firebird que no respondió a
+// tiempo) también se registra con su causa encadenada (WithError): sin eso el
+// 503 llegaba al log de acceso sin ninguna pista y había que adivinar qué lo
+// produjo. La causa nunca viaja al cliente.
+func (h *Handlers) mapAppError(ctx context.Context, err error) error {
 	var ae *apperror.Error
 	if !errors.As(err, &ae) {
-		slog.ErrorContext(ctx, "desempeno.http.error_interno", "error", err)
+		h.logger().ErrorContext(ctx, "desempeno.http.error_interno", "error", err)
 		return huma.NewError(http.StatusInternalServerError, "ocurrió un error interno")
+	}
+	status := ae.Kind.HTTPStatus()
+	if status >= http.StatusInternalServerError {
+		h.logger().WarnContext(ctx, "desempeno.http.no_disponible",
+			"code", ae.Code, "status", status, "error", err)
 	}
 	detalle := &huma.ErrorDetail{Message: "code=" + ae.Code}
 	if p, ok := ae.Fields["parametro"].(string); ok {
 		detalle.Location = "query." + p
 	}
-	return huma.NewError(ae.Kind.HTTPStatus(), ae.Message, detalle)
+	return huma.NewError(status, ae.Message, detalle)
 }

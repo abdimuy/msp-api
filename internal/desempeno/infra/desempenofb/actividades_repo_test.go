@@ -13,6 +13,7 @@ import (
 
 	"github.com/abdimuy/msp-api/internal/desempeno/domain"
 	"github.com/abdimuy/msp-api/internal/desempeno/infra/desempenofb"
+	"github.com/abdimuy/msp-api/internal/desempeno/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/fbtestutil"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 	"github.com/abdimuy/msp-api/internal/platform/microsipseed"
@@ -529,4 +530,72 @@ func cancelarAbono(ctx context.Context, t *testing.T, q firebird.Querier, doctoC
 		 WHERE p.DOCTO_CC_ID = ?`, doctoCCID).Scan(&cache, &importe),
 		"el abono cancelado sigue en la caché (si no, la prueba no distinguiría el filtro)")
 	require.Equal(t, "S", importe, "Microsip propaga la cancelación al importe")
+}
+
+// El reparto por lote usa la zona de la FILA (p.ZONA_CLIENTE_ID del pago,
+// s.ZONA_CLIENTE_ID de la venta del pendiente, v.ZONA_CLIENTE_ID de la
+// visita), no la zona actual del cliente: un cliente que cambió de ruta deja
+// sus pagos viejos en la ruta donde se cobraron, igual que la lectura por
+// zona. En dev no hay pagos con zona distinta a la del cliente, así que el
+// caso se siembra.
+func TestActividadesRepo_LoteRepartePorLaZonaDeLaFila(t *testing.T) {
+	requireFBEnv(t)
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		q := firebird.GetQuerier(ctx, pool.DB)
+		microsipseed.RequiereConceptos(t, q, domain.ConceptoCobranzaEnRuta)
+		zonaA := microsipseed.PrimeraZona(t, q)
+		zonaB := segundaZona(ctx, t, q, zonaA)
+		cliente := microsipseed.ClienteEnZona(t, q, "ROSALBA QUINTERO DÍAZ", zonaA)
+		usuarioID, _ := usuarioSembrado(ctx, t, q)
+		capturado := time.Date(2024, 3, 20, 18, 0, 0, 0, time.UTC)
+
+		ventaAplicada := microsipseed.VentaCredito(t, q, cliente, microsipseed.OpcionesVenta{})
+		microsipseed.AbonoAplicado(t, q, ventaAplicada, microsipseed.OpcionesAbono{
+			ConceptoCCID: domain.ConceptoCobranzaEnRuta, Importe: decimal.NewFromInt(150), Fecha: diaAbono,
+			ConFormaCobro: true, FormaCobroID: domain.FormaCobroEfectivo,
+		})
+		_, err := q.ExecContext(ctx, `UPDATE MSP_PAGOS_VENTAS SET ZONA_CLIENTE_ID = ? WHERE DOCTO_CC_ACR_ID = ?`,
+			zonaB, ventaAplicada.CargoCCID)
+		require.NoError(t, err)
+
+		ventaPendiente := microsipseed.VentaCredito(t, q, cliente, microsipseed.OpcionesVenta{})
+		sembrarPagoRecibido(ctx, t, q, pagoRecibidoSembrado{
+			id: uuid.New(), cargoID: ventaPendiente.CargoCCID, clienteID: cliente, cobradorID: 11502,
+			importe: decimal.NewFromInt(80), formaCobroID: domain.FormaCobroEfectivo,
+			conceptoID: domain.ConceptoCobranzaEnRuta, fecha: capturado, recibido: capturado,
+			estado: "P", createdBy: usuarioID,
+		})
+		_, err = q.ExecContext(ctx, `UPDATE MSP_SALDOS_VENTAS SET ZONA_CLIENTE_ID = ? WHERE DOCTO_CC_ID = ?`,
+			zonaB, ventaPendiente.CargoCCID)
+		require.NoError(t, err)
+
+		sembrarVisita(ctx, t, q, visitaSembrada{
+			id: uuid.New(), clienteID: cliente, zonaID: zonaB, cobradorID: 11502,
+			tipo: "No se encontraba", fecha: capturado, lat: 18.4617, lng: -97.3928,
+		})
+
+		desde, hasta := ventanaDelDia()
+		lote, err := desempenofb.NewActividadesRepo(pool).ActividadesZonas(ctx, []outbound.ConsultaActividades{
+			{ZonaID: zonaA, Desde: desde, Hasta: hasta},
+			{ZonaID: zonaB, Desde: desde, Hasta: hasta},
+		})
+		require.NoError(t, err)
+		require.Len(t, lote, 2)
+		assert.Empty(t, delCliente(lote[0], cliente), "nada sale en la zona actual del cliente")
+		enB := delCliente(lote[1], cliente)
+		tipos := map[string]int{}
+		for _, a := range enB {
+			switch {
+			case a.Visita != nil:
+				tipos["visita"]++
+			case a.Pago != nil && a.Pago.Aplicado:
+				tipos["aplicado"]++
+			case a.Pago != nil:
+				tipos["pendiente"]++
+			}
+		}
+		assert.Equal(t, map[string]int{"aplicado": 1, "pendiente": 1, "visita": 1}, tipos,
+			"los tres salen en la zona de su fila")
+	})
 }

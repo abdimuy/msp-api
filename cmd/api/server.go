@@ -382,7 +382,11 @@ func provideRootHandler(
 		// /v2/desempeno/usuarios[/{uid}/jornada|actividad|cuentas].
 		r.Group(func(r chi.Router) {
 			r.Use(skipAuthForPublicDocs(authn.Handler))
-			desempenohttp.MountRouter(r, desempenoSvc)
+			// Tope de sentencia de Firebird por debajo del Timeout HTTP: el
+			// driver ignora la cancelación, así que sin él la sentencia
+			// seguía corriendo después del 503 (config.Desempeno).
+			desempenohttp.MountRouter(r, desempenoSvc,
+				desempenohttp.WithStatementTimeout(cfg.Desempeno.StatementTimeout))
 		})
 
 		// Cobranza endpoints — authn only. Read (saldos, pagos, sync) plus

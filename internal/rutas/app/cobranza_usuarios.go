@@ -58,15 +58,54 @@ func (s *Service) UsuariosCobradores(ctx context.Context) ([]rutas.UsuarioCobrad
 // computation as DesglosePorUsuario (VentasPorZona + enrichVentas +
 // CalcularResumenPonderado), over the user's own window.
 func (s *Service) CobranzaDeUsuario(ctx context.Context, u rutas.UsuarioCobrador) (rutas.CobranzaUsuario, error) {
-	out := rutas.CobranzaUsuario{Usuario: u, Ventas: []rutas.VentaCobro{}}
 	if u.ZonaID <= 0 || u.InicioSemana == nil {
-		return out, nil
+		return cobranzaVacia(u), nil
 	}
 	now := time.Now().UTC()
 	ventas, err := s.cobranza.VentasPorZona(ctx, u.ZonaID, *u.InicioSemana, now)
 	if err != nil {
 		return rutas.CobranzaUsuario{}, err
 	}
+	return cobranzaDe(u, ventas, now), nil
+}
+
+// CobranzaDeUsuarios implements rutas.CobranzaUsuariosReader: the same
+// computation as CobranzaDeUsuario for every user, with ONE read of the
+// repository for all of them (VentasPorZonas) instead of one per user.
+func (s *Service) CobranzaDeUsuarios(ctx context.Context, us []rutas.UsuarioCobrador) ([]rutas.CobranzaUsuario, error) {
+	now := time.Now().UTC()
+	out := make([]rutas.CobranzaUsuario, len(us))
+	consultas := make([]outbound.ConsultaVentasZona, 0, len(us))
+	indices := make([]int, 0, len(us))
+	for i, u := range us {
+		out[i] = cobranzaVacia(u)
+		if u.ZonaID <= 0 || u.InicioSemana == nil {
+			continue
+		}
+		consultas = append(consultas, outbound.ConsultaVentasZona{ZonaID: u.ZonaID, Desde: *u.InicioSemana})
+		indices = append(indices, i)
+	}
+	if len(consultas) == 0 {
+		return out, nil
+	}
+	lote, err := s.cobranza.VentasPorZonas(ctx, consultas, now)
+	if err != nil {
+		return nil, err
+	}
+	for k, i := range indices {
+		out[i] = cobranzaDe(us[i], lote[k], now)
+	}
+	return out, nil
+}
+
+func cobranzaVacia(u rutas.UsuarioCobrador) rutas.CobranzaUsuario {
+	return rutas.CobranzaUsuario{Usuario: u, Ventas: []rutas.VentaCobro{}}
+}
+
+// cobranzaDe enriches the user's rows (in place) over the user's window and
+// projects them to the contract.
+func cobranzaDe(u rutas.UsuarioCobrador, ventas []rutasdomain.VentaCobranza, now time.Time) rutas.CobranzaUsuario {
+	out := cobranzaVacia(u)
 	enrichVentas(ventas, *u.InicioSemana, now)
 	for _, v := range ventas {
 		out.Ventas = append(out.Ventas, rutas.VentaCobro{
@@ -76,5 +115,5 @@ func (s *Service) CobranzaDeUsuario(ctx context.Context, u rutas.UsuarioCobrador
 		})
 	}
 	out.PctPonderado = rutasdomain.CalcularResumenPonderado(ventas).Pct
-	return out, nil
+	return out
 }

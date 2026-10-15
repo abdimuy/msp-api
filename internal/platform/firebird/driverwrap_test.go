@@ -345,12 +345,12 @@ func TestCancelProofStmt_RejectsNamedArgsOnLegacyFallback(t *testing.T) {
 
 func TestRegisterCancelProofDriver_IsIdempotent(t *testing.T) {
 	t.Parallel()
-	name, err := registerCancelProofDriver(10 * time.Minute)
+	name, err := registerCancelProofDriver(driverOptions{statementTimeout: 10 * time.Minute})
 	require.NoError(t, err)
 	assert.Equal(t, cancelProofDriverName, name)
 
 	// A second call must not panic on a duplicate sql.Register.
-	again, err := registerCancelProofDriver(time.Minute)
+	again, err := registerCancelProofDriver(driverOptions{statementTimeout: time.Minute})
 	require.NoError(t, err)
 	assert.Equal(t, name, again)
 }
