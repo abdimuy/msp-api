@@ -548,14 +548,39 @@ EMPIEZA`, que se pone roja con **un solo dp** de más.
   quién "determina" una venta en un empate exacto dependía del plan. En la
   ventana de 30 días de dev: 1 grupo de 2 pagos de la misma venta a la misma
   hora, 52 grupos (104 visitas) del mismo cliente a la misma hora, 0
-  pendientes. Desempate fijado: (hora, id), gana el id menor. Contra la salida
-  del código anterior **sin** desempate cambia el `DeterminadoPor` de **una**
-  venta (zona 2990693, 3 casos del arnés: los tres usuarios de esa zona).
+  pendientes. Desempate fijado: (hora, id), gana el id **menor en orden
+  lexicográfico** del ID completo (`visita:<uuid>`, `pago:<n>`), el mismo
+  criterio que ya usan `domain.OrdenarActividades` y el cursor de la
+  actividad; no se hace numérico porque los ids de visitas y pendientes son
+  UUID. **CORRECCIÓN (compuerta 2):** la versión anterior de esta entrada
+  decía "una venta"; son **tres**. Contra la salida del código anterior **sin**
+  desempate cambian `DeterminadoPor`, `UltimaActividadID` y
+  `ultima_actividad.id` de las ventas 13914738, 14394018 y 14719574 (zona
+  2990693) en `cuentas/equiv-a` (las 3), `equiv-b` (las 3) y `equiv-c` (1,
+  por su inicio de hoy). Ningún caso de tablero, jornada ni actividad cambia;
+  estado, etiqueta, segmento y hora de última actividad son iguales. En los
+  tres casos son dos visitas **duplicadas**: mismo cliente, misma venta, mismo
+  segundo, mismo cobrador (2991009), "No se encontraba", sin nota ni fotos
+  (consultado en `MSP_VISITAS` el 2026-10-15); solo cambia cuál de los dos IDs
+  se muestra.
 - **Trampa medida:** un OR por zona en el WHERE (`(zona = ? AND fecha >= ?) OR
   …`) para no ensanchar la ventana hace que Firebird deje de usar el rango de
   fechas del índice: con un usuario de 30 días, aplicados 0.8 → 15.9 s y cobro
   de rutas 29 s. Con una rama `UNION ALL` por grupo de zonas (inicios a menos
   de 24 h entre sí) vuelve a 0.9 s.
+- **Límite de 256 contextos (compuerta 2, MEDIDO en dev FB 4.0.2):** cada
+  rama `UNION ALL` repite los contextos de su consulta; con 16 o más grupos de
+  inicio los aplicados fallaban con `Too many Contexts of
+  Relation/Procedure/Views. Maximum allowed is 256` y el tablero entero daba
+  500. Arreglo: sentencias de a lo más `ramasPorSentencia` ramas (mitad del
+  límite / contextos de la rama). Prueba con 48 grupos (un inicio por zona a
+  25 h del anterior más un segundo inicio escalonado: 0, 5 h, 23:59, 24 h,
+  24 h + 150 µs, 30 h, 47 h, 49 h, 3 d, 5 d 7 h): roja antes con ese error,
+  verde después, 58,417 actividades, 23,538 cuentas y 23,409 filas de rutas
+  idénticas a la lectura consulta por consulta. Tablero en el peor caso (55
+  usuarios, cada uno con su inicio a 25 h del anterior): 22 sentencias,
+  **6.0–10.3 s** (base compartida con otros carriles, de ahí el rango). Correr
+  las sentencias de actividades a la vez se midió peor: 10.9–11.2 s.
 - **Lo que NO se midió:** producción (índices distintos: dev tiene
   `IDX_MSP_PAGOS_RECIBIDOS_DOCTO_CC`, producción `IDX_PAGOS_REC_DOCTO_CC` e
   `IDX_MSP_PAGOS_DOCTO_CC_ID`; no se fijó ningún `PLAN`); la base sin los
