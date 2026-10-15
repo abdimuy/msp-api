@@ -34,7 +34,7 @@ una prueba está configurada de una forma rara, o desde el mensaje del commit:
 Los números son correlativos y **nunca se reutilizan ni se renumeran**. Lo
 refutado **no se borra**: cambia de estado a REFUTADA y se queda.
 
-**Siguiente identificador libre: `E-INF-014`.**
+**Siguiente identificador libre: `E-INF-015`.**
 
 ---
 
@@ -503,7 +503,7 @@ EMPIEZA`, que se pone roja con **un solo dp** de más.
 - **Caduca si:** los goldens dejan de tener variante oscura, o se adopta una
   utilidad compartida de análisis que resuelva el umbral por tema
 
-### E-INF-013 · El tablero de desempeño leído por lote da EXACTAMENTE lo mismo que zona por zona, con 6 sentencias en vez de 220
+### E-INF-014 · El tablero de desempeño leído por lote da EXACTAMENTE lo mismo que zona por zona, con 6 sentencias en vez de 220
 
 - **Nivel:** MEDIDO · **Estado:** VIGENTE
 - **Medido:** 2026-10-14/15, base de **desarrollo** (`mueblera-firebird`, datos

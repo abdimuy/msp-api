@@ -26,7 +26,7 @@ type grupoDesde struct {
 //
 // Por qué grupos y no un solo rango: un solo usuario con la semana de hace 30
 // días haría que las 44 zonas se leyeran 30 días. Y por qué no un OR por zona
-// dentro del WHERE: medido (E-INF-013), con un usuario de 30 días los
+// dentro del WHERE: medido (E-INF-014), con un usuario de 30 días los
 // aplicados pasaron de 0.8 s a 15.9 s y el cobro de rutas a 29 s; con una rama
 // UNION ALL por grupo, cada una con su rango limpio, 0.9 s.
 func agruparZonas(desdePorZona map[int]time.Time) []grupoDesde {

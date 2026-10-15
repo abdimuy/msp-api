@@ -106,7 +106,7 @@ func parsePeriodo(s string) (Periodo, error) {
 // las tres a la vez,
 // sea cual sea el número de zonas; el reparto por zona, inicio de semana y
 // usuario se hace en Go con las mismas reglas de ventana de la lectura por
-// zona (E-INF-013: antes 220 sentencias y 8–9 s por petición con 44 zonas
+// zona (E-INF-014: antes 220 sentencias y 8–9 s por petición con 44 zonas
 // en dev; por lote 6 sentencias y 1.6–1.9 s). Un error de Firebird falla la consulta
 // completa: el tablero nunca muestra cifras a medias.
 func (s *Service) Tablero(ctx context.Context, in TableroInput) (Tablero, error) {
@@ -218,7 +218,7 @@ func (s *Service) semanasDelTablero(
 	if len(claves) == 0 {
 		return out, nil
 	}
-	// Las tres lecturas van a la vez, cada una en su conexión (E-INF-013,
+	// Las tres lecturas van a la vez, cada una en su conexión (E-INF-014,
 	// TestMedirLoteParalelo con 55 usuarios / 44 zonas: en serie 3.1 s, en
 	// paralelo 1.6 s). Si una falla, la consulta completa falla.
 	var (

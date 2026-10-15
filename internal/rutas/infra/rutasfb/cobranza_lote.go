@@ -126,7 +126,7 @@ type abonoRuta struct {
 
 type claveVentaZona struct{ zona, venta int }
 
-// VentasPorZonas implements outbound.CobranzaRepo (E-INF-013): dos sentencias para todas
+// VentasPorZonas implements outbound.CobranzaRepo (E-INF-014): dos sentencias para todas
 // las consultas (las ventas candidatas y los abonos), en una misma foto de la
 // base (snapshot), y el reparto por consulta en Go.
 func (r *CobranzaRepo) VentasPorZonas(

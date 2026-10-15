@@ -273,7 +273,7 @@ func (r *ActividadesRepo) ActividadesZonas(
 // visitas iguales gana la primera), y ninguna de las tres consultas tiene
 // ORDER BY: sin este orden, quién "determina" una venta en un empate exacto
 // dependía del plan de Firebird. Desempate documentado: gana el id menor
-// (E-INF-013: en dev cambia el DeterminadoPor de UNA venta respecto al orden
+// (E-INF-014: en dev cambia el DeterminadoPor de UNA venta respecto al orden
 // que daba el plan de antes).
 // Ordenar en Go y no en SQL: un ORDER BY sobre la fecha haría que Firebird
 // recorriera el índice en orden en vez de usar el de zona y fecha.
