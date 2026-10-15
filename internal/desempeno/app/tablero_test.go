@@ -64,7 +64,7 @@ func TestTablero_Hoy_CifrasDeJuan(t *testing.T) {
 	assert.Equal(t, 8, f.VentasUniverso)
 	assert.Equal(t, 7, f.CoberturaConAlgo)
 	assert.Equal(t, 8, f.CoberturaTotal)
-	assert.Equal(t, desempenoapp.CoberturaPorSegmento{SinVisitar: 2, Volver: 2, Despues: 0, Pagados: 4, SinNada: 1}, f.PorSegmento)
+	assert.Equal(t, desempenoapp.CoberturaPorSegmento{SinVisitar: 2, Volver: 0, Despues: 0, Pagados: 6, SinNada: 1}, f.PorSegmento)
 
 	// Cobro: lo que calcula rutas.
 	assert.Equal(t, "150.00", f.Cobro.Cobrado.StringFixed(2))

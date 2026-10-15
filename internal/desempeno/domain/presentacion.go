@@ -113,14 +113,16 @@ func DetalleDe(r ResultadoCuenta) string {
 	return "Todavía no vas"
 }
 
-// SegmentoDe es SegmentoDeCobranza.contiene invertido: el segmento de la cuenta
-// o ok=false si no cae en ninguno (compromiso con trato propio y sin fecha).
-// hoy es el día de negocio (America/Mexico_City).
+// SegmentoDe es SegmentoDeCobranza.contiene invertido, con UNA divergencia
+// deliberada: el abono parcial cae en "pagados", no en "volver" (E-INF-016).
+// Devuelve el segmento de la cuenta o ok=false si no cae en ninguno
+// (compromiso con trato propio y sin fecha). hoy es el día de negocio
+// (America/Mexico_City).
 func SegmentoDe(r ResultadoCuenta, hoy Fecha) (Segmento, bool) {
 	switch TratoDe(r) {
 	case TratoSinTrabajar:
 		return SegmentoSinVisitar, true
-	case TratoParcial, TratoRegresas, TratoNadie:
+	case TratoRegresas, TratoNadie:
 		return SegmentoVolver, true
 	case TratoEscalar:
 		return SegmentoDespues, true
@@ -128,7 +130,13 @@ func SegmentoDe(r ResultadoCuenta, hoy Fecha) (Segmento, bool) {
 		return segmentoPorFecha(r.FechaPromesa, hoy)
 	case TratoCita:
 		return segmentoPorFecha(r.FechaCita, hoy)
-	case TratoPagado:
+	// Deliberate divergence from the phone (E-INF-016): msp-app-kt's
+	// SegmentoDeCobranza, the source this file ports, still puts a partial
+	// payment under "volver". Owner's decision 2026-10-15: on the desktop a
+	// partial payment counts as "pagados" (case: Noé Cortero, R/25, whose two
+	// partial accounts of the week, Y00002364 and Y00001500, showed under
+	// "volver"). Label and Trato stay "Abonó parcial"; only the segment changes.
+	case TratoPagado, TratoParcial:
 		return SegmentoPagados, true
 	}
 	return SegmentoSinVisitar, true

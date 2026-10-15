@@ -25,6 +25,7 @@ func hora(t *testing.T, s string) *domain.HoraDelDia {
 
 // Cadenas copiadas de EstadoCuentaUi.kt y de EstadoCuentaUiTest.kt
 // (LEÍDO 2026-10-14). Si el teléfono cambia una, esta tabla se pone roja.
+// Única divergencia: el segmento del abono parcial (E-INF-016).
 func TestPresentacion_TratoEtiquetaDetalleSegmento(t *testing.T) {
 	t.Parallel()
 	hoy := *fecha(t, "2026-09-20")
@@ -42,9 +43,11 @@ func TestPresentacion_TratoEtiquetaDetalleSegmento(t *testing.T) {
 			domain.TratoPagado, "Pagó esta semana", "No hace falta volver", domain.SegmentoPagados, true,
 		},
 		{
+			// E-INF-016: divergencia deliberada con el teléfono (que lo manda a
+			// "volver"); la etiqueta y el trato siguen siendo los suyos.
 			"abono parcial",
 			domain.ResultadoCuenta{Estado: domain.EstadoAbonoParcial},
-			domain.TratoParcial, "Abonó parcial", "Falta por confirmar", domain.SegmentoVolver, true,
+			domain.TratoParcial, "Abonó parcial", "Falta por confirmar", domain.SegmentoPagados, true,
 		},
 		{
 			"visité vuelvo",

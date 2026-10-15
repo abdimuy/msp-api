@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -31,7 +32,7 @@ func TestCuentas_EstadoPorVentaYConteos(t *testing.T) {
 	v, err := svc.Cuentas(context.Background(), "uid-juan", desempenoapp.CuentasInput{})
 	require.NoError(t, err)
 	assert.Equal(t, *m.juan.InicioSemana, v.InicioSemana)
-	assert.Equal(t, desempenoapp.ConteosCuentas{SinVisitar: 2, Volver: 2, Despues: 0, Pagados: 4, SinNada: 1, Total: 8}, v.Conteos)
+	assert.Equal(t, desempenoapp.ConteosCuentas{SinVisitar: 2, Volver: 0, Despues: 0, Pagados: 6, SinNada: 1, Total: 8}, v.Conteos)
 	require.Len(t, v.Cuentas, 8)
 	assert.Equal(t, []int{1, 2, 3, 4, 5, 6, 7, 8}, ventasDe(v.Cuentas), "orden cliente asc")
 
@@ -68,8 +69,9 @@ func TestCuentas_FiltrosYOrden(t *testing.T) {
 		in     desempenoapp.CuentasInput
 		ventas []int
 	}{
-		{"pagados", desempenoapp.CuentasInput{Segmento: "pagados"}, []int{1, 2, 3, 7}},
-		{"volver", desempenoapp.CuentasInput{Segmento: "volver"}, []int{4, 6}},
+		// 4 y 6 son abono parcial: pagados en el escritorio (E-INF-016).
+		{"pagados", desempenoapp.CuentasInput{Segmento: "pagados"}, []int{1, 2, 3, 4, 6, 7}},
+		{"volver", desempenoapp.CuentasInput{Segmento: "volver"}, []int{}},
 		{"sin nada", desempenoapp.CuentasInput{Segmento: "sin_nada"}, []int{8}},
 		{"q", desempenoapp.CuentasInput{Q: "cliente 1"}, []int{1, 2, 3, 4, 5, 6, 7, 8}},
 		{"q por folio", desempenoapp.CuentasInput{Q: "Z07"}, []int{7}},
@@ -170,4 +172,66 @@ func TestCuentas_InicioSemanaFuturoEs409(t *testing.T) {
 	svc := nuevoServicio(t, m.usuarios, m.actividades, m.cuentas, m.ahora)
 	_, err := svc.Cuentas(context.Background(), "uid-juan", desempenoapp.CuentasInput{})
 	require.ErrorIs(t, err, domain.ErrUsuarioInicioSemanaFuturo)
+}
+
+// E-INF-016 · Caso real que originó la decisión del dueño (2026-10-15): Noé
+// Cortero, R/25. Y00002299 (parcialidad 150) pagó 200; Y00002364 (parcialidad
+// 250) pagó 200 y Y00001500 (parcialidad 150) pagó 100. En el escritorio las
+// tres son "pagados": las dos parciales siguen rotuladas "Abonó parcial", pero
+// no cuentan en "volver" ni en las cuentas ni en la cobertura del tablero.
+func TestCuentasYTablero_E_INF_016_AbonoParcialCuentaComoPagados(t *testing.T) {
+	t.Parallel()
+	m := nuevoMundo(t)
+	type caso struct {
+		venta                    int
+		folio, parcialidad, pago string
+		estado                   domain.EstadoCuenta
+	}
+	casos := []caso{
+		{2299, "Y00002299", "150.00", "200.00", domain.EstadoPago},
+		{2364, "Y00002364", "250.00", "200.00", domain.EstadoAbonoParcial},
+		{1500, "Y00001500", "150.00", "100.00", domain.EstadoAbonoParcial},
+	}
+	universo := make([]domain.CuentaUniverso, 0, len(casos))
+	acts := make([]domain.Actividad, 0, len(casos))
+	for i, c := range casos {
+		cu := cuenta(c.venta, 100+i, c.parcialidad, "1000.00")
+		cu.Folio = c.folio
+		universo = append(universo, cu)
+		p := pagoDe("pago:"+c.folio, m.juan, local(t, 14, "10:0"+strconv.Itoa(i)), c.venta, 100+i, c.pago, domain.FormaCobroEfectivo)
+		p.Folio = c.folio
+		acts = append(acts, p)
+	}
+	m.cuentas.porZona[zonaRuta21] = universo
+	m.actividades.porZona[zonaRuta21] = acts
+	svc := nuevoServicio(t, m.usuarios, m.actividades, m.cuentas, m.ahora)
+	ctx := context.Background()
+
+	v, err := svc.Cuentas(ctx, "uid-juan", desempenoapp.CuentasInput{})
+	require.NoError(t, err)
+	assert.Equal(t, desempenoapp.ConteosCuentas{Pagados: 3, Volver: 0, Total: 3}, v.Conteos)
+	require.Len(t, v.Cuentas, 3)
+	for _, cv := range v.Cuentas {
+		var c caso
+		for _, x := range casos {
+			if x.venta == cv.Cuenta.VentaID {
+				c = x
+			}
+		}
+		assert.Equal(t, c.estado, cv.Resultado.Estado, c.folio)
+		require.NotNil(t, cv.Segmento, c.folio)
+		assert.Equal(t, domain.SegmentoPagados, *cv.Segmento, c.folio)
+		if c.estado == domain.EstadoAbonoParcial {
+			assert.Equal(t, domain.TratoParcial, cv.Trato, c.folio)
+			assert.Equal(t, "Abonó parcial", cv.Etiqueta, "%s: la etiqueta no cambia", c.folio)
+		}
+	}
+	vol, err := svc.Cuentas(ctx, "uid-juan", desempenoapp.CuentasInput{Segmento: "volver"})
+	require.NoError(t, err)
+	assert.Empty(t, vol.Cuentas, "ninguna parcial en volver")
+
+	tb, err := svc.Tablero(ctx, desempenoapp.TableroInput{Periodo: "semana"})
+	require.NoError(t, err)
+	f := filaDe(t, tb, "uid-juan")
+	assert.Equal(t, desempenoapp.CoberturaPorSegmento{Pagados: 3, Volver: 0}, f.PorSegmento)
 }

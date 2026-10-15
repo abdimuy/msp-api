@@ -34,7 +34,7 @@ una prueba está configurada de una forma rara, o desde el mensaje del commit:
 Los números son correlativos y **nunca se reutilizan ni se renumeran**. Lo
 refutado **no se borra**: cambia de estado a REFUTADA y se queda.
 
-**Siguiente identificador libre: `E-INF-016`.**
+**Siguiente identificador libre: `E-INF-017`.**
 
 ---
 
@@ -743,3 +743,62 @@ EMPIEZA`, que se pone roja con **un solo dp** de más.
 - **Caduca si:** cambia la forma de las subconsultas (`MIN` → otra cosa), se
   borran o renombran los índices de 000065, o producción muestra otro plan
 
+
+### E-INF-016 · En el escritorio el abono parcial cuenta en "pagados", no en "volver" (divergencia deliberada con el teléfono)
+
+- **Nivel:** MEDIDO (dev) · **Estado:** VIGENTE
+- **Decisión del dueño, 2026-10-15:** en la pantalla "Desempeño de cobradores"
+  del escritorio, una cuenta con trato `parcial` (`EstadoAbonoParcial`) cae en
+  el segmento `pagados`. Su trato, etiqueta ("Abonó parcial") y detalle no
+  cambian. El teléfono **no** cambia: `SegmentoDeCobranza.kt` de msp-app-kt
+  —la fuente que porta `internal/desempeno/domain/presentacion.go`— sigue
+  mandando el parcial a "volver". Desde hoy `SegmentoDe` y
+  `SegmentoDeCobranza.contiene` ya no son idénticos en ese único caso.
+- **Caso que la originó:** Noé Cortero, R/25, semana del 2026-10-15.
+  Y00002299 (parcialidad 150) pagó 200 → pagó; Y00002364 (parcialidad 250)
+  pagó 200 y Y00001500 (parcialidad 150) pagó 100 → abono parcial, mostrados
+  en "volver". Con la regla nueva: pagados = 3, volver = 0.
+- **Única fuente de la regla (LEÍDO 2026-10-15, enumerado con `grep -rn` de
+  `SegmentoDe(`, `SegmentoVolver`, `SegmentoPagados` y `TratoParcial` sobre
+  todo el `.go` del repo):** `domain.SegmentoDe` (`presentacion.go`). Sus dos
+  consumidores, `app/cuentas.go` (`Cuentas` → `contarSegmento`, conteos y
+  filtro `segmento`) y `app/tablero.go` (`llenarCobertura` →
+  `cobertura_por_segmento`), cuentan el segmento que devuelve, sin copia propia
+  de la regla. `infra/desempenohttp` sólo copia los conteos al DTO;
+  `infra/desempenofb` no conoce segmentos. Fuera de `internal/desempeno` no hay
+  ningún consumidor.
+- **Prueba roja/verde (MEDIDO 2026-10-15, unitaria):**
+  `TestCuentasYTablero_E_INF_016_AbonoParcialCuentaComoPagados` (caso de Noé:
+  conteos de cuentas, filtro `volver` vacío, `cobertura_por_segmento` del
+  tablero) y la fila "abono parcial" de
+  `TestPresentacion_TratoEtiquetaDetalleSegmento`. Con `presentacion.go`
+  regresado a `564bd74`: rojas (`Volver:2, Pagados:1` en vez de
+  `Volver:0, Pagados:3`); con el cambio, verdes. También se pusieron rojas
+  `TestTablero_Hoy_CifrasDeJuan`, `TestCuentas_EstadoPorVentaYConteos` y
+  `TestCuentas_FiltrosYOrden`, que afirmaban parcial → volver y se
+  actualizaron.
+- **Arnés de equivalencia (MEDIDO 2026-10-15, base de dev, reloj 18-feb-2026
+  20:00 CDMX):** `TestEquivalenciaDesempeno` grabado con `564bd74` (791 casos,
+  48 zonas, 173 usuarios) y comparado con el cambio: 280 casos distintos
+  (tablero hoy y semana, 139 `cuentas/`, 139 `cuentas-sin-nada/`); 0 casos de
+  jornada ni de actividad. Comparación estructural completa (no sólo la primera
+  línea que muestra el arnés): las únicas rutas JSON que cambian son
+  `Cuentas[].Segmento` (3,624 veces, **todas** `volver → pagados` y **todas**
+  de cuentas con trato `parcial`), `Conteos.Volver/Pagados` y
+  `Filas[].PorSegmento.Volver/Pagados`; en los 280 grupos de conteo, `Volver`
+  baja exactamente lo que sube `Pagados`, y en los 159 casos `cuentas/` sin
+  error la baja de `Volver` es igual al número de parciales. Tablero semana,
+  suma de la flota: volver 5,811 → 2,187, pagados 13,347 → 16,971. Control
+  positivo: el mismo arnés sí detecta la diferencia (falla con 280 casos), y
+  ninguna cuenta parcial quedó fuera de `pagados`.
+- **La referencia regrabada** quedó fuera del repo (contiene nombres de
+  clientes de dev), como manda el arnés; quien vuelva a correr la equivalencia
+  debe grabar con el código de este cambio en adelante.
+- **Lo que NO se midió:** producción; el caso de Noé con sus datos reales (dev
+  llega a feb-2026; el caso se reprodujo con sus montos en la prueba unitaria);
+  el escritorio pintando el segmento nuevo; si algún otro cliente del API (el
+  teléfono no consume estos endpoints, INFERIDO de que es pantalla de
+  escritorio) lee `segmento`.
+- **Caduca si:** el dueño revierte la decisión, o el teléfono adopta la misma
+  regla (entonces deja de ser divergencia y el comentario de `SegmentoDe` debe
+  decirlo).
