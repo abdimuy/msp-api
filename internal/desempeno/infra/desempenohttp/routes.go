@@ -16,7 +16,7 @@ const securitySchemeName = "bearerAuth"
 // MountRouter registra las cuatro operaciones sobre r. r ya trae el
 // middleware de autenticación (cmd/api/server.go); el permiso se revisa en
 // cada handler. Rutas finales: /v2/desempeno/usuarios[/{uid}/jornada|actividad|cuentas].
-func MountRouter(r chi.Router, svc *desempenoapp.Service) huma.API {
+func MountRouter(r chi.Router, svc *desempenoapp.Service, opts ...Option) huma.API {
 	cfg := huma.DefaultConfig("MSP API · Desempeño de cobradores", "v2")
 	cfg.DocsRenderer = huma.DocsRendererScalar
 	// Sin el "$schema" que Huma agrega a cada respuesta: el contrato fija las
@@ -37,6 +37,9 @@ func MountRouter(r chi.Router, svc *desempenoapp.Service) huma.API {
 	}
 	api := humachi.New(r, cfg)
 	h := &Handlers{svc: svc}
+	for _, o := range opts {
+		o(h)
+	}
 	security := []map[string][]string{{securitySchemeName: {}}}
 	tags := []string{"desempeno"}
 
