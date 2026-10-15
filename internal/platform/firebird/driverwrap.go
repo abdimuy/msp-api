@@ -30,6 +30,8 @@ var errNoBaseDriver = errors.New("firebird: base driver unavailable")
 var (
 	cancelProofOnce      sync.Once
 	errCancelProofDriver error
+	// registeredOptions are the options the one registration captured.
+	registeredOptions driverOptions
 )
 
 // registerCancelProofDriver registers (once) a driver.Driver that shields the
@@ -46,6 +48,7 @@ func registerCancelProofDriver(opts driverOptions) (string, error) {
 			errCancelProofDriver = err
 			return
 		}
+		registeredOptions = opts
 		sql.Register(cancelProofDriverName, &cancelProofDriver{
 			base:               base,
 			statementTimeout:   opts.statementTimeout,
@@ -173,9 +176,11 @@ type statementTimeoutKey struct{}
 // The driver ignores context cancellation by design (see cancelProofDriver),
 // so a request deadline alone never stops a statement already in Firebird.
 // This is the mechanism that does: before each statement issued with this
-// context the connection runs SET STATEMENT TIMEOUT d, and the next statement
-// issued without it (any other module, the phone sync) first gets the default
-// back. A connection that cannot restore its default is discarded. Firebird
+// context the connection runs SET STATEMENT TIMEOUT d. The default comes
+// back when database/sql hands the conn to its next borrower (ResetSession),
+// and again before any statement issued without the option (any other module,
+// the phone sync). A connection that cannot restore its default is discarded
+// (E-INF-013). Firebird
 // counts the ceiling from execution start to the last fetch, and aborts the
 // statement itself when it expires (gds 335545128, mapped to
 // firebird_timeout), leaving the connection healthy.
@@ -219,6 +224,9 @@ type cancelProofConn struct {
 	defaultTimeout time.Duration
 	// currentTimeout is what the attachment was last told.
 	currentTimeout time.Duration
+	// unknown marks a session whose timeout is uncertain after a failed SET:
+	// the next statement or ResetSession must send its SET regardless.
+	unknown bool
 	// broken marks a conn that could not restore its default; it refuses
 	// every statement and reports itself invalid so the pool drops it.
 	broken bool
@@ -228,6 +236,12 @@ type cancelProofConn struct {
 
 // syncStatementTimeout makes the attachment's statement timeout match what ctx
 // asks for (its override, or the default) before a statement runs.
+//
+// Invariant, E-INF-013 (docs/evidencia/infra.md): no statement issued without
+// the option runs under a narrow ceiling. This per-statement restore is the
+// second line of defence; ResetSession restores at pool checkout first. When
+// the state is unknown (a SET failed) the next statement sends its SET no
+// matter what, and if that fails too the conn is condemned.
 func (c *cancelProofConn) syncStatementTimeout(ctx context.Context) error {
 	if c.broken {
 		return driver.ErrBadConn
@@ -236,28 +250,41 @@ func (c *cancelProofConn) syncStatementTimeout(ctx context.Context) error {
 	if !override {
 		want = c.defaultTimeout
 	}
-	if timeoutSeconds(want) == timeoutSeconds(c.currentTimeout) {
+	if !c.unknown && timeoutSeconds(want) == timeoutSeconds(c.currentTimeout) {
 		return nil
 	}
+	err := c.setStatementTimeout(ctx, want)
+	if err == nil {
+		return nil
+	}
+	if override && !c.unknown {
+		// The narrow ceiling is defence in depth: the statement still runs.
+		// The server may or may not have applied the SET, so the state is
+		// unknown and the next statement re-sends its own value.
+		c.unknown = true
+		if c.warn != nil {
+			c.warn(err)
+		}
+		return nil
+	}
+	// Either the default could not be restored, or the session state was
+	// already unknown and still cannot be fixed: this attachment must not
+	// serve anyone again.
+	c.broken = true
+	return driver.ErrBadConn
+}
+
+// setStatementTimeout sends SET STATEMENT TIMEOUT d and records the result.
+func (c *cancelProofConn) setStatementTimeout(ctx context.Context, d time.Duration) error {
 	execer, ok := c.base.(driver.ExecerContext)
 	if !ok {
 		return nil // nothing to talk to; a test-only shape.
 	}
-	if _, err := execer.ExecContext(context.WithoutCancel(ctx), statementTimeoutSQL(want), nil); err != nil {
-		if override {
-			// The narrow ceiling is defence in depth: the statement still runs
-			// under the default, which the attachment demonstrably still has.
-			if c.warn != nil {
-				c.warn(err)
-			}
-			return nil
-		}
-		// The attachment keeps somebody else's narrow ceiling: it must not
-		// serve anyone again.
-		c.broken = true
-		return driver.ErrBadConn
+	if _, err := execer.ExecContext(context.WithoutCancel(ctx), statementTimeoutSQL(d), nil); err != nil {
+		return err //nolint:wrapcheck // only inspected for nil by the callers.
 	}
-	c.currentTimeout = want
+	c.currentTimeout = d
+	c.unknown = false
 	return nil
 }
 
@@ -265,11 +292,21 @@ func (c *cancelProofConn) syncStatementTimeout(ctx context.Context) error {
 // not restore its default statement timeout instead of pooling it.
 func (c *cancelProofConn) IsValid() bool { return !c.broken }
 
-// ResetSession implements driver.SessionResetter. otelsql forwards this one
-// (not IsValid), so it is what tells database/sql in production to drop a
-// conn that kept somebody else's narrow statement timeout.
-func (c *cancelProofConn) ResetSession(_ context.Context) error {
+// ResetSession implements driver.SessionResetter. database/sql calls it when
+// it hands a pooled conn to the next borrower (otelsql forwards it; it does
+// not forward IsValid). It restores the process default there, so a conn
+// never serves another module with a narrow ceiling and a failed restore is
+// an ErrBadConn database/sql retries on another conn — never a failed
+// statement inside somebody else's transaction (E-INF-013).
+func (c *cancelProofConn) ResetSession(ctx context.Context) error {
 	if c.broken {
+		return driver.ErrBadConn
+	}
+	if !c.unknown && timeoutSeconds(c.currentTimeout) == timeoutSeconds(c.defaultTimeout) {
+		return nil
+	}
+	if err := c.setStatementTimeout(ctx, c.defaultTimeout); err != nil {
+		c.broken = true
 		return driver.ErrBadConn
 	}
 	return nil

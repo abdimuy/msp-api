@@ -127,7 +127,7 @@ func TestWithStatementTimeout_FirebirdAbortsTheStatementOnTheServer(t *testing.T
 	acotado := attachmentTimeoutMs(firebird.WithStatementTimeout(bg, 3*time.Second), t, conn)
 	assert.Equal(t, int64(3000), acotado)
 	def := attachmentTimeoutMs(bg, t, conn)
-	assert.Equal(t, firebirdSeconds(cfg.StatementTimeout)*1000, def,
+	assert.Equal(t, firebirdSeconds(firebird.RegisteredDefaultStatementTimeout())*1000, def,
 		"la conexión debe volver al tope del proceso (FB_STATEMENT_TIMEOUT) antes de servir a otro")
 }
 

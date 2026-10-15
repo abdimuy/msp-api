@@ -34,7 +34,7 @@ una prueba está configurada de una forma rara, o desde el mensaje del commit:
 Los números son correlativos y **nunca se reutilizan ni se renumeran**. Lo
 refutado **no se borra**: cambia de estado a REFUTADA y se queda.
 
-**Siguiente identificador libre: `E-INF-013`.**
+**Siguiente identificador libre: `E-INF-014`.**
 
 ---
 
@@ -502,3 +502,82 @@ EMPIEZA`, que se pone roja con **un solo dp** de más.
   hay prueba automática que la fije)
 - **Caduca si:** los goldens dejan de tener variante oscura, o se adopta una
   utilidad compartida de análisis que resuelva el umbral por tema
+
+---
+
+### E-INF-013 · Ninguna sentencia sin `WithStatementTimeout` corre con el tope corto
+
+- **Nivel:** MEDIDO · **Estado:** VIGENTE
+- **Medido:** 2026-10-14 ~23:14 hora de México (2026-10-15 05:14 UTC), **dev**
+  (`mueblera-firebird`, imagen `jacobalberty/firebird:v4.0`), rama
+  `perf/desempeno-robustez`. **No medido en producción (Firebird 5.0).**
+- **Contexto.** El driver ignora la cancelación del contexto a propósito (la
+  cancelación envenenaba el pool), así que un 503 a los 30 s dejaba la
+  sentencia corriendo en Firebird (se midió un 503 de 78 s en producción).
+  `firebird.WithStatementTimeout(ctx, d)` lo arregla con `SET STATEMENT
+  TIMEOUT d` **por sesión**: `nakagami/firebirdsql v0.9.19` manda el tope por
+  sentencia del protocolo 16 fijo en 0 (`wireprotocol.go:1163-1166`,
+  `1193-1196`, LEÍDO). Ser por sesión es justo el riesgo: que una sentencia de
+  **otro módulo** (el sync de teléfonos, una escritura de cobranza) herede los
+  25 s del tablero. Esta entrada es la evidencia de que no pasa.
+- **Afirmación:** una sentencia emitida sin la opción corre con el tope del
+  proceso (`FB_STATEMENT_TIMEOUT`), y lo que el mecanismo hace en la sesión no
+  altera ni cursores abiertos ni la transacción en curso.
+- **Mediciones** (`internal/platform/firebird/statement_timeout_e_inf_013_integration_test.go`
+  y `statement_timeout_integration_test.go`; `go test -count=1 -run
+  'TestE_INF_013|TestWithStatementTimeout_Firebird' -v ./internal/platform/firebird/`
+  con `.env` de dev):
+  1. **Un `ExecContext` sin la opción restaura, visto desde otra conexión.**
+     Conexión fija `c1` (attachment 44474); tras una lectura con tope de 2 s,
+     otra conexión lee `MON$ATTACHMENTS.MON$STATEMENT_TIMEOUT` de ese
+     attachment: **2000 ms** (control positivo: la consulta sí ve el tope
+     corto). Tras `c1.ExecContext(EXECUTE BLOCK AS BEGIN END)` sin opción:
+     **600000 ms** = el tope del proceso.
+  2. **Restaurar no alarga un cursor abierto con 2 s.** En una transacción, un
+     cursor abierto con tope de 2 s; en la misma transacción, un `ExecContext`
+     sin opción (manda `SET ... 600`) con el cursor abierto. El cursor **murió
+     a los 4.48 s** con *"operation was cancelled / Attachment level timeout
+     expired"*: el tope que vale es el de cuando se **ejecutó**. Los 2.48 s de
+     más son, INFERIDO, el lote de filas que el driver ya tenía en memoria
+     (la prueba duerme 5 ms por fila) antes del siguiente `op_fetch`; lo
+     volvería MEDIDO registrar en qué fila llega el error.
+  3. **Un SET posterior no acota un cursor ya abierto.** Cursor abierto con el
+     tope del proceso; en la misma transacción una lectura con tope de 2 s
+     (sesión en 2 s); el primer cursor siguió leyendo **5.0 s sin error**. El
+     bucle de lectura es el mismo que en la medición 2 sí vio el aborto
+     (control positivo).
+  4. **El SET dentro de una transacción de escritura no la cambia.**
+     `CURRENT_TRANSACTION` antes / tras `SET 2` / tras `SET 600` =
+     **13848027 / 13848027 / 13848027**, y una variable `USER_TRANSACTION`
+     puesta antes del primer SET sigue ahí (no hubo commit). Control positivo:
+     una transacción nueva da otro número y la variable vacía.
+  5. **El tope vencido a mitad del fetch se mapea a `firebird_timeout`**
+     (`firebird.MapError`, misma ruta que el aborto en ejecución), así que el
+     cliente recibe 503 y no un 500 con texto del driver.
+- **Defensas en el código** (`driverwrap.go`, `cancelProofConn`):
+  `ResetSession` restaura el tope al sacar la conexión del pool (si falla:
+  `ErrBadConn`, que `database/sql` reintenta con otra; nunca falla la sentencia
+  de otro dentro de su transacción). `syncStatementTimeout` vuelve a restaurar
+  antes de cada sentencia (segunda defensa). Un SET fallido deja la sesión en
+  estado **desconocido** y la siguiente sentencia manda su SET sí o sí; si
+  falla también, la conexión queda condenada (`IsValid`/`ResetSession`).
+- **Trampas encontradas al medir:**
+  - Las tablas `MON$` son una foto que vive hasta que **termina** la
+    transacción, y la transacción implícita del driver sólo hace commit
+    retaining: una lectura simple del pool devolvió una foto vieja (vio la
+    sentencia abortada "todavía corriendo" y el tope sin restaurar). Toda
+    lectura de `MON$` va en una transacción propia.
+  - El driver se registra **una vez por proceso** con el primer `firebird.New`;
+    en el binario de pruebas de `platform/firebird` lo gana a veces una prueba
+    con `StatementTimeout` 0. Comparar contra el `cfg` propio dio un falso rojo
+    (esperaba 600000, el proceso tenía 0). Las pruebas comparan contra
+    `RegisteredDefaultStatementTimeout()`.
+- **Guardada por:** `TestE_INF_013_*` (integración) y
+  `TestStatementTimeout_E_INF_013_*` (unitarias). Mutaciones rojas: `ExecContext`
+  que sólo revisa `broken` sin restaurar; `ResetSession` que no restaura;
+  override fallido sin marcar desconocido; estado desconocido que no fuerza el
+  SET; desconocido + SET fallido que no condena.
+- **Caduca si:** el driver empieza a mandar el tope por sentencia del protocolo
+  (entonces se usa ése y no hay estado de sesión), se cambia de driver, o
+  producción mide distinto en Firebird 5.0 — lo que la volvería MEDIDA allá es
+  correr estas mismas pruebas contra una copia con 5.0.

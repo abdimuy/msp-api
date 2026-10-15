@@ -123,8 +123,111 @@ func TestStatementTimeout_FailedOverrideStillRunsTheStatement(t *testing.T) {
 	require.NoError(t, err, "el tope acotado es defensa: si el SET falla la lectura sigue con el del proceso")
 	assert.Len(t, fc.queryCtxs, 1)
 	assert.True(t, conn.IsValid())
+	assert.True(t, conn.unknown, "tras un SET fallido no sabemos qué tope tiene la sesión (E-INF-013)")
+}
+
+// E-INF-013: after a failed override the session state is UNKNOWN, so the
+// next statement sends the default no matter what, and a failure there
+// condemns the conn.
+func TestStatementTimeout_E_INF_013_UnknownStateForcesTheNextSet(t *testing.T) {
+	t.Parallel()
+	conn, fc, _ := newWrappedWithDefault(10 * time.Minute)
+	fc.execErr = errFake
+	_, err := conn.QueryContext(WithStatementTimeout(context.Background(), 25*time.Second), "SELECT 1", nil)
+	require.NoError(t, err)
+
+	// Server recovers: the default is sent even though currentTimeout already
+	// "equals" it.
+	fc.execErr = nil
+	_, err = conn.QueryContext(context.Background(), "SELECT 2", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"SET STATEMENT TIMEOUT 25 SECOND", "SET STATEMENT TIMEOUT 600 SECOND"}, fc.execQueries)
+	assert.False(t, conn.unknown)
+
+	// Unknown again, and this time the forced SET fails: condemned.
+	fc.execErr = errFake
+	_, err = conn.QueryContext(WithStatementTimeout(context.Background(), 25*time.Second), "SELECT 3", nil)
+	require.NoError(t, err)
+	_, err = conn.QueryContext(context.Background(), "SELECT 4", nil)
+	require.ErrorIs(t, err, driver.ErrBadConn)
+	assert.False(t, conn.IsValid())
+}
+
+// E-INF-013: Exec without the option after a Query with it restores the
+// default before running (the conn-level Exec path is its own code path).
+func TestStatementTimeout_E_INF_013_ExecWithoutOptionRestoresAfterOverriddenQuery(t *testing.T) {
+	t.Parallel()
+	conn, fc, _ := newWrappedWithDefault(10 * time.Minute)
+	_, err := conn.QueryContext(WithStatementTimeout(context.Background(), 25*time.Second), "SELECT 1", nil)
+	require.NoError(t, err)
+	_, err = conn.ExecContext(context.Background(), "UPDATE X SET Y = 1", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"SET STATEMENT TIMEOUT 25 SECOND",
+		"SET STATEMENT TIMEOUT 600 SECOND",
+		"UPDATE X SET Y = 1",
+	}, fc.execQueries)
+}
+
+// E-INF-013: ResetSession (database/sql calls it when it hands a pooled conn
+// to the next borrower) restores the default, so a conn never serves another
+// module with the narrow ceiling, and a failure there is a retryable
+// ErrBadConn instead of a failed statement inside somebody's transaction.
+// E-INF-013: while unknown, even a statement that asks for the narrow ceiling
+// condemns the conn if its forced SET fails — two failed SETs in a row leave
+// nothing we can trust about the session.
+func TestStatementTimeout_E_INF_013_UnknownThenFailedOverrideCondemns(t *testing.T) {
+	t.Parallel()
+	conn, fc, _ := newWrappedWithDefault(10 * time.Minute)
+	fc.execErr = errFake
+	acotado := WithStatementTimeout(context.Background(), 25*time.Second)
+	_, err := conn.QueryContext(acotado, "SELECT 1", nil)
+	require.NoError(t, err)
+	_, err = conn.QueryContext(acotado, "SELECT 2", nil)
+	require.ErrorIs(t, err, driver.ErrBadConn)
+	assert.Len(t, fc.queryCtxs, 1)
+	assert.False(t, conn.IsValid())
+}
+
+func TestStatementTimeout_E_INF_013_ResetSessionRestoresTheDefault(t *testing.T) {
+	t.Parallel()
+	conn, fc, _ := newWrappedWithDefault(10 * time.Minute)
+
 	require.NoError(t, conn.ResetSession(context.Background()))
-	assert.Equal(t, 10*time.Minute, conn.currentTimeout, "el estado no debe mentir sobre lo que tiene el servidor")
+	assert.Empty(t, fc.execQueries, "en el tope del proceso no hay nada que restaurar")
+
+	_, err := conn.QueryContext(WithStatementTimeout(context.Background(), 25*time.Second), "SELECT 1", nil)
+	require.NoError(t, err)
+	require.NoError(t, conn.ResetSession(context.Background()))
+	assert.Equal(t, []string{"SET STATEMENT TIMEOUT 25 SECOND", "SET STATEMENT TIMEOUT 600 SECOND"}, fc.execQueries)
+	assert.Equal(t, 10*time.Minute, conn.currentTimeout)
+
+	// The next statement without the option costs nothing extra.
+	_, err = conn.ExecContext(context.Background(), "UPDATE X SET Y = 1", nil)
+	require.NoError(t, err)
+	assert.Len(t, fc.execQueries, 3)
+}
+
+func TestStatementTimeout_E_INF_013_ResetSessionFailureCondemnsTheConn(t *testing.T) {
+	t.Parallel()
+	conn, fc, _ := newWrappedWithDefault(10 * time.Minute)
+	_, err := conn.QueryContext(WithStatementTimeout(context.Background(), 25*time.Second), "SELECT 1", nil)
+	require.NoError(t, err)
+	fc.execErr = errFake
+	require.ErrorIs(t, conn.ResetSession(context.Background()), driver.ErrBadConn)
+	assert.False(t, conn.IsValid())
+}
+
+func TestStatementTimeout_E_INF_013_ResetSessionForcesSetWhenUnknown(t *testing.T) {
+	t.Parallel()
+	conn, fc, _ := newWrappedWithDefault(10 * time.Minute)
+	fc.execErr = errFake
+	_, err := conn.QueryContext(WithStatementTimeout(context.Background(), 25*time.Second), "SELECT 1", nil)
+	require.NoError(t, err)
+	fc.execErr = nil
+	require.NoError(t, conn.ResetSession(context.Background()))
+	assert.Equal(t, []string{"SET STATEMENT TIMEOUT 25 SECOND", "SET STATEMENT TIMEOUT 600 SECOND"}, fc.execQueries)
+	assert.False(t, conn.unknown)
 }
 
 func TestStatementTimeout_DisabledDefaultRestoresToZero(t *testing.T) {
