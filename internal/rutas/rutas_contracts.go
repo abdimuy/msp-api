@@ -59,6 +59,10 @@ type CobranzaUsuariosReader interface {
 	// user (no second Firestore read). A user without zona or window returns
 	// an empty breakdown, not an error.
 	CobranzaDeUsuario(ctx context.Context, u UsuarioCobrador) (CobranzaUsuario, error)
+	// CobranzaDeUsuarios is CobranzaDeUsuario for many users at once with a
+	// fixed number of statements (not one per user): out[i] is exactly
+	// CobranzaDeUsuario(us[i]), computed with one shared "now".
+	CobranzaDeUsuarios(ctx context.Context, us []UsuarioCobrador) ([]CobranzaUsuario, error)
 }
 
 // ErrCalendarioNoDisponible wraps any failure reading Firestore `users`.

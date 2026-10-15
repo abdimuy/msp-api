@@ -21,6 +21,7 @@ type fakeRutas struct {
 	errUs    error
 	errCob   error
 	pedido   rutas.UsuarioCobrador
+	pedidos  []rutas.UsuarioCobrador
 }
 
 func (f *fakeRutas) UsuariosCobradores(context.Context) ([]rutas.UsuarioCobrador, error) {
@@ -30,6 +31,19 @@ func (f *fakeRutas) UsuariosCobradores(context.Context) ([]rutas.UsuarioCobrador
 func (f *fakeRutas) CobranzaDeUsuario(_ context.Context, u rutas.UsuarioCobrador) (rutas.CobranzaUsuario, error) {
 	f.pedido = u
 	return f.cobranza, f.errCob
+}
+
+func (f *fakeRutas) CobranzaDeUsuarios(_ context.Context, us []rutas.UsuarioCobrador) ([]rutas.CobranzaUsuario, error) {
+	f.pedidos = us
+	if f.errCob != nil {
+		return nil, f.errCob
+	}
+	out := make([]rutas.CobranzaUsuario, len(us))
+	for i, u := range us {
+		out[i] = f.cobranza
+		out[i].Usuario = u
+	}
+	return out, nil
 }
 
 func TestRutasUsuariosClient_ListarUsuarios(t *testing.T) {

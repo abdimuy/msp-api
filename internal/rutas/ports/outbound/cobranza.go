@@ -16,6 +16,18 @@ type CobranzaRepo interface {
 	// paid in window). The caller provides the reporting window so the
 	// query can filter pagos without a second round-trip.
 	VentasPorZona(ctx context.Context, zonaID int, desde, hasta time.Time) ([]rutasdomain.VentaCobranza, error)
+	// VentasPorZonas answers several (zona, desde) windows sharing the same
+	// hasta with a fixed number of statements, whatever the number of zonas.
+	// out[i] is exactly what VentasPorZona(consultas[i].ZonaID,
+	// consultas[i].Desde, hasta) returns — same rows, same order — and is a
+	// slice of its own (callers enrich it in place).
+	VentasPorZonas(ctx context.Context, consultas []ConsultaVentasZona, hasta time.Time) ([][]rutasdomain.VentaCobranza, error)
+}
+
+// ConsultaVentasZona is one window of VentasPorZonas.
+type ConsultaVentasZona struct {
+	ZonaID int
+	Desde  time.Time
 }
 
 // UsuarioCobrador is one Firestore `users` document projected to the fields the
