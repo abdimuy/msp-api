@@ -139,11 +139,15 @@ func TestTablero_ParametrosDistintosNoSeMezclan(t *testing.T) {
 	cu := usuarioCon(auth.PermDesempenoVer)
 	h := routerOpts(&cu, servicioCon(t, u))
 
+	// Una base y una variante por cada campo de la clave, que difiere de la
+	// base SOLO en ese campo: quitar cualquiera de los cuatro de la clave
+	// junta dos de estas peticiones y la cuenta baja.
 	paths := []string{
-		"/desempeno/usuarios?pausa_min=30",
-		"/desempeno/usuarios?pausa_min=60",
-		"/desempeno/usuarios?periodo=semana&pausa_min=30",
-		"/desempeno/usuarios?pausa_min=30&desde_hora=08:00&hasta_hora=18:00",
+		"/desempeno/usuarios?periodo=semana&pausa_min=30&desde_hora=08:00&hasta_hora=18:00",
+		"/desempeno/usuarios?periodo=hoy&pausa_min=30&desde_hora=08:00&hasta_hora=18:00",
+		"/desempeno/usuarios?periodo=semana&pausa_min=60&desde_hora=08:00&hasta_hora=18:00",
+		"/desempeno/usuarios?periodo=semana&pausa_min=30&desde_hora=09:00&hasta_hora=18:00",
+		"/desempeno/usuarios?periodo=semana&pausa_min=30&desde_hora=08:00&hasta_hora=17:00",
 	}
 	out, wg := lanzar(h, paths)
 	esperaYSuelta(t, u, int32(len(paths)))
