@@ -1297,7 +1297,7 @@ type ZonaExcluidaDesempeno struct {
 
 // ErrZonaExcluidaInvalida: zona ≤ 0 o sin administrador.
 var ErrZonaExcluidaInvalida = apperror.NewValidation(
-	"config_zona_excluida_invalida",
+	"zona_excluida_invalida",
 	"la zona o el usuario de la exclusión no son válidos",
 )
 
