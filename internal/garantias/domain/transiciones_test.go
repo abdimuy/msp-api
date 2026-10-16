@@ -47,6 +47,7 @@ func TestEtapa_CanTransitionTo_ValidTransitions(t *testing.T) {
 
 		// Convergencia
 		{domain.EtapaListoEntrega, domain.EtapaEntregado},
+		{domain.EtapaListoEntrega, domain.EtapaReingresadoInventario},
 
 		// Standby → terminales
 		{domain.EtapaStandby, domain.EtapaSegundaMano},
@@ -107,9 +108,8 @@ func TestEtapa_CanTransitionTo_RejectsInvalid(t *testing.T) {
 		{domain.EtapaEnTaller, domain.EtapaEnRevision},
 		{domain.EtapaReparadoTaller, domain.EtapaEnTaller},
 
-		// listo_entrega solo va a entregado
+		// listo_entrega no va a cambio_autorizado
 		{domain.EtapaListoEntrega, domain.EtapaCambioAutorizado},
-		{domain.EtapaListoEntrega, domain.EtapaReingresadoInventario},
 
 		// Sin retrocesos desde cambio_autorizado
 		{domain.EtapaCambioAutorizado, domain.EtapaDictamenRecibido},
@@ -208,6 +208,7 @@ func TestEtapa_CanTransitionTo_ExhaustiveInvalid(t *testing.T) {
 
 		// Convergencia
 		{domain.EtapaListoEntrega, domain.EtapaEntregado},
+		{domain.EtapaListoEntrega, domain.EtapaReingresadoInventario},
 
 		// Standby → terminales
 		{domain.EtapaStandby, domain.EtapaSegundaMano},

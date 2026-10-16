@@ -14,12 +14,16 @@ func TestParseTipoEvento_HappyPath(t *testing.T) {
 		want  domain.TipoEvento
 	}{
 		{"folio_abierto", domain.TipoEventoFolioAbierto},
+		{"folio_en_proceso", domain.TipoEventoFolioEnProceso},
+		{"folio_listo_entrega", domain.TipoEventoFolioListoEntrega},
 		{"articulo_agregado", domain.TipoEventoArticuloAgregado},
+		{"articulo_movido", domain.TipoEventoArticuloMovido},
 		{"etapa_avanzada", domain.TipoEventoEtapaAvanzada},
 		{"diagnostico_registrado", domain.TipoEventoDiagnosticoRegistrado},
 		{"dictamen_registrado", domain.TipoEventoDictamenRegistrado},
 		{"cambio_autorizado", domain.TipoEventoCambioAutorizado},
 		{"desenlace_registrado", domain.TipoEventoDesenlaceRegistrado},
+		{"devolucion_fallida", domain.TipoEventoDevolucionFallida},
 		{"folio_entregado", domain.TipoEventoFolioEntregado},
 		{"folio_cerrado", domain.TipoEventoFolioCerrado},
 		{"folio_cancelado", domain.TipoEventoFolioCancelado},
