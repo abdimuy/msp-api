@@ -22,6 +22,8 @@ type Evento struct {
 	description       string
 	etapaDesde        *Etapa
 	etapaHasta        *Etapa
+	ubicacionDesde    *Ubicacion
+	ubicacionHasta    *Ubicacion
 	usuario           string
 	rolDecisor        *RolDecisor
 	gpsLat            *float64
@@ -41,6 +43,8 @@ type EventoParams struct {
 	Description       string
 	EtapaDesde        *Etapa
 	EtapaHasta        *Etapa
+	UbicacionDesde    *Ubicacion
+	UbicacionHasta    *Ubicacion
 	Usuario           string
 	RolDecisor        *RolDecisor
 	GPSLat, GPSLon    *float64
@@ -53,7 +57,7 @@ type EventoParams struct {
 // event ID is generated here via uuid.New(). Tipo is a validated closed enum
 // fed by typed constants, so an invalid value can never reach this function.
 func newEvento(p EventoParams) (*Evento, error) {
-	usuario := strings.TrimSpace(p.Usuario)
+	usuario := normalizarNFC(strings.TrimSpace(p.Usuario))
 	if usuario == "" {
 		return nil, ErrEventoUsuarioObligatorio
 	}
@@ -88,9 +92,11 @@ func newEvento(p EventoParams) (*Evento, error) {
 		garantiaID:        p.GarantiaID,
 		articuloRef:       p.ArticuloRef,
 		tipo:              p.Tipo,
-		description:       p.Description,
+		description:       normalizarNFC(p.Description),
 		etapaDesde:        p.EtapaDesde,
 		etapaHasta:        p.EtapaHasta,
+		ubicacionDesde:    p.UbicacionDesde,
+		ubicacionHasta:    p.UbicacionHasta,
 		usuario:           usuario,
 		rolDecisor:        p.RolDecisor,
 		gpsLat:            p.GPSLat,
@@ -129,6 +135,8 @@ type HydrateEventoParams struct {
 	Description       string
 	EtapaDesde        *Etapa
 	EtapaHasta        *Etapa
+	UbicacionDesde    *Ubicacion
+	UbicacionHasta    *Ubicacion
 	Usuario           string
 	RolDecisor        *RolDecisor
 	GPSLat, GPSLon    *float64
@@ -148,6 +156,8 @@ func HydrateEvento(p HydrateEventoParams) *Evento {
 		description:       p.Description,
 		etapaDesde:        p.EtapaDesde,
 		etapaHasta:        p.EtapaHasta,
+		ubicacionDesde:    p.UbicacionDesde,
+		ubicacionHasta:    p.UbicacionHasta,
 		usuario:           p.Usuario,
 		rolDecisor:        p.RolDecisor,
 		gpsLat:            p.GPSLat,
@@ -178,6 +188,14 @@ func (e *Evento) EtapaDesde() *Etapa { return e.etapaDesde }
 
 // EtapaHasta returns the destination stage for stage-bearing events, if any.
 func (e *Evento) EtapaHasta() *Etapa { return e.etapaHasta }
+
+// UbicacionDesde returns the origin location for location-bearing events, if
+// any. A move that does not change where the item is leaves it nil.
+func (e *Evento) UbicacionDesde() *Ubicacion { return e.ubicacionDesde }
+
+// UbicacionHasta returns the destination location for location-bearing events,
+// if any.
+func (e *Evento) UbicacionHasta() *Ubicacion { return e.ubicacionHasta }
 
 // Usuario returns the actor who registered the event.
 func (e *Evento) Usuario() string { return e.usuario }
