@@ -1200,7 +1200,7 @@ git commit -m "feat(desempeno): horas activas recortadas al horario y eje segun 
   }
   // satisfecho por *configapp.Service
   ```
-  HTTP: `GET /v2/config/desempeno/zonas-excluidas` (`config:leer`) → `{"items":[{"zona_id":23301,"zona_nombre":"MAYOREO","created_at":"...Z"}]}`; `PUT /v2/config/desempeno/zonas-excluidas/{zonaId}` (`config:administrar`, idempotente, 404 `config_zona_no_encontrada` si la zona no existe en `ZONAS_CLIENTES`) → 200 con el item; `DELETE` mismo path (`config:administrar`, idempotente) → 204.
+  HTTP: `GET /v2/config/desempeno/zonas-excluidas` (`config:leer`) → `{"items":[{"zona_id":23301,"zona_nombre":"MAYOREO","created_at":"...Z"}]}`; `PUT /v2/config/desempeno/zonas-excluidas/{zonaId}` (`config:administrar`, idempotente, 404 `zona_no_existe` si la zona no existe en `ZONAS_CLIENTES`) → 200 con el item; `DELETE` mismo path (`config:administrar`, idempotente) → 204.
 
 - [ ] **Step 1: Migración** (sólo estructura; CLAUDE.md §1: sin DEFAULT, `CREATED_AT`/`CREATED_BY` desde Go)
 
