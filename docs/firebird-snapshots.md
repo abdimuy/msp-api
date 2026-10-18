@@ -19,7 +19,7 @@ Backup/restore del dev DB de Firebird (`mueblera-firebird`) usando `gbak`, la he
 
 **La carpeta la comparten todos los worktrees** (y los agentes que trabajan en ellos). Por eso `fb-restore` ya no tiene "el más reciente" por defecto —podía ser el de otro worktree— y `fb-snapshot` no pisa un `NAME` existente salvo con `FORCE=1`. Usa nombres que digan de quién son (`NAME=antes-000066-visitas`).
 
-**`fb-restore` aborta de verdad** si no tecleas `restore`. Hasta 2026-10-18 los `|| (echo … && exit 1)` de en medio del target sólo salían de un subshell: contestar otra cosa imprimía `aborted` **y restauraba igual**. Lo guarda `scripts/makefile-migrate_test.sh`.
+**`fb-restore` aborta de verdad** si no tecleas `restore`. Hasta 2026-10-18 los `|| (echo … && exit 1)` de en medio del target sólo salían de un subshell: contestar otra cosa imprimía `aborted` **y restauraba igual**. Lo guarda `scripts/makefile-migrate_test.sh`; `make test-makefile` lo corre en FB4 y FB5 con contenedores `*-desechable`.
 
 ## Cómo es un snapshot
 

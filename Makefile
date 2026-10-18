@@ -1,4 +1,4 @@
-.PHONY: help setup build build-winback run dev test test-unit test-mutation test-mutation-domain test-mutation-app test-mutation-ventas test-mutation-ventas-domain test-mutation-ventas-app test-mutation-cobranza test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-cobranza-eventbus test-mutation-visitas test-mutation-visitas-domain test-mutation-visitas-app test-mutation-httpdispatch lint lint-fix check-sealed fmt generate clean test-firebird test-firebird-all test-firebird-ventas coverage-auth coverage-auth-full coverage-ventas coverage-ventas-full coverage-canal coverage-visitas precommit-strict fb-migrate-up fb-migrate-down fb-migrate-status fb-seed-admin fb-snapshot fb-snapshot-list fb-restore fb-snapshot-delete fb-emu-up fb-emu-down fb-emu-logs meilisearch-up meilisearch-down test-meilisearch
+.PHONY: help setup build build-winback run dev test test-unit test-mutation test-mutation-domain test-mutation-app test-mutation-ventas test-mutation-ventas-domain test-mutation-ventas-app test-mutation-cobranza test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-cobranza-eventbus test-mutation-visitas test-mutation-visitas-domain test-mutation-visitas-app test-mutation-httpdispatch lint lint-fix check-sealed fmt generate clean test-firebird test-firebird-all test-firebird-ventas coverage-auth coverage-auth-full coverage-ventas coverage-ventas-full coverage-canal coverage-visitas precommit-strict test-makefile fb-migrate-up fb-migrate-down fb-migrate-status fb-seed-admin fb-snapshot fb-snapshot-list fb-restore fb-snapshot-delete fb-emu-up fb-emu-down fb-emu-logs meilisearch-up meilisearch-down test-meilisearch
 
 # ── Config ───────────────────────────────────────────────────────────
 APP_NAME      := msp-api
@@ -302,6 +302,23 @@ fb-seed-admin: ## Apply admin seed file (must be created from the .example templ
 		(echo "❌ Missing $(FB_SEEDS_DIR)/000001_admin_user.sql — copy from .example and fill in values" && exit 1)
 	docker exec -i $(FB_CONTAINER) /usr/local/firebird/bin/isql \
 		-bail -u $(FB_USER) -p $(FB_PASSWORD) -ch UTF8 $(FB_DATABASE) < $(FB_SEEDS_DIR)/000001_admin_user.sql
+
+# ── Pruebas de los targets Firebird y del generador de la base de pruebas ──
+# Levantan contenedores Firebird DESECHABLES propios (nombre *-desechable; los
+# scripts se niegan a borrar cualquier otro) con bases vacías/sintéticas.
+# Nunca tocan mueblera-firebird, la base de dev ni el artefacto publicado.
+# Sin docker se saltan solos. FB_TEST_IMAGES elige las imágenes (FB4 y FB5 por
+# defecto). Deliberadamente NO está en lefthook ni en CI: se corre a mano al
+# tocar los targets fb-* o scripts/make-test-db.sh.
+FB_TEST_IMAGES ?= jacobalberty/firebird:v4.0 firebirdsql/firebird:5.0.4
+
+test-makefile: ## Test fb-migrate/fb-snapshot/fb-restore targets and make-test-db.sh on throwaway *-desechable Firebird containers (FB4+FB5)
+	@set -e; for img in $(FB_TEST_IMAGES); do \
+		echo "═══ $$img"; \
+		FB_IMAGE=$$img CONTAINER=msp-makefile-test-desechable ./scripts/makefile-migrate_test.sh; \
+		FB_IMAGE=$$img CONTAINER=msp-make-test-db-desechable ./scripts/make-test-db_test.sh; \
+	done
+	@echo "✔ test-makefile"
 
 # ── Firebird integration tests (against the real Microsip dev DB) ───
 # Tests connect to the same Firebird container the API uses in dev
