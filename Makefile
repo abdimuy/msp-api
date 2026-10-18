@@ -310,15 +310,32 @@ fb-seed-admin: ## Apply admin seed file (must be created from the .example templ
 # Sin docker se saltan solos. FB_TEST_IMAGES elige las imágenes (FB4 y FB5 por
 # defecto). Deliberadamente NO está en lefthook ni en CI: se corre a mano al
 # tocar los targets fb-* o scripts/make-test-db.sh.
-FB_TEST_IMAGES ?= jacobalberty/firebird:v4.0 firebirdsql/firebird:5.0.4
+FB_TEST_IMAGES  ?= jacobalberty/firebird:v4.0 firebirdsql/firebird:5.0.4
+FB_TEST_SCRIPTS ?= scripts/makefile-migrate_test.sh scripts/make-test-db_test.sh
 
+# El resultado NO depende de `set -e`: se revisa el exit de cada prueba Y su
+# salida — una prueba que imprime una línea FAIL hace fallar el target aunque
+# salga con 0. Guardado por el caso 8 de scripts/makefile-migrate_test.sh.
 test-makefile: ## Test fb-migrate/fb-snapshot/fb-restore targets and make-test-db.sh on throwaway *-desechable Firebird containers (FB4+FB5)
-	@set -e; for img in $(FB_TEST_IMAGES); do \
-		echo "═══ $$img"; \
-		FB_IMAGE=$$img CONTAINER=msp-makefile-test-desechable ./scripts/makefile-migrate_test.sh; \
-		FB_IMAGE=$$img CONTAINER=msp-make-test-db-desechable ./scripts/make-test-db_test.sh; \
-	done
-	@echo "✔ test-makefile"
+	@failed=""; \
+	for img in $(FB_TEST_IMAGES); do \
+		for t in $(FB_TEST_SCRIPTS); do \
+			echo "═══ $$img · $$t"; \
+			log=$$(mktemp); \
+			FB_IMAGE=$$img CONTAINER=msp-test-makefile-$$(basename $$t .sh | tr '_' '-')-desechable \
+				"$$t" >"$$log" 2>&1; \
+			rc=$$?; \
+			cat "$$log"; \
+			if [ "$$rc" -ne 0 ]; then \
+				failed="$$failed $$img·$$t(exit=$$rc)"; \
+			elif grep -q '^FAIL' "$$log"; then \
+				failed="$$failed $$img·$$t(imprimió FAIL)"; \
+			fi; \
+			rm -f "$$log"; \
+		done; \
+	done; \
+	if [ -n "$$failed" ]; then echo "❌ test-makefile falló:$$failed"; exit 1; fi; \
+	echo "✔ test-makefile"
 
 # ── Firebird integration tests (against the real Microsip dev DB) ───
 # Tests connect to the same Firebird container the API uses in dev

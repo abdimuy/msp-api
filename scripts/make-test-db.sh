@@ -39,15 +39,16 @@ WORK_DB="${WORK_DB:-/firebird/data/CAT.FDB}"
 VERIFY_DB="${VERIFY_DB:-/firebird/data/CATVERIF.FDB}"
 OUT="${OUT:-msp-test-db.fbk.gz}"
 # El artefacto se copia primero a $OUT.partial y sólo se mueve a $OUT cuando
-# pasó la verificación (paso 5 + volcado). Si algo falla antes, el trap borra
-# el parcial: en $OUT nunca queda un artefacto a medias ni sin verificar.
-# (Un $OUT de una corrida ANTERIOR no se toca.)
+# terminaron el paso 5 (restaurarlo a una base aparte) y el volcado de texto.
+# Si algo falla antes, el trap borra el parcial: en $OUT nunca queda un
+# artefacto a medias. Que llegue a $OUT NO significa que esté libre de datos
+# personales: el escaneo (db-test-pii-scan.py) no corre dentro de este script
+# y hay que correrlo aparte. (Un $OUT de una corrida ANTERIOR no se toca.)
 OUT_PARTIAL="$OUT.partial"
 FBUSER="${FBUSER:-sysdba}"
 FBPASS="${FBPASS:-masterkey}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ANONYMIZE_SQL="${ANONYMIZE_SQL:-$SCRIPT_DIR/db-test-anonymize.sql}"
 GBAK=/usr/local/firebird/bin/gbak
 ISQL=/usr/local/firebird/bin/isql
 
@@ -55,6 +56,15 @@ fb() { docker exec -i "$CONTAINER" "$@"; }
 
 rm -f "$OUT_PARTIAL"
 trap 'rm -f "$OUT_PARTIAL"' EXIT
+
+# La anonimización sale SIEMPRE del archivo versionado junto al script: no hay
+# variable para sustituirla (un archivo vacío dejaba el artefacto con datos
+# reales y exit 0). Y si ese archivo está vacío o no trae ningún UPDATE, no se
+# genera nada. Guardado por scripts/make-test-db_test.sh.
+if ! grep -qiE '^[[:space:]]*UPDATE[[:space:]]' "$SCRIPT_DIR/db-test-anonymize.sql" 2>/dev/null; then
+  echo "❌ $SCRIPT_DIR/db-test-anonymize.sql falta, está vacío o no tiene ningún UPDATE: no se genera el artefacto" >&2
+  exit 1
+fi
 
 if [ "$SRC_DB" = "$WORK_DB" ] || [ "$SRC_DB" = "$VERIFY_DB" ]; then
   echo "❌ WORK_DB/VERIFY_DB no pueden ser la base de origen" >&2
@@ -80,7 +90,7 @@ fb "$GBAK" -c \
   "$FULL_FBK" "$WORK_DB"
 
 echo "▸ 3/5 sustitución por datos sintéticos"
-docker cp "$ANONYMIZE_SQL" "$CONTAINER:/tmp/db-test-anonymize.sql" >/dev/null
+docker cp "$SCRIPT_DIR/db-test-anonymize.sql" "$CONTAINER:/tmp/db-test-anonymize.sql" >/dev/null
 # -bail: sin él isql se salta la sentencia que falla, sigue con el resto y
 # confirma con el COMMIT del final una anonimización a medias en $WORK_DB.
 # (isql sale con 1 en ambos casos y set -e corta aquí; -bail además evita que
@@ -121,7 +131,8 @@ docker cp /tmp/padron.sql "$CONTAINER:/tmp/padron.sql" >/dev/null
 fb "$ISQL" -user "$FBUSER" -password "$FBPASS" -i /tmp/padron.sql "$SRC_DB" \
   | LC_ALL=C sed 's/^ *//; s/ *$//' | LC_ALL=C grep -v '^$' > pii-padron.txt
 
-# Verificado: recién ahora el artefacto llega a su ruta final.
+# Restaurado y volcado: recién ahora el artefacto llega a su ruta final.
+# Falta el escaneo de PII, que se corre aparte (ver abajo).
 mv -f "$OUT_PARTIAL" "$OUT"
 
 echo

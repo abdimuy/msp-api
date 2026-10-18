@@ -18,6 +18,7 @@
 #   6. fb-restore sin NAME aborta y lista los snapshots (aunque se teclee
 #      "restore"): el directorio lo comparten todos los worktrees.
 #   7. FB_SNAPSHOTS_DIR con espacios funciona (rutas entre comillas).
+#   8. make test-makefile falla si una prueba sale con exit != 0 o imprime FAIL.
 #   Además, el error de fb-migrate-up indica `make fb-restore NAME=…`.
 #
 # CONTAINER debe terminar en -desechable (se le hace docker rm -f).
@@ -217,6 +218,18 @@ if git -C "$REPO_ROOT" worktree add --detach "$WT" HEAD >/dev/null 2>&1; then
 else
 	bad "no se pudo crear el worktree de prueba"
 fi
+
+echo "▶ 8. make test-makefile no depende de set -e: exit y salida de cada prueba"
+mkdir -p "$TMP/fakes"
+printf '#!/bin/sh\necho "  FALLA algo"\necho "FAIL: 1 comprobaciones"\nexit 0\n' >"$TMP/fakes/imprime_fail.sh"
+printf '#!/bin/sh\nexit 1\n' >"$TMP/fakes/exit_uno.sh"
+printf '#!/bin/sh\necho PASS\nexit 0\n' >"$TMP/fakes/pasa.sh"
+chmod +x "$TMP/fakes/"*.sh
+tm() { (cd "$TMP/cwd" && make --no-print-directory -f "$MK" test-makefile FB_TEST_IMAGES=imagen-falsa FB_TEST_SCRIPTS="$1" >/dev/null 2>&1); }
+tm "$TMP/fakes/pasa.sh" && ok "control positivo: una prueba que pasa deja el target en 0" || bad "el target falla con una prueba que pasa"
+tm "$TMP/fakes/imprime_fail.sh" && bad "una prueba que imprime FAIL (exit 0) NO hizo fallar el target" || ok "una prueba que imprime FAIL hace fallar el target"
+tm "$TMP/fakes/exit_uno.sh" && bad "una prueba con exit 1 NO hizo fallar el target" || ok "una prueba con exit 1 hace fallar el target"
+tm "$TMP/fakes/exit_uno.sh $TMP/fakes/pasa.sh" && bad "una prueba con exit 1 seguida de una que pasa NO hizo fallar el target" || ok "un fallo seguido de un pase sigue fallando"
 
 echo
 if [ "$fails" -eq 0 ]; then

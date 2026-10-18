@@ -11,6 +11,15 @@
 #      la ruta final ni a medias.
 #   C. control positivo: con una anonimización buena el artefacto sí aparece
 #      en $OUT y no queda el .partial.
+#   D/E. si db-test-anonymize.sql está vacío o no tiene ningún UPDATE, el
+#      script aborta sin generar nada.
+#   F. (estática, sin docker) el script sólo lee la anonimización de
+#      "$SCRIPT_DIR/db-test-anonymize.sql": cualquier otra vía para sustituirla
+#      (variable, argumento, otra ruta) hace fallar la prueba. Un archivo de
+#      anonimización vacío llegó a dejar el artefacto con datos reales y exit 0.
+#
+# Cada caso corre una COPIA del script en su propio directorio, con su propio
+# db-test-anonymize.sql al lado (SCRIPT_DIR lo toma de ahí).
 #
 # Uso:
 #   scripts/make-test-db_test.sh
@@ -22,15 +31,44 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 UNDER_TEST="${MAKE_TEST_DB_UNDER_TEST:-$REPO_ROOT/scripts/make-test-db.sh}"
-# Absoluta: cada caso corre desde su propio directorio. Una copia revertida
-# necesita a su lado db-test-skip-tables.txt y db-test-dump-text.sh.
-UNDER_TEST="$(cd "$(dirname "$UNDER_TEST")" && pwd)/$(basename "$UNDER_TEST")"
+# Absoluta. db-test-skip-tables.txt y db-test-dump-text.sh se toman de su
+# mismo directorio (una copia revertida los necesita al lado).
+UNDER_TEST_DIR="$(cd "$(dirname "$UNDER_TEST")" && pwd)"
+UNDER_TEST="$UNDER_TEST_DIR/$(basename "$UNDER_TEST")"
 FB_IMAGE="${FB_IMAGE:-jacobalberty/firebird:v4.0}"
 CONTAINER="${CONTAINER:-msp-make-test-db-desechable}"
 ISQL=/usr/local/firebird/bin/isql
 
+fails=0
+ok() { echo "  OK    $*"; }
+bad() { echo "  FALLA $*"; fails=$((fails + 1)); }
+
+# F. Las únicas líneas de código (no comentario) que pueden mencionar la
+# anonimización son éstas, al pie de la letra.
+ALLOWED_ANON_LINES='if ! grep -qiE '"'"'^[[:space:]]*UPDATE[[:space:]]'"'"' "$SCRIPT_DIR/db-test-anonymize.sql" 2>/dev/null; then
+echo "❌ $SCRIPT_DIR/db-test-anonymize.sql falta, está vacío o no tiene ningún UPDATE: no se genera el artefacto" >&2
+docker cp "$SCRIPT_DIR/db-test-anonymize.sql" "$CONTAINER:/tmp/db-test-anonymize.sql" >/dev/null
+fb "$ISQL" -bail -user "$FBUSER" -password "$FBPASS" -i /tmp/db-test-anonymize.sql "$WORK_DB"'
+anon_lines_ok() {
+	local extra
+	extra="$(grep -iE 'anonymi|anonimi' "$1" | sed 's/^[[:space:]]*//' | grep -v '^#' |
+		grep -vxF -f <(printf '%s\n' "$ALLOWED_ANON_LINES"))"
+	[ -z "$extra" ] || { echo "$extra" | sed 's/^/        > /'; return 1; }
+	# y el guardia de archivo vacío / sin UPDATE sigue ahí
+	grep -qF 'grep -qiE '"'"'^[[:space:]]*UPDATE[[:space:]]'"'"' "$SCRIPT_DIR/db-test-anonymize.sql"' "$1"
+}
+echo "▶ F. el script sólo lee \$SCRIPT_DIR/db-test-anonymize.sql"
+anon_lines_ok "$UNDER_TEST" && ok "ninguna otra vía para sustituir la anonimización" ||
+	bad "el script lee la anonimización de otro lado o perdió el guardia"
+# Control positivo del chequeo: una copia con la variable de antes debe fallar.
+awk '{print} /^SCRIPT_DIR=/ {print "ANONYMIZE_SQL=\"${ANONYMIZE_SQL:-$SCRIPT_DIR/db-test-anonymize.sql}\""}' "$UNDER_TEST" >"${TMPDIR:-/tmp}/mtd-ctrl.$$"
+anon_lines_ok "${TMPDIR:-/tmp}/mtd-ctrl.$$" >/dev/null && bad "el chequeo NO detecta ANONYMIZE_SQL (control positivo)" ||
+	ok "el chequeo detecta una variable ANONYMIZE_SQL (control positivo)"
+rm -f "${TMPDIR:-/tmp}/mtd-ctrl.$$"
+
 if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
-	echo "SKIP: docker no disponible"
+	echo "SKIP: docker no disponible (sólo corrió F)"
+	[ "$fails" -eq 0 ] || { echo "FAIL: $fails comprobaciones"; exit 1; }
 	exit 0
 fi
 # Se le hace docker rm -f: sólo nombres *-desechable.
@@ -40,15 +78,12 @@ case "$CONTAINER" in
 esac
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/make-test-db-test.XXXXXX")"
-fails=0
 cleanup() {
 	docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 	rm -rf "$TMP"
 }
 trap cleanup EXIT
 
-ok() { echo "  OK    $*"; }
-bad() { echo "  FALLA $*"; fails=$((fails + 1)); }
 sql() { docker exec -i "$CONTAINER" "$ISQL" -u SYSDBA -p masterkey -q "$1"; }
 
 echo "▶ contenedor $CONTAINER ($FB_IMAGE)"
@@ -89,17 +124,26 @@ cat >"$TMP/anon-buena.sql" <<'EOF'
 UPDATE COBRADORES SET NOMBRE = 'SINTETICO';
 COMMIT;
 EOF
+: >"$TMP/anon-vacia.sql"
+cat >"$TMP/anon-sin-update.sql" <<'EOF'
+-- UPDATE COBRADORES SET NOMBRE = 'SINTETICO';
+COMMIT;
+EOF
 
 # run <caso> <anonimizacion> [VAR=valor ...]
 run() {
 	local caso="$1" anon="$2"
 	shift 2
-	mkdir -p "$TMP/$caso"
+	local dir="$TMP/scripts-$caso"
+	mkdir -p "$TMP/$caso" "$dir"
+	cp "$UNDER_TEST" "$dir/make-test-db.sh"
+	cp "$UNDER_TEST_DIR/db-test-skip-tables.txt" "$UNDER_TEST_DIR/db-test-dump-text.sh" "$dir/"
+	cp "$anon" "$dir/db-test-anonymize.sql"
 	(cd "$TMP/$caso" && env CONTAINER="$CONTAINER" SRC_DB="$SRC" \
 		FULL_FBK=/firebird/data/full.fbk WORK_DB=/firebird/data/CAT.FDB \
 		VERIFY_DB=/firebird/data/CATVERIF.FDB OUT="$TMP/$caso/msp-test-db.fbk.gz" \
-		ANONYMIZE_SQL="$anon" FBUSER=SYSDBA FBPASS=masterkey "$@" \
-		bash "$UNDER_TEST" 2>&1)
+		FBUSER=SYSDBA FBPASS=masterkey "$@" \
+		bash "$dir/make-test-db.sh" 2>&1)
 }
 no_artifact() {
 	local caso="$1"
@@ -133,6 +177,17 @@ echo "$out" | tail -4 | sed 's/^/        | /'
 [ "$rc" -eq 0 ] && ok "exit 0" || bad "exit=$rc, se esperaba 0"
 [ -s "$TMP/C/msp-test-db.fbk.gz" ] && ok "el artefacto está en \$OUT" || bad "no hay artefacto en \$OUT"
 [ ! -e "$TMP/C/msp-test-db.fbk.gz.partial" ] && ok "no quedó .partial" || bad "quedó .partial"
+
+for caso in D:anon-vacia E:anon-sin-update; do
+	c="${caso%%:*}"
+	f="${caso#*:}"
+	echo "▶ $c. db-test-anonymize.sql = $f"
+	out="$(run "$c" "$TMP/$f.sql")"
+	rc=$?
+	echo "$out" | tail -2 | sed 's/^/        | /'
+	[ "$rc" -ne 0 ] && ok "exit distinto de 0 ($rc)" || bad "exit=$rc, se esperaba != 0"
+	no_artifact "$c"
+done
 
 echo
 if [ "$fails" -eq 0 ]; then
