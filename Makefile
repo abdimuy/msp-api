@@ -187,7 +187,7 @@ fb-migrate-up: ## Apply pending Firebird migrations (idempotent; dev only)
 		echo "▶ $$f (id=$$id)"; \
 		docker exec -i $(FB_CONTAINER) /usr/local/firebird/bin/isql \
 			-bail -u $(FB_USER) -p $(FB_PASSWORD) -ch UTF8 $(FB_DATABASE) < $$f \
-			|| { echo "❌ Failed at $$f (id=$$id) — NOT registered in MSP_MIGRATIONS; stopping. Statements before the failing one may already be committed (AUTODDL): check by hand before re-running."; exit 1; }; \
+			|| { echo "❌ Failed at $$f (id=$$id) — NOT registered in MSP_MIGRATIONS; stopping. Statements before the failing one may already be committed (AUTODDL): check by hand, or roll back with the snapshot you took before migrating: make fb-restore NAME=<el que tomaste>."; exit 1; }; \
 	done
 	@echo "✔ Firebird migrations applied"
 
@@ -225,36 +225,45 @@ fb-migrate-status: ## Show applied Firebird migrations
 FB_REPO_ROOT     := $(shell d=$$(git rev-parse --git-common-dir 2>/dev/null) && cd "$$d/.." && pwd)
 FB_SNAPSHOTS_DIR ?= $(if $(FB_REPO_ROOT),$(FB_REPO_ROOT),$(CURDIR))/data/firebird-snapshots
 
-fb-snapshot: ## Take a hot snapshot of the dev DB. NAME=foo optional (defaults to timestamp).
-	@mkdir -p $(FB_SNAPSHOTS_DIR)
+fb-snapshot: ## Take a hot snapshot of the dev DB. NAME=foo optional (defaults to timestamp). FORCE=1 to overwrite an existing NAME.
+	@mkdir -p "$(FB_SNAPSHOTS_DIR)"
 	@name="$${NAME:-snapshot_$$(date +%Y%m%d_%H%M%S)}"; \
+	dst="$(FB_SNAPSHOTS_DIR)/$$name.fbk"; \
+	if [ -e "$$dst" ] && [ "$(FORCE)" != "1" ]; then \
+		echo "❌ snapshot already exists: $$dst"; \
+		echo "   El directorio lo comparten todos los worktrees: usa otro NAME, o FORCE=1 para sobreescribirlo."; \
+		exit 1; \
+	fi; \
 	echo "▶ creating snapshot $$name.fbk (this takes ~30s for 3.6GB)"; \
 	docker exec $(FB_CONTAINER) /usr/local/firebird/bin/gbak \
 		-b -v -t -user $(FB_USER) -password $(FB_PASSWORD) \
 		$(FB_DATABASE) /tmp/$$name.fbk \
 		|| { echo "❌ gbak backup failed"; exit 1; }; \
-	docker cp $(FB_CONTAINER):/tmp/$$name.fbk $(FB_SNAPSHOTS_DIR)/$$name.fbk \
+	docker cp $(FB_CONTAINER):/tmp/$$name.fbk "$$dst" \
 		|| { echo "❌ docker cp failed"; exit 1; }; \
 	docker exec $(FB_CONTAINER) rm -f /tmp/$$name.fbk; \
-	echo "✔ snapshot saved to $(FB_SNAPSHOTS_DIR)/$$name.fbk"; \
-	ls -lh $(FB_SNAPSHOTS_DIR)/$$name.fbk
+	echo "✔ snapshot saved to $$dst"; \
+	ls -lh "$$dst"
 
 fb-snapshot-list: ## List available Firebird snapshots
-	@if [ ! -d $(FB_SNAPSHOTS_DIR) ] || [ -z "$$(ls -A $(FB_SNAPSHOTS_DIR) 2>/dev/null)" ]; then \
+	@if [ ! -d "$(FB_SNAPSHOTS_DIR)" ] || [ -z "$$(ls -A "$(FB_SNAPSHOTS_DIR)" 2>/dev/null)" ]; then \
 		echo "(no snapshots in $(FB_SNAPSHOTS_DIR))"; \
 	else \
-		ls -lht $(FB_SNAPSHOTS_DIR)/ | grep -v '^total'; \
+		ls -lht "$(FB_SNAPSHOTS_DIR)/" | grep -v '^total'; \
 	fi
 
-fb-restore: ## Restore from a snapshot. NAME=foo (default: latest). DESTRUCTIVE — replaces current DB.
-	@name="$${NAME:-}"; \
+# NAME es OBLIGATORIO: el directorio de snapshots lo comparten todos los
+# worktrees, así que "el más reciente" puede ser el de otro worktree/agente.
+fb-restore: ## Restore from a snapshot. NAME=foo (REQUIRED). DESTRUCTIVE — replaces current DB.
+	@name="$(NAME)"; \
 	if [ -z "$$name" ]; then \
-		name=$$(ls -t $(FB_SNAPSHOTS_DIR)/*.fbk 2>/dev/null | head -1 | xargs -n1 basename | sed 's/\.fbk$$//'); \
-		[ -n "$$name" ] || { echo "❌ no snapshots found in $(FB_SNAPSHOTS_DIR)"; exit 1; }; \
-		echo "ℹ no NAME given; using latest: $$name"; \
+		echo "❌ NAME required: make fb-restore NAME=<snapshot> (shared dir, no 'latest' default)"; \
+		echo "Available in $(FB_SNAPSHOTS_DIR):"; \
+		ls -lht "$(FB_SNAPSHOTS_DIR)/" 2>/dev/null | grep -v '^total'; \
+		exit 1; \
 	fi; \
-	src=$(FB_SNAPSHOTS_DIR)/$$name.fbk; \
-	[ -f "$$src" ] || { echo "❌ snapshot file not found: $$src"; echo "Available:"; ls $(FB_SNAPSHOTS_DIR)/ 2>/dev/null; exit 1; }; \
+	src="$(FB_SNAPSHOTS_DIR)/$$name.fbk"; \
+	[ -f "$$src" ] || { echo "❌ snapshot file not found: $$src"; echo "Available:"; ls "$(FB_SNAPSHOTS_DIR)/" 2>/dev/null; exit 1; }; \
 	echo "⚠  RESTORE WILL REPLACE $(FB_DATABASE) WITH $$src"; \
 	echo "   Current DB will be wiped. Anything written since the snapshot is gone."; \
 	echo ""; \
@@ -282,7 +291,7 @@ fb-restore: ## Restore from a snapshot. NAME=foo (default: latest). DESTRUCTIVE 
 
 fb-snapshot-delete: ## Delete a snapshot. NAME=foo (required).
 	@[ -n "$(NAME)" ] || (echo "❌ NAME required: make fb-snapshot-delete NAME=snapshot_20260513_120000" && exit 1)
-	@f=$(FB_SNAPSHOTS_DIR)/$(NAME).fbk; \
+	@f="$(FB_SNAPSHOTS_DIR)/$(NAME).fbk"; \
 	[ -f "$$f" ] || { echo "❌ not found: $$f"; exit 1; }; \
 	rm -f "$$f"; \
 	echo "✔ deleted $$f"

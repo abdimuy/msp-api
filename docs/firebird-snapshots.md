@@ -9,13 +9,15 @@ Backup/restore del dev DB de Firebird (`mueblera-firebird`) usando `gbak`, la he
 | Comando | Qué hace |
 |---|---|
 | `make fb-snapshot` | Backup hot (sin downtime) → `$(FB_SNAPSHOTS_DIR)/snapshot_YYYYMMDD_HHMMSS.fbk` |
-| `make fb-snapshot NAME=foo` | Backup con nombre custom → `$(FB_SNAPSHOTS_DIR)/foo.fbk` |
+| `make fb-snapshot NAME=foo` | Backup con nombre custom → `$(FB_SNAPSHOTS_DIR)/foo.fbk`. **Se niega** si `foo.fbk` ya existe |
+| `make fb-snapshot NAME=foo FORCE=1` | Sobreescribe `foo.fbk` a propósito |
 | `make fb-snapshot-list` | Lista los snapshots disponibles, ordenados por fecha desc |
-| `make fb-restore` | **DESTRUCTIVO.** Restaura desde el snapshot más reciente. Pide confirmar tecleando `restore` |
-| `make fb-restore NAME=foo` | Restaura desde `foo.fbk` específicamente |
+| `make fb-restore NAME=foo` | **DESTRUCTIVO.** Restaura desde `foo.fbk`. Pide confirmar tecleando `restore`. **NAME es obligatorio**: sin él aborta y lista los disponibles |
 | `make fb-snapshot-delete NAME=foo` | Borra `foo.fbk` |
 
-**Dónde quedan.** `FB_SNAPSHOTS_DIR` es por defecto `<checkout principal>/data/firebird-snapshots`, en ruta **absoluta**: el checkout principal se saca de `git rev-parse --git-common-dir`, así que un snapshot tomado desde un worktree (`git worktree add …`) cae en el del checkout principal y **no se pierde al borrar el worktree**. Antes era la ruta relativa `data/firebird-snapshots` y quedaba dentro del worktree. Para otra carpeta: `FB_SNAPSHOTS_DIR=/ruta make fb-snapshot` (o en la línea de make). El target crea la carpeta si falta. `make fb-snapshot-list` y `make fb-restore` leen de la misma variable.
+**Dónde quedan.** `FB_SNAPSHOTS_DIR` es por defecto `<checkout principal>/data/firebird-snapshots`, en ruta **absoluta**: el checkout principal se saca de `git rev-parse --git-common-dir`, así que un snapshot tomado desde un worktree (`git worktree add …`) cae en el del checkout principal y **no se pierde al borrar el worktree**. Antes era la ruta relativa `data/firebird-snapshots` y quedaba dentro del worktree. Para otra carpeta: `FB_SNAPSHOTS_DIR=/ruta make fb-snapshot` (o en la línea de make). El target crea la carpeta si falta (las rutas van entre comillas: sirve con espacios). `make fb-snapshot-list` y `make fb-restore` leen de la misma variable.
+
+**La carpeta la comparten todos los worktrees** (y los agentes que trabajan en ellos). Por eso `fb-restore` ya no tiene "el más reciente" por defecto —podía ser el de otro worktree— y `fb-snapshot` no pisa un `NAME` existente salvo con `FORCE=1`. Usa nombres que digan de quién son (`NAME=antes-000066-visitas`).
 
 **`fb-restore` aborta de verdad** si no tecleas `restore`. Hasta 2026-10-18 los `|| (echo … && exit 1)` de en medio del target sólo salían de un subshell: contestar otra cosa imprimía `aborted` **y restauraba igual**. Lo guarda `scripts/makefile-migrate_test.sh`.
 

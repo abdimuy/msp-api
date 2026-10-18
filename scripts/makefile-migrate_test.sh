@@ -14,6 +14,13 @@
 #   4. FB_SNAPSHOTS_DIR: desde un worktree, el default es absoluto y apunta al
 #      checkout principal; un snapshot escrito con FB_SNAPSHOTS_DIR=<ruta>
 #      sobrevive a borrar el worktree desde el que se tomó.
+#   5. fb-snapshot no sobreescribe un NAME existente salvo con FORCE=1.
+#   6. fb-restore sin NAME aborta y lista los snapshots (aunque se teclee
+#      "restore"): el directorio lo comparten todos los worktrees.
+#   7. FB_SNAPSHOTS_DIR con espacios funciona (rutas entre comillas).
+#   Además, el error de fb-migrate-up indica `make fb-restore NAME=…`.
+#
+# CONTAINER debe terminar en -desechable (se le hace docker rm -f).
 #
 # Uso:
 #   scripts/makefile-migrate_test.sh                 # prueba ./Makefile
@@ -34,8 +41,11 @@ if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
 	echo "SKIP: docker no disponible"
 	exit 0
 fi
+# A este contenedor se le hace `docker rm -f`: sólo nombres que terminen en
+# -desechable, para que nunca se borre mueblera-firebird ni otro ajeno.
 case "$CONTAINER" in
-mueblera-firebird) echo "ABORT: nunca contra mueblera-firebird" >&2; exit 2 ;;
+*-desechable) ;;
+*) echo "ABORT: CONTAINER=$CONTAINER no termina en -desechable; no se borra nada" >&2; exit 2 ;;
 esac
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/makefile-migrate-test.XXXXXX")"
@@ -116,6 +126,7 @@ echo "        MSP_MIGRATIONS = [$ids]  exit=$rc"
 [ "$rc" -ne 0 ] && ok "exit distinto de 0 ($rc)" || bad "exit=$rc, se esperaba != 0"
 [ "$ids" = "1" ] && ok "sólo la buena (1) quedó registrada" || bad "registradas [$ids], se esperaba [1]"
 echo "$out" | grep -q 'Failed at .*000002_mala' && ok "el mensaje nombra 000002_mala" || bad "el mensaje no nombra 000002_mala"
+echo "$out" | grep -q 'make fb-restore NAME=' && ok "el mensaje indica restaurar el snapshot" || bad "el mensaje no indica make fb-restore NAME="
 echo "$out" | grep -q '000003_posterior' && bad "intentó 000003 después del fallo" || ok "no intentó 000003 tras el fallo"
 
 echo "▶ 2. fb-migrate-down que falla antes de su DELETE"
@@ -148,6 +159,38 @@ exists="$(sql <<<"SELECT COUNT(*) FROM RDB\$RELATIONS WHERE RDB\$RELATION_NAME =
 echo "        tabla posterior al snapshot presente=$exists  exit=$rc"
 [ "$rc" -ne 0 ] && ok "exit distinto de 0 ($rc)" || bad "exit=$rc, se esperaba != 0"
 [ "$exists" = "1" ] && ok "la base NO se reemplazó" || bad "la base se reemplazó pese a contestar 'no'"
+
+echo "▶ 5. fb-snapshot no sobreescribe un NAME existente salvo con FORCE=1"
+before="$(cksum <"$SNAPS/antes.fbk" 2>/dev/null)"
+sql <<<'CREATE TABLE PRUEBA_CAMBIO_PARA_FORCE (ID INTEGER); COMMIT;' >/dev/null 2>&1
+out="$(mk fb-snapshot NAME=antes FB_SNAPSHOTS_DIR="$SNAPS" 2>&1)"
+rc=$?
+echo "$out" | sed 's/^/        | /'
+after="$(cksum <"$SNAPS/antes.fbk" 2>/dev/null)"
+[ "$rc" -ne 0 ] && ok "exit distinto de 0 ($rc)" || bad "exit=$rc, se esperaba != 0"
+[ -n "$before" ] && [ "$before" = "$after" ] && ok "antes.fbk no cambió" || bad "antes.fbk se sobreescribió"
+mk fb-snapshot NAME=antes FB_SNAPSHOTS_DIR="$SNAPS" FORCE=1 >/dev/null 2>&1
+rc=$?
+forced="$(cksum <"$SNAPS/antes.fbk" 2>/dev/null)"
+[ "$rc" -eq 0 ] && [ "$forced" != "$before" ] && ok "con FORCE=1 sí se sobreescribe" || bad "FORCE=1 no sobreescribió (exit=$rc)"
+
+echo "▶ 6. fb-restore sin NAME aborta y lista los snapshots (aunque se teclee 'restore')"
+sql <<<'CREATE TABLE PRUEBA_SIN_NAME (ID INTEGER); COMMIT;' >/dev/null 2>&1
+out="$(echo restore | mk fb-restore FB_SNAPSHOTS_DIR="$SNAPS" 2>&1)"
+rc=$?
+echo "$out" | sed 's/^/        | /'
+exists="$(sql <<<"SELECT COUNT(*) FROM RDB\$RELATIONS WHERE RDB\$RELATION_NAME = 'PRUEBA_SIN_NAME';" 2>/dev/null | awk '$1 ~ /^[0-9]+$/ {print $1}')"
+[ "$rc" -ne 0 ] && ok "exit distinto de 0 ($rc)" || bad "exit=$rc, se esperaba != 0"
+[ "$exists" = "1" ] && ok "la base NO se reemplazó" || bad "restauró el más reciente sin NAME"
+echo "$out" | grep -q 'antes.fbk' && ok "lista los snapshots disponibles" || bad "no listó antes.fbk"
+
+echo "▶ 7. FB_SNAPSHOTS_DIR con espacios"
+ESP="$TMP/con espacios/snaps"
+mk fb-snapshot NAME=esp FB_SNAPSHOTS_DIR="$ESP" >/dev/null 2>&1
+rc=$?
+[ "$rc" -eq 0 ] && [ -s "$ESP/esp.fbk" ] && ok "snapshot en ruta con espacios" || bad "falló con espacios (exit=$rc)"
+out="$(mk fb-snapshot-list FB_SNAPSHOTS_DIR="$ESP" 2>&1)"
+echo "$out" | grep -q 'esp.fbk' && ok "fb-snapshot-list la ve" || bad "fb-snapshot-list no la ve"
 
 echo "▶ 4. FB_SNAPSHOTS_DIR desde un worktree"
 WT="$TMP/worktree-de-prueba"
