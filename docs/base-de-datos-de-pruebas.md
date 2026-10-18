@@ -167,9 +167,11 @@ python3 scripts/db-test-pii-scan.py pii-corpus.txt pii-padron.txt
 
 Resultado sobre el artefacto del 2026-08-17: **cero aciertos, código de salida 0.**
 
-Hay **una** excepción declarada en el propio script: `TIPOS_CLIENTES.NOMBRE = 'PUBLICO EN GENERAL'`, un valor del catálogo de tipos de cliente de Microsip que coincide con el nombre del cliente genérico de mostrador. No es el dato de nadie. La lista de excepciones vive en el código, con su justificación, y se revisa como se revisa un `nolint`: es la única forma de que este escaneo mienta.
+Hay **una** excepción declarada en el propio script: `TIPOS_CLIENTES.NOMBRE = 'PUBLICO EN GENERAL'`, un valor del catálogo de tipos de cliente de Microsip que coincide con el nombre del cliente genérico de mostrador. No es el dato de nadie. La lista de excepciones vive en el código, con su justificación, y se revisa como se revisa un `nolint`.
 
 El escaneo tarda unos segundos y **hay que correrlo cada vez que se regenera el artefacto.**
+
+> ⚠ **El código de salida 0 del escaneo NO basta para dar por bueno un artefacto.** Las secciones 2 y 3 del reporte ("revisión manual") son **obligatorias**: hay que leerlas columna por columna antes de aceptar el artefacto. El código de salida sólo mira el cruce contra el padrón de `CLIENTES` (sección 1); un catálogo de personas que la anonimización dejó sin tocar —cobradores, vendedores, cajeros— no está en ese padrón y no lo cambia. Medido el 2026-10-18 en un contenedor desechable (revisión independiente de la rama `fix/makefile-migrate-bail`): con un `db-test-anonymize.sql` manipulado a propósito (un `UPDATE` con `WHERE 1=0`), el escaneo salió con **0** y lo único que delataba el problema era `COBRADORES.NOMBRE` en la lista de revisión manual.
 
 ### Lo que este método NO garantiza
 

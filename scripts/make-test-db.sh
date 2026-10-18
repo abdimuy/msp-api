@@ -27,6 +27,13 @@
 # Después:
 #   python3 scripts/db-test-pii-scan.py pii-corpus.txt pii-padron.txt
 #
+# ⚠ El exit 0 del escaneo NO basta: sólo cruza contra el padrón de CLIENTES.
+#   Sus secciones de "revisión manual" (patrones y frases por columna) son
+#   OBLIGATORIAS antes de dar por bueno el artefacto. Medido 2026-10-18: con
+#   un UPDATE de la anonimización neutralizado (WHERE 1=0) el escaneo salió
+#   con 0 y sólo COBRADORES.NOMBRE en revisión manual lo delataba. Ver
+#   docs/base-de-datos-de-pruebas.md.
+#
 # ⚠ El artefacto no se publica desde aquí. Quién lo publica y dónde lo decide
 #   quien sea dueño del repositorio.
 
