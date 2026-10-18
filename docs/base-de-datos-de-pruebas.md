@@ -130,7 +130,7 @@ El script hace cinco pasos, y ninguno toca la base de desarrollo después del pr
 |---|---|
 | 1 | `gbak -b` de la base viva. Es seguro sobre una base en uso; no hay que detener nada |
 | 2 | `gbak -c -skip_data` con la expresión de [`scripts/db-test-skip-tables.txt`](../scripts/db-test-skip-tables.txt) |
-| 3 | `isql` con [`scripts/db-test-anonymize.sql`](../scripts/db-test-anonymize.sql), que sustituye lo que sobrevivió |
+| 3 | `isql -bail` con [`scripts/db-test-anonymize.sql`](../scripts/db-test-anonymize.sql), que sustituye lo que sobrevivió. Con `-bail` la primera sentencia que falla detiene todo sin confirmar las siguientes |
 | 4 | Respaldo y `gzip -9` del resultado |
 | 5 | Restaura el `.gz` a una base **aparte** y vuelca de ahí todo el texto |
 
@@ -144,6 +144,8 @@ VERIFY_DB=/firebird/data/CATVERIF2.FDB ./scripts/make-test-db.sh
 La segunda existe por una trampa real: si una corrida de `go test` quedó a medias, el servidor conserva la conexión contra la base de verificación y `gbak` responde `database already exists` **aunque el archivo ya no esté**. Usar otro nombre sale más barato que reiniciar el contenedor.
 
 El paso 5 es deliberado: **se verifica el artefacto, no la base de la que salió.** Un archivo que nunca se restauró no está verificado.
+
+Por la misma razón el artefacto se copia primero a `msp-test-db.fbk.gz.partial` y **sólo se mueve a su nombre final cuando pasaron el paso 5 y el volcado**. Si cualquier paso falla, el script sale con exit distinto de 0 y borra el `.partial`: en la ruta final nunca queda un artefacto a medias ni uno sin verificar. Un `msp-test-db.fbk.gz` de una corrida **anterior** no se toca, así que antes de regenerar conviene apartarlo para no confundirlo con uno nuevo. Lo guarda `scripts/make-test-db_test.sh` (contenedor `*-desechable`, base sintética; `make test-makefile`). Para esa prueba existe `ANONYMIZE_SQL=<archivo>`, que sustituye el script de anonimización; en una corrida real no se usa.
 
 ---
 
