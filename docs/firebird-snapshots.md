@@ -8,12 +8,16 @@ Backup/restore del dev DB de Firebird (`mueblera-firebird`) usando `gbak`, la he
 
 | Comando | Qué hace |
 |---|---|
-| `make fb-snapshot` | Backup hot (sin downtime) → `data/firebird-snapshots/snapshot_YYYYMMDD_HHMMSS.fbk` |
-| `make fb-snapshot NAME=foo` | Backup con nombre custom → `data/firebird-snapshots/foo.fbk` |
+| `make fb-snapshot` | Backup hot (sin downtime) → `$(FB_SNAPSHOTS_DIR)/snapshot_YYYYMMDD_HHMMSS.fbk` |
+| `make fb-snapshot NAME=foo` | Backup con nombre custom → `$(FB_SNAPSHOTS_DIR)/foo.fbk` |
 | `make fb-snapshot-list` | Lista los snapshots disponibles, ordenados por fecha desc |
 | `make fb-restore` | **DESTRUCTIVO.** Restaura desde el snapshot más reciente. Pide confirmar tecleando `restore` |
 | `make fb-restore NAME=foo` | Restaura desde `foo.fbk` específicamente |
 | `make fb-snapshot-delete NAME=foo` | Borra `foo.fbk` |
+
+**Dónde quedan.** `FB_SNAPSHOTS_DIR` es por defecto `<checkout principal>/data/firebird-snapshots`, en ruta **absoluta**: el checkout principal se saca de `git rev-parse --git-common-dir`, así que un snapshot tomado desde un worktree (`git worktree add …`) cae en el del checkout principal y **no se pierde al borrar el worktree**. Antes era la ruta relativa `data/firebird-snapshots` y quedaba dentro del worktree. Para otra carpeta: `FB_SNAPSHOTS_DIR=/ruta make fb-snapshot` (o en la línea de make). El target crea la carpeta si falta. `make fb-snapshot-list` y `make fb-restore` leen de la misma variable.
+
+**`fb-restore` aborta de verdad** si no tecleas `restore`. Hasta 2026-10-18 los `|| (echo … && exit 1)` de en medio del target sólo salían de un subshell: contestar otra cosa imprimía `aborted` **y restauraba igual**. Lo guarda `scripts/makefile-migrate_test.sh`.
 
 ## Cómo es un snapshot
 
@@ -21,7 +25,7 @@ Backup/restore del dev DB de Firebird (`mueblera-firebird`) usando `gbak`, la he
 - **Tamaño:** ~60% del tamaño de la DB (3.6 GB → 2.2 GB típico). gbak comprime al guardar y rehidrata al restaurar.
 - **Tiempo:** ~30s para snapshot, ~1-2 min para restore.
 - **Online:** gbak hace consistent backup sin tomar locks. Tu API y tus tests pueden seguir corriendo durante el snapshot.
-- **Local-only:** la carpeta `data/firebird-snapshots/` está en `.gitignore`. No se commitea (son 2GB cada uno).
+- **Local-only:** la carpeta `data/firebird-snapshots/` (del checkout principal) está en `.gitignore`. No se commitea (son 2GB cada uno).
 
 ## Workflow típico
 
@@ -97,18 +101,18 @@ auth-bootstrap.
 - **No restaura cambios al schema migrado posteriormente.** Si tomas snapshot, aplicas 000003, y restauras: vuelves al schema previo a 000003. La tabla `MSP_MIGRATIONS` también se restaura, así que `make fb-migrate-up` vuelve a verlo como "no aplicada".
 - **No es para CI.** Los tests usan `WithTestTransaction` (rollback-only). El snapshot/restore es para experimentación manual.
 - **No es backup de prod.** El DBA de producción tiene su propio proceso.
-- **No protege contra el dev que borre `data/firebird-snapshots/` por accidente.** Si te importa un snapshot, cópialo a otro lado.
+- **No protege contra el dev que borre `$(FB_SNAPSHOTS_DIR)` por accidente.** Si te importa un snapshot, cópialo a otro lado.
 
 ## Detrás de cuadros (cómo funciona)
 
 ```
 make fb-snapshot:
   docker exec mueblera-firebird gbak -b -v -t /firebird/data/MUEBLERA.FDB /tmp/foo.fbk
-  docker cp mueblera-firebird:/tmp/foo.fbk ./data/firebird-snapshots/foo.fbk
+  docker cp mueblera-firebird:/tmp/foo.fbk $FB_SNAPSHOTS_DIR/foo.fbk
   docker exec mueblera-firebird rm /tmp/foo.fbk
 
 make fb-restore:
-  docker cp ./data/firebird-snapshots/foo.fbk mueblera-firebird:/tmp/restore.fbk
+  docker cp $FB_SNAPSHOTS_DIR/foo.fbk mueblera-firebird:/tmp/restore.fbk
   docker exec mueblera-firebird gfix -shut full -force 30 /firebird/data/MUEBLERA.FDB
   docker exec mueblera-firebird gbak -c -replace_database /tmp/restore.fbk /firebird/data/MUEBLERA.FDB
   docker exec mueblera-firebird gfix -online normal /firebird/data/MUEBLERA.FDB
@@ -125,7 +129,7 @@ make fb-restore:
 `bonanza-api` ya tiene un snapshot histórico montado en el contenedor (`/tmp/backup.fbk` ← `bonanza-api/firebird/MUEBLERA_SNP_20260219_2230.fbk`). Si quieres bootstraping desde ese estado prístino de febrero 2026, puedes:
 
 ```bash
-docker cp mueblera-firebird:/tmp/backup.fbk data/firebird-snapshots/feb_2026_baseline.fbk
+docker cp mueblera-firebird:/tmp/backup.fbk "$(git rev-parse --git-common-dir)/../data/firebird-snapshots/feb_2026_baseline.fbk"
 make fb-restore NAME=feb_2026_baseline
 ```
 

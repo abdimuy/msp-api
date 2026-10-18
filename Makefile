@@ -148,8 +148,20 @@ sqlc: ## Generate SQL code from queries/
 # `golang-migrate` no soporta Firebird, así que aplicamos los .sql via isql
 # dentro del container `mueblera-firebird`. Estos targets son para desarrollo
 # local — en producción se aplican manualmente con autorización del DBA.
+#
+# isql corre SIEMPRE con -bail: sin él, una sentencia que falla se salta y el
+# resto del archivo sigue — incluido el INSERT INTO MSP_MIGRATIONS del final —,
+# así que una migración rota quedaba registrada como aplicada y el ciclo seguía
+# con la siguiente. Con -bail isql se detiene en el primer error con exit 1 y
+# el `exit 1` dentro de { } corta el for. Guardado por
+# scripts/makefile-migrate_test.sh. OJO: con AUTODDL (default de isql) las
+# sentencias DDL anteriores a la que falla YA quedaron confirmadas.
+#
+# FB_MIGRATIONS_DIR / FB_CONTAINER / FB_DATABASE se pueden pasar en la línea de
+# make (`make fb-migrate-up FB_CONTAINER=x`). Como variable de ENTORNO no basta
+# para las que define .env: `include .env` les gana al entorno.
 
-FB_MIGRATIONS_DIR    := migrations-firebird
+FB_MIGRATIONS_DIR    ?= migrations-firebird
 FB_SEEDS_DIR         := seeds-firebird
 FB_CONTAINER         ?= mueblera-firebird
 FB_USER              ?= SYSDBA
@@ -174,8 +186,8 @@ fb-migrate-up: ## Apply pending Firebird migrations (idempotent; dev only)
 		fi; \
 		echo "▶ $$f (id=$$id)"; \
 		docker exec -i $(FB_CONTAINER) /usr/local/firebird/bin/isql \
-			-u $(FB_USER) -p $(FB_PASSWORD) -ch UTF8 $(FB_DATABASE) < $$f \
-			|| (echo "❌ Failed at $$f" && exit 1); \
+			-bail -u $(FB_USER) -p $(FB_PASSWORD) -ch UTF8 $(FB_DATABASE) < $$f \
+			|| { echo "❌ Failed at $$f (id=$$id) — NOT registered in MSP_MIGRATIONS; stopping. Statements before the failing one may already be committed (AUTODDL): check by hand before re-running."; exit 1; }; \
 	done
 	@echo "✔ Firebird migrations applied"
 
@@ -183,10 +195,11 @@ fb-migrate-up: ## Apply pending Firebird migrations (idempotent; dev only)
 fb-migrate-down: ## Rollback one Firebird migration. Usage: make fb-migrate-down N=000002
 	@[ -n "$(N)" ] || (echo "❌ N required: make fb-migrate-down N=000002" && exit 1)
 	@f=$$(ls $(FB_MIGRATIONS_DIR)/$(N)_*.down.sql 2>/dev/null); \
-	[ -n "$$f" ] || (echo "❌ No down migration found for N=$(N)" && exit 1); \
+	[ -n "$$f" ] || { echo "❌ No down migration found for N=$(N)"; exit 1; }; \
 	echo "▶ $$f"; \
 	docker exec -i $(FB_CONTAINER) /usr/local/firebird/bin/isql \
-		-u $(FB_USER) -p $(FB_PASSWORD) -ch UTF8 $(FB_DATABASE) < $$f
+		-bail -u $(FB_USER) -p $(FB_PASSWORD) -ch UTF8 $(FB_DATABASE) < $$f \
+		|| { echo "❌ Failed at $$f — stopped at the first error; the MSP_MIGRATIONS row was NOT removed if the DELETE comes after it."; exit 1; }
 
 # List applied Firebird migrations
 fb-migrate-status: ## Show applied Firebird migrations
@@ -200,10 +213,17 @@ fb-migrate-status: ## Show applied Firebird migrations
 # the active DB file (destructive — you lose anything written since the
 # snapshot).
 #
-# Snapshots live under data/firebird-snapshots/ (gitignored). The dir is
-# created on first snapshot.
+# Snapshots live under <checkout principal>/data/firebird-snapshots/
+# (gitignored), en ruta ABSOLUTA: el checkout principal se deriva de
+# `git rev-parse --git-common-dir`, que desde cualquier worktree apunta al .git
+# del checkout principal. Antes era relativa (data/firebird-snapshots) y un
+# snapshot tomado desde un worktree caía dentro del worktree y se perdía al
+# borrarlo. Se sobreescribe con FB_SNAPSHOTS_DIR=/otra/ruta (entorno o línea de
+# make). Fuera de git, cae al directorio actual. El dir se crea en el primer
+# snapshot. Guardado por scripts/makefile-migrate_test.sh.
 
-FB_SNAPSHOTS_DIR := data/firebird-snapshots
+FB_REPO_ROOT     := $(shell d=$$(git rev-parse --git-common-dir 2>/dev/null) && cd "$$d/.." && pwd)
+FB_SNAPSHOTS_DIR ?= $(if $(FB_REPO_ROOT),$(FB_REPO_ROOT),$(CURDIR))/data/firebird-snapshots
 
 fb-snapshot: ## Take a hot snapshot of the dev DB. NAME=foo optional (defaults to timestamp).
 	@mkdir -p $(FB_SNAPSHOTS_DIR)
@@ -212,9 +232,9 @@ fb-snapshot: ## Take a hot snapshot of the dev DB. NAME=foo optional (defaults t
 	docker exec $(FB_CONTAINER) /usr/local/firebird/bin/gbak \
 		-b -v -t -user $(FB_USER) -password $(FB_PASSWORD) \
 		$(FB_DATABASE) /tmp/$$name.fbk \
-		|| (echo "❌ gbak backup failed" && exit 1); \
+		|| { echo "❌ gbak backup failed"; exit 1; }; \
 	docker cp $(FB_CONTAINER):/tmp/$$name.fbk $(FB_SNAPSHOTS_DIR)/$$name.fbk \
-		|| (echo "❌ docker cp failed" && exit 1); \
+		|| { echo "❌ docker cp failed"; exit 1; }; \
 	docker exec $(FB_CONTAINER) rm -f /tmp/$$name.fbk; \
 	echo "✔ snapshot saved to $(FB_SNAPSHOTS_DIR)/$$name.fbk"; \
 	ls -lh $(FB_SNAPSHOTS_DIR)/$$name.fbk
@@ -230,19 +250,19 @@ fb-restore: ## Restore from a snapshot. NAME=foo (default: latest). DESTRUCTIVE 
 	@name="$${NAME:-}"; \
 	if [ -z "$$name" ]; then \
 		name=$$(ls -t $(FB_SNAPSHOTS_DIR)/*.fbk 2>/dev/null | head -1 | xargs -n1 basename | sed 's/\.fbk$$//'); \
-		[ -n "$$name" ] || (echo "❌ no snapshots found in $(FB_SNAPSHOTS_DIR)" && exit 1); \
+		[ -n "$$name" ] || { echo "❌ no snapshots found in $(FB_SNAPSHOTS_DIR)"; exit 1; }; \
 		echo "ℹ no NAME given; using latest: $$name"; \
 	fi; \
 	src=$(FB_SNAPSHOTS_DIR)/$$name.fbk; \
-	[ -f "$$src" ] || (echo "❌ snapshot file not found: $$src" && echo "Available:" && ls $(FB_SNAPSHOTS_DIR)/ 2>/dev/null && exit 1); \
+	[ -f "$$src" ] || { echo "❌ snapshot file not found: $$src"; echo "Available:"; ls $(FB_SNAPSHOTS_DIR)/ 2>/dev/null; exit 1; }; \
 	echo "⚠  RESTORE WILL REPLACE $(FB_DATABASE) WITH $$src"; \
 	echo "   Current DB will be wiped. Anything written since the snapshot is gone."; \
 	echo ""; \
 	read -p "Type 'restore' to confirm: " confirm; \
-	[ "$$confirm" = "restore" ] || (echo "aborted" && exit 1); \
+	[ "$$confirm" = "restore" ] || { echo "aborted"; exit 1; }; \
 	echo "▶ copying $$src into container"; \
 	docker cp "$$src" $(FB_CONTAINER):/tmp/restore.fbk \
-		|| (echo "❌ docker cp failed" && exit 1); \
+		|| { echo "❌ docker cp failed"; exit 1; }; \
 	echo "▶ shutting down DB connections (gfix shutdown full -force 30)"; \
 	docker exec $(FB_CONTAINER) /usr/local/firebird/bin/gfix \
 		-user $(FB_USER) -password $(FB_PASSWORD) \
@@ -253,7 +273,7 @@ fb-restore: ## Restore from a snapshot. NAME=foo (default: latest). DESTRUCTIVE 
 		-c -v -user $(FB_USER) -password $(FB_PASSWORD) \
 		-replace_database \
 		/tmp/restore.fbk $(FB_DATABASE) \
-		|| (echo "❌ gbak restore failed — DB may be in inconsistent state" && exit 1); \
+		|| { echo "❌ gbak restore failed — DB may be in inconsistent state"; exit 1; }; \
 	docker exec $(FB_CONTAINER) /usr/local/firebird/bin/gfix \
 		-user $(FB_USER) -password $(FB_PASSWORD) \
 		-online normal $(FB_DATABASE) || true; \
@@ -263,7 +283,7 @@ fb-restore: ## Restore from a snapshot. NAME=foo (default: latest). DESTRUCTIVE 
 fb-snapshot-delete: ## Delete a snapshot. NAME=foo (required).
 	@[ -n "$(NAME)" ] || (echo "❌ NAME required: make fb-snapshot-delete NAME=snapshot_20260513_120000" && exit 1)
 	@f=$(FB_SNAPSHOTS_DIR)/$(NAME).fbk; \
-	[ -f "$$f" ] || (echo "❌ not found: $$f" && exit 1); \
+	[ -f "$$f" ] || { echo "❌ not found: $$f"; exit 1; }; \
 	rm -f "$$f"; \
 	echo "✔ deleted $$f"
 
@@ -272,7 +292,7 @@ fb-seed-admin: ## Apply admin seed file (must be created from the .example templ
 	@[ -f $(FB_SEEDS_DIR)/000001_admin_user.sql ] || \
 		(echo "❌ Missing $(FB_SEEDS_DIR)/000001_admin_user.sql — copy from .example and fill in values" && exit 1)
 	docker exec -i $(FB_CONTAINER) /usr/local/firebird/bin/isql \
-		-u $(FB_USER) -p $(FB_PASSWORD) -ch UTF8 $(FB_DATABASE) < $(FB_SEEDS_DIR)/000001_admin_user.sql
+		-bail -u $(FB_USER) -p $(FB_PASSWORD) -ch UTF8 $(FB_DATABASE) < $(FB_SEEDS_DIR)/000001_admin_user.sql
 
 # ── Firebird integration tests (against the real Microsip dev DB) ───
 # Tests connect to the same Firebird container the API uses in dev
