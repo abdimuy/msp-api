@@ -621,7 +621,14 @@ func (g *Garantia) Entregar(actor ActorParams, now time.Time) error {
 			desde := EtapaListoEntrega
 			hasta := EtapaEntregado
 			ubicDesde, ubicHasta := cambioUbicacionPorEtapa(a.ubicacion, hasta)
-			ev, err := g.buildEvent(actor, now, TipoEventoEtapaAvanzada, &a.id, "", &desde, &hasta, ubicDesde, ubicHasta)
+			// Each delivered article gets its own key derived from the
+			// command's: CLAVE_IDEMPOTENCIA is UNIQUE, so reusing the
+			// command's key for every article would violate the index on
+			// the second one. The folio event keeps the original key; it
+			// is the row the replay lookup finds by TIPO.
+			actorArticulo := actor
+			actorArticulo.ClaveIdempotencia = claveDerivada(actor.ClaveIdempotencia, a.id.String())
+			ev, err := g.buildEvent(actorArticulo, now, TipoEventoEtapaAvanzada, &a.id, "", &desde, &hasta, ubicDesde, ubicHasta)
 			if err != nil {
 				return err
 			}

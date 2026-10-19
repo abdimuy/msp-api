@@ -15,8 +15,11 @@ import (
 // The five permission codes of spec §7, as pointers so a fake can deny exactly
 // one without spelling out the other four.
 var (
+	permLeer       = domain.PermisoLeer
 	permCrear      = domain.PermisoCrear
 	permActualizar = domain.PermisoActualizar
+	permAutorizar  = domain.PermisoAutorizar
+	permCerrar     = domain.PermisoCerrar
 )
 
 func setupService() (*app.Service, *fakeGarantiaRepo, *fakeEventoRepo, *fakeFolioGen, *fakeTxRunner, *fakeIdentity, *fakeClock, *registrador) {

@@ -107,6 +107,24 @@ func newEvento(p EventoParams) (*Evento, error) {
 	}, nil
 }
 
+// espacioDeEventos is the fixed namespace under which the derived keys of a
+// multi-event command are minted. It exists so that Entregar can write one
+// event per article without every one of them carrying the command's single
+// CLAVE_IDEMPOTENCIA: the column is UNIQUE, and two articles delivered by the
+// same call would otherwise collide on the second INSERT.
+var espacioDeEventos = uuid.MustParse("6f6b0a7c-1f2e-5a3d-9b4c-7d8e9f0a1b2c")
+
+// claveDerivada mints the idempotency key of an extra event inside a command
+// that already owns una clave. It is a UUIDv5 of the command's key and a
+// discriminator, so it is deterministic: the same retry of the same command
+// produces the same keys and the UNIQUE index still answers "ya lo hice"
+// instead of writing the delivery twice. The caller keeps the original key for
+// the event its command is named after, which is the one the app's replay
+// lookup reads (revisarClave compares TIPO against it).
+func claveDerivada(clave, discriminator string) string {
+	return uuid.NewSHA1(espacioDeEventos, []byte(clave+"\x00"+discriminator)).String()
+}
+
 // gpsValido reports whether the event's coordinates are acceptable. They are
 // optional, but they come as a pair (spec §3.3): half a position would be
 // stored as a lat with no lon and read back as a place off the coast of

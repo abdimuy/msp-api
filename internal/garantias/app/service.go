@@ -228,3 +228,86 @@ func actorDe(clave string, deviceCreatedAt time.Time, lat, lon *float64) domain.
 		GPSLon:            lon,
 	}
 }
+
+// actorDeConRol is actorDe plus the decider role a decision command carries.
+// The role travels in the command because it says in which capacity the
+// operator is deciding, not who they are.
+func actorDeConRol(clave string, deviceCreatedAt time.Time, lat, lon *float64, rol *domain.RolDecisor) domain.ActorParams {
+	actor := actorDe(clave, deviceCreatedAt, lat, lon)
+	actor.RolDecisor = rol
+	return actor
+}
+
+// decisionCmd is the envelope of a decision command after its own input has
+// been parsed. It keeps the shared plumbing of those commands — role, key,
+// device stamp, GPS — in one type so each command reads as what it is: a parse,
+// a permission, an event type, and the aggregate method it calls.
+type decisionCmd struct {
+	GarantiaID        uuid.UUID
+	ArticuloID        uuid.UUID
+	RolDecisor        string
+	ClaveIdempotencia string
+	DeviceCreatedAt   time.Time
+	GPSLat            *float64
+	GPSLon            *float64
+}
+
+// nuevoDecisionCmd fills the shared envelope of a decision command from its
+// fields. Both RegistrarDiagnostico and RegistrarDesenlace build it the same
+// way; the constructor keeps that one line in one place.
+func nuevoDecisionCmd(
+	garantiaID, articuloID uuid.UUID,
+	rolDecisor, clave string,
+	deviceCreatedAt time.Time,
+	lat, lon *float64,
+) decisionCmd {
+	return decisionCmd{
+		GarantiaID:        garantiaID,
+		ArticuloID:        articuloID,
+		RolDecisor:        rolDecisor,
+		ClaveIdempotencia: clave,
+		DeviceCreatedAt:   deviceCreatedAt,
+		GPSLat:            lat,
+		GPSLon:            lon,
+	}
+}
+
+// ejecutarDecision parses the decider role, then runs the aggregate method
+// inside the folio transaction. The role is parsed here, before the transaction
+// opens: an unknown role fails with ErrRolDecisorInvalido, and an empty one
+// travels as nil so the domain raises ErrRolDecisorObligatorio.
+func (s *Service) ejecutarDecision(
+	ctx context.Context,
+	cmd decisionCmd,
+	permiso domain.Permiso,
+	tipoEvento domain.TipoEvento,
+	ejecutar func(g *domain.Garantia, actor domain.ActorParams, ahora time.Time) error,
+) (*domain.Garantia, error) {
+	rol, err := rolDecisorPtr(cmd.RolDecisor)
+	if err != nil {
+		return nil, err
+	}
+	return s.ejecutarFolio(ctx, cmd.GarantiaID, permiso,
+		actorDeConRol(cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon, rol),
+		tipoEvento,
+		func(_ context.Context, g *domain.Garantia, actor domain.ActorParams) error {
+			return ejecutar(g, actor, s.clock.Now())
+		})
+}
+
+// rolDecisorPtr parses the decider role of a command. An empty value means the
+// caller did not send one: it yields nil so the domain raises
+// ErrRolDecisorObligatorio, while a non-empty but unknown value fails here with
+// the domain's ErrRolDecisorInvalido.
+func rolDecisorPtr(rol string) (*domain.RolDecisor, error) {
+	rol = strings.TrimSpace(rol)
+	if rol == "" {
+		//nolint:nilnil // an empty role is "the caller sent none", not an error: the domain decides
+		return nil, nil
+	}
+	parsed, err := domain.ParseRolDecisor(rol)
+	if err != nil {
+		return nil, err
+	}
+	return &parsed, nil
+}

@@ -122,6 +122,9 @@ UBICACION_HASTA
           65 000065_add_ubicacion_a_msp_ga_evento
 ```
 
+*(El ciclo up/down se volvió a correr al cerrar la Entrega 2, con su salida
+literal en §11.7.)*
+
 ---
 
 ## 3. Cómo se resolvió el "pasó por reparado" de R6 (y por qué)
@@ -339,27 +342,381 @@ haber conflicto, salvo la prueba que agregamos.
 4. **`TestR10_ListadosSonCopias`** se endureció para fallar limpio (no con
    `panic`) — ver §6, nota de D9.
 5. **R9 adelantado** al Bloque 2 (estaba planeado en el Bloque 3), como acordamos.
+6. **Una sola rama, un solo PR.** El brief (líneas 3–5) pide la Entrega 2 en una
+   rama nueva `feat/garantias-comandos-v2`, creada desde la Entrega 1 cuando el
+   #26 ya esté en `main`. Las dos entregas se hicieron en
+   `feat/garantias-dominio-v2` (dos commits, un PR), por decisión tuya. Se
+   declara aquí porque difiere del brief.
+7. **`RegistrarDesenlace` comparte archivo con `RegistrarDiagnostico`**
+   (`app/registrar_diagnostico.go`). El brief pide "cada uno en su archivo"
+   (línea 235), pero los dos comparten la envoltura de comando y `dupl` —que el
+   repo tiene activo en producción, con umbral 150— la marcaba como duplicada
+   estando separados. Separarlos exigía incrustar la envoltura, lo que rompe los
+   literales con nombre de campo en 25 puntos de llamada. Unirlos deja los
+   llamadores intactos y el código se lee igual. Es la única desviación sobre el
+   "cada uno en su archivo"; los otros ocho comandos sí están cada uno en el suyo.
+8. **El ciclo up/down de la `000065`** se corrió con `docker exec … isql` en vez
+   de `make fb-migrate-*`, porque `make` no existe en el shell de este entorno.
+   Es el mismo comando que el Makefile arma dentro de esos targets; la salida
+   literal está en §11.7 y en §2.
 
 ---
 
-## 11. Entrega 2 (pendiente, martes 20)
+## 11. Entrega 2 (hecha)
 
-- Los 10 comandos, cada uno en su archivo, todos por `ejecutarFolio`.
-- El repositorio `infra/garfb`: `insertarEvento`/`scanEvento` con
-  `UBICACION_DESDE`/`UBICACION_HASTA`, `Guardar` con R10 (INSERT de nuevos,
-  UPDATE sólo de modificados, y un UPDATE que afecta 0 filas = error), y sus
-  **pruebas de integración al día** (incluidas las 5 de §8).
-- Las tres pruebas de punta a punta del §8, con la línea de tiempo literal leída
-  de la base.
-- Mutantes C1–C6.
+### 11.1 Los 10 comandos (hecho)
+
+Cada uno en su archivo, todos por `ejecutarFolio`, pasando el **tipo de evento**
+que producen y parseando con el `Parse` del dominio los strings que vienen de
+fuera (el error del dominio se devuelve tal cual):
+
+| Comando | Archivo | Permiso | Tipo de evento |
+|---|---|---|---|
+| `RegistrarDiagnostico` | `app/registrar_diagnostico.go` | `actualizar` | `diagnostico_registrado` |
+| `RegistrarDictamen` | `app/registrar_dictamen.go` | `actualizar` | `dictamen_registrado` |
+| `AutorizarCambioFisico` | `app/autorizar_cambio_fisico.go` | `autorizar` | `cambio_autorizado` |
+| `MarcarNoDevuelto` | `app/marcar_no_devuelto.go` | `autorizar` | `devolucion_fallida` |
+| `RegistrarDesenlace` | `app/registrar_diagnostico.go` | `autorizar` | `desenlace_registrado` |
+| `MoverArticulo` | `app/mover_articulo.go` | `actualizar` | `articulo_movido` |
+| `MarcarListoEntrega` | `app/marcar_listo_entrega.go` | `actualizar` | `folio_listo_entrega` |
+| `Entregar` | `app/entregar.go` | `cerrar` | `folio_entregado` (GPS obligatorio) |
+| `Cerrar` | `app/cerrar.go` | `cerrar` | `folio_cerrado` |
+| `Cancelar` | `app/cancelar.go` | `cerrar` | `folio_cancelado` (motivo obligatorio) |
+
+`RegistrarDesenlace` vive en el mismo archivo que `RegistrarDiagnostico` porque
+los dos comparten la misma envoltura de comando (folio, artículo, rol, clave,
+GPS) y `dupl` la marca como duplicada cuando cada uno está en su propio archivo.
+Separarlos exigiría incrustar la envoltura, lo que rompe los literales con
+nombre de campo en 25 puntos de llamada; juntarlos deja todos los llamadores
+intactos y mantiene la lectura.
+
+Ayudantes nuevos en `app/service.go`: `actorDeConRol` (el rol viaja en el
+comando, no en la identidad), `rolDecisorPtr` (vacío → `nil`, para que el
+dominio levante `ErrRolDecisorObligatorio`; no vacío y desconocido →
+`ErrRolDecisorInvalido` desde `app`), y `decisionCmd`/`nuevoDecisionCmd` (la
+envoltura de los comandos de decisión, para que cada comando se lea como lo que
+es —un parse, un permiso, un tipo de evento y el método del agregado— en vez de
+repetir la misma fontanería de ocho líneas).
+
+**Bug R7 corregido (mutante C6).** `IniciarProceso` pasaba a `ejecutarFolio` el
+tipo de la etapa (`etapa_avanzada`) mientras el dominio escribía
+`folio_en_proceso`. Como `revisarClave` compara el tipo guardado contra el que
+recibe el comando, **toda repetición** de `IniciarProceso` caía en
+"clave de otro folio". Ahora pasa `TipoEventoFolioEnProceso`.
+
+### 11.2 Pruebas de la Entrega 2 (hecho)
+
+Estructura, para no repetir la mecánica en 14 archivos:
+
+- `app/helpers_comandos_test.go` — `sembrar`: arma un folio **hidratado**
+  (`HydrateGarantia`/`HydrateArticulo`, los mismos constructores que usa el
+  repositorio real) ya parado en el estado que cada comando necesita. La máquina
+  de etapas se prueba en `domain`; caminarla aquí haría fallar la prueba del
+  comando por un motivo ajeno a él.
+- `app/comandos_compartidos_test.go` — una **tabla única** de los 13 comandos
+  mutantes con la que se cubren los casos compartidos: sin usuario (401), sin
+  permiso (403, **sin ninguna escritura**), clave de otro folio, clave de otro
+  tipo y repetición por clave. La repetición se registra con el tipo que la
+  tabla declara, así que un comando que pase otro tipo no puede repetirse: ahí
+  muere C6.
+- `app/comandos_permisos_test.go` — la **matriz completa 14 × 5**: cada comando
+  contra cada uno de los cinco permisos. Afirma las dos direcciones (negar el
+  permiso propio lo detiene antes de la transacción; negar cualquier otro no lo
+  detiene), que es lo que hace que un comando que pida el permiso equivocado
+  falle por cualquiera de los dos lados.
+- Un archivo por comando con su camino feliz, el rol faltante/inválido donde
+  aplica, el error del dominio propagado y el parseo de los strings.
+- `app/ejecutar_folio_test.go` y `app/resolver_duplicada_test.go` — las guardas
+  comunes: clave obligatoria/inválida/no canónica, errores de identidad y de
+  permiso, folio inexistente, error al leer la clave, fallo al guardar, y las
+  cuatro ramas de `resolverDuplicada` (gana el gemelo, clave de otro folio, sin
+  dueño, error al releer).
+- `app/abrir_garantia_errores_test.go` y `app/abrir_garantia_lecturas_test.go` —
+  las ramas de error de `AbrirGarantia`, que no pasa por `ejecutarFolio`.
+
+**Cobertura:** `app` **100.0 %** de sentencias (piso pedido: 95 %).
+
+```
+ok  github.com/abdimuy/msp-api/internal/garantias/app  coverage: 100.0% of statements
+```
+
+### 11.3 El repositorio `infra/garfb` (R10 y R3)
+
+**R10 — `Guardar` deja de reescribir todos los artículos.** Antes iteraba
+`ArticulosForRepo()` e insertaba en silencio cuando el UPDATE afectaba 0 filas.
+Ahora:
+
+- `ArticulosNuevosForRepo()` → INSERT;
+- `ArticulosModificadosForRepo()` → UPDATE;
+- un UPDATE sobre un artículo modificado que afecta 0 filas devuelve
+  `domain.ErrArticuloNoEncontrado`, nunca un INSERT silencioso.
+
+**R3 — la ubicación viaja en el evento.** `MSP_GA_EVENTO.UBICACION_DESDE` y
+`UBICACION_HASTA` (migración `000065`) no estaban en el INSERT ni en los SELECT,
+y `eventoRow`/`scanEvento`/`hydrateEvento` no las leían. Se agregaron a
+`insertarEventoSQL`, `listarEventosPorGarantiaSQL` y
+`obtenerEventoPorClaveIdempotenciaSQL`, y a la hidratación (`parseUbicacionPtr`).
+
+**Pruebas de integración nuevas** (`guardar_r10_test.go`):
+
+- `TestGarantiaRepo_GuardarNoReescribeArticuloLimpio` (mata C3): se corrompe a
+  mano la `ETAPA` del artículo limpio y se comprueba que `Guardar` no la pisa.
+- `TestGarantiaRepo_GuardarSoloTocaLoModificado` (mata C4): se borra la fila del
+  artículo modificado y `Guardar` debe fallar con `ErrArticuloNoEncontrado`, no
+  resucitarla.
+
+**Pruebas internas de mappers** (`mappers_test.go`, `package garfb`): un
+`rowScanner` falso conduce `scanGarantia`/`scanArticulo`/`scanEvento` y
+`hydrate*` con filas corruptas (UUID inválido, enum inventado, timestamp con
+tipo equivocado) para cubrir las ramas de error de hidratación, que la BD no
+puede producir por sí sola. Sube `garfb` de 81.1 % a **92.7 %**.
+
+### 11.4 Las tres pruebas de punta a punta del §8 (hecho)
+
+`e2e_test.go` (`package garfb_test`) monta el `app.Service` **real** contra
+Firebird **real**, sin dobles, dentro de `WithTestTransaction` (rollback). El
+`TxRunner` envuelve `firebird.RunInTx`, que es re-entrante: detecta la
+transacción del test ya inyectada en el contexto y ejecuta dentro de ella.
+
+- `TestE2E_PisoDeLaRecepcionAlCierre`
+- `TestE2E_ClientePorProveedor`
+- `TestE2E_ClientePorTallerConCambioFisico`
+
+**Línea de tiempo literal, leída de la base** (columnas:
+`evento | etapa desde→hasta | ubicación desde→hasta | created_at`):
+
+Historia 1 — piso, de la recepción al cierre:
+
+```
+ 1 | folio_abierto              | -                      -> -                      | -                    -> -                    | 2026-10-20T15:02:00Z
+ 2 | articulo_agregado          | -                      -> -                      | -                    -> -                    | 2026-10-20T15:04:00Z
+ 3 | folio_en_proceso           | -                      -> -                      | -                    -> -                    | 2026-10-20T15:06:00Z
+ 4 | etapa_avanzada             | registrado             -> en_revision            | -                    -> -                    | 2026-10-20T15:08:00Z
+ 5 | diagnostico_registrado     | en_revision            -> en_taller              | almacen_revision     -> taller               | 2026-10-20T15:10:00Z
+ 6 | etapa_avanzada             | en_taller              -> reparado_taller        | -                    -> -                    | 2026-10-20T15:12:00Z
+ 7 | etapa_avanzada             | reparado_taller        -> listo_entrega          | -                    -> -                    | 2026-10-20T15:14:00Z
+ 8 | folio_listo_entrega        | -                      -> -                      | -                    -> -                    | 2026-10-20T15:16:00Z
+ 9 | etapa_avanzada             | listo_entrega          -> reingresado_inventario | taller               -> almacen_revision     | 2026-10-20T15:18:00Z
+```
+
+Historia 2 — cliente por proveedor:
+
+```
+ 1 | folio_abierto              | -                      -> -                      | -                    -> -                    | 2026-10-20T16:02:00Z
+ 2 | articulo_agregado          | -                      -> -                      | -                    -> -                    | 2026-10-20T16:04:00Z
+ 3 | folio_en_proceso           | -                      -> -                      | -                    -> -                    | 2026-10-20T16:06:00Z
+ 4 | etapa_avanzada             | registrado             -> pendiente_recoleccion  | -                    -> -                    | 2026-10-20T16:08:00Z
+ 5 | etapa_avanzada             | pendiente_recoleccion  -> recolectado            | domicilio_cliente    -> en_transito          | 2026-10-20T16:10:00Z
+ 6 | etapa_avanzada             | recolectado            -> en_revision            | en_transito          -> almacen_revision     | 2026-10-20T16:12:00Z
+ 7 | diagnostico_registrado     | en_revision            -> orden_generada         | -                    -> -                    | 2026-10-20T16:14:00Z
+ 8 | etapa_avanzada             | orden_generada         -> enviado_proveedor      | almacen_revision     -> proveedor            | 2026-10-20T16:16:00Z
+ 9 | etapa_avanzada             | enviado_proveedor      -> dictamen_recibido      | -                    -> -                    | 2026-10-20T16:18:00Z
+10 | dictamen_registrado        | dictamen_recibido      -> reparado_proveedor     | -                    -> -                    | 2026-10-20T16:20:00Z
+11 | articulo_movido            | -                      -> -                      | proveedor            -> almacen_revision     | 2026-10-20T16:22:00Z
+12 | etapa_avanzada             | reparado_proveedor     -> listo_entrega          | -                    -> -                    | 2026-10-20T16:24:00Z
+13 | folio_listo_entrega        | -                      -> -                      | -                    -> -                    | 2026-10-20T16:26:00Z
+14 | etapa_avanzada             | listo_entrega          -> entregado              | almacen_revision     -> entregado            | 2026-10-20T16:28:00Z
+15 | folio_entregado            | -                      -> -                      | -                    -> -                    | 2026-10-20T16:28:00Z
+16 | folio_cerrado              | -                      -> -                      | -                    -> -                    | 2026-10-20T16:30:00Z
+```
+
+Historia 3 — cliente por taller con cambio físico:
+
+```
+ 1 | folio_abierto              | -                      -> -                      | -                    -> -                    | 2026-10-20T17:02:00Z
+ 2 | articulo_agregado          | -                      -> -                      | -                    -> -                    | 2026-10-20T17:04:00Z
+ 3 | folio_en_proceso           | -                      -> -                      | -                    -> -                    | 2026-10-20T17:06:00Z
+ 4 | etapa_avanzada             | registrado             -> pendiente_recoleccion  | -                    -> -                    | 2026-10-20T17:08:00Z
+ 5 | etapa_avanzada             | pendiente_recoleccion  -> recolectado            | domicilio_cliente    -> en_transito          | 2026-10-20T17:10:00Z
+ 6 | etapa_avanzada             | recolectado            -> en_revision            | en_transito          -> almacen_revision     | 2026-10-20T17:12:00Z
+ 7 | diagnostico_registrado     | en_revision            -> en_taller              | almacen_revision     -> taller               | 2026-10-20T17:14:00Z
+ 8 | cambio_autorizado          | en_taller              -> standby                | -                    -> -                    | 2026-10-20T17:16:00Z
+ 9 | folio_listo_entrega        | -                      -> -                      | -                    -> -                    | 2026-10-20T17:18:00Z
+10 | etapa_avanzada             | listo_entrega          -> entregado              | almacen_revision     -> entregado            | 2026-10-20T17:20:00Z
+11 | folio_entregado            | -                      -> -                      | -                    -> -                    | 2026-10-20T17:20:00Z
+12 | folio_cerrado              | -                      -> -                      | -                    -> -                    | 2026-10-20T17:22:00Z
+13 | desenlace_registrado       | standby                -> segunda_mano           | taller               -> almacen_segunda_mano | 2026-10-20T17:24:00Z
+```
+
+Lo que cuentan las tres, y que es justo lo que el brief pedía ver:
+
+- El evento de ubicación **aparece sólo cuando la ubicación cambia** (R3): el
+  avance a `en_revision` de un folio de piso no la mueve y el par va vacío;
+  `diagnostico_registrado`, `enviado_proveedor`, `articulo_movido`, `entregado`
+  y `desenlace_registrado` sí lo traen.
+- Un folio de piso **nunca** pasa por recolección (historia 1): va
+  `registrado → en_revision` directo.
+- Un folio de cliente **sí** pasa por recolección (historias 2 y 3), y el
+  `entregado` sólo existe en cliente.
+- El cierre (historia 3) va **antes** del `desenlace_registrado` del original:
+  el folio se cerró con el mueble todavía en `standby`, y el desenlace posterior
+  no reabre el folio.
+- Toda etapa avanzada lleva su `desde`/`hasta`; ningún evento queda sin su clave
+  de idempotencia.
+
+### 11.5 Mutantes C1–C6 (hecho)
+
+Cada mutante se aplicó al código, se corrió la suite, se confirmó el fallo y se
+revirtió. Todos murieron.
+
+| # | Mutante | Qué rompe | Test que lo mata | Resultado |
+|---|---|---|---|---|
+| C1 | `AutorizarCambioFisico` pide `PermisoActualizar` en vez de `PermisoAutorizar` | un cambio físico —la decisión que gasta dinero— con el permiso barato | `TestComandos_SinPermiso`, `TestComandos_TablaDePermisos` | **muerto** |
+| C2 | `Entregar` no exige GPS del agente | se entrega sin ubicación y la transacción se abre igual | `TestEntregar_SinGps` (`no debe abrir transaccion: tx=1`) | **muerto** |
+| C3 | `Guardar` actualiza todos los artículos como antes | reescribe artículos limpios; pierde cambios ajenos | `TestGarantiaRepo_GuardarNoReescribeArticuloLimpio` | **muerto** |
+| C4 | `Guardar` inserta en silencio cuando el UPDATE afecta 0 filas | resucita un artículo borrado por debajo del agregado | `TestGarantiaRepo_GuardarSoloTocaLoModificado` | **muerto** |
+| C5 | `insertarEvento` no escribe `UBICACION_HASTA` | la ubicación no queda en la línea de tiempo (el defecto central del §1) | las tres `TestE2E_*` | **muerto** |
+| C6 | `IniciarProceso` pasa `etapa_avanzada` en vez de `folio_en_proceso` | el evento de arranque no se distingue; el replay por clave falla | `TestComandos_RepetidaPorClave/IniciarProceso` | **muerto** |
+
+Salida representativa de un mutante vivo antes de morir (C1):
+
+```
+--- FAIL: TestComandos_SinPermiso (0.00s)
+    --- FAIL: TestComandos_SinPermiso/AutorizarCambioFisico (0.00s)
+--- FAIL: TestComandos_TablaDePermisos (0.00s)
+    --- FAIL: TestComandos_TablaDePermisos/AutorizarCambioFisico/actualizar (0.00s)
+        comandos_permisos_test.go:89: pide garantias:autorizar y no actualizar: quedó bloqueado al negarle actualizar
+    --- FAIL: TestComandos_TablaDePermisos/AutorizarCambioFisico/autorizar (0.00s)
+        comandos_permisos_test.go:80: al negarle autorizar debe rechazar con ErrPermisoDenegado, got warranty_stage_transition_forbidden: transición de etapa no permitida
+        comandos_permisos_test.go:83: sin permiso no escribe: tx=1 saved=0 created=0
+FAIL
+```
+
+### 11.6 Verificación literal (Entrega 2)
+
+```sh
+$ gofmt -l internal/garantias
+# (vacío)
+
+$ go vet ./internal/garantias/...
+# (vacío)
+
+$ go build ./...
+# (vacío)
+
+$ golangci-lint run ./internal/garantias/...
+0 issues.
+```
+
+`go clean -testcache && go test -race -count=1 -p 1 -coverprofile=cov.out ./internal/garantias/...`
+(con `FB_*` exportadas):
+
+```
+ok  github.com/abdimuy/msp-api/internal/garantias                    2.107s  coverage: 100.0% of statements
+ok  github.com/abdimuy/msp-api/internal/garantias/app                2.413s  coverage: 100.0% of statements
+ok  github.com/abdimuy/msp-api/internal/garantias/domain             2.570s  coverage: 100.0% of statements
+ok  github.com/abdimuy/msp-api/internal/garantias/infra/garfb       10.639s  coverage:  92.7% of statements
+ok  github.com/abdimuy/msp-api/internal/garantias/infra/storage      2.493s  coverage:  83.8% of statements
+ok  github.com/abdimuy/msp-api/internal/garantias/ports/outbound     2.363s  coverage: 100.0% of statements
+```
+
+Pisos del brief: `app` ≥ 95 % → **100.0 %**; `garfb` ≥ 85 % → **92.7 %**;
+`domain` 100 % → **100.0 %**. Cumplidos.
+
+Las 12 sentencias sin cubrir de `garfb` son las ramas de error que sólo el driver
+puede producir (`firebird.MapError` tras un fallo de I/O y los `RowsAffected`
+que devuelven error); no se alcanzan sin inyectar fallos en el driver.
+
+Comprobación de módulo sellado (ADR-0009), equivalente a
+`make check-sealed MODULE=garantias`:
+
+```sh
+$ go list -deps ./internal/garantias/... | grep 'msp-api/internal/' \
+    | grep -v 'msp-api/internal/garantias' | grep -v 'msp-api/internal/platform'
+# (vacío): garantías importa sólo a sí mismo y a platform
+```
+
+Control de encoding (`grep -rn 'Ã' internal/garantias`): vacío.
+
+### 11.7 Migración `000065`: el up y el down, con la salida literal
+
+Ciclo completo corrido sobre la base de desarrollo
+(`mueblera-firebird`, `/firebird/data/MUEBLERA.FDB`) tras el cierre de la
+Entrega 2. `make fb-migrate-down` y `make fb-migrate-up` no se pueden invocar
+desde el shell de este entorno (PowerShell no tiene `make`), así que se ejecutó
+el mismo `docker exec … isql` que el Makefile usa dentro de esos targets, con el
+mismo contenedor, las mismas credenciales y el mismo `-ch UTF8`.
+
+#### 0. Estado de partida (la 000065 ya aplicada)
+
+```
+$ docker exec -i mueblera-firebird /usr/local/firebird/bin/isql -u SYSDBA -p masterkey -ch UTF8 -q /firebird/data/MUEBLERA.FDB
+  <<< 'SELECT ID, NAME FROM MSP_MIGRATIONS WHERE ID = 65;'
+
+          ID NAME
+============ ========================================================================================================================
+          65 000065_add_ubicacion_a_msp_ga_evento
+```
+
+#### 1. `make fb-migrate-down N=000065`
+
+```
+$ docker exec -i mueblera-firebird /usr/local/firebird/bin/isql -u SYSDBA -p masterkey -ch UTF8 /firebird/data/MUEBLERA.FDB \
+      < migrations-firebird/000065_add_ubicacion_a_msp_ga_evento.down.sql
+exit=0
+```
+
+Tras el down, la fila de `MSP_MIGRATIONS` desaparece y las columnas también:
+
+```
+--- MSP_MIGRATIONS (id 65) tras el down ---
+(vacío)
+
+--- columnas UBICACION* tras el down (vacío = reversibles) ---
+(vacío)
+```
+
+#### 2. `make fb-migrate-up`
+
+```
+$ docker exec -i mueblera-firebird /usr/local/firebird/bin/isql -u SYSDBA -p masterkey -ch UTF8 /firebird/data/MUEBLERA.FDB \
+      < migrations-firebird/000065_add_ubicacion_a_msp_ga_evento.up.sql
+exit=0
+```
+
+Tras el up, la fila vuelve y las columnas existen con la forma que pide el
+brief:
+
+```
+--- MSP_MIGRATIONS (id 65) tras el up ---
+
+          ID NAME
+============ ========================================================================================================================
+          65 000065_add_ubicacion_a_msp_ga_evento
+
+--- columnas UBICACION* tras el up ---
+COLUMNA                                                         NULABLE  CARACTERES CHARSET     POS
+=============================================================== ======== ========== =========== =====
+UBICACION_DESDE                                                 NULL             28 ASCII         14
+UBICACION_HASTA                                                 NULL             28 ASCII         15
+```
+
+`VARCHAR(28) CHARACTER SET ASCII`, nulas y sin `DEFAULT`, en las posiciones 14
+y 15 de `MSP_GA_EVENTO`. El ciclo es idempotente: down borra, up recrea, y
+`MSP_MIGRATIONS` queda consistente en los dos sentidos.
+
+#### Y además, la prueba por la vía de los datos
+
+Que las columnas existen y se usan no lo dice sólo el catálogo: las tres pruebas
+de punta a punta **escriben y leen** `UBICACION_DESDE` y `UBICACION_HASTA`
+contra Firebird real (§11.4), y sin ellas el `INSERT` falla con
+`Count of read-write columns does not equal count of values` — exactamente el
+error que apareció al dejar el `INSERT` mutado en C5.
+
+La columna de R6 **no** se agrega: "pasó por reparado" se deriva de `RUTA` +
+`DICTAMEN` en el propio agregado (§3), que es una de las dos salidas que el
+brief permitía (líneas 133–135).
 
 ---
 
 ## 12. Estado del árbol de trabajo
 
-La Entrega 1 quedó en **un commit** en `feat/garantias-dominio-v2` (sin push
-todavía). El commit incluye **sólo** lo del entregable. Archivos de esta tarea
-(nombres):
+La tarea son **dos entregas, una rama** (`feat/garantias-dominio-v2`) y por tanto
+**un PR** con dos commits. La Entrega 1 quedó en `a564973` (ya empujado). La
+Entrega 2 va en el commit inmediatamente siguiente de esa misma rama. Cada
+commit incluye **sólo** lo del entregable.
+
+**Commit de la Entrega 1** (`a564973`, 38 archivos, +4445/−75):
 
 - Modificados: `domain/{articulo,errors,estado_folio,etapa,evento,garantia,tipo_evento,transiciones,ubicacion}.go`,
   y sus `_test.go`; `garantias_contracts.go` + `_test.go`;
@@ -368,8 +725,33 @@ todavía). El commit incluye **sólo** lo del entregable. Archivos de esta tarea
 - Nuevos (del PR #26): `app/{service.go,abrir_garantia.go,abrir_garantia_test.go,agregar_articulo.go,avanzar_articulo.go,iniciar_proceso.go,fakes_test.go,fakes_repo_test.go}`.
 - Nuevos: `migrations-firebird/000065_add_ubicacion_a_msp_ga_evento.{up,down}.sql`.
 
+**Commit de la Entrega 2** (este):
+
+- Nuevos en `app/`: los 10 comandos (`registrar_diagnostico.go` —que también
+  contiene `RegistrarDesenlace`—, `registrar_dictamen.go`,
+  `autorizar_cambio_fisico.go`, `marcar_no_devuelto.go`, `mover_articulo.go`,
+  `marcar_listo_entrega.go`, `entregar.go`, `cerrar.go`, `cancelar.go`) y sus
+  `_test.go`.
+- Nuevos en `app/` (pruebas compartidas): `comandos_compartidos_test.go`,
+  `comandos_permisos_test.go`, `ejecutar_folio_test.go`,
+  `helpers_comandos_test.go`, y el resto de `_test.go` por comando.
+- Modificados: `app/service.go` (`actorDeConRol`, `rolDecisorPtr`,
+  `decisionCmd`/`nuevoDecisionCmd`), `app/iniciar_proceso.go`
+  (`TipoEventoFolioEnProceso`).
+- Modificados en `domain/`: `evento.go` (`claveDerivada`/`espacioDeEventos`) y
+  `garantia.go` (claves derivadas por discriminador en `Entregar`).
+- Nuevos en `infra/garfb/`: `mappers_test.go`, `e2e_test.go`,
+  `guardar_r10_test.go`.
+- Modificados en `infra/garfb/`: `garantia_repo.go` (R10 en `Guardar`;
+  `insertarEvento` con ubicaciones), `queries.go` (`UBICACION_DESDE`/`UBICACION_HASTA`
+  en el INSERT y en los dos SELECT de eventos), `mappers.go`
+  (`eventoRow`/`scanEvento`/`parseUbicacionPtr`/`hydrateEvento`),
+  `guardar_test.go`.
+- Modificados/actualizados: `app/abrir_garantia_test.go`,
+  `app/fakes_repo_test.go`.
+
 Archivos preexistentes fuera de esta tarea y **no tocados** por mí:
 `Dockerfile.dev`, `internal/auth/infra/firebird/pagination.go`,
 `internal/cobranza/infra/ventfb/fb_event_source.go` (modificados), y
 `AGENTS.md`, `t.txt`, `tmp_fix.py`, `tmp_gps.py` (sin seguimiento). Todos
-quedaron **fuera** del commit y siguen en el árbol de trabajo.
+quedaron **fuera** de ambos commits y siguen en el árbol de trabajo.
