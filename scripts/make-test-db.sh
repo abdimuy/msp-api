@@ -27,6 +27,13 @@
 # Después:
 #   python3 scripts/db-test-pii-scan.py pii-corpus.txt pii-padron.txt
 #
+# ⚠ El exit 0 del escaneo NO basta: sólo cruza contra el padrón de CLIENTES.
+#   Sus secciones de "revisión manual" (patrones y frases por columna) son
+#   OBLIGATORIAS antes de dar por bueno el artefacto. Medido 2026-10-18: con
+#   un UPDATE de la anonimización neutralizado (WHERE 1=0) el escaneo salió
+#   con 0 y sólo COBRADORES.NOMBRE en revisión manual lo delataba. Ver
+#   docs/base-de-datos-de-pruebas.md.
+#
 # ⚠ El artefacto no se publica desde aquí. Quién lo publica y dónde lo decide
 #   quien sea dueño del repositorio.
 
@@ -38,6 +45,13 @@ FULL_FBK="${FULL_FBK:-/firebird/data/full.fbk}"
 WORK_DB="${WORK_DB:-/firebird/data/CAT.FDB}"
 VERIFY_DB="${VERIFY_DB:-/firebird/data/CATVERIF.FDB}"
 OUT="${OUT:-msp-test-db.fbk.gz}"
+# El artefacto se copia primero a $OUT.partial y sólo se mueve a $OUT cuando
+# terminaron el paso 5 (restaurarlo a una base aparte) y el volcado de texto.
+# Si algo falla antes, el trap borra el parcial: en $OUT nunca queda un
+# artefacto a medias. Que llegue a $OUT NO significa que esté libre de datos
+# personales: el escaneo (db-test-pii-scan.py) no corre dentro de este script
+# y hay que correrlo aparte. (Un $OUT de una corrida ANTERIOR no se toca.)
+OUT_PARTIAL="$OUT.partial"
 FBUSER="${FBUSER:-sysdba}"
 FBPASS="${FBPASS:-masterkey}"
 
@@ -46,6 +60,18 @@ GBAK=/usr/local/firebird/bin/gbak
 ISQL=/usr/local/firebird/bin/isql
 
 fb() { docker exec -i "$CONTAINER" "$@"; }
+
+rm -f "$OUT_PARTIAL"
+trap 'rm -f "$OUT_PARTIAL"' EXIT
+
+# La anonimización sale SIEMPRE del archivo versionado junto al script: no hay
+# variable para sustituirla (un archivo vacío dejaba el artefacto con datos
+# reales y exit 0). Y si ese archivo está vacío o no trae ningún UPDATE, no se
+# genera nada. Guardado por scripts/make-test-db_test.sh.
+if ! grep -qiE '^[[:space:]]*UPDATE[[:space:]]' "$SCRIPT_DIR/db-test-anonymize.sql" 2>/dev/null; then
+  echo "❌ $SCRIPT_DIR/db-test-anonymize.sql falta, está vacío o no tiene ningún UPDATE: no se genera el artefacto" >&2
+  exit 1
+fi
 
 if [ "$SRC_DB" = "$WORK_DB" ] || [ "$SRC_DB" = "$VERIFY_DB" ]; then
   echo "❌ WORK_DB/VERIFY_DB no pueden ser la base de origen" >&2
@@ -72,13 +98,18 @@ fb "$GBAK" -c \
 
 echo "▸ 3/5 sustitución por datos sintéticos"
 docker cp "$SCRIPT_DIR/db-test-anonymize.sql" "$CONTAINER:/tmp/db-test-anonymize.sql" >/dev/null
-fb "$ISQL" -user "$FBUSER" -password "$FBPASS" -i /tmp/db-test-anonymize.sql "$WORK_DB"
+# -bail: sin él isql se salta la sentencia que falla, sigue con el resto y
+# confirma con el COMMIT del final una anonimización a medias en $WORK_DB.
+# (isql sale con 1 en ambos casos y set -e corta aquí; -bail además evita que
+# corran y se confirmen las sentencias posteriores.) Guardado por
+# scripts/make-test-db_test.sh.
+fb "$ISQL" -bail -user "$FBUSER" -password "$FBPASS" -i /tmp/db-test-anonymize.sql "$WORK_DB"
 
 echo "▸ 4/5 respaldo y compresión del artefacto"
 fb rm -f /firebird/data/msp-test-db.fbk /firebird/data/msp-test-db.fbk.gz
 fb "$GBAK" -b -user "$FBUSER" -password "$FBPASS" "$WORK_DB" /firebird/data/msp-test-db.fbk
 fb gzip -9 /firebird/data/msp-test-db.fbk
-docker cp "$CONTAINER:/firebird/data/msp-test-db.fbk.gz" "$OUT" >/dev/null
+docker cp "$CONTAINER:/firebird/data/msp-test-db.fbk.gz" "$OUT_PARTIAL" >/dev/null
 
 # Si aquí sale "database already exists" o "database might be in use" pese al
 # rm, el servidor conserva una conexión contra $VERIFY_DB — típicamente una
@@ -106,6 +137,10 @@ SQL
 docker cp /tmp/padron.sql "$CONTAINER:/tmp/padron.sql" >/dev/null
 fb "$ISQL" -user "$FBUSER" -password "$FBPASS" -i /tmp/padron.sql "$SRC_DB" \
   | LC_ALL=C sed 's/^ *//; s/ *$//' | LC_ALL=C grep -v '^$' > pii-padron.txt
+
+# Restaurado y volcado: recién ahora el artefacto llega a su ruta final.
+# Falta el escaneo de PII, que se corre aparte (ver abajo).
+mv -f "$OUT_PARTIAL" "$OUT"
 
 echo
 echo "✔ artefacto:      $OUT"

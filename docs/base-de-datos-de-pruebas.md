@@ -130,7 +130,7 @@ El script hace cinco pasos, y ninguno toca la base de desarrollo después del pr
 |---|---|
 | 1 | `gbak -b` de la base viva. Es seguro sobre una base en uso; no hay que detener nada |
 | 2 | `gbak -c -skip_data` con la expresión de [`scripts/db-test-skip-tables.txt`](../scripts/db-test-skip-tables.txt) |
-| 3 | `isql` con [`scripts/db-test-anonymize.sql`](../scripts/db-test-anonymize.sql), que sustituye lo que sobrevivió |
+| 3 | `isql -bail` con [`scripts/db-test-anonymize.sql`](../scripts/db-test-anonymize.sql), que sustituye lo que sobrevivió. Con `-bail` la primera sentencia que falla detiene todo sin confirmar las siguientes |
 | 4 | Respaldo y `gzip -9` del resultado |
 | 5 | Restaura el `.gz` a una base **aparte** y vuelca de ahí todo el texto |
 
@@ -144,6 +144,8 @@ VERIFY_DB=/firebird/data/CATVERIF2.FDB ./scripts/make-test-db.sh
 La segunda existe por una trampa real: si una corrida de `go test` quedó a medias, el servidor conserva la conexión contra la base de verificación y `gbak` responde `database already exists` **aunque el archivo ya no esté**. Usar otro nombre sale más barato que reiniciar el contenedor.
 
 El paso 5 es deliberado: **se verifica el artefacto, no la base de la que salió.** Un archivo que nunca se restauró no está verificado.
+
+Por la misma razón el artefacto se copia primero a `msp-test-db.fbk.gz.partial` y **sólo se mueve a su nombre final cuando pasaron el paso 5 y el volcado**. Si cualquier paso falla, el script sale con exit distinto de 0 y borra el `.partial`: en la ruta final nunca queda un artefacto a medias. Que esté en la ruta final **no** quiere decir que esté libre de datos personales: el escaneo con `db-test-pii-scan.py` no corre dentro del script y hay que correrlo aparte. Un `msp-test-db.fbk.gz` de una corrida **anterior** no se toca, así que antes de regenerar conviene apartarlo para no confundirlo con uno nuevo. Lo guarda `scripts/make-test-db_test.sh` (contenedor `*-desechable`, base sintética; `make test-makefile`). La anonimización sale **siempre** de `scripts/db-test-anonymize.sql`, junto al script: no hay variable para sustituirla (un archivo vacío llegó a dejar el artefacto con datos reales y exit 0), y si ese archivo está vacío o no tiene ningún `UPDATE` el script aborta sin generar nada.
 
 ---
 
@@ -165,9 +167,11 @@ python3 scripts/db-test-pii-scan.py pii-corpus.txt pii-padron.txt
 
 Resultado sobre el artefacto del 2026-08-17: **cero aciertos, código de salida 0.**
 
-Hay **una** excepción declarada en el propio script: `TIPOS_CLIENTES.NOMBRE = 'PUBLICO EN GENERAL'`, un valor del catálogo de tipos de cliente de Microsip que coincide con el nombre del cliente genérico de mostrador. No es el dato de nadie. La lista de excepciones vive en el código, con su justificación, y se revisa como se revisa un `nolint`: es la única forma de que este escaneo mienta.
+Hay **una** excepción declarada en el propio script: `TIPOS_CLIENTES.NOMBRE = 'PUBLICO EN GENERAL'`, un valor del catálogo de tipos de cliente de Microsip que coincide con el nombre del cliente genérico de mostrador. No es el dato de nadie. La lista de excepciones vive en el código, con su justificación, y se revisa como se revisa un `nolint`.
 
 El escaneo tarda unos segundos y **hay que correrlo cada vez que se regenera el artefacto.**
+
+> ⚠ **El código de salida 0 del escaneo NO basta para dar por bueno un artefacto.** Las secciones 2 y 3 del reporte ("revisión manual") son **obligatorias**: hay que leerlas columna por columna antes de aceptar el artefacto. El código de salida sólo mira el cruce contra el padrón de `CLIENTES` (sección 1); un catálogo de personas que la anonimización dejó sin tocar —cobradores, vendedores, cajeros— no está en ese padrón y no lo cambia. Medido el 2026-10-18 en un contenedor desechable (revisión independiente de la rama `fix/makefile-migrate-bail`): con un `db-test-anonymize.sql` manipulado a propósito (un `UPDATE` con `WHERE 1=0`), el escaneo salió con **0** y lo único que delataba el problema era `COBRADORES.NOMBRE` en la lista de revisión manual.
 
 ### Lo que este método NO garantiza
 
