@@ -55,6 +55,20 @@ func NewService(deps Deps) *Service {
 // helper instead of being copied per command.
 type operacion func(ctx context.Context, g *domain.Garantia, actor domain.ActorParams) error
 
+// huellaEvento is what a command expects to find behind its idempotency key.
+// The plain "same folio" rule the first revision used was too loose: a key
+// reused on this folio with a different command, or with the same command and
+// different content, answered "already done" and dropped the second
+// operation (review of the B, 20-oct). These three fields are what separates
+// a true replay from a reuse: the event type identifies the command, and for
+// the ones that name an article or an arrival stage, so do articuloRef and
+// etapaHasta. A command that carries neither leaves them nil.
+type huellaEvento struct {
+	tipo        domain.TipoEvento
+	articuloRef *uuid.UUID
+	etapaHasta  *domain.Etapa
+}
+
 // ejecutarFolio applies the five steps every mutating command shares:
 //
 //  1. resolve the user from Identity — never from the command
@@ -79,7 +93,7 @@ func (s *Service) ejecutarFolio(
 	garantiaID uuid.UUID,
 	permiso domain.Permiso,
 	actor domain.ActorParams,
-	tipo domain.TipoEvento,
+	huella huellaEvento,
 	mutar operacion,
 ) (*domain.Garantia, error) {
 	usuario, err := s.usuario(ctx)
@@ -109,7 +123,7 @@ func (s *Service) ejecutarFolio(
 		if err != nil {
 			return err
 		}
-		repite, err := revisarClave(vista, garantiaID, tipo)
+		repite, err := revisarClave(vista, garantiaID, huella)
 		if err != nil {
 			return err
 		}
@@ -136,35 +150,76 @@ func (s *Service) ejecutarFolio(
 		if !errors.Is(err, domain.ErrClaveIdempotenciaDuplicada) {
 			return nil, err
 		}
-		return s.resolverDuplicada(ctx, actor.ClaveIdempotencia, func(v *domain.Evento) bool {
-			return v.GarantiaID() == garantiaID && v.Tipo() == tipo
-		})
+		return s.resolverDuplicada(ctx, actor.ClaveIdempotencia, garantiaID, huella)
 	}
 	return s.garantias.Obtener(ctx, garantiaID)
 }
 
 // revisarClave decides what an already-registered idempotency key means for
 // this command, inside the transaction and after the folio is locked. Absent:
-// the command proceeds. Present on this same folio and of this same event
-// type: a replay of this exact command, which succeeds writing nothing. Any
-// other owner is a key reused against the wrong folio or the wrong command.
-func revisarClave(vista *domain.Evento, garantiaID uuid.UUID, tipo domain.TipoEvento) (bool, error) {
+// the command proceeds. Present on this same folio and describing the same
+// operation: a replay, which succeeds writing nothing. Present on this same
+// folio but describing something else: the key is a repeat, its content is
+// not, and answering "already done" would drop the operation being asked for
+// now. Any other owner is a key reused against the wrong folio.
+func revisarClave(vista *domain.Evento, garantiaID uuid.UUID, huella huellaEvento) (bool, error) {
 	switch {
 	case vista == nil:
 		return false, nil
-	case vista.GarantiaID() == garantiaID && vista.Tipo() == tipo:
+	case vista.GarantiaID() != garantiaID:
+		return false, domain.ErrClaveIdempotenciaDeOtroFolio
+	case coincideHuella(vista, huella):
 		return true, nil
 	default:
-		return false, domain.ErrClaveIdempotenciaDeOtroFolio
+		return false, domain.ErrClaveIdempotenciaMismatch
 	}
+}
+
+// coincideHuella reports whether a stored event describes the same operation
+// as the huella. articuloRef and etapaHasta are compared only where the
+// command declared one: a nil expected value means the command does not carry
+// that field, not that it expects nil, so those commands judge on the type
+// alone.
+func coincideHuella(vista *domain.Evento, huella huellaEvento) bool {
+	if vista.Tipo() != huella.tipo {
+		return false
+	}
+	if huella.articuloRef != nil {
+		if vista.ArticuloRef() == nil || *vista.ArticuloRef() != *huella.articuloRef {
+			return false
+		}
+	}
+	if huella.etapaHasta != nil {
+		if vista.EtapaHasta() == nil || *vista.EtapaHasta() != *huella.etapaHasta {
+			return false
+		}
+	}
+	return true
+}
+
+// huellaApertura is the huella of AbrirGarantia: the only command that
+// creates the folio, so it has no article or stage to name.
+func huellaApertura() huellaEvento {
+	return huellaEvento{tipo: domain.TipoEventoFolioAbierto}
 }
 
 // resolverDuplicada runs after the rollback caused by a duplicate key: the
 // twin's event owns it now. An absent key means there was no twin and the
-// write is simply lost; an event that is not ours means the key was reused
-// against the wrong folio (or command). Otherwise the folio behind the event is
-// re-read and returned.
-func (s *Service) resolverDuplicada(ctx context.Context, clave string, esMia func(*domain.Evento) bool) (*domain.Garantia, error) {
+// write is simply lost; an event on another folio means the key was reused
+// against the wrong folio; an event on this folio describing another
+// operation is the content mismatch the locked path already rejects, and it
+// must keep failing here too. Otherwise the folio behind the event is re-read
+// and returned.
+//
+// garantiaID is uuid.Nil for AbrirGarantia, which has no folio to name: the
+// key is the only thing that can identify the twin, so the folio check is
+// skipped and the huella decides.
+func (s *Service) resolverDuplicada(
+	ctx context.Context,
+	clave string,
+	garantiaID uuid.UUID,
+	huella huellaEvento,
+) (*domain.Garantia, error) {
 	vista, err := s.eventos.ObtenerPorClaveIdempotencia(ctx, clave)
 	if err != nil {
 		return nil, err
@@ -172,8 +227,10 @@ func (s *Service) resolverDuplicada(ctx context.Context, clave string, esMia fun
 	switch {
 	case vista == nil:
 		return nil, domain.ErrClaveIdempotenciaDuplicada
-	case !esMia(vista):
+	case garantiaID != uuid.Nil && vista.GarantiaID() != garantiaID:
 		return nil, domain.ErrClaveIdempotenciaDeOtroFolio
+	case !coincideHuella(vista, huella):
+		return nil, domain.ErrClaveIdempotenciaMismatch
 	}
 	return s.garantias.Obtener(ctx, vista.GarantiaID())
 }

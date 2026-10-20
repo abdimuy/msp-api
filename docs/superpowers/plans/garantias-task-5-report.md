@@ -4,7 +4,7 @@ Entrega A y Entrega B, cada una con su sección. Cada sección lleva la salida l
 
 ## Status
 
-DONE — los cinco gates de la Entrega A dan 0. Sin commit ni push: pendiente tu revisión.
+DONE — los cinco gates de la Entrega A dan 0. Commiteada y empujada en la rama de esta tarea; el PR está abierto para revisión.
 
 ## Archivos
 

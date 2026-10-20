@@ -84,11 +84,26 @@ func TestAvanzarArticulo_ClaveRepetida_NoEscribe(t *testing.T) {
 	svc, repo, erepo, _, _, _, clk, _ := setupService()
 	g := seedFolio(t, repo, clk.Now(), 1)
 	k := clave()
-	erepo.addEvento(hydrateEvento(g.ID(), k, domain.TipoEventoEtapaAvanzada, clk.Now()))
+	artID := firstArticuloID(t, g)
+
+	// First execution for real: it writes the event, and that event — not a
+	// hand-written stand-in — is what the retry finds in the store.
+	if _, err := svc.AvanzarArticulo(context.Background(), app.AvanzarArticuloCmd{
+		GarantiaID:        g.ID(),
+		ArticuloID:        artID,
+		EtapaDestino:      domain.EtapaPendienteRecoleccion,
+		ClaveIdempotencia: k,
+		DeviceCreatedAt:   clk.Now(),
+	}); err != nil {
+		t.Fatalf("la primera ejecucion fallo: %v", err)
+	}
+	escrito := eventoComoElPrimero(t, repo.lastSaved)
+	erepo.addEvento(escrito)
+	repo.saved = nil
 
 	res, err := svc.AvanzarArticulo(context.Background(), app.AvanzarArticuloCmd{
 		GarantiaID:        g.ID(),
-		ArticuloID:        firstArticuloID(t, g),
+		ArticuloID:        artID,
 		EtapaDestino:      domain.EtapaPendienteRecoleccion,
 		ClaveIdempotencia: k,
 		DeviceCreatedAt:   clk.Now(),
@@ -109,14 +124,18 @@ func TestAvanzarArticulo_CarreraEnGuardar(t *testing.T) {
 	svc, repo, erepo, _, tx, _, clk, _ := setupService()
 	g := seedFolio(t, repo, clk.Now(), 1)
 	k := clave()
+	artID := firstArticuloID(t, g)
+	// The twin ran the same command, so its event carries the same huella.
+	// Seeding only the type would be a stand-in the content check rejects.
 	repo.onSave = func() {
-		erepo.addEvento(hydrateEvento(g.ID(), k, domain.TipoEventoEtapaAvanzada, clk.Now()))
+		erepo.addEvento(hydrateEventoDeArticulo(
+			g.ID(), k, domain.TipoEventoEtapaAvanzada, artID, domain.EtapaPendienteRecoleccion, clk.Now()))
 	}
 	repo.saveErr = domain.ErrClaveIdempotenciaDuplicada
 
 	res, err := svc.AvanzarArticulo(context.Background(), app.AvanzarArticuloCmd{
 		GarantiaID:        g.ID(),
-		ArticuloID:        firstArticuloID(t, g),
+		ArticuloID:        artID,
 		EtapaDestino:      domain.EtapaPendienteRecoleccion,
 		ClaveIdempotencia: k,
 		DeviceCreatedAt:   clk.Now(),
@@ -161,6 +180,39 @@ func TestAvanzarArticulo_ClaveDeOtroFolio(t *testing.T) {
 	})
 	if !errors.Is(err, domain.ErrClaveIdempotenciaDeOtroFolio) {
 		t.Fatalf("want ErrClaveIdempotenciaDeOtroFolio, got %v", err)
+	}
+	if len(repo.saved) != 0 {
+		t.Errorf("saved = %d, want 0", len(repo.saved))
+	}
+}
+
+// TestAvanzarArticulo_CarreraConClaveDeOtroFolio is the folio check on the
+// resolverDuplicada path: the twin that won the UNIQUE holds a key belonging to
+// a different folio. The rollback must not be mistaken for a replay of this
+// command.
+func TestAvanzarArticulo_CarreraConClaveDeOtroFolio(t *testing.T) {
+	t.Parallel()
+	svc, repo, erepo, _, tx, _, clk, _ := setupService()
+	g := seedFolio(t, repo, clk.Now(), 1)
+	otro := seedFolio(t, repo, clk.Now(), 1)
+	k := clave()
+	repo.onSave = func() {
+		erepo.addEvento(hydrateEvento(otro.ID(), k, domain.TipoEventoEtapaAvanzada, clk.Now()))
+	}
+	repo.saveErr = domain.ErrClaveIdempotenciaDuplicada
+
+	_, err := svc.AvanzarArticulo(context.Background(), app.AvanzarArticuloCmd{
+		GarantiaID:        g.ID(),
+		ArticuloID:        firstArticuloID(t, g),
+		EtapaDestino:      domain.EtapaPendienteRecoleccion,
+		ClaveIdempotencia: k,
+		DeviceCreatedAt:   clk.Now(),
+	})
+	if !errors.Is(err, domain.ErrClaveIdempotenciaDeOtroFolio) {
+		t.Fatalf("want ErrClaveIdempotenciaDeOtroFolio, got %v", err)
+	}
+	if tx.rollbacks != 1 {
+		t.Errorf("rollbacks = %d, want 1 (la escritura a medias no se confirma)", tx.rollbacks)
 	}
 	if len(repo.saved) != 0 {
 		t.Errorf("saved = %d, want 0", len(repo.saved))
@@ -218,10 +270,11 @@ func TestAvanzarArticulo_CandadoAntesQueLaClave(t *testing.T) {
 	}
 }
 
-// TestAvanzarArticulo_ClaveDeOtroTipoMismoFolio pins review round 2, menor b:
-// a key of this same folio but of another command's event is not a replay, so
-// it must not answer success without doing anything.
-func TestAvanzarArticulo_ClaveDeOtroTipoMismoFolio(t *testing.T) {
+// TestAvanzarArticulo_ClaveDeOtroComandoMismoFolio pins the content rule of
+// the 20-oct review: a key of this same folio but of another command's event
+// is not a replay. The folio is right and what the key describes is not, so
+// the answer is the mismatch conflict.
+func TestAvanzarArticulo_ClaveDeOtroComandoMismoFolio(t *testing.T) {
 	t.Parallel()
 	svc, repo, erepo, _, _, _, clk, _ := setupService()
 	g := seedFolio(t, repo, clk.Now(), 1)
@@ -235,18 +288,72 @@ func TestAvanzarArticulo_ClaveDeOtroTipoMismoFolio(t *testing.T) {
 		ClaveIdempotencia: k,
 		DeviceCreatedAt:   clk.Now(),
 	})
-	if !errors.Is(err, domain.ErrClaveIdempotenciaDeOtroFolio) {
-		t.Fatalf("want ErrClaveIdempotenciaDeOtroFolio, got %v", err)
+	if !errors.Is(err, domain.ErrClaveIdempotenciaMismatch) {
+		t.Fatalf("want ErrClaveIdempotenciaMismatch, got %v", err)
 	}
 	if len(repo.saved) != 0 {
 		t.Errorf("saved = %d, want 0", len(repo.saved))
 	}
 }
 
-// TestAvanzarArticulo_CarreraConClaveDeOtroTipo is the same check on the other
-// call site of the type comparison: after the rollback, resolverDuplicada must
-// also demand that the twin's event is this command's event.
-func TestAvanzarArticulo_CarreraConClaveDeOtroTipo(t *testing.T) {
+// TestAvanzarArticulo_ClaveMismoComandoOtraEtapa is the other face of the
+// content rule, and the one the type alone could not see: the same command on
+// this folio and this article, but the retry asks for a different
+// destination. The key repeats, the operation does not.
+func TestAvanzarArticulo_ClaveMismoComandoOtraEtapa(t *testing.T) {
+	t.Parallel()
+	svc, repo, erepo, _, _, _, clk, _ := setupService()
+	g := seedFolio(t, repo, clk.Now(), 1)
+	k := clave()
+	artID := firstArticuloID(t, g)
+	erepo.addEvento(hydrateEventoDeArticulo(
+		g.ID(), k, domain.TipoEventoEtapaAvanzada, artID, domain.EtapaRecolectado, clk.Now()))
+
+	_, err := svc.AvanzarArticulo(context.Background(), app.AvanzarArticuloCmd{
+		GarantiaID:        g.ID(),
+		ArticuloID:        artID,
+		EtapaDestino:      domain.EtapaPendienteRecoleccion,
+		ClaveIdempotencia: k,
+		DeviceCreatedAt:   clk.Now(),
+	})
+	if !errors.Is(err, domain.ErrClaveIdempotenciaMismatch) {
+		t.Fatalf("want ErrClaveIdempotenciaMismatch, got %v", err)
+	}
+	if len(repo.saved) != 0 {
+		t.Errorf("saved = %d, want 0", len(repo.saved))
+	}
+}
+
+// TestAvanzarArticulo_ClaveMismoComandoOtroArticulo: same command, same
+// destination stage, different article. Also a mismatch.
+func TestAvanzarArticulo_ClaveMismoComandoOtroArticulo(t *testing.T) {
+	t.Parallel()
+	svc, repo, erepo, _, _, _, clk, _ := setupService()
+	g := seedFolio(t, repo, clk.Now(), 2)
+	k := clave()
+	primero, segundo := firstArticuloID(t, g), secondArticuloID(t, g)
+	erepo.addEvento(hydrateEventoDeArticulo(
+		g.ID(), k, domain.TipoEventoEtapaAvanzada, segundo, domain.EtapaPendienteRecoleccion, clk.Now()))
+
+	_, err := svc.AvanzarArticulo(context.Background(), app.AvanzarArticuloCmd{
+		GarantiaID:        g.ID(),
+		ArticuloID:        primero,
+		EtapaDestino:      domain.EtapaPendienteRecoleccion,
+		ClaveIdempotencia: k,
+		DeviceCreatedAt:   clk.Now(),
+	})
+	if !errors.Is(err, domain.ErrClaveIdempotenciaMismatch) {
+		t.Fatalf("want ErrClaveIdempotenciaMismatch, got %v", err)
+	}
+	if len(repo.saved) != 0 {
+		t.Errorf("saved = %d, want 0", len(repo.saved))
+	}
+}
+
+// TestAvanzarArticulo_CarreraConClaveDeOtroComando is the same check on the
+// other call site of the content comparison: after the rollback,
+// resolverDuplicada must also refuse a twin whose event is another command's.
+func TestAvanzarArticulo_CarreraConClaveDeOtroComando(t *testing.T) {
 	t.Parallel()
 	svc, repo, erepo, _, tx, _, clk, _ := setupService()
 	g := seedFolio(t, repo, clk.Now(), 1)
@@ -263,8 +370,8 @@ func TestAvanzarArticulo_CarreraConClaveDeOtroTipo(t *testing.T) {
 		ClaveIdempotencia: k,
 		DeviceCreatedAt:   clk.Now(),
 	})
-	if !errors.Is(err, domain.ErrClaveIdempotenciaDeOtroFolio) {
-		t.Fatalf("want ErrClaveIdempotenciaDeOtroFolio, got %v", err)
+	if !errors.Is(err, domain.ErrClaveIdempotenciaMismatch) {
+		t.Fatalf("want ErrClaveIdempotenciaMismatch, got %v", err)
 	}
 	if tx.rollbacks != 1 {
 		t.Errorf("rollbacks = %d, want 1 (la escritura a medias no se confirma)", tx.rollbacks)

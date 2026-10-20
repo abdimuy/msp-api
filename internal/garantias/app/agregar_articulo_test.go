@@ -87,7 +87,20 @@ func TestAgregarArticulo_ClaveRepetida_NoEscribe(t *testing.T) {
 	svc, repo, erepo, _, _, _, clk, _ := setupService()
 	g := seedFolio(t, repo, clk.Now(), 1)
 	k := clave()
-	erepo.addEvento(hydrateEvento(g.ID(), k, domain.TipoEventoArticuloAgregado, clk.Now()))
+
+	// First execution for real: the retry must meet the event it actually
+	// wrote, not a hand-written stand-in (review of the B, 20-oct).
+	if _, err := svc.AgregarArticulo(context.Background(), app.AgregarArticuloCmd{
+		GarantiaID:        g.ID(),
+		Clave:             "B",
+		Description:       "mesa",
+		ClaveIdempotencia: k,
+		DeviceCreatedAt:   clk.Now(),
+	}); err != nil {
+		t.Fatalf("la primera ejecucion fallo: %v", err)
+	}
+	erepo.addEvento(eventoComoElPrimero(t, repo.lastSaved))
+	repo.saved = nil
 
 	res, err := svc.AgregarArticulo(context.Background(), app.AgregarArticuloCmd{
 		GarantiaID:        g.ID(),

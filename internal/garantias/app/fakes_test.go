@@ -216,6 +216,20 @@ func firstArticuloID(t *testing.T, g *domain.Garantia) uuid.UUID {
 	return uuid.Nil
 }
 
+// secondArticuloID returns the second article of the folio, for the mismatch
+// tests where the stored event names a different article than the retry.
+func secondArticuloID(t *testing.T, g *domain.Garantia) uuid.UUID {
+	t.Helper()
+	var ids []uuid.UUID
+	for a := range g.Articulos() {
+		ids = append(ids, a.ID())
+	}
+	if len(ids) < 2 {
+		t.Fatalf("el folio tiene %d articulos, want >= 2", len(ids))
+	}
+	return ids[1]
+}
+
 // hydrateEvento builds a persisted-shape event for the idempotency fake. The
 // key is stored as given — tests pass the canonical form, matching what the
 // real repository persists.
@@ -229,6 +243,40 @@ func hydrateEvento(garantiaID uuid.UUID, clave string, tipo domain.TipoEvento, n
 		DeviceCreatedAt:   now,
 		ClaveIdempotencia: clave,
 	})
+}
+
+// hydrateEventoDeArticulo is hydrateEvento for the stage-bearing commands: it
+// also fills articuloRef and etapaHasta, which is what the real write leaves
+// behind and what the content check compares. An evento seeded without them
+// is the mutilated shape the review called out: it does not look like what
+// the first execution actually stored, so it cannot stand in for a replay.
+func hydrateEventoDeArticulo(
+	garantiaID uuid.UUID,
+	clave string,
+	tipo domain.TipoEvento,
+	articuloRef uuid.UUID,
+	etapaHasta domain.Etapa,
+	now time.Time,
+) *domain.Evento {
+	return domain.HydrateEvento(domain.HydrateEventoParams{
+		ID:                uuid.New(),
+		GarantiaID:        garantiaID,
+		ArticuloRef:       &articuloRef,
+		Tipo:              tipo,
+		EtapaHasta:        &etapaHasta,
+		Usuario:           "Juan",
+		CreatedAt:         now,
+		DeviceCreatedAt:   now,
+		ClaveIdempotencia: clave,
+	})
+}
+
+// eventoComoElPrimero builds the event a successful first execution left
+// behind, taken from the raw aggregate the command handed to Guardar. This is
+// the shape a real retry meets in the store — not a hand-written stand-in.
+func eventoComoElPrimero(t *testing.T, g *domain.Garantia) *domain.Evento {
+	t.Helper()
+	return unicoEventoPendiente(t, g)
 }
 
 // unicoEventoPendiente returns the single pending event of the raw aggregate a

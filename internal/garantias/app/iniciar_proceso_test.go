@@ -75,7 +75,18 @@ func TestIniciarProceso_ClaveRepetida_NoEscribe(t *testing.T) {
 	svc, repo, erepo, _, _, _, clk, _ := setupService()
 	g := seedFolio(t, repo, clk.Now(), 1)
 	k := clave()
-	erepo.addEvento(hydrateEvento(g.ID(), k, domain.TipoEventoEtapaAvanzada, clk.Now()))
+
+	// First execution for real, so the retry finds the event the command
+	// itself wrote (review of the B, 20-oct).
+	if _, err := svc.IniciarProceso(context.Background(), app.IniciarProcesoCmd{
+		GarantiaID:        g.ID(),
+		ClaveIdempotencia: k,
+		DeviceCreatedAt:   clk.Now(),
+	}); err != nil {
+		t.Fatalf("la primera ejecucion fallo: %v", err)
+	}
+	erepo.addEvento(eventoComoElPrimero(t, repo.lastSaved))
+	repo.saved = nil
 
 	res, err := svc.IniciarProceso(context.Background(), app.IniciarProcesoCmd{
 		GarantiaID:        g.ID(),
@@ -193,6 +204,10 @@ func TestAbrirGarantia_ClaveRepetida_ReusaElFolio(t *testing.T) {
 
 // TestAbrirGarantia_ClaveDeOtroEvento pins the other half: the same key but
 // owned by a different command's event is not this command's replay.
+// TestAbrirGarantia_ClaveDeOtroEvento: the key already belongs to an event of
+// another command. AbrirGarantia has no folio of its own to compare against, so
+// the content rule (review of the B, 20-oct) is what tells the retry apart from
+// a reuse: the stored event is not folio_abierto, hence a mismatch.
 func TestAbrirGarantia_ClaveDeOtroEvento(t *testing.T) {
 	t.Parallel()
 	svc, repo, erepo, _, _, _, clk, _ := setupService()
@@ -206,8 +221,8 @@ func TestAbrirGarantia_ClaveDeOtroEvento(t *testing.T) {
 		ClaveIdempotencia: k,
 		DeviceCreatedAt:   clk.Now(),
 	})
-	if !errors.Is(err, domain.ErrClaveIdempotenciaDeOtroFolio) {
-		t.Fatalf("want ErrClaveIdempotenciaDeOtroFolio, got %v", err)
+	if !errors.Is(err, domain.ErrClaveIdempotenciaMismatch) {
+		t.Fatalf("want ErrClaveIdempotenciaMismatch, got %v", err)
 	}
 	if len(repo.created) != 0 {
 		t.Errorf("created = %d, want 0", len(repo.created))
@@ -246,10 +261,10 @@ func TestAbrirGarantia_CarreraEnCrear(t *testing.T) {
 	}
 }
 
-// TestAbrirGarantia_CarreraConClaveDeOtroEvento covers the type check on the
-// resolverDuplicada path (review round 2, menor a): the twin that won the
-// UNIQUE with a key that belongs to another command's event is not this
-// command's replay, even though it owns the key now.
+// TestAbrirGarantia_CarreraConClaveDeOtroEvento covers the content check on the
+// resolverDuplicada path (review round 2, menor a; semantics of the 20-oct
+// review): the twin that won the UNIQUE with a key that belongs to another
+// command's event is not this command's replay, even though it owns the key now.
 func TestAbrirGarantia_CarreraConClaveDeOtroEvento(t *testing.T) {
 	t.Parallel()
 	svc, repo, erepo, _, tx, _, clk, _ := setupService()
@@ -266,8 +281,8 @@ func TestAbrirGarantia_CarreraConClaveDeOtroEvento(t *testing.T) {
 		ClaveIdempotencia: k,
 		DeviceCreatedAt:   clk.Now(),
 	})
-	if !errors.Is(err, domain.ErrClaveIdempotenciaDeOtroFolio) {
-		t.Fatalf("want ErrClaveIdempotenciaDeOtroFolio, got %v", err)
+	if !errors.Is(err, domain.ErrClaveIdempotenciaMismatch) {
+		t.Fatalf("want ErrClaveIdempotenciaMismatch, got %v", err)
 	}
 	if tx.rollbacks != 1 {
 		t.Errorf("rollbacks = %d, want 1 (la cabecera a medias no se confirma)", tx.rollbacks)

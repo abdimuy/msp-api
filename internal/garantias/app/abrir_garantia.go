@@ -6,6 +6,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/abdimuy/msp-api/internal/garantias/domain"
 )
 
@@ -67,8 +69,8 @@ func (s *Service) AbrirGarantia(ctx context.Context, cmd AbrirGarantiaCmd) (*dom
 			return err
 		}
 		if vista != nil {
-			if vista.Tipo() != domain.TipoEventoFolioAbierto {
-				return domain.ErrClaveIdempotenciaDeOtroFolio
+			if !coincideHuella(vista, huellaApertura()) {
+				return domain.ErrClaveIdempotenciaMismatch
 			}
 			return nil // replay: its folio is re-read below, not rebuilt
 		}
@@ -119,11 +121,10 @@ func (s *Service) AbrirGarantia(ctx context.Context, cmd AbrirGarantiaCmd) (*dom
 		return nil, err
 	}
 	if creada == nil {
-		// The write rolled back; whoever owns the key now wins. For AbrirGarantia
-		// the key is a replay only when the event behind it is folio_abierto.
-		return s.resolverDuplicada(ctx, actor.ClaveIdempotencia, func(v *domain.Evento) bool {
-			return v.Tipo() == domain.TipoEventoFolioAbierto
-		})
+		// The write rolled back; whoever owns the key now wins. AbrirGarantia has
+		// no folio to compare against — it was about to create one — so the key
+		// is a replay only when the event behind it is folio_abierto.
+		return s.resolverDuplicada(ctx, actor.ClaveIdempotencia, uuid.Nil, huellaApertura())
 	}
 	// Answer with the re-read folio, like every other command: an aggregate
 	// still in memory and one read back from the store can differ in timestamp
