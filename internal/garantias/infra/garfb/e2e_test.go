@@ -74,6 +74,83 @@ func lineaDeTiempo(
 	return evs
 }
 
+// verificarLineaDeTiempo comprueba las invariantes que el §8 pide en las tres
+// historias de punta a punta, sobre la línea de tiempo leída de la base:
+//
+//   - está completa, en orden, y arranca con la apertura del folio;
+//   - ningún evento queda sin su clave de idempotencia;
+//   - ninguna etapa avanzada queda sin su par desde/hasta;
+//   - al menos un evento guardó el par de ubicaciones desde/hasta (R3/C5);
+//   - cero artículos sin su evento: cada artículo del folio aparece al menos
+//     una vez como ArticuloRef, y ningún ArticuloRef apunta a un artículo que
+//     no sea del folio.
+//
+// Lo que sí cambia entre historias — qué evento cierra la línea de tiempo y
+// qué desenlaces quedaron — lo afirma cada historia por su cuenta.
+func verificarLineaDeTiempo(
+	ctx context.Context,
+	t *testing.T,
+	eventos *garfb.EventoRepo,
+	final *domain.Garantia,
+) []*domain.Evento {
+	t.Helper()
+
+	evs := lineaDeTiempo(ctx, t, eventos, final.ID())
+	require.NotEmpty(t, evs)
+
+	for _, e := range evs {
+		require.NotEmpty(t, e.ClaveIdempotencia(), "evento sin clave: %s", e.Tipo())
+	}
+
+	require.Equal(t, domain.TipoEventoFolioAbierto, evs[0].Tipo())
+
+	// Ninguna etapa avanzada puede quedar sin su desde/hasta.
+	for _, e := range evs {
+		if e.Tipo() == domain.TipoEventoEtapaAvanzada {
+			require.NotNil(t, e.EtapaDesde(), "etapa_avanzada sin desde")
+			require.NotNil(t, e.EtapaHasta(), "etapa_avanzada sin hasta")
+		}
+	}
+
+	// R3: la ubicación viaja con el mueble. Al menos un evento tiene que haber
+	// dejado su par desde/hasta (C5: si el INSERT omite UBICACION_HASTA, este
+	// evento llega con el hasta en nil).
+	var conUbicacionHasta *domain.Evento
+	for _, e := range evs {
+		if e.UbicacionHasta() != nil {
+			conUbicacionHasta = e
+		}
+	}
+	require.NotNil(t, conUbicacionHasta,
+		"al menos un evento debe haber guardado su ubicación hasta")
+
+	// Cero artículos sin su evento: cada artículo del folio tiene al menos un
+	// evento que lo referencia, y ningún evento referencia un artículo ajeno.
+	articulos := final.ArticulosForRepo()
+	delFolio := make(map[uuid.UUID]bool, len(articulos))
+	for _, a := range articulos {
+		delFolio[a.ID()] = false
+	}
+
+	for _, e := range evs {
+		ref := e.ArticuloRef()
+		if ref == nil {
+			continue
+		}
+		_, conocido := delFolio[*ref]
+		require.True(t, conocido,
+			"evento %s referencia un artículo ajeno al folio: %s", e.Tipo(), *ref)
+		delFolio[*ref] = true
+	}
+
+	for _, a := range articulos {
+		require.True(t, delFolio[a.ID()],
+			"el artículo %s quedó sin ningún evento en la línea de tiempo", a.ID())
+	}
+
+	return evs
+}
+
 // abrirPiso abre un folio de piso con un artículo, la mitad común de las
 // historias 1 y — casi — la 3. Devuelve el folio ya guardado.
 func abrirPiso(
@@ -204,39 +281,10 @@ func TestE2E_PisoDeLaRecepcionAlCierre(t *testing.T) {
 		require.NotNil(t, a.Desenlace())
 		require.Equal(t, domain.DesenlaceReparado, *a.Desenlace())
 
-		// Comprobación final: la línea de tiempo leída de la base cuenta la
-		// historia completa, en orden, con desde/hasta de etapa y ubicación.
-		evs := lineaDeTiempo(ctx, t, erepo, id)
-		require.NotEmpty(t, evs)
-
-		for _, e := range evs {
-			require.NotEmpty(t, e.ClaveIdempotencia(), "evento sin clave: %s", e.Tipo())
-		}
-
-		// El primer evento es la apertura; debe haber un evento de etapa para
-		// cada salto y el desenlace lo puso el dominio, no un comando.
-		require.Equal(t, domain.TipoEventoFolioAbierto, evs[0].Tipo())
-
-		// Ninguna etapa avanzada puede quedar sin su desde/hasta.
-		for _, e := range evs {
-			if e.Tipo() == domain.TipoEventoEtapaAvanzada {
-				require.NotNil(t, e.EtapaDesde(), "etapa_avanzada sin desde")
-				require.NotNil(t, e.EtapaHasta(), "etapa_avanzada sin hasta")
-			}
-		}
-
-		// R3: la ubicación viajó con el mueble y quedó en la línea de tiempo.
-		// El avance a en_revision mueve la ubicación a almacen_revision, y ese
-		// par desde/hasta tiene que haber vuelto de la base (C5: si el INSERT
-		// no escribe UBICACION_HASTA, este evento llega con hasta nil).
-		var conUbicacionHasta *domain.Evento
-		for _, e := range evs {
-			if e.UbicacionHasta() != nil {
-				conUbicacionHasta = e
-			}
-		}
-		require.NotNil(t, conUbicacionHasta,
-			"al menos un evento debe haber guardado su ubicación hasta")
+		// Comprobación final del §8: la línea de tiempo leída de la base cuenta
+		// la historia completa, en orden, con desde/hasta de etapa y ubicación,
+		// y sin artículos huérfanos de evento.
+		verificarLineaDeTiempo(ctx, t, erepo, cargada)
 	})
 }
 
@@ -420,8 +468,7 @@ func TestE2E_ClientePorProveedor(t *testing.T) {
 		require.NotNil(t, fin.Desenlace())
 		require.Equal(t, domain.DesenlaceReparado, *fin.Desenlace())
 
-		evs := lineaDeTiempo(ctx, t, erepo, id)
-		require.Equal(t, domain.TipoEventoFolioAbierto, evs[0].Tipo())
+		evs := verificarLineaDeTiempo(ctx, t, erepo, final)
 		require.Equal(t, domain.TipoEventoFolioCerrado, evs[len(evs)-1].Tipo())
 
 		// El evento del folio entregado guarda el GPS de la entrega.
@@ -639,8 +686,7 @@ func TestE2E_ClientePorTallerConCambioFisico(t *testing.T) {
 
 		// La línea de tiempo completa: el cierre va antes del desenlace del
 		// original, porque el folio se cerró con el mueble todavía dentro.
-		evs := lineaDeTiempo(ctx, t, erepo, id)
-		require.Equal(t, domain.TipoEventoFolioAbierto, evs[0].Tipo())
+		evs := verificarLineaDeTiempo(ctx, t, erepo, final)
 		require.Equal(t, domain.TipoEventoDesenlaceRegistrado, evs[len(evs)-1].Tipo())
 	})
 }

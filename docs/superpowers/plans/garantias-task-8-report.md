@@ -1,12 +1,13 @@
 # Tarea 8 — Reporte único (Entrega 1 + Entrega 2)
 
 Este es el **único** reporte de la tarea 8 y crece con las dos entregas. Cubre la
-Entrega 1 (dominio + migración) y se completará con la Entrega 2 (los 10
-comandos, el repositorio y las pruebas de punta a punta).
+Entrega 1 (dominio + migración) y la Entrega 2 (los 10 comandos, el repositorio y
+las pruebas de punta a punta), más el cierre posterior del hueco de la
+comprobación final del §8.
 
 - **Rama:** `feat/garantias-dominio-v2`
-- **Estado:** Entrega 1 implementada, verificada y **commiteada** en esta rama.
-  Aún **sin push** y sin el PR abierto.
+- **Estado:** las dos entregas implementadas, verificadas y **commiteadas** en
+  esta rama (`a564973` → `ceaff16` → el commit de cierre).
 - **Brief:** `docs/superpowers/plans/garantias-task-8-brief.md`
 
 Bloques de la Entrega 1, como los acordamos:
@@ -359,6 +360,10 @@ haber conflicto, salvo la prueba que agregamos.
    de `make fb-migrate-*`, porque `make` no existe en el shell de este entorno.
    Es el mismo comando que el Makefile arma dentro de esos targets; la salida
    literal está en §11.7 y en §2.
+9. **El bloque de comprobación final del §8 se extrajo a un helper**
+   (`verificarLineaDeTiempo`). El brief no pedía un helper; pedía que esa
+   comprobación estuviera. En la primera versión sólo la historia 1 la tenía
+   completa, así que se unificó y se llamó desde las tres (detalle en §11.4).
 
 ---
 
@@ -554,6 +559,31 @@ Lo que cuentan las tres, y que es justo lo que el brief pedía ver:
 - Toda etapa avanzada lleva su `desde`/`hasta`; ningún evento queda sin su clave
   de idempotencia.
 
+**Cierre del hueco de la comprobación final (auditoría posterior).** En la
+primera versión, el bloque de comprobación final del §8 —"línea de tiempo
+completa, ninguna etapa sin desde/hasta, cero artículos o folios sin su
+evento"— estaba escrito **en línea y sólo dentro de la historia 1**; las
+historias 2 y 3 comprobaban menos. Se extrajo a un helper único,
+`verificarLineaDeTiempo(ctx, t, erepo, final)`, que ahora llaman **las tres**
+historias y que añade la aserción que faltaba por completo:
+
+- cero artículos sin su evento: cada artículo del folio aparece al menos una vez
+  como `ArticuloRef`, y ningún `ArticuloRef` apunta a un artículo ajeno al folio.
+
+Lo que sí difiere entre historias —qué evento cierra la línea de tiempo y qué
+desenlaces quedaron— lo sigue afirmando cada historia por su cuenta, porque la
+historia 1 termina en `etapa_avanzada`, la 2 en `folio_cerrado` y la 3 en
+`desenlace_registrado`.
+
+Las tres aserciones nuevas del helper se probaron con **mutantes de control**,
+para confirmar que son alcanzables y no pasan en vacío:
+
+| # | Mutante de control | Qué rompe | Resultado |
+|---|---|---|---|
+| H1 | `delFolio[*ref] = false` (nunca marca cubierto) | el conteo de artículo sin evento | **muere** en las 3 historias: "el artículo … quedó sin ningún evento" |
+| H2 | el mapa sólo registra el primer artículo | la detección de `ArticuloRef` ajeno | **muere** en la historia 3: "etapa_avanzada referencia un artículo ajeno al folio" |
+| H3 | `if false && e.UbicacionHasta() != nil` | el par desde/hasta de R3/C5 | **muere** en las 3 historias: "al menos un evento debe haber guardado su ubicación hasta" |
+
 ### 11.5 Mutantes C1–C6 (hecho)
 
 Cada mutante se aplicó al código, se corrió la suite, se confirmó el fallo y se
@@ -712,9 +742,10 @@ brief permitía (líneas 133–135).
 ## 12. Estado del árbol de trabajo
 
 La tarea son **dos entregas, una rama** (`feat/garantias-dominio-v2`) y por tanto
-**un PR** con dos commits. La Entrega 1 quedó en `a564973` (ya empujado). La
-Entrega 2 va en el commit inmediatamente siguiente de esa misma rama. Cada
-commit incluye **sólo** lo del entregable.
+**un PR**. La Entrega 1 quedó en `a564973`; la Entrega 2 en `ceaff16`; el cierre
+del hueco de la comprobación final va en un tercer commit encima. Cada commit
+incluye **sólo** lo del entregable (el tercero, además, sólo toca
+`infra/garfb/e2e_test.go` y este reporte).
 
 **Commit de la Entrega 1** (`a564973`, 38 archivos, +4445/−75):
 
@@ -749,6 +780,15 @@ commit incluye **sólo** lo del entregable.
   `guardar_test.go`.
 - Modificados/actualizados: `app/abrir_garantia_test.go`,
   `app/fakes_repo_test.go`.
+
+**Commit 3 — cierre del hueco de la comprobación final** (este, encima de la
+Entrega 2):
+
+- `infra/garfb/e2e_test.go`: nuevo helper `verificarLineaDeTiempo`, que
+  las tres historias llaman; extrae el bloque del §8 y añade la aserción de
+  "cero artículos sin su evento". Único archivo tocado, además del reporte.
+- `docs/superpowers/plans/garantias-task-8-report.md`: §11.4 (helper y sus
+  mutantes de control), §10.9 (la desviación), §12 (este commit).
 
 Archivos preexistentes fuera de esta tarea y **no tocados** por mí:
 `Dockerfile.dev`, `internal/auth/infra/firebird/pagination.go`,
