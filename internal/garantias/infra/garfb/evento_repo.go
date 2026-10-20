@@ -27,6 +27,8 @@ func NewEventoRepo(pool *firebird.Pool) *EventoRepo {
 }
 
 // ListarPorGarantia returns the events for a warranty in timeline order.
+//
+//nolint:dupl // El flujo de lectura es similar al de ImagenRepo, pero usa otro dominio y mapper.
 func (r *EventoRepo) ListarPorGarantia(
 	ctx context.Context,
 	garantiaID uuid.UUID,
