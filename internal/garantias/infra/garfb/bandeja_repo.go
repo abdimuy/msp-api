@@ -53,7 +53,8 @@ func decodificarCursor(raw string) (pagination.Cursor, error) {
 
 // BandejaRepo implements the read side of the warranty list.
 type BandejaRepo struct {
-	pool *firebird.Pool
+	pool            *firebird.Pool
+	decorateQuerier func(firebird.Querier) firebird.Querier
 }
 
 // NewBandejaRepo creates a BandejaRepo backed by Firebird.
@@ -181,6 +182,9 @@ func (r *BandejaRepo) Listar(
 
 	err = firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
 		q := firebird.GetQuerier(ctx, r.pool.DB)
+		if r.decorateQuerier != nil {
+			q = r.decorateQuerier(q)
+		}
 
 		pagina, err = listarBandejaEnTx(
 			ctx,

@@ -15,6 +15,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/garantias/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/apperror"
 	"github.com/abdimuy/msp-api/internal/platform/fbtestutil"
+	"github.com/abdimuy/msp-api/internal/platform/pagination"
 )
 
 //nolint:revive // Helper de prueba: se mantiene *testing.T como primer parámetro.
@@ -433,7 +434,9 @@ func TestBandejaRepo_Listar_FiltroUbicacion(t *testing.T) {
 	folios := garfb.NewFolioGenerator(pool)
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
-		base := time.Date(2026, 10, 8, 16, 0, 0, 0, time.UTC)
+		base := time.Date(2099, 2, 2, 16, 0, 0, 0, time.UTC)
+		desde := base.Add(-time.Second)
+		hasta := base.Add(2 * time.Hour)
 
 		esperada := crearGarantiaClienteParaBandeja(
 			t,
@@ -459,6 +462,8 @@ func TestBandejaRepo_Listar_FiltroUbicacion(t *testing.T) {
 			ctx,
 			outbound.ListarGarantiasFiltros{
 				Ubicacion: &ubicacion,
+				Desde:     &desde,
+				Hasta:     &hasta,
 			},
 			outbound.Paginacion{
 				Limite: 20,
@@ -531,7 +536,8 @@ func TestBandejaRepo_Listar_FiltroHasta(t *testing.T) {
 	folios := garfb.NewFolioGenerator(pool)
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
-		hasta := time.Date(2026, 10, 8, 20, 0, 0, 0, time.UTC)
+		hasta := time.Date(2099, 2, 1, 20, 0, 0, 0, time.UTC)
+		desde := hasta.Add(-2 * time.Hour)
 
 		esperada := crearGarantiaParaBandeja(
 			t,
@@ -554,6 +560,7 @@ func TestBandejaRepo_Listar_FiltroHasta(t *testing.T) {
 		pagina, err := bandejaRepo.Listar(
 			ctx,
 			outbound.ListarGarantiasFiltros{
+				Desde: &desde,
 				Hasta: &hasta,
 			},
 			outbound.Paginacion{
@@ -626,7 +633,9 @@ func TestBandejaRepo_Listar_PaginacionSinRepetirNiSaltar(t *testing.T) {
 	folios := garfb.NewFolioGenerator(pool)
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
-		base := time.Date(2026, 10, 8, 22, 0, 0, 0, time.UTC)
+		base := time.Date(2099, 2, 3, 22, 0, 0, 0, time.UTC)
+		desde := base.Add(-time.Second)
+		hasta := base.Add(5 * time.Minute)
 
 		creadas := make([]*domain.Garantia, 0, 5)
 
@@ -655,7 +664,10 @@ func TestBandejaRepo_Listar_PaginacionSinRepetirNiSaltar(t *testing.T) {
 
 		pagina1, err := bandejaRepo.Listar(
 			ctx,
-			outbound.ListarGarantiasFiltros{},
+			outbound.ListarGarantiasFiltros{
+				Desde: &desde,
+				Hasta: &hasta,
+			},
 			outbound.Paginacion{
 				Limite: 2,
 			},
@@ -666,7 +678,10 @@ func TestBandejaRepo_Listar_PaginacionSinRepetirNiSaltar(t *testing.T) {
 
 		pagina2, err := bandejaRepo.Listar(
 			ctx,
-			outbound.ListarGarantiasFiltros{},
+			outbound.ListarGarantiasFiltros{
+				Desde: &desde,
+				Hasta: &hasta,
+			},
 			outbound.Paginacion{
 				Cursor: pagina1.SiguienteCursor,
 				Limite: 2,
@@ -678,7 +693,10 @@ func TestBandejaRepo_Listar_PaginacionSinRepetirNiSaltar(t *testing.T) {
 
 		pagina3, err := bandejaRepo.Listar(
 			ctx,
-			outbound.ListarGarantiasFiltros{},
+			outbound.ListarGarantiasFiltros{
+				Desde: &desde,
+				Hasta: &hasta,
+			},
 			outbound.Paginacion{
 				Cursor: pagina2.SiguienteCursor,
 				Limite: 2,
@@ -708,7 +726,9 @@ func TestBandejaRepo_Listar_PaginacionConCreatedAtIgual(t *testing.T) {
 	folios := garfb.NewFolioGenerator(pool)
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
-		mismoCreatedAt := time.Date(2026, 10, 8, 23, 0, 0, 0, time.UTC)
+		mismoCreatedAt := time.Date(2099, 2, 4, 23, 0, 0, 0, time.UTC)
+		desde := mismoCreatedAt
+		hasta := mismoCreatedAt.Add(time.Second)
 
 		creadas := make([]*domain.Garantia, 0, 4)
 
@@ -736,7 +756,10 @@ func TestBandejaRepo_Listar_PaginacionConCreatedAtIgual(t *testing.T) {
 
 		pagina1, err := bandejaRepo.Listar(
 			ctx,
-			outbound.ListarGarantiasFiltros{},
+			outbound.ListarGarantiasFiltros{
+				Desde: &desde,
+				Hasta: &hasta,
+			},
 			outbound.Paginacion{
 				Limite: 2,
 			},
@@ -747,7 +770,10 @@ func TestBandejaRepo_Listar_PaginacionConCreatedAtIgual(t *testing.T) {
 
 		pagina2, err := bandejaRepo.Listar(
 			ctx,
-			outbound.ListarGarantiasFiltros{},
+			outbound.ListarGarantiasFiltros{
+				Desde: &desde,
+				Hasta: &hasta,
+			},
 			outbound.Paginacion{
 				Cursor: pagina1.SiguienteCursor,
 				Limite: 2,
@@ -849,7 +875,9 @@ func TestBandejaRepo_ListarYObtener_ArticulosOrdenados(t *testing.T) {
 	folios := garfb.NewFolioGenerator(pool)
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
-		base := time.Date(2026, 10, 9, 10, 0, 0, 0, time.UTC)
+		base := time.Date(2099, 2, 5, 10, 0, 0, 0, time.UTC)
+		desde := base.Add(-time.Second)
+		hasta := base.Add(time.Hour)
 
 		numero, err := folios.Siguiente(ctx)
 		require.NoError(t, err)
@@ -860,66 +888,84 @@ func TestBandejaRepo_ListarYObtener_ArticulosOrdenados(t *testing.T) {
 		origen, err := domain.ParseOrigenFolio("piso")
 		require.NoError(t, err)
 
-		g, err := domain.AbrirGarantia(domain.AbrirGarantiaParams{
-			Folio:       folio,
-			Origen:      origen,
-			Description: "Garantía para probar orden de artículos",
-			AbiertoPor:  "ruben",
-			Now:         base,
-			Actor: domain.ActorParams{
-				Usuario:           "ruben",
-				ClaveIdempotencia: uuid.NewString(),
-				DeviceCreatedAt:   base,
-			},
-		})
-		require.NoError(t, err)
+		garantiaID := uuid.MustParse(
+			"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		)
 
 		casos := []struct {
-			clave string
-			fecha time.Time
-			id    int
+			id         uuid.UUID
+			clave      string
+			fecha      time.Time
+			articuloID int
 		}{
 			{
-				clave: "ORD-03",
-				fecha: base.Add(30 * time.Minute),
-				id:    810003,
+				id: uuid.MustParse(
+					"00000000-0000-0000-0000-000000000003",
+				),
+				clave:      "ORD-01",
+				fecha:      base.Add(10 * time.Minute),
+				articuloID: 810001,
 			},
 			{
-				clave: "ORD-01",
-				fecha: base.Add(10 * time.Minute),
-				id:    810001,
+				id: uuid.MustParse(
+					"00000000-0000-0000-0000-000000000002",
+				),
+				clave:      "ORD-02",
+				fecha:      base.Add(20 * time.Minute),
+				articuloID: 810002,
 			},
 			{
-				clave: "ORD-02",
-				fecha: base.Add(20 * time.Minute),
-				id:    810002,
+				id: uuid.MustParse(
+					"00000000-0000-0000-0000-000000000001",
+				),
+				clave:      "ORD-03",
+				fecha:      base.Add(30 * time.Minute),
+				articuloID: 810003,
 			},
 		}
 
-		for _, caso := range casos {
-			articuloID := caso.id
+		articulos := make([]*domain.Articulo, 0, len(casos))
 
-			err = g.AgregarArticulo(
-				domain.AgregarArticuloParams{
+		for _, caso := range casos {
+			articuloID := caso.articuloID
+
+			articulos = append(
+				articulos,
+				domain.HydrateArticulo(domain.HydrateArticuloParams{
+					ID:          caso.id,
+					GarantiaID:  garantiaID,
+					Rol:         domain.RolArticuloOriginal,
 					ArticuloID:  &articuloID,
 					Clave:       caso.clave,
 					Description: "Artículo para probar orden",
-				},
-				domain.ActorParams{
-					Usuario:           "ruben",
-					ClaveIdempotencia: uuid.NewString(),
-					DeviceCreatedAt:   caso.fecha,
-				},
-				caso.fecha,
+					Etapa:       domain.EtapaRegistrado,
+					Ubicacion:   domain.UbicacionAlmacenRevision,
+					CreatedAt:   caso.fecha,
+					UpdatedAt:   caso.fecha,
+				}),
 			)
-			require.NoError(t, err)
 		}
+
+		g := domain.HydrateGarantia(domain.HydrateGarantiaParams{
+			ID:          garantiaID,
+			Folio:       folio,
+			Origen:      origen,
+			Estado:      domain.EstadoFolioAbierto,
+			Description: "Garantía para probar orden de artículos",
+			AbiertoPor:  "ruben",
+			CreatedAt:   base,
+			UpdatedAt:   base.Add(30 * time.Minute),
+			Articulos:   articulos,
+		})
 
 		require.NoError(t, garantiaRepo.Crear(ctx, g))
 
 		pagina, err := bandejaRepo.Listar(
 			ctx,
-			outbound.ListarGarantiasFiltros{},
+			outbound.ListarGarantiasFiltros{
+				Desde: &desde,
+				Hasta: &hasta,
+			},
 			outbound.Paginacion{
 				Limite: 20,
 			},
@@ -933,7 +979,7 @@ func TestBandejaRepo_ListarYObtener_ArticulosOrdenados(t *testing.T) {
 		require.Equal(t, "ORD-02", articulosListar[1].Clave())
 		require.Equal(t, "ORD-03", articulosListar[2].Clave())
 
-		obtenida, err := garantiaRepo.Obtener(ctx, g.ID())
+		obtenida, err := garantiaRepo.Obtener(ctx, garantiaID)
 		require.NoError(t, err)
 
 		articulosObtener := obtenida.ArticulosForRepo()
@@ -964,5 +1010,147 @@ func TestBandejaRepo_Listar_CursorInvalido(t *testing.T) {
 		require.True(t, ok)
 		require.Equal(t, apperror.KindValidation, appErr.Kind)
 		require.Equal(t, "warranty_cursor_invalid", appErr.Code)
+	})
+}
+
+func TestBandejaRepo_Listar_AsociaArticulosAlFolioCorrecto(t *testing.T) {
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	garantiaRepo := garfb.NewGarantiaRepo(pool)
+	bandejaRepo := garfb.NewBandejaRepo(pool)
+	folios := garfb.NewFolioGenerator(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		base := time.Date(2099, 1, 2, 12, 0, 0, 0, time.UTC)
+
+		primera := crearGarantiaParaBandeja(
+			t,
+			ctx,
+			garantiaRepo,
+			folios,
+			base,
+			false,
+		)
+
+		segunda := crearGarantiaParaBandeja(
+			t,
+			ctx,
+			garantiaRepo,
+			folios,
+			base.Add(time.Second),
+			false,
+		)
+
+		desde := base.Add(-time.Second)
+		hasta := base.Add(2 * time.Second)
+
+		pagina, err := bandejaRepo.Listar(
+			ctx,
+			outbound.ListarGarantiasFiltros{
+				Desde: &desde,
+				Hasta: &hasta,
+			},
+			outbound.Paginacion{
+				Limite: 20,
+			},
+		)
+		require.NoError(t, err)
+
+		encontradas := make(map[uuid.UUID]*domain.Garantia)
+
+		for _, g := range pagina.Items {
+			if g.ID() == primera.ID() || g.ID() == segunda.ID() {
+				encontradas[g.ID()] = g
+			}
+		}
+
+		require.Len(t, encontradas, 2)
+
+		for _, esperada := range []*domain.Garantia{primera, segunda} {
+			obtenida := encontradas[esperada.ID()]
+			require.NotNil(t, obtenida)
+
+			articulosEsperados := esperada.ArticulosForRepo()
+			articulosObtenidos := obtenida.ArticulosForRepo()
+
+			require.Len(t, articulosEsperados, 1)
+			require.Len(t, articulosObtenidos, 1)
+
+			require.Equal(
+				t,
+				articulosEsperados[0].ID(),
+				articulosObtenidos[0].ID(),
+			)
+		}
+	})
+}
+
+func TestBandejaRepo_Listar_CursorDecodificadoInvalido(t *testing.T) {
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := garfb.NewBandejaRepo(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		id := uuid.MustParse(
+			"11111111-1111-1111-1111-111111111111",
+		)
+		fecha := time.Date(2099, 2, 7, 12, 0, 0, 0, time.UTC)
+
+		casos := []struct {
+			nombre string
+			cursor pagination.Cursor
+		}{
+			{
+				nombre: "version_invalida",
+				cursor: pagination.Cursor{
+					Schema:    2,
+					ID:        &id,
+					UpdatedAt: fecha,
+				},
+			},
+			{
+				nombre: "id_faltante",
+				cursor: pagination.Cursor{
+					Schema:    1,
+					UpdatedAt: fecha,
+				},
+			},
+			{
+				nombre: "fecha_faltante",
+				cursor: pagination.Cursor{
+					Schema: 1,
+					ID:     &id,
+				},
+			},
+		}
+
+		for _, caso := range casos {
+			t.Run(caso.nombre, func(t *testing.T) {
+				raw, err := pagination.EncodeCursor(caso.cursor)
+				require.NoError(t, err)
+
+				_, err = repo.Listar(
+					ctx,
+					outbound.ListarGarantiasFiltros{},
+					outbound.Paginacion{
+						Cursor: raw,
+						Limite: 20,
+					},
+				)
+				require.Error(t, err)
+
+				appErr, ok := apperror.As(err)
+				require.True(t, ok)
+				require.Equal(
+					t,
+					apperror.KindValidation,
+					appErr.Kind,
+				)
+				require.Equal(
+					t,
+					"warranty_cursor_invalid",
+					appErr.Code,
+				)
+			})
+		}
 	})
 }

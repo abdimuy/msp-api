@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/nakagami/firebirdsql"
 
 	"github.com/abdimuy/msp-api/internal/garantias/domain"
 	"github.com/abdimuy/msp-api/internal/garantias/ports/outbound"
@@ -356,9 +357,26 @@ func esClaveDuplicada(err error) bool {
 		return false
 	}
 
-	// Dependemos del nombre de la restricción que incluye el driver
-	// de Firebird en el texto del error.
-	return strings.Contains(err.Error(), "UQ_MSP_GA_EVENTO_CLAVE")
+	var fbErr *firebirdsql.FbError
+	if !errors.As(err, &fbErr) {
+		return false
+	}
+
+	// Firebird usa el GDS code 335544665 para violaciones de clave.
+	// Además comprobamos el nombre de la restricción incluido en FbError.Message
+	// para distinguir la clave de idempotencia de otras PK o UNIQUE.
+	const duplicateKeyCode = 335544665
+
+	tieneCodigoDuplicado := false
+	for _, code := range fbErr.GDSCodes {
+		if code == duplicateKeyCode {
+			tieneCodigoDuplicado = true
+			break
+		}
+	}
+
+	return tieneCodigoDuplicado &&
+		strings.Contains(fbErr.Message, "UQ_MSP_GA_EVENTO_CLAVE")
 }
 
 func nullableString(v string) any {

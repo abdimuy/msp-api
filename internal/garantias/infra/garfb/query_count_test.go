@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/nakagami/firebirdsql"
 	"github.com/stretchr/testify/require"
 
 	"github.com/abdimuy/msp-api/internal/garantias/domain"
@@ -195,70 +196,66 @@ func crearGarantiaParaConteoBandeja(
 func TestBandejaRepo_ListarUsaDosConsultasPorPagina(t *testing.T) {
 	pool := fbtestutil.NewTestFirebirdPool(t)
 
-	repo := NewGarantiaRepo(pool)
+	garantiaRepo := NewGarantiaRepo(pool)
+	bandejaRepo := NewBandejaRepo(pool)
 	folios := NewFolioGenerator(pool)
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
-		base := time.Date(2026, 10, 9, 9, 0, 0, 0, time.UTC)
+		base := time.Date(2099, 2, 6, 9, 0, 0, 0, time.UTC)
+		desde := base.Add(-time.Second)
+		hasta := base.Add(3 * time.Hour)
 
 		for i := 0; i < 3; i++ { //nolint:intrange
 			crearGarantiaParaConteoBandeja(
 				ctx,
 				t,
-				repo,
+				garantiaRepo,
 				folios,
 				base.Add(time.Duration(i)*time.Hour),
 				800000+(i*10),
 			)
 		}
 
-		tx, err := firebird.RequireTx(ctx)
-		require.NoError(t, err)
+		counter := &countingQuerier{}
 
-		query1, args1, limite1, err := buildBandejaQuery(
-			outbound.ListarGarantiasFiltros{},
+		bandejaRepo.decorateQuerier = func(
+			q firebird.Querier,
+		) firebird.Querier {
+			counter.base = q
+			return counter
+		}
+
+		filtros := outbound.ListarGarantiasFiltros{
+			Desde: &desde,
+			Hasta: &hasta,
+		}
+
+		pagina1, err := bandejaRepo.Listar(
+			ctx,
+			filtros,
 			outbound.Paginacion{
 				Limite: 2,
 			},
 		)
 		require.NoError(t, err)
-
-		counter1 := &countingQuerier{base: tx}
-
-		pagina1, err := listarBandejaEnTx(
-			ctx,
-			counter1,
-			query1,
-			args1,
-			limite1,
-		)
-		require.NoError(t, err)
 		require.Len(t, pagina1.Items, 2)
 		require.NotEmpty(t, pagina1.SiguienteCursor)
-		require.Equal(t, 2, counter1.queries)
+		require.Equal(t, 2, counter.queries)
 
-		query2, args2, limite2, err := buildBandejaQuery(
-			outbound.ListarGarantiasFiltros{},
+		counter.queries = 0
+
+		pagina2, err := bandejaRepo.Listar(
+			ctx,
+			filtros,
 			outbound.Paginacion{
 				Cursor: pagina1.SiguienteCursor,
 				Limite: 2,
 			},
 		)
 		require.NoError(t, err)
-
-		counter2 := &countingQuerier{base: tx}
-
-		pagina2, err := listarBandejaEnTx(
-			ctx,
-			counter2,
-			query2,
-			args2,
-			limite2,
-		)
-		require.NoError(t, err)
 		require.Len(t, pagina2.Items, 1)
 		require.Empty(t, pagina2.SiguienteCursor)
-		require.Equal(t, 2, counter2.queries)
+		require.Equal(t, 2, counter.queries)
 	})
 }
 
@@ -345,6 +342,35 @@ func TestEsClaveDuplicada_DistingueRestriccionReal(t *testing.T) {
 
 		err = repo.Crear(ctx, g2)
 		require.Error(t, err)
+		require.False(t, esClaveDuplicada(err))
+	})
+}
+
+func TestEsClaveDuplicada_RequiereCodigoYRestriccion(t *testing.T) {
+	t.Run("codigo_y_restriccion_correctos", func(t *testing.T) {
+		err := &firebirdsql.FbError{
+			GDSCodes: []int{335544665},
+			Message:  "violation of PRIMARY or UNIQUE KEY constraint UQ_MSP_GA_EVENTO_CLAVE",
+		}
+
+		require.True(t, esClaveDuplicada(err))
+	})
+
+	t.Run("nombre_sin_codigo_no_basta", func(t *testing.T) {
+		err := &firebirdsql.FbError{
+			GDSCodes: []int{335544347},
+			Message:  "violation of PRIMARY or UNIQUE KEY constraint UQ_MSP_GA_EVENTO_CLAVE",
+		}
+
+		require.False(t, esClaveDuplicada(err))
+	})
+
+	t.Run("codigo_con_otra_restriccion_no_basta", func(t *testing.T) {
+		err := &firebirdsql.FbError{
+			GDSCodes: []int{335544665},
+			Message:  "violation of PRIMARY or UNIQUE KEY constraint PK_MSP_GA_EVENTO",
+		}
+
 		require.False(t, esClaveDuplicada(err))
 	})
 }

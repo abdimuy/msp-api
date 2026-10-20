@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/nakagami/firebirdsql"
 	"github.com/stretchr/testify/require"
 
 	"github.com/abdimuy/msp-api/internal/platform/apperror"
@@ -34,14 +35,25 @@ func TestEsClaveDuplicada(t *testing.T) {
 
 	require.False(
 		t,
-		esClaveDuplicada(errors.New("UQ_MSP_GA_GARANTIA_FOLIO")),
+		esClaveDuplicada(errors.New(
+			"violation of UNIQUE KEY constraint UQ_MSP_GA_EVENTO_CLAVE",
+		)),
+	)
+
+	require.False(
+		t,
+		esClaveDuplicada(&firebirdsql.FbError{
+			GDSCodes: []int{335544665},
+			Message:  "violation of UNIQUE KEY constraint UQ_MSP_GA_GARANTIA_FOLIO",
+		}),
 	)
 
 	require.True(
 		t,
-		esClaveDuplicada(errors.New(
-			"violation of UNIQUE KEY constraint UQ_MSP_GA_EVENTO_CLAVE",
-		)),
+		esClaveDuplicada(&firebirdsql.FbError{
+			GDSCodes: []int{335544665},
+			Message:  "violation of UNIQUE KEY constraint UQ_MSP_GA_EVENTO_CLAVE",
+		}),
 	)
 }
 

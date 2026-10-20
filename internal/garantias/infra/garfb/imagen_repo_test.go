@@ -192,6 +192,7 @@ func TestImagenRepo_ListarPorEvento_FiltraOrdenaYVacio(t *testing.T) {
 
 		vacias, err := imagenRepo.ListarPorEvento(ctx, uuid.New())
 		require.NoError(t, err)
+		require.NotNil(t, vacias)
 		require.Empty(t, vacias)
 	})
 }
@@ -287,5 +288,105 @@ WHERE ID = ?`,
 		require.NoError(t, err)
 
 		require.Equal(t, 0, total)
+	})
+}
+
+func TestImagenRepo_ListarPorEvento_DesempataPorID(t *testing.T) {
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	garantiaRepo := garfb.NewGarantiaRepo(pool)
+	imagenRepo := garfb.NewImagenRepo(pool)
+	folios := garfb.NewFolioGenerator(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		now := time.Date(2099, 2, 8, 12, 0, 0, 0, time.UTC)
+
+		numero, err := folios.Siguiente(ctx)
+		require.NoError(t, err)
+
+		folio, err := domain.NewFolio(numero)
+		require.NoError(t, err)
+
+		origen, err := domain.ParseOrigenFolio("piso")
+		require.NoError(t, err)
+
+		g, err := domain.AbrirGarantia(domain.AbrirGarantiaParams{
+			Folio:       folio,
+			Origen:      origen,
+			Description: "Garantía para desempate de imágenes",
+			AbiertoPor:  "ruben",
+			Now:         now,
+			Actor: domain.ActorParams{
+				Usuario:           "ruben",
+				ClaveIdempotencia: uuid.NewString(),
+				DeviceCreatedAt:   now,
+			},
+		})
+		require.NoError(t, err)
+
+		require.NoError(t, garantiaRepo.Crear(ctx, g))
+
+		eventos := g.EventosPendientesForRepo()
+		require.NotEmpty(t, eventos)
+
+		eventoID := eventos[0].ID()
+		mismoCreatedAt := now.Add(time.Minute)
+
+		imagenes := []*domain.Imagen{
+			domain.HydrateImagen(domain.HydrateImagenParams{
+				ID: uuid.MustParse(
+					"00000000-0000-0000-0000-000000000003",
+				),
+				EventoID:    eventoID,
+				Ruta:        "garantias/03.jpg",
+				Description: "Imagen tres",
+				SubidaPor:   "ruben",
+				CreatedAt:   mismoCreatedAt,
+			}),
+			domain.HydrateImagen(domain.HydrateImagenParams{
+				ID: uuid.MustParse(
+					"00000000-0000-0000-0000-000000000001",
+				),
+				EventoID:    eventoID,
+				Ruta:        "garantias/01.jpg",
+				Description: "Imagen uno",
+				SubidaPor:   "ruben",
+				CreatedAt:   mismoCreatedAt,
+			}),
+			domain.HydrateImagen(domain.HydrateImagenParams{
+				ID: uuid.MustParse(
+					"00000000-0000-0000-0000-000000000002",
+				),
+				EventoID:    eventoID,
+				Ruta:        "garantias/02.jpg",
+				Description: "Imagen dos",
+				SubidaPor:   "ruben",
+				CreatedAt:   mismoCreatedAt,
+			}),
+		}
+
+		for _, img := range imagenes {
+			require.NoError(t, imagenRepo.Registrar(ctx, img))
+		}
+
+		obtenidas, err := imagenRepo.ListarPorEvento(ctx, eventoID)
+		require.NoError(t, err)
+		require.Len(t, obtenidas, 3)
+
+		require.Equal(
+			t,
+			"00000000-0000-0000-0000-000000000001",
+			obtenidas[0].ID().String(),
+		)
+		require.Equal(
+			t,
+			"00000000-0000-0000-0000-000000000002",
+			obtenidas[1].ID().String(),
+		)
+		require.Equal(
+			t,
+			"00000000-0000-0000-0000-000000000003",
+			obtenidas[2].ID().String(),
+		)
 	})
 }
