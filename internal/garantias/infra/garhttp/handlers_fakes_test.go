@@ -171,16 +171,18 @@ func fixtureHTTPGarantia() (*domain.Garantia, *domain.Evento) {
 		time.UTC,
 	)
 
+	zonaMexico := time.FixedZone("CST", -6*60*60)
+
 	createdAt := time.Date(
 		2026, time.October, 13,
-		15, 0, 0, 0,
-		time.UTC,
+		9, 0, 0, 0,
+		zonaMexico,
 	)
 
 	updatedAt := time.Date(
 		2026, time.October, 13,
-		15, 30, 0, 0,
-		time.UTC,
+		9, 30, 0, 0,
+		zonaMexico,
 	)
 
 	articulo := domain.HydrateArticulo(domain.HydrateArticuloParams{

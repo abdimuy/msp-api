@@ -202,6 +202,7 @@ func TestListarGarantias_QueryParamsInvalidos_422(t *testing.T) {
 		nombre string
 		param  string
 		valor  string
+		code   string
 	}{
 		{
 			nombre: "limit",
@@ -209,14 +210,21 @@ func TestListarGarantias_QueryParamsInvalidos_422(t *testing.T) {
 			valor:  "abc",
 		},
 		{
+			nombre: "limit_cero",
+			param:  "limit",
+			valor:  "0",
+		},
+		{
 			nombre: "estado",
 			param:  "estado",
 			valor:  "estado_invalido",
+			code:   "invalid_estado",
 		},
 		{
 			nombre: "origen",
 			param:  "origen",
 			valor:  "origen_invalido",
+			code:   "invalid_origen",
 		},
 		{
 			nombre: "cliente_id",
@@ -224,14 +232,26 @@ func TestListarGarantias_QueryParamsInvalidos_422(t *testing.T) {
 			valor:  "abc",
 		},
 		{
+			nombre: "cliente_id_cero",
+			param:  "cliente_id",
+			valor:  "0",
+		},
+		{
+			nombre: "cliente_id_fuera_de_int32",
+			param:  "cliente_id",
+			valor:  "2147483648",
+		},
+		{
 			nombre: "etapa",
 			param:  "etapa",
 			valor:  "etapa_invalida",
+			code:   "invalid_etapa",
 		},
 		{
 			nombre: "ubicacion",
 			param:  "ubicacion",
 			valor:  "ubicacion_invalida",
+			code:   "invalid_ubicacion",
 		},
 		{
 			nombre: "desde",
@@ -278,6 +298,16 @@ func TestListarGarantias_QueryParamsInvalidos_422(t *testing.T) {
 				rec.Code,
 				rec.Body.String(),
 			)
+
+			if caso.code != "" {
+				require.Contains(t, rec.Body.String(), caso.code)
+				require.Contains(t, rec.Body.String(), "no es válido")
+			}
+
+			if caso.code != "" {
+				require.Contains(t, rec.Body.String(), caso.code)
+				require.Contains(t, rec.Body.String(), "no es válido")
+			}
 
 			require.Equal(t, 0, bandeja.calls)
 		})
@@ -352,6 +382,13 @@ func TestObtenerGarantia_UUIDInvalido_422(t *testing.T) {
 		http.StatusUnprocessableEntity,
 		rec.Code,
 		rec.Body.String(),
+	)
+
+	require.Contains(t, rec.Body.String(), "invalid_uuid")
+	require.Contains(
+		t,
+		rec.Body.String(),
+		"el identificador de la garantía no es un UUID válido",
 	)
 
 	require.Equal(t, 0, garantias.calls)
@@ -567,6 +604,13 @@ func TestOpenAPI_PathsRegistered(t *testing.T) {
 		`"operationId":"listar-garantias"`,
 		`"operationId":"obtener-garantia"`,
 		`"bearerAuth"`,
+		`"format":"uuid"`,
+		`"format":"date-time"`,
+		`"format":"date"`,
+		`"401":`,
+		`"403":`,
+		`"404":`,
+		`"422":`,
 	} {
 		require.Contains(t, doc, esperado)
 	}
@@ -817,4 +861,171 @@ func TestListarGarantias_ProyectaCamposOpcionales(t *testing.T) {
 	)
 
 	require.NotContains(t, rec.Body.String(), `"calle"`)
+}
+
+func TestObtenerGarantia_SinEventos_DevuelveListaVacia(t *testing.T) {
+	t.Parallel()
+
+	garantia, _ := fixtureHTTPGarantia()
+
+	identity := &fakeHTTPIdentity{
+		usuario: outbound.Usuario{
+			ID:     "usuario-1",
+			Nombre: "Ruben",
+		},
+		permitido: true,
+	}
+
+	garantias := &fakeHTTPGarantiaRepo{
+		garantia: garantia,
+	}
+
+	eventos := &fakeHTTPEventoRepo{
+		eventos: nil,
+	}
+
+	r := buildHTTPRouter(identity, garantias, nil, eventos)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/garantias/11111111-1111-1111-1111-111111111111",
+		nil,
+	)
+	rec := httptest.NewRecorder()
+
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"eventos":[]`)
+	require.NotContains(t, rec.Body.String(), `"eventos":null`)
+}
+
+func TestListarGarantias_DesdePosteriorAHasta_422(t *testing.T) {
+	t.Parallel()
+
+	identity := &fakeHTTPIdentity{
+		usuario: outbound.Usuario{
+			ID:     "usuario-1",
+			Nombre: "Ruben",
+		},
+		permitido: true,
+	}
+
+	garantias := &fakeHTTPGarantiaRepo{}
+	bandeja := &fakeHTTPBandejaRepo{}
+	eventos := &fakeHTTPEventoRepo{}
+
+	r := buildHTTPRouter(identity, garantias, bandeja, eventos)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/garantias?desde=2026-10-14T00:00:00Z&hasta=2026-10-13T00:00:00Z",
+		nil,
+	)
+	rec := httptest.NewRecorder()
+
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "invalid_date_range")
+	require.Equal(t, 0, bandeja.calls)
+}
+
+func TestListarGarantias_QueryParamRepetido_422(t *testing.T) {
+	t.Parallel()
+
+	identity := &fakeHTTPIdentity{
+		usuario: outbound.Usuario{
+			ID:     "usuario-1",
+			Nombre: "Ruben",
+		},
+		permitido: true,
+	}
+
+	garantias := &fakeHTTPGarantiaRepo{}
+	bandeja := &fakeHTTPBandejaRepo{}
+	eventos := &fakeHTTPEventoRepo{}
+
+	r := buildHTTPRouter(identity, garantias, bandeja, eventos)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/garantias?estado=abierto&estado=cerrado",
+		nil,
+	)
+	rec := httptest.NewRecorder()
+
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	require.Equal(t, 0, bandeja.calls)
+	require.Contains(t, rec.Body.String(), "estado")
+}
+
+func TestListarGarantias_ServiceUnavailable_503(t *testing.T) {
+	t.Parallel()
+
+	identity := &fakeHTTPIdentity{
+		usuario: outbound.Usuario{
+			ID:     "usuario-1",
+			Nombre: "Ruben",
+		},
+		permitido: true,
+	}
+
+	bandeja := &fakeHTTPBandejaRepo{
+		err: apperror.NewServiceUnavailable(
+			"warranty_service_unavailable",
+			"el servicio de garantías no está disponible",
+		),
+	}
+
+	r := buildHTTPRouter(
+		identity,
+		&fakeHTTPGarantiaRepo{},
+		bandeja,
+		&fakeHTTPEventoRepo{},
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/garantias", nil)
+	rec := httptest.NewRecorder()
+
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "warranty_service_unavailable")
+}
+
+func TestListarGarantias_TooManyRequests_429(t *testing.T) {
+	t.Parallel()
+
+	identity := &fakeHTTPIdentity{
+		usuario: outbound.Usuario{
+			ID:     "usuario-1",
+			Nombre: "Ruben",
+		},
+		permitido: true,
+	}
+
+	bandeja := &fakeHTTPBandejaRepo{
+		err: apperror.NewTooManyRequests(
+			"warranty_rate_limited",
+			"demasiadas solicitudes",
+		),
+	}
+
+	r := buildHTTPRouter(
+		identity,
+		&fakeHTTPGarantiaRepo{},
+		bandeja,
+		&fakeHTTPEventoRepo{},
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/garantias", nil)
+	rec := httptest.NewRecorder()
+
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusTooManyRequests, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "warranty_rate_limited")
 }

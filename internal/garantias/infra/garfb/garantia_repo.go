@@ -176,6 +176,38 @@ func (r *GarantiaRepo) Obtener(
 	return garantia, nil
 }
 
+// ObtenerDetalle returns a warranty and its events from one read transaction.
+func (r *GarantiaRepo) ObtenerDetalle(
+	ctx context.Context,
+	id uuid.UUID,
+) (*domain.Garantia, []*domain.Evento, error) {
+	var garantia *domain.Garantia
+	var eventos []*domain.Evento
+
+	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+
+		var err error
+		garantia, err = obtenerGarantia(
+			ctx,
+			q,
+			obtenerGarantiaSQL,
+			id.String(),
+		)
+		if err != nil {
+			return err
+		}
+
+		eventos, err = listarEventosPorGarantia(ctx, q, id)
+		return err
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return garantia, eventos, nil
+}
+
 // ObtenerPorFolio returns a warranty by folio.
 func (r *GarantiaRepo) ObtenerPorFolio(
 	ctx context.Context,

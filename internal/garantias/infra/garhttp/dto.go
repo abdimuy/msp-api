@@ -6,23 +6,23 @@ package garhttp
 type ListarGarantiasRequest struct {
 	Cursor    string `query:"cursor" required:"false"`
 	Limit     string `query:"limit" required:"false"`
-	Estado    string `query:"estado" required:"false" enum:"abierto,en_proceso,listo_entrega,entregado,cerrado,cancelado"`
-	Origen    string `query:"origen" required:"false" enum:"piso,cliente"`
+	Estado    string `query:"estado" required:"false"`
+	Origen    string `query:"origen" required:"false"`
 	ClienteID string `query:"cliente_id" required:"false"`
-	Etapa     string `query:"etapa" required:"false" enum:"registrado,pendiente_recoleccion,recolectado,en_revision,orden_generada,enviado_proveedor,dictamen_recibido,reparado_proveedor,espera_respuesta_cliente,en_taller,reparado_taller,cambio_autorizado,listo_entrega,entregado,reingresado_inventario,standby,segunda_mano,desarmado,merma"`
-	Ubicacion string `query:"ubicacion" required:"false" enum:"domicilio_cliente,en_transito,almacen_revision,taller,proveedor,almacen_segunda_mano,entregado,baja"`
+	Etapa     string `query:"etapa" required:"false"`
+	Ubicacion string `query:"ubicacion" required:"false"`
 	Desde     string `query:"desde" required:"false"`
 	Hasta     string `query:"hasta" required:"false"`
 }
 
 // ObtenerGarantiaRequest representa el UUID recibido en la ruta.
 type ObtenerGarantiaRequest struct {
-	ID string `path:"id" format:"uuid"`
+	ID string `path:"id"`
 }
 
 // GarantiaDTO es la representación HTTP de un folio.
 type GarantiaDTO struct {
-	ID             string        `json:"id"`
+	ID             string        `json:"id" format:"uuid"`
 	Folio          string        `json:"folio"`
 	Origen         string        `json:"origen"`
 	ClienteID      *int          `json:"cliente_id,omitempty"`
@@ -30,7 +30,7 @@ type GarantiaDTO struct {
 	EstadoCuenta   *string       `json:"estado_cuenta,omitempty"`
 	Estado         string        `json:"estado"`
 	Description    string        `json:"description"`
-	VigenciaHasta  *string       `json:"vigencia_hasta,omitempty"`
+	VigenciaHasta  *string       `json:"vigencia_hasta,omitempty" format:"date"`
 	Calle          *string       `json:"calle,omitempty"`
 	NumeroExterior *string       `json:"numero_exterior,omitempty"`
 	Colonia        *string       `json:"colonia,omitempty"`
@@ -40,18 +40,18 @@ type GarantiaDTO struct {
 	GPSLat         *float64      `json:"gps_lat,omitempty"`
 	GPSLon         *float64      `json:"gps_lon,omitempty"`
 	AbiertoPor     string        `json:"abierto_por"`
-	CerradoEn      *string       `json:"cerrado_en,omitempty"`
-	CreatedAt      string        `json:"created_at"`
-	UpdatedAt      string        `json:"updated_at"`
+	CerradoEn      *string       `json:"cerrado_en,omitempty" format:"date-time"`
+	CreatedAt      string        `json:"created_at" format:"date-time"`
+	UpdatedAt      string        `json:"updated_at" format:"date-time"`
 	Articulos      []ArticuloDTO `json:"articulos"`
 }
 
 // ArticuloDTO es la representación HTTP de un artículo de la garantía.
 type ArticuloDTO struct {
-	ID          string  `json:"id"`
-	GarantiaID  string  `json:"garantia_id"`
+	ID          string  `json:"id" format:"uuid"`
+	GarantiaID  string  `json:"garantia_id" format:"uuid"`
 	Rol         string  `json:"rol"`
-	ReemplazaA  *string `json:"reemplaza_a,omitempty"`
+	ReemplazaA  *string `json:"reemplaza_a,omitempty" format:"uuid"`
 	ArticuloID  *int    `json:"articulo_id,omitempty"`
 	Clave       string  `json:"clave"`
 	Description string  `json:"description"`
@@ -60,16 +60,16 @@ type ArticuloDTO struct {
 	Ubicacion   string  `json:"ubicacion"`
 	Dictamen    *string `json:"dictamen,omitempty"`
 	Desenlace   *string `json:"desenlace,omitempty"`
-	CerradoEn   *string `json:"cerrado_en,omitempty"`
-	CreatedAt   string  `json:"created_at"`
-	UpdatedAt   string  `json:"updated_at"`
+	CerradoEn   *string `json:"cerrado_en,omitempty" format:"date-time"`
+	CreatedAt   string  `json:"created_at" format:"date-time"`
+	UpdatedAt   string  `json:"updated_at" format:"date-time"`
 }
 
 // EventoDTO representa una entrada de la línea de tiempo.
 type EventoDTO struct {
-	ID                string   `json:"id"`
-	GarantiaID        string   `json:"garantia_id"`
-	ArticuloRef       *string  `json:"articulo_ref,omitempty"`
+	ID                string   `json:"id" format:"uuid"`
+	GarantiaID        string   `json:"garantia_id" format:"uuid"`
+	ArticuloRef       *string  `json:"articulo_ref,omitempty" format:"uuid"`
 	Tipo              string   `json:"tipo"`
 	Description       string   `json:"description"`
 	EtapaDesde        *string  `json:"etapa_desde,omitempty"`
@@ -78,8 +78,8 @@ type EventoDTO struct {
 	RolDecisor        *string  `json:"rol_decisor,omitempty"`
 	GPSLat            *float64 `json:"gps_lat,omitempty"`
 	GPSLon            *float64 `json:"gps_lon,omitempty"`
-	CreatedAt         string   `json:"created_at"`
-	DeviceCreatedAt   string   `json:"device_created_at"`
+	CreatedAt         string   `json:"created_at" format:"date-time"`
+	DeviceCreatedAt   string   `json:"device_created_at" format:"date-time"`
 	ClaveIdempotencia string   `json:"clave_idempotencia"`
 }
 

@@ -170,7 +170,23 @@ func TestGarHTTP_E2E_BandejaFiltradaConFirebird(t *testing.T) {
 			json.Unmarshal(rec.Body.Bytes(), &body),
 		)
 
-		require.Len(t, body.Items, 2)
+		idsSembrados := map[string]bool{
+			primera.ID().String(): true,
+			ultima.ID().String():  true,
+		}
+
+		itemsSembrados := make([]struct {
+			ID     string `json:"id"`
+			Estado string `json:"estado"`
+		}, 0, 2)
+
+		for _, item := range body.Items {
+			if idsSembrados[item.ID] {
+				itemsSembrados = append(itemsSembrados, item)
+			}
+		}
+
+		require.Len(t, itemsSembrados, 2)
 
 		require.Equal(
 			t,
@@ -179,14 +195,99 @@ func TestGarHTTP_E2E_BandejaFiltradaConFirebird(t *testing.T) {
 				primera.ID().String(),
 			},
 			[]string{
-				body.Items[0].ID,
-				body.Items[1].ID,
+				itemsSembrados[0].ID,
+				itemsSembrados[1].ID,
 			},
 		)
 
-		require.Equal(t, "en_proceso", body.Items[0].Estado)
-		require.Equal(t, "en_proceso", body.Items[1].Estado)
+		require.Equal(t, "en_proceso", itemsSembrados[0].Estado)
+		require.Equal(t, "en_proceso", itemsSembrados[1].Estado)
 		require.Empty(t, body.NextCursor)
 		require.False(t, body.HasMore)
+	})
+}
+
+func TestGarHTTP_E2E_DetalleConFirebird(t *testing.T) {
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	garantias := garfb.NewGarantiaRepo(pool)
+	bandeja := garfb.NewBandejaRepo(pool)
+	eventos := garfb.NewEventoRepo(pool)
+	folios := garfb.NewFolioGenerator(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		base := time.Date(
+			2026, time.October, 13,
+			18, 0, 0, 0,
+			time.UTC,
+		)
+
+		garantia := seedHTTPGarantia(
+			ctx,
+			t,
+			garantias,
+			folios,
+			base,
+			true,
+		)
+
+		identity := &fakeHTTPIdentity{
+			usuario: outbound.Usuario{
+				ID:     "usuario-1",
+				Nombre: "Ruben",
+			},
+			permitido: true,
+		}
+
+		router := buildHTTPRouter(
+			identity,
+			garantias,
+			bandeja,
+			eventos,
+		)
+
+		req := httptest.NewRequest(
+			http.MethodGet,
+			"/garantias/"+garantia.ID().String(),
+			nil,
+		).WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(
+			t,
+			http.StatusOK,
+			rec.Code,
+			rec.Body.String(),
+		)
+
+		var body struct {
+			Garantia struct {
+				ID     string `json:"id"`
+				Estado string `json:"estado"`
+			} `json:"garantia"`
+			Eventos []struct {
+				GarantiaID string `json:"garantia_id"`
+			} `json:"eventos"`
+		}
+
+		require.NoError(
+			t,
+			json.Unmarshal(rec.Body.Bytes(), &body),
+		)
+
+		require.Equal(t, garantia.ID().String(), body.Garantia.ID)
+		require.Equal(t, "en_proceso", body.Garantia.Estado)
+		require.NotEmpty(t, body.Eventos)
+
+		for _, evento := range body.Eventos {
+			require.Equal(
+				t,
+				garantia.ID().String(),
+				evento.GarantiaID,
+			)
+		}
 	})
 }

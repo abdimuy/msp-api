@@ -30,12 +30,12 @@ func (h *Handlers) ListarGarantias(
 ) (*ListarGarantiasResponse, error) {
 	query, err := buildBandejaQuery(in)
 	if err != nil {
-		return nil, mapAppError(err)
+		return nil, mapAppError(ctx, err)
 	}
 
 	pagina, err := h.consultas.Bandeja(ctx, query)
 	if err != nil {
-		return nil, mapAppError(err)
+		return nil, mapAppError(ctx, err)
 	}
 
 	items := make([]GarantiaDTO, 0, len(pagina.Items))
@@ -58,7 +58,7 @@ func (h *Handlers) ObtenerGarantia(
 ) (*ObtenerGarantiaResponse, error) {
 	id, err := uuid.Parse(in.ID)
 	if err != nil {
-		return nil, mapAppError(errorValidacion(
+		return nil, mapAppError(ctx, errorValidacion(
 			"invalid_uuid",
 			"el identificador de la garantía no es un UUID válido",
 		))
@@ -66,7 +66,7 @@ func (h *Handlers) ObtenerGarantia(
 
 	detalle, err := h.consultas.Detalle(ctx, id)
 	if err != nil {
-		return nil, mapAppError(err)
+		return nil, mapAppError(ctx, err)
 	}
 
 	eventos := make([]EventoDTO, 0, len(detalle.Eventos))
@@ -122,6 +122,13 @@ func buildBandejaQuery(in *ListarGarantiasRequest) (app.BandejaQuery, error) {
 		return app.BandejaQuery{}, err
 	}
 
+	if desde != nil && hasta != nil && desde.After(*hasta) {
+		return app.BandejaQuery{}, errorValidacion(
+			"invalid_date_range",
+			"el parámetro desde no puede ser posterior a hasta",
+		)
+	}
+
 	return app.BandejaQuery{
 		Estado:    estado,
 		Origen:    origen,
@@ -157,14 +164,15 @@ func parseClienteID(raw string) (*int, error) {
 		return nil, nil
 	}
 
-	id, err := strconv.Atoi(raw)
-	if err != nil || id <= 0 {
+	parsed, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil || parsed <= 0 {
 		return nil, errorValidacion(
 			"invalid_cliente_id",
 			"el parámetro cliente_id debe ser un entero positivo",
 		)
 	}
 
+	id := int(parsed)
 	return &id, nil
 }
 
@@ -176,7 +184,10 @@ func parseEstado(raw string) (*domain.EstadoFolio, error) {
 
 	estado, err := domain.ParseEstadoFolio(raw)
 	if err != nil {
-		return nil, err
+		return nil, errorValidacion(
+			"invalid_estado",
+			"el parámetro estado no es válido",
+		)
 	}
 
 	return &estado, nil
@@ -190,7 +201,10 @@ func parseOrigen(raw string) (*domain.OrigenFolio, error) {
 
 	origen, err := domain.ParseOrigenFolio(raw)
 	if err != nil {
-		return nil, err
+		return nil, errorValidacion(
+			"invalid_origen",
+			"el parámetro origen no es válido",
+		)
 	}
 
 	return &origen, nil
@@ -204,7 +218,10 @@ func parseEtapa(raw string) (*domain.Etapa, error) {
 
 	etapa, err := domain.ParseEtapa(raw)
 	if err != nil {
-		return nil, err
+		return nil, errorValidacion(
+			"invalid_etapa",
+			"el parámetro etapa no es válido",
+		)
 	}
 
 	return &etapa, nil
@@ -218,7 +235,10 @@ func parseUbicacion(raw string) (*domain.Ubicacion, error) {
 
 	ubicacion, err := domain.ParseUbicacion(raw)
 	if err != nil {
-		return nil, err
+		return nil, errorValidacion(
+			"invalid_ubicacion",
+			"el parámetro ubicacion no es válido",
+		)
 	}
 
 	return &ubicacion, nil
@@ -234,7 +254,7 @@ func parseFechaFiltro(raw, nombre string) (*time.Time, error) {
 	if err != nil {
 		return nil, errorValidacion(
 			"invalid_"+nombre,
-			"el parámetro "+nombre+" no es una fecha ISO8601 válida",
+			"el parámetro "+nombre+" no es una fecha RFC3339 válida",
 		)
 	}
 

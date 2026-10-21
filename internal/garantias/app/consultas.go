@@ -30,6 +30,13 @@ type Detalle struct {
 	Eventos  []*domain.Evento
 }
 
+type detalleReader interface {
+	ObtenerDetalle(
+		ctx context.Context,
+		id uuid.UUID,
+	) (*domain.Garantia, []*domain.Evento, error)
+}
+
 // ConsultasDeps contiene las dependencias del lado de lectura.
 type ConsultasDeps struct {
 	Garantias outbound.GarantiaRepo
@@ -90,6 +97,18 @@ func (c *Consultas) Detalle(
 ) (Detalle, error) {
 	if err := c.autorizarLectura(ctx); err != nil {
 		return Detalle{}, err
+	}
+
+	if reader, ok := c.garantias.(detalleReader); ok {
+		garantia, eventos, err := reader.ObtenerDetalle(ctx, id)
+		if err != nil {
+			return Detalle{}, err
+		}
+
+		return Detalle{
+			Garantia: garantia,
+			Eventos:  eventos,
+		}, nil
 	}
 
 	garantia, err := c.garantias.Obtener(ctx, id)

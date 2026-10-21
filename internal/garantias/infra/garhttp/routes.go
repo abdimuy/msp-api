@@ -19,6 +19,10 @@ type Deps struct {
 
 // MountRouter monta las rutas HTTP de garantías sobre el router recibido.
 func MountRouter(r chi.Router, d Deps) huma.API {
+	if d.Consultas == nil {
+		panic("garhttp: Consultas es requerida")
+	}
+
 	config := huma.DefaultConfig("MSP API · Garantías", "v2")
 	config.DocsRenderer = huma.DocsRendererScalar
 
@@ -47,6 +51,38 @@ func MountRouter(r chi.Router, d Deps) huma.API {
 	api := humachi.New(r, config)
 	handlers := NewHandlers(d.Consultas)
 
+	api.UseMiddleware(func(ctx huma.Context, next func(huma.Context)) {
+		if ctx.Operation() != nil &&
+			ctx.Operation().OperationID == "listar-garantias" {
+			u := ctx.URL()
+			query := u.Query()
+
+			for _, nombre := range []string{
+				"cursor",
+				"limit",
+				"estado",
+				"origen",
+				"cliente_id",
+				"etapa",
+				"ubicacion",
+				"desde",
+				"hasta",
+			} {
+				if len(query[nombre]) > 1 {
+					_ = huma.WriteErr(
+						api,
+						ctx,
+						http.StatusUnprocessableEntity,
+						"el parámetro "+nombre+" no puede repetirse",
+					)
+					return
+				}
+			}
+		}
+
+		next(ctx)
+	})
+
 	registerOperations(api, handlers)
 
 	return api
@@ -66,6 +102,11 @@ func registerOperations(api huma.API, handlers *Handlers) {
 		Tags:          []string{"garantias"},
 		Security:      security,
 		DefaultStatus: http.StatusOK,
+		Errors: []int{
+			http.StatusUnauthorized,
+			http.StatusForbidden,
+			http.StatusUnprocessableEntity,
+		},
 	}, handlers.ListarGarantias)
 
 	huma.Register(api, huma.Operation{
@@ -77,5 +118,11 @@ func registerOperations(api huma.API, handlers *Handlers) {
 		Tags:          []string{"garantias"},
 		Security:      security,
 		DefaultStatus: http.StatusOK,
+		Errors: []int{
+			http.StatusUnauthorized,
+			http.StatusForbidden,
+			http.StatusNotFound,
+			http.StatusUnprocessableEntity,
+		},
 	}, handlers.ObtenerGarantia)
 }
