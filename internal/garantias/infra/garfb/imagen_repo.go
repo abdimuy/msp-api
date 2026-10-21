@@ -58,7 +58,7 @@ func (r *ImagenRepo) ListarPorEvento(
 	ctx context.Context,
 	eventoID uuid.UUID,
 ) ([]*domain.Imagen, error) {
-	var imagenes []*domain.Imagen
+	imagenes := make([]*domain.Imagen, 0)
 
 	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
 		q := firebird.GetQuerier(ctx, r.pool.DB)
