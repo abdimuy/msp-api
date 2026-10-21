@@ -73,18 +73,28 @@ func TestEjecutarFolio_ClaveNoCanonica(t *testing.T) {
 	svc, grepo, erepo, _, tx, _, clk, _ := setupService()
 	s := sembrar(t, grepo, domain.EstadoFolioEnProceso, piso(), domain.EtapaEnRevision)
 	k := clave()
+
+	// First execution for real: the retry must meet the event the command
+	// actually wrote (with its articuloRef), not a stand-in.
+	invocar := func(clave string) (*domain.Garantia, error) {
+		return svc.RegistrarDiagnostico(context.Background(), app.RegistrarDiagnosticoCmd{
+			GarantiaID:        s.g.ID(),
+			ArticuloID:        s.primero(),
+			Ruta:              string(domain.RutaReparacionProveedor),
+			RolDecisor:        rolDecisorPrueba(),
+			ClaveIdempotencia: clave,
+			DeviceCreatedAt:   clk.Now(),
+		})
+	}
+	if _, err := invocar(k); err != nil {
+		t.Fatalf("la primera ejecucion fallo: %v", err)
+	}
 	// The event is registered under the canonical spelling the domain writes,
 	// while the phone sends the same UUID with braces and capitals.
-	erepo.addEvento(hydrateEvento(s.g.ID(), k, domain.TipoEventoDiagnosticoRegistrado, clk.Now()))
+	erepo.addEvento(eventoComoElPrimero(t, grepo.lastSaved))
+	grepo.saved = nil
 
-	res, err := svc.RegistrarDiagnostico(context.Background(), app.RegistrarDiagnosticoCmd{
-		GarantiaID:        s.g.ID(),
-		ArticuloID:        s.primero(),
-		Ruta:              string(domain.RutaReparacionProveedor),
-		RolDecisor:        rolDecisorPrueba(),
-		ClaveIdempotencia: "{" + strings.ToUpper(k) + "}",
-		DeviceCreatedAt:   clk.Now(),
-	})
+	res, err := invocar("{" + strings.ToUpper(k) + "}")
 	if err != nil {
 		t.Fatalf("la repeticion por clave debe tener exito: %v", err)
 	}
@@ -94,8 +104,8 @@ func TestEjecutarFolio_ClaveNoCanonica(t *testing.T) {
 	if !sinFilas(grepo) {
 		t.Errorf("la repeticion no escribe: saved=%d created=%d", len(grepo.saved), len(grepo.created))
 	}
-	if tx.calls != 1 {
-		t.Errorf("tx = %d, want 1", tx.calls)
+	if tx.calls != 2 {
+		t.Errorf("tx = %d, want 2", tx.calls)
 	}
 }
 

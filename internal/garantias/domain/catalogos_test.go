@@ -147,3 +147,69 @@ func TestR11_CatalogosSonCopias(t *testing.T) {
 		t.Error("Ubicaciones() shares its backing array between calls")
 	}
 }
+
+// TestR11_CatalogosCabenEnLaColumna ties the three catalogs to the width of the
+// columns that store them: MSP_GA_EVENTO.ETAPA_* and UBICACION_* are
+// VARCHAR(28) CHARACTER SET ASCII.
+func TestR11_CatalogosCabenEnLaColumna(t *testing.T) {
+	t.Parallel()
+	const maxColumna = 28
+	for _, e := range domain.Etapas() {
+		s := string(e)
+		if len(s) > maxColumna {
+			t.Errorf("etapa %q mide %d, tope %d", s, len(s), maxColumna)
+		}
+		for _, r := range s {
+			if r > 127 {
+				t.Errorf("etapa %q trae rune fuera de ASCII %q", s, r)
+			}
+		}
+	}
+	for _, u := range domain.Ubicaciones() {
+		s := string(u)
+		if len(s) > maxColumna {
+			t.Errorf("ubicacion %q mide %d, tope %d", s, len(s), maxColumna)
+		}
+		for _, r := range s {
+			if r > 127 {
+				t.Errorf("ubicacion %q trae rune fuera de ASCII %q", s, r)
+			}
+		}
+	}
+	for _, te := range todosLosTiposEvento() {
+		if !te.IsValid() {
+			t.Errorf("tipo_evento %q no es valido", te)
+		}
+		s := string(te)
+		if len(s) > maxColumna {
+			t.Errorf("tipo_evento %q mide %d, tope %d", s, len(s), maxColumna)
+		}
+		for _, r := range s {
+			if r > 127 {
+				t.Errorf("tipo_evento %q trae rune fuera de ASCII %q", s, r)
+			}
+		}
+	}
+}
+
+func todosLosTiposEvento() []domain.TipoEvento {
+	return []domain.TipoEvento{
+		domain.TipoEventoFolioAbierto,
+		domain.TipoEventoFolioEnProceso,
+		domain.TipoEventoFolioListoEntrega,
+		domain.TipoEventoArticuloAgregado,
+		domain.TipoEventoArticuloMovido,
+		domain.TipoEventoEtapaAvanzada,
+		domain.TipoEventoDiagnosticoRegistrado,
+		domain.TipoEventoDictamenRegistrado,
+		domain.TipoEventoCambioAutorizado,
+		domain.TipoEventoDesenlaceRegistrado,
+		domain.TipoEventoDevolucionFallida,
+		domain.TipoEventoFolioEntregado,
+		domain.TipoEventoFolioCerrado,
+		domain.TipoEventoFolioCancelado,
+		domain.TipoEventoEvidenciaAdjuntada,
+		domain.TipoEventoCorrection,
+		domain.TipoEventoNota,
+	}
+}

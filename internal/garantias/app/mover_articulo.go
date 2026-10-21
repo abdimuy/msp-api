@@ -1,4 +1,6 @@
 // Package app contains the use cases of the garantias module.
+//
+//nolint:dupl // article-scoped non-decision commands with near-identical envelope/parse/delegate shape; each differs in its parsed value and aggregate call.
 package app
 
 import (
@@ -24,15 +26,25 @@ type MoverArticuloCmd struct {
 // MoverArticulo records where the operator physically put an article (R3). It
 // only sets the working locations: entregado and baja are the stage's business,
 // so the domain rejects them with ErrUbicacionManualNoPermitida.
+//
+//nolint:dupl // same envelope as RegistrarDictamen (parse, delegate); each parses its own field and calls its own aggregate method.
 func (s *Service) MoverArticulo(ctx context.Context, cmd MoverArticuloCmd) (*domain.Garantia, error) {
 	ubicacion, err := domain.ParseUbicacion(cmd.Ubicacion)
 	if err != nil {
 		return nil, err
 	}
-	return s.ejecutarFolio(ctx, cmd.GarantiaID, domain.PermisoActualizar,
-		actorDe(cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon),
+	return s.ejecutarArticulo(ctx,
+		articuloCmd{
+			GarantiaID:        cmd.GarantiaID,
+			ArticuloID:        cmd.ArticuloID,
+			ClaveIdempotencia: cmd.ClaveIdempotencia,
+			DeviceCreatedAt:   cmd.DeviceCreatedAt,
+			GPSLat:            cmd.GPSLat,
+			GPSLon:            cmd.GPSLon,
+		},
+		domain.PermisoActualizar,
 		domain.TipoEventoArticuloMovido,
-		func(_ context.Context, g *domain.Garantia, actor domain.ActorParams) error {
-			return g.MoverArticulo(cmd.ArticuloID, ubicacion, actor, s.clock.Now())
+		func(g *domain.Garantia, actor domain.ActorParams, ahora time.Time) error {
+			return g.MoverArticulo(cmd.ArticuloID, ubicacion, actor, ahora)
 		})
 }

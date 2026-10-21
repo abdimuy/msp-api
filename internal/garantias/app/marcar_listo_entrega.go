@@ -25,7 +25,7 @@ type MarcarListoEntregaCmd struct {
 func (s *Service) MarcarListoEntrega(ctx context.Context, cmd MarcarListoEntregaCmd) (*domain.Garantia, error) {
 	return s.ejecutarFolio(ctx, cmd.GarantiaID, domain.PermisoActualizar,
 		actorDe(cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon),
-		domain.TipoEventoFolioListoEntrega,
+		huellaEvento{tipo: domain.TipoEventoFolioListoEntrega},
 		func(_ context.Context, g *domain.Garantia, actor domain.ActorParams) error {
 			return g.MarcarListoEntrega(actor, s.clock.Now())
 		})

@@ -29,7 +29,7 @@ func (s *Service) Entregar(ctx context.Context, cmd EntregarCmd) (*domain.Garant
 	}
 	return s.ejecutarFolio(ctx, cmd.GarantiaID, domain.PermisoCerrar,
 		actorDe(cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon),
-		domain.TipoEventoFolioEntregado,
+		huellaEvento{tipo: domain.TipoEventoFolioEntregado},
 		func(_ context.Context, g *domain.Garantia, actor domain.ActorParams) error {
 			return g.Entregar(actor, s.clock.Now())
 		})

@@ -189,7 +189,7 @@ func desenlaceAutomatico(a *Articulo) *Desenlace {
 // derived from RUTA + DICTAMEN rather than from a dedicated column: ruta taller
 // only reaches listo_entrega through reparado_taller, and ruta proveedor only
 // through reparado_proveedor when the verdict was aceptada. No new column is
-// needed (see the 000065 comment and the task report).
+// needed (see the 000070 comment and the task report).
 func (a *Articulo) pasoPorReparado() bool {
 	if a.ruta == nil {
 		return false

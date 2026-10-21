@@ -14,7 +14,8 @@ import (
 )
 
 // comandoCompartido is one mutating command as the shared cases see it: the
-// permission it must ask for, the event type it must record, and how to run it.
+// permission it must ask for, the event type it must record, the idempotency
+// huella it declares, and how to run it.
 //
 // The state a command needs is not part of this table: every shared case
 // resolves before the mutation (identity, permission or idempotency key), so a
@@ -23,6 +24,13 @@ type comandoCompartido struct {
 	nombre  string
 	permiso domain.Permiso
 	tipo    domain.TipoEvento
+	// huella builds the event the command expects to meet behind its key on a
+	// retry. It mirrors the huella the command hands ejecutarFolio: tipo alone
+	// for folio commands, plus articuloRef — and etapaHasta for AvanzarArticulo
+	// — for the ones that name them. The shared test seeds exactly this so a
+	// command that declares a different huella than the one it writes fails
+	// instead of replaying (mutant C6).
+	huella  func(garantiaID uuid.UUID, clave string, artID uuid.UUID, now time.Time) *domain.Evento
 	invocar func(svc *app.Service, g *domain.Garantia, artID uuid.UUID, clave string, now time.Time) (*domain.Garantia, error)
 }
 
@@ -39,6 +47,7 @@ func comandosCompartidos() []comandoCompartido {
 			nombre:  "AgregarArticulo",
 			permiso: domain.PermisoCrear,
 			tipo:    domain.TipoEventoArticuloAgregado,
+			huella:  huellaDeFolio(domain.TipoEventoArticuloAgregado),
 			invocar: func(svc *app.Service, g *domain.Garantia, _ uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
 				return svc.AgregarArticulo(context.Background(), app.AgregarArticuloCmd{
 					GarantiaID:        g.ID(),
@@ -53,6 +62,7 @@ func comandosCompartidos() []comandoCompartido {
 			nombre:  "AvanzarArticulo",
 			permiso: domain.PermisoActualizar,
 			tipo:    domain.TipoEventoEtapaAvanzada,
+			huella:  huellaDeEtapa(domain.TipoEventoEtapaAvanzada, domain.EtapaEnRevision),
 			invocar: func(svc *app.Service, g *domain.Garantia, artID uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
 				return svc.AvanzarArticulo(context.Background(), app.AvanzarArticuloCmd{
 					GarantiaID:        g.ID(),
@@ -67,6 +77,7 @@ func comandosCompartidos() []comandoCompartido {
 			nombre:  "IniciarProceso",
 			permiso: domain.PermisoActualizar,
 			tipo:    domain.TipoEventoFolioEnProceso,
+			huella:  huellaDeFolio(domain.TipoEventoFolioEnProceso),
 			invocar: func(svc *app.Service, g *domain.Garantia, _ uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
 				return svc.IniciarProceso(context.Background(), app.IniciarProcesoCmd{
 					GarantiaID:        g.ID(),
@@ -79,6 +90,7 @@ func comandosCompartidos() []comandoCompartido {
 			nombre:  "RegistrarDiagnostico",
 			permiso: domain.PermisoActualizar,
 			tipo:    domain.TipoEventoDiagnosticoRegistrado,
+			huella:  huellaDeArticulo(domain.TipoEventoDiagnosticoRegistrado),
 			invocar: func(svc *app.Service, g *domain.Garantia, artID uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
 				return svc.RegistrarDiagnostico(context.Background(), app.RegistrarDiagnosticoCmd{
 					GarantiaID:        g.ID(),
@@ -94,6 +106,7 @@ func comandosCompartidos() []comandoCompartido {
 			nombre:  "RegistrarDictamen",
 			permiso: domain.PermisoActualizar,
 			tipo:    domain.TipoEventoDictamenRegistrado,
+			huella:  huellaDeArticulo(domain.TipoEventoDictamenRegistrado),
 			invocar: func(svc *app.Service, g *domain.Garantia, artID uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
 				return svc.RegistrarDictamen(context.Background(), app.RegistrarDictamenCmd{
 					GarantiaID:        g.ID(),
@@ -108,6 +121,7 @@ func comandosCompartidos() []comandoCompartido {
 			nombre:  "AutorizarCambioFisico",
 			permiso: domain.PermisoAutorizar,
 			tipo:    domain.TipoEventoCambioAutorizado,
+			huella:  huellaDeArticulo(domain.TipoEventoCambioAutorizado),
 			invocar: func(svc *app.Service, g *domain.Garantia, artID uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
 				return svc.AutorizarCambioFisico(context.Background(), app.AutorizarCambioFisicoCmd{
 					GarantiaID:        g.ID(),
@@ -122,6 +136,7 @@ func comandosCompartidos() []comandoCompartido {
 			nombre:  "MarcarNoDevuelto",
 			permiso: domain.PermisoAutorizar,
 			tipo:    domain.TipoEventoDevolucionFallida,
+			huella:  huellaDeArticulo(domain.TipoEventoDevolucionFallida),
 			invocar: func(svc *app.Service, g *domain.Garantia, artID uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
 				return svc.MarcarNoDevuelto(context.Background(), app.MarcarNoDevueltoCmd{
 					GarantiaID:        g.ID(),
@@ -136,6 +151,7 @@ func comandosCompartidos() []comandoCompartido {
 			nombre:  "RegistrarDesenlace",
 			permiso: domain.PermisoAutorizar,
 			tipo:    domain.TipoEventoDesenlaceRegistrado,
+			huella:  huellaDeArticulo(domain.TipoEventoDesenlaceRegistrado),
 			invocar: func(svc *app.Service, g *domain.Garantia, artID uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
 				return svc.RegistrarDesenlace(context.Background(), app.RegistrarDesenlaceCmd{
 					GarantiaID:        g.ID(),
@@ -151,6 +167,7 @@ func comandosCompartidos() []comandoCompartido {
 			nombre:  "MoverArticulo",
 			permiso: domain.PermisoActualizar,
 			tipo:    domain.TipoEventoArticuloMovido,
+			huella:  huellaDeArticulo(domain.TipoEventoArticuloMovido),
 			invocar: func(svc *app.Service, g *domain.Garantia, artID uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
 				return svc.MoverArticulo(context.Background(), app.MoverArticuloCmd{
 					GarantiaID:        g.ID(),
@@ -165,6 +182,7 @@ func comandosCompartidos() []comandoCompartido {
 			nombre:  "MarcarListoEntrega",
 			permiso: domain.PermisoActualizar,
 			tipo:    domain.TipoEventoFolioListoEntrega,
+			huella:  huellaDeFolio(domain.TipoEventoFolioListoEntrega),
 			invocar: func(svc *app.Service, g *domain.Garantia, _ uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
 				return svc.MarcarListoEntrega(context.Background(), app.MarcarListoEntregaCmd{
 					GarantiaID:        g.ID(),
@@ -177,6 +195,7 @@ func comandosCompartidos() []comandoCompartido {
 			nombre:  "Entregar",
 			permiso: domain.PermisoCerrar,
 			tipo:    domain.TipoEventoFolioEntregado,
+			huella:  huellaDeFolio(domain.TipoEventoFolioEntregado),
 			invocar: func(svc *app.Service, g *domain.Garantia, _ uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
 				lat, lon := gpsPrueba()
 				return svc.Entregar(context.Background(), app.EntregarCmd{
@@ -192,6 +211,7 @@ func comandosCompartidos() []comandoCompartido {
 			nombre:  "Cerrar",
 			permiso: domain.PermisoCerrar,
 			tipo:    domain.TipoEventoFolioCerrado,
+			huella:  huellaDeFolio(domain.TipoEventoFolioCerrado),
 			invocar: func(svc *app.Service, g *domain.Garantia, _ uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
 				return svc.Cerrar(context.Background(), app.CerrarCmd{
 					GarantiaID:        g.ID(),
@@ -204,6 +224,7 @@ func comandosCompartidos() []comandoCompartido {
 			nombre:  "Cancelar",
 			permiso: domain.PermisoCerrar,
 			tipo:    domain.TipoEventoFolioCancelado,
+			huella:  huellaDeFolio(domain.TipoEventoFolioCancelado),
 			invocar: func(svc *app.Service, g *domain.Garantia, _ uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
 				return svc.Cancelar(context.Background(), app.CancelarCmd{
 					GarantiaID:        g.ID(),
@@ -288,9 +309,10 @@ func TestComandos_ClaveDeOtroFolio(t *testing.T) {
 	}
 }
 
-// TestComandos_ClaveDeOtroTipo is the other face of the same rule: the key may
-// belong to this folio but to a different command. Replaying Cerrar with the key
-// Entregar already spent must not pass for an Entregar replay.
+// TestComandos_ClaveDeOtroTipo is the other face of the rule, now under the
+// content semantics of the 20-oct review: the key may belong to this same folio
+// but to a different operation. The folio is right and what the key describes
+// is not, so the answer is the mismatch conflict — not "other folio".
 func TestComandos_ClaveDeOtroTipo(t *testing.T) {
 	t.Parallel()
 	otroTipo := domain.TipoEventoNota
@@ -306,8 +328,8 @@ func TestComandos_ClaveDeOtroTipo(t *testing.T) {
 			erepo.addEvento(hydrateEvento(s.g.ID(), k, otroTipo, clk.Now()))
 
 			_, err := c.invocar(svc, s.g, s.primero(), k, clk.Now())
-			if !errors.Is(err, domain.ErrClaveIdempotenciaDeOtroFolio) {
-				t.Fatalf("want ErrClaveIdempotenciaDeOtroFolio, got %v", err)
+			if !errors.Is(err, domain.ErrClaveIdempotenciaMismatch) {
+				t.Fatalf("want ErrClaveIdempotenciaMismatch, got %v", err)
 			}
 			if !sinFilas(grepo) {
 				t.Errorf("no debe escribir: saved=%d created=%d", len(grepo.saved), len(grepo.created))
@@ -319,10 +341,12 @@ func TestComandos_ClaveDeOtroTipo(t *testing.T) {
 // TestComandos_RepetidaPorClave is the replay of each command under its own
 // key: it succeeds, returns the folio and writes nothing at all.
 //
-// The registered event carries the tipo this table declares, so a command that
-// hands a different one to ejecutarFolio fails here instead of replaying. That
-// is what IniciarProceso did before this entrega (mutant C6): the domain wrote
-// folio_en_proceso while the command asked the store for etapa_avanzada.
+// The stored event is the one the command's own huella describes — its tipo,
+// the articuloRef when it names an article, and the arrival stage for
+// AvanzarArticulo — so a command that hands ejecutarFolio a different huella
+// than the one it writes can never replay. That is what IniciarProceso did
+// before this entrega (mutant C6): the domain wrote folio_en_proceso while the
+// command asked the store for etapa_avanzada.
 func TestComandos_RepetidaPorClave(t *testing.T) {
 	t.Parallel()
 	for _, c := range comandosCompartidos() {
@@ -331,7 +355,7 @@ func TestComandos_RepetidaPorClave(t *testing.T) {
 			svc, grepo, erepo, _, tx, _, clk, _ := setupService()
 			s := sembrar(t, grepo, domain.EstadoFolioEnProceso, piso(), domain.EtapaEnRevision)
 			k := clave()
-			erepo.addEvento(hydrateEvento(s.g.ID(), k, c.tipo, clk.Now()))
+			erepo.addEvento(c.huella(s.g.ID(), k, s.primero(), clk.Now()))
 
 			res, err := c.invocar(svc, s.g, s.primero(), k, clk.Now())
 			if err != nil {

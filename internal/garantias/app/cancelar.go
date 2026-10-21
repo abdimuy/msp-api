@@ -28,7 +28,7 @@ type CancelarCmd struct {
 func (s *Service) Cancelar(ctx context.Context, cmd CancelarCmd) (*domain.Garantia, error) {
 	return s.ejecutarFolio(ctx, cmd.GarantiaID, domain.PermisoCerrar,
 		actorDe(cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon),
-		domain.TipoEventoFolioCancelado,
+		huellaEvento{tipo: domain.TipoEventoFolioCancelado},
 		func(_ context.Context, g *domain.Garantia, actor domain.ActorParams) error {
 			return g.Cancelar(cmd.Motivo, actor, s.clock.Now())
 		})

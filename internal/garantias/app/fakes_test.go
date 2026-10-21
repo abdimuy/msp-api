@@ -231,6 +231,72 @@ func hydrateEvento(garantiaID uuid.UUID, clave string, tipo domain.TipoEvento, n
 	})
 }
 
+// eventoComoElPrimero builds the event a successful first execution left
+// behind, taken from the raw aggregate the command handed to Guardar. This is
+// the shape a real retry meets in the store — not a hand-written stand-in
+// missing the article the command writes (review of the B, 20-oct).
+func eventoComoElPrimero(t *testing.T, g *domain.Garantia) *domain.Evento {
+	t.Helper()
+	return unicoEventoPendiente(t, g)
+}
+
+// eventoDeArticulo builds a persisted-shape event of an article-scoped command,
+// with the articuloRef the content check compares. It is what a twin that ran
+// the same command would have left behind.
+func eventoDeArticulo(
+	garantiaID uuid.UUID,
+	clave string,
+	tipo domain.TipoEvento,
+	articuloRef uuid.UUID,
+	now time.Time,
+) *domain.Evento {
+	return domain.HydrateEvento(domain.HydrateEventoParams{
+		ID:                uuid.New(),
+		GarantiaID:        garantiaID,
+		ArticuloRef:       &articuloRef,
+		Tipo:              tipo,
+		Usuario:           "Juan",
+		CreatedAt:         now,
+		DeviceCreatedAt:   now,
+		ClaveIdempotencia: clave,
+	})
+}
+
+// huellaDeFolio builds the store event of a command whose huella is the type
+// alone: folio-wide commands and the ones that generate their article id
+// internally, like AgregarArticulo.
+func huellaDeFolio(tipo domain.TipoEvento) func(uuid.UUID, string, uuid.UUID, time.Time) *domain.Evento {
+	return func(garantiaID uuid.UUID, clave string, _ uuid.UUID, now time.Time) *domain.Evento {
+		return hydrateEvento(garantiaID, clave, tipo, now)
+	}
+}
+
+// huellaDeArticulo builds the store event of a command whose huella names the
+// article and no stage, matching what that command writes.
+func huellaDeArticulo(tipo domain.TipoEvento) func(uuid.UUID, string, uuid.UUID, time.Time) *domain.Evento {
+	return func(garantiaID uuid.UUID, clave string, artID uuid.UUID, now time.Time) *domain.Evento {
+		return eventoDeArticulo(garantiaID, clave, tipo, artID, now)
+	}
+}
+
+// huellaDeEtapa builds the store event of AvanzarArticulo, whose huella names
+// both the article and the arrival stage.
+func huellaDeEtapa(tipo domain.TipoEvento, etapa domain.Etapa) func(uuid.UUID, string, uuid.UUID, time.Time) *domain.Evento {
+	return func(garantiaID uuid.UUID, clave string, artID uuid.UUID, now time.Time) *domain.Evento {
+		return domain.HydrateEvento(domain.HydrateEventoParams{
+			ID:                uuid.New(),
+			GarantiaID:        garantiaID,
+			ArticuloRef:       &artID,
+			EtapaHasta:        &etapa,
+			Tipo:              tipo,
+			Usuario:           "Juan",
+			CreatedAt:         now,
+			DeviceCreatedAt:   now,
+			ClaveIdempotencia: clave,
+		})
+	}
+}
+
 // unicoEventoPendiente returns the single pending event of the raw aggregate a
 // command handed to Crear. Pending events only live on that raw aggregate:
 // the clones and the re-read answers do not carry them.

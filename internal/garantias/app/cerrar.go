@@ -24,7 +24,7 @@ type CerrarCmd struct {
 func (s *Service) Cerrar(ctx context.Context, cmd CerrarCmd) (*domain.Garantia, error) {
 	return s.ejecutarFolio(ctx, cmd.GarantiaID, domain.PermisoCerrar,
 		actorDe(cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon),
-		domain.TipoEventoFolioCerrado,
+		huellaEvento{tipo: domain.TipoEventoFolioCerrado},
 		func(_ context.Context, g *domain.Garantia, actor domain.ActorParams) error {
 			return g.Cerrar(actor, s.clock.Now())
 		})

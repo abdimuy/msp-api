@@ -25,14 +25,12 @@ type MarcarNoDevueltoCmd struct {
 // without creating a replacement (R8). It is a decision, so it asks for the
 // autorizar permission and a decider role, and it emits devolucion_fallida.
 func (s *Service) MarcarNoDevuelto(ctx context.Context, cmd MarcarNoDevueltoCmd) (*domain.Garantia, error) {
-	rol, err := rolDecisorPtr(cmd.RolDecisor)
-	if err != nil {
-		return nil, err
-	}
-	return s.ejecutarFolio(ctx, cmd.GarantiaID, domain.PermisoAutorizar,
-		actorDeConRol(cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon, rol),
+	return s.ejecutarDecision(ctx,
+		nuevoDecisionCmd(cmd.GarantiaID, cmd.ArticuloID, cmd.RolDecisor,
+			cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon),
+		domain.PermisoAutorizar,
 		domain.TipoEventoDevolucionFallida,
-		func(_ context.Context, g *domain.Garantia, actor domain.ActorParams) error {
-			return g.MarcarNoDevuelto(cmd.ArticuloID, actor, s.clock.Now())
+		func(g *domain.Garantia, actor domain.ActorParams, ahora time.Time) error {
+			return g.MarcarNoDevuelto(cmd.ArticuloID, actor, ahora)
 		})
 }

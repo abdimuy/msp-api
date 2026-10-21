@@ -112,7 +112,9 @@ func TestAbrirGarantia_GanaElGemelo(t *testing.T) {
 }
 
 // TestAbrirGarantia_ClaveDeOtroComando: la clave existe pero detras hay otro
-// comando, asi que reutilizarla es un conflicto.
+// comando. AbrirGarantia no tiene folio propio contra el que comparar, asi que
+// decide por contenido (review del 20-oct): el evento no es folio_abierto, de
+// modo que reutilizar la clave es un mismatch.
 func TestAbrirGarantia_ClaveDeOtroComando(t *testing.T) {
 	t.Parallel()
 	svc, grepo, erepo, _, _, _, clk, _ := setupService()
@@ -125,8 +127,8 @@ func TestAbrirGarantia_ClaveDeOtroComando(t *testing.T) {
 		ClaveIdempotencia: k,
 		DeviceCreatedAt:   clk.Now(),
 	})
-	if !errors.Is(err, domain.ErrClaveIdempotenciaDeOtroFolio) {
-		t.Fatalf("want ErrClaveIdempotenciaDeOtroFolio, got %v", err)
+	if !errors.Is(err, domain.ErrClaveIdempotenciaMismatch) {
+		t.Fatalf("want ErrClaveIdempotenciaMismatch, got %v", err)
 	}
 	if len(grepo.created) != 0 {
 		t.Errorf("created = %d, want 0", len(grepo.created))

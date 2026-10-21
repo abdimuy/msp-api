@@ -1,4 +1,6 @@
 // Package app contains the use cases of the garantias module.
+//
+//nolint:dupl // article-scoped non-decision commands with near-identical envelope/parse/delegate shape; each differs in its parsed value and aggregate call.
 package app
 
 import (
@@ -24,15 +26,25 @@ type RegistrarDictamenCmd struct {
 // RegistrarDictamen applies the supplier's verdict and advances the article in
 // the same call. It is not a folio-level decision, so it carries no decider
 // role: the domain only admits it from dictamen_recibido on a supplier route.
+//
+//nolint:dupl // same envelope as MoverArticulo (parse, delegate); each parses its own field and calls its own aggregate method.
 func (s *Service) RegistrarDictamen(ctx context.Context, cmd RegistrarDictamenCmd) (*domain.Garantia, error) {
 	dictamen, err := domain.ParseDictamen(cmd.Dictamen)
 	if err != nil {
 		return nil, err
 	}
-	return s.ejecutarFolio(ctx, cmd.GarantiaID, domain.PermisoActualizar,
-		actorDe(cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon),
+	return s.ejecutarArticulo(ctx,
+		articuloCmd{
+			GarantiaID:        cmd.GarantiaID,
+			ArticuloID:        cmd.ArticuloID,
+			ClaveIdempotencia: cmd.ClaveIdempotencia,
+			DeviceCreatedAt:   cmd.DeviceCreatedAt,
+			GPSLat:            cmd.GPSLat,
+			GPSLon:            cmd.GPSLon,
+		},
+		domain.PermisoActualizar,
 		domain.TipoEventoDictamenRegistrado,
-		func(_ context.Context, g *domain.Garantia, actor domain.ActorParams) error {
-			return g.RegistrarDictamen(cmd.ArticuloID, dictamen, actor, s.clock.Now())
+		func(g *domain.Garantia, actor domain.ActorParams, ahora time.Time) error {
+			return g.RegistrarDictamen(cmd.ArticuloID, dictamen, actor, ahora)
 		})
 }

@@ -28,9 +28,10 @@ func TestResolverDuplicada_GanaElGemelo(t *testing.T) {
 	k := clave()
 	grepo.saveErr = domain.ErrClaveIdempotenciaDuplicada
 	grepo.onSave = func() {
-		// The twin's event, registered while nothing owns the key yet. Its folio
-		// is the one this command must answer with.
-		erepo.addEvento(hydrateEvento(s.g.ID(), k, domain.TipoEventoDiagnosticoRegistrado, clk.Now()))
+		// The twin's event, registered while nothing owns the key yet. It ran
+		// the same command, so it carries the same articuloRef the huella
+		// compares; its folio is the one this command must answer with.
+		erepo.addEvento(eventoDeArticulo(s.g.ID(), k, domain.TipoEventoDiagnosticoRegistrado, s.primero(), clk.Now()))
 	}
 
 	res, err := svc.RegistrarDiagnostico(context.Background(), app.RegistrarDiagnosticoCmd{

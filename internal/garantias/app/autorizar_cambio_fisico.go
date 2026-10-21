@@ -25,14 +25,12 @@ type AutorizarCambioFisicoCmd struct {
 // replacement. It is the decision that spends money, so it asks for the
 // autorizar permission — never actualizar — and demands a decider role.
 func (s *Service) AutorizarCambioFisico(ctx context.Context, cmd AutorizarCambioFisicoCmd) (*domain.Garantia, error) {
-	rol, err := rolDecisorPtr(cmd.RolDecisor)
-	if err != nil {
-		return nil, err
-	}
-	return s.ejecutarFolio(ctx, cmd.GarantiaID, domain.PermisoAutorizar,
-		actorDeConRol(cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon, rol),
+	return s.ejecutarDecision(ctx,
+		nuevoDecisionCmd(cmd.GarantiaID, cmd.ArticuloID, cmd.RolDecisor,
+			cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon),
+		domain.PermisoAutorizar,
 		domain.TipoEventoCambioAutorizado,
-		func(_ context.Context, g *domain.Garantia, actor domain.ActorParams) error {
-			return g.AutorizarCambioFisico(cmd.ArticuloID, actor, s.clock.Now())
+		func(g *domain.Garantia, actor domain.ActorParams, ahora time.Time) error {
+			return g.AutorizarCambioFisico(cmd.ArticuloID, actor, ahora)
 		})
 }

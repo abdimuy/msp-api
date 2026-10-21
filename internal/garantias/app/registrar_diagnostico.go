@@ -45,7 +45,8 @@ func (s *Service) RegistrarDiagnostico(ctx context.Context, cmd RegistrarDiagnos
 	return s.ejecutarDecision(ctx,
 		nuevoDecisionCmd(cmd.GarantiaID, cmd.ArticuloID, cmd.RolDecisor,
 			cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon),
-		domain.PermisoActualizar, domain.TipoEventoDiagnosticoRegistrado,
+		domain.PermisoActualizar,
+		domain.TipoEventoDiagnosticoRegistrado,
 		func(g *domain.Garantia, actor domain.ActorParams, ahora time.Time) error {
 			return g.RegistrarDiagnostico(cmd.ArticuloID, ruta, actor, ahora)
 		})
@@ -63,7 +64,8 @@ func (s *Service) RegistrarDesenlace(ctx context.Context, cmd RegistrarDesenlace
 	return s.ejecutarDecision(ctx,
 		nuevoDecisionCmd(cmd.GarantiaID, cmd.ArticuloID, cmd.RolDecisor,
 			cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon),
-		domain.PermisoAutorizar, domain.TipoEventoDesenlaceRegistrado,
+		domain.PermisoAutorizar,
+		domain.TipoEventoDesenlaceRegistrado,
 		func(g *domain.Garantia, actor domain.ActorParams, ahora time.Time) error {
 			return g.RegistrarDesenlace(cmd.ArticuloID, desenlace, actor, ahora)
 		})

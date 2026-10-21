@@ -11,7 +11,7 @@ comprobación final del §8.
 - **Brief:** `docs/superpowers/plans/garantias-task-8-brief.md`
 
 Bloques de la Entrega 1, como los acordamos:
-1. Migración `000065` + R1 + R2 + R7.
+1. Migración `000070` + R1 + R2 + R7.
 2. R3, R4, R5, R6 y R8 (+ R9 adelantado).
 3. R9, R10, R11 y R12.
 
@@ -33,11 +33,11 @@ Bloques de la Entrega 1, como los acordamos:
 | R10 — `nuevo` / `modificado` / limpio | `domain/articulo.go`, `garantia.go` | ✅ |
 | R11 — catálogos estables (`Etapas`, `Ubicaciones`, `SiguientesPorAvanzar`) | `domain/etapa.go`, `ubicacion.go`, `transiciones.go` | ✅ |
 | R12 — GPS del domicilio, NFC, `Description`, prueba de releído | `domain/garantia.go`, `texto.go`, `evento.go`, `app/` | ✅ |
-| Migración `000065` | `migrations-firebird/000065_*` | ✅ aplicada y revertida |
+| Migración `000070` | `migrations-firebird/000070_*` | ✅ aplicada y revertida |
 
 ---
 
-## 2. Migración `000065_add_ubicacion_a_msp_ga_evento`
+## 2. Migración `000070_add_ubicacion_a_msp_ga_evento`
 
 Agrega `UBICACION_DESDE` y `UBICACION_HASTA` a `MSP_GA_EVENTO`, ambas
 `VARCHAR(28) CHARACTER SET ASCII`, nullable y sin `DEFAULT` (regla dura #1: el
@@ -52,13 +52,27 @@ migración, como pide el brief.
 ### 2.1 Estado previo de la base (dev)
 
 La base tenía migraciones hasta `000062` (la `000063`/`000064` existen sólo en
-producción). La `000065` no estaba aplicada:
+producción). Este entregable se escribió en su momento como `000065`, con ese
+número ya aplicado en la base de dev; al renumerarlo a `000070` (ver §2.0) hubo
+que retirar primero ese rastro viejo — las dos columnas y la fila `65` — antes de
+aplicar la `000070` limpia:
 
 ```
-          ID NAME
-============ ========================================================================================================================================================================================================
-          62 000062_create_msp_flota_asignaciones
+--- tras retirar el rastro viejo 000065 ---
+SELECT ID, NAME FROM MSP_MIGRATIONS WHERE ID >= 63 ORDER BY ID;
+(vacío)
+SELECT RDB$FIELD_NAME ... LIKE 'UBICACION%';
+(vacío)
 ```
+
+### 2.0 Por qué la migración es la `000070` y no la `000065`
+
+El brief pedía la `000065` (era el número libre en `main` cuando se escribió).
+Desde entonces `main` y la base de dev avanzaron con las migraciones de flota
+(`000062`) y el líder pidió renumerar a `000070` para no chocar con las
+`000063`/`000064` de producción ni con las que se agregaron después. El
+contenido no cambia: sólo el número (`000070`), el `ID` de `MSP_MIGRATIONS`
+(`70`), el nombre del archivo y las menciones en el código y el reporte.
 
 ### 2.2 Aplicar la `up`
 
@@ -67,7 +81,7 @@ producción). La `000065` no estaba aplicada:
 `docker exec … isql` que arma el Makefile:
 
 ```powershell
-Get-Content -Raw migrations-firebird\000065_add_ubicacion_a_msp_ga_evento.up.sql |
+Get-Content -Raw migrations-firebird\000070_add_ubicacion_a_msp_ga_evento.up.sql |
   docker exec -i mueblera-firebird /usr/local/firebird/bin/isql `
     -u SYSDBA -p masterkey -ch UTF8 /firebird/data/MUEBLERA.FDB
 ```
@@ -79,24 +93,23 @@ Verificación (columnas + fila de control):
 ```
 RDB$FIELD_NAME
 ===============================================================
-ETAPA_DESDE
-ETAPA_HASTA
 UBICACION_DESDE
 UBICACION_HASTA
 
           ID NAME
 ============ ========================================================================================================================================================================================================
-          65 000065_add_ubicacion_a_msp_ga_evento
+          70 000070_add_ubicacion_a_msp_ga_evento
 ```
 
 Tipo y charset, idénticos a `ETAPA_DESDE`:
 
 ```
-RDB$FIELD_NAME                                                  RDB$FIELD_TYPE RDB$CHARACTER_LENGTH RDB$CHARACTER_SET_ID
-=============================================================== ============== ==================== ====================
-ETAPA_DESDE                                                                 37                   28                    2
-UBICACION_DESDE                                                             37                   28                    2
-UBICACION_HASTA                                                             37                   28                    2
+CAMPO                                                              TIPO CARACTERES CHARSET
+=============================================================== ======= ========== =======
+ETAPA_DESDE                                                          37         28       2
+ETAPA_HASTA                                                          37         28       2
+UBICACION_DESDE                                                      37         28       2
+UBICACION_HASTA                                                      37         28       2
 ```
 
 (`37` = `VARCHAR`, `28` = longitud, `2` = `ASCII`.)
@@ -104,12 +117,12 @@ UBICACION_HASTA                                                             37  
 ### 2.3 Revertir la `down` y volver a aplicar la `up`
 
 ```powershell
-Get-Content -Raw migrations-firebird\000065_add_ubicacion_a_msp_ga_evento.down.sql |
+Get-Content -Raw migrations-firebird\000070_add_ubicacion_a_msp_ga_evento.down.sql |
   docker exec -i mueblera-firebird /usr/local/firebird/bin/isql `
     -u SYSDBA -p masterkey -ch UTF8 /firebird/data/MUEBLERA.FDB
 ```
 
-Tras la `down`, la consulta de columnas `UBICACION%` y la de `ID = 65` devuelven
+Tras la `down`, la consulta de columnas `UBICACION%` y la de `ID = 70` devuelven
 **ambas vacío** (sin error): las columnas y la fila de control se fueron.
 
 Después se volvió a aplicar la `up` para dejar la base de desarrollo migrada:
@@ -120,7 +133,7 @@ UBICACION_HASTA
 
           ID NAME
 ============ ========================================================================================================================================================================================================
-          65 000065_add_ubicacion_a_msp_ga_evento
+          70 000070_add_ubicacion_a_msp_ga_evento
 ```
 
 *(El ciclo up/down se volvió a correr al cerrar la Entrega 2, con su salida
@@ -303,40 +316,42 @@ usa `test-unit` (sin `FB_DATABASE`); por eso no aparecían antes.
 
 ---
 
-## 9. Dependencia declarada: el PR #26 no está mergeado
+## 9. Relación con el PR #26 (declarada)
 
-El paquete `internal/garantias/app` **no existe** en esta rama: viene del PR #26
-(`origin/feat/garantias-comandos-apertura`), que **todavía no está mergeado**.
-Para que la prueba de R12 (`app/abrir_garantia_test.go`) compile y corra, se
-trajo de ese PR, **textualmente**:
+Esta rama **ya no depende** del PR #26 para compilar: `internal/garantias/app`
+existe aquí entero, con los trece comandos y sus pruebas. En su día el paquete se
+trajo de `feat/garantias-comandos-apertura` cuando el #26 todavía no estaba
+mergeado; desde entonces esta rama creció por su cuenta.
 
-- `app/service.go`
-- `app/abrir_garantia.go`
-- `app/agregar_articulo.go`, `app/avanzar_articulo.go`, `app/iniciar_proceso.go`
-  (los necesita `service.go`: sin ellos `ejecutarFolio`/`revisarClave`/`operacion`
-  quedan sin uso y `golangci-lint` falla con `unused`)
-- `app/fakes_test.go`, `app/fakes_repo_test.go`
+**Lo que sí hay que resolver al integrar:** las dos ramas modifican los mismos
+doce archivos de `app/` más `domain/errors.go`, cada una con contenido propio:
 
-Y **se agregó** lo propio de esta tarea:
-`app/abrir_garantia_test.go` con `TestAbrirGarantia_DevuelveElFolioReleido`.
+- el **#26** trae `AbrirGarantia`, `AgregarArticulo`, `AvanzarArticulo`,
+  `IniciarProceso` y sus pruebas;
+- **esta rama** trae los trece comandos y sus pruebas (`comandos_compartidos_test.go`,
+  los `*_test.go` de cada comando, `helpers_comandos_test.go`), y además portó
+  aquí la **maquinaria de huella** que la revisión del #26 pidió
+  (`huellaEvento`/`coincideHuella`/`huellaApertura` + `ErrClaveIdempotenciaMismatch`),
+  para que el #30 no quedara con el diseño que el líder ya rechazó. `service.go`
+  y `errors.go` difieren entre ramas justo por ese port.
 
-**No se trajeron** las pruebas de comando del PR #26
-(`agregar_articulo_test.go`, `avanzar_articulo_test.go`, `iniciar_proceso_test.go`,
-`errores_test.go`, `transaccion_test.go`): preceden a R4 y hoy fallan (mismo
-motivo que §8). Pertenecen a la Entrega 2 / al rebase del PR #26.
-
-**Para el líder:** el PR #26 no está mergeado; esta rama depende de él. Cuando se
-mergee (o rebase), los archivos que trajimos son idénticos, así que no debería
-haber conflicto, salvo la prueba que agregamos.
+**Plan de integración:** cuando el #26 se mergee (o se rebase sobre él), esta rama
+se rebasa sobre `main` con el #26 dentro. Los conflictos son de contenido en esos
+doce archivos, no de diseño: esta rama es un superconjunto funcional de los
+comandos del #26, así que el rebase resuelve quedándose con la versión de aquí
+salvo en lo que el #26 haga distinto en los tres comandos de apertura. Se declara
+para que el líder lo sepa antes de mergear el #26.
 
 ---
 
 ## 10. Desviaciones del brief (declaradas con el porqué)
 
-1. **`internal/garantias/app` traído del PR #26** (ver §9). El brief asume que
-   ese paquete ya existe; como el PR no está mergeado, lo trajimos para que la
-   prueba de R12 corra.
-2. **Pruebas de comando del PR #26 no traídas** (ver §9): preceden a R4.
+1. **`internal/garantias/app` nació del PR #26** (ver §9). El brief asume que ese
+   paquete ya existe; como el #26 no estaba mergeado, en su día se trajo de ahí.
+   Hoy esta rama lo tiene entero y creció por su cuenta.
+2. **Divergencia con el PR #26 en doce archivos de `app/` + `errors.go`** (ver §9):
+   el rebase sobre el #26 ya mergeado los resuelve quedándose con la versión de
+   esta rama. Se declara para que el líder lo tenga presente.
 3. **`ENCODING_HANDLING.md`**: se documentó ahí el helper `normalizarNFC` de
    garantías (el brief dice "va en `ENCODING_HANDLING.md`"). Es el único cambio
    fuera de `internal/garantias` y `migrations-firebird`.
@@ -356,7 +371,7 @@ haber conflicto, salvo la prueba que agregamos.
    literales con nombre de campo en 25 puntos de llamada. Unirlos deja los
    llamadores intactos y el código se lee igual. Es la única desviación sobre el
    "cada uno en su archivo"; los otros ocho comandos sí están cada uno en el suyo.
-8. **El ciclo up/down de la `000065`** se corrió con `docker exec … isql` en vez
+8. **El ciclo up/down de la `000070`** se corrió con `docker exec … isql` en vez
    de `make fb-migrate-*`, porque `make` no existe en el shell de este entorno.
    Es el mismo comando que el Makefile arma dentro de esos targets; la salida
    literal está en §11.7 y en §2.
@@ -371,9 +386,10 @@ haber conflicto, salvo la prueba que agregamos.
 
 ### 11.1 Los 10 comandos (hecho)
 
-Cada uno en su archivo, todos por `ejecutarFolio`, pasando el **tipo de evento**
-que producen y parseando con el `Parse` del dominio los strings que vienen de
-fuera (el error del dominio se devuelve tal cual):
+Cada uno en su archivo, todos por `ejecutarFolio`, pasando la **huella** del
+evento que producen (su tipo, y el artículo y/o la etapa cuando el comando los
+nombra) y parseando con el `Parse` del dominio los strings que vienen de fuera
+(el error del dominio se devuelve tal cual):
 
 | Comando | Archivo | Permiso | Tipo de evento |
 |---|---|---|---|
@@ -403,11 +419,27 @@ envoltura de los comandos de decisión, para que cada comando se lea como lo que
 es —un parse, un permiso, un tipo de evento y el método del agregado— en vez de
 repetir la misma fontanería de ocho líneas).
 
-**Bug R7 corregido (mutante C6).** `IniciarProceso` pasaba a `ejecutarFolio` el
-tipo de la etapa (`etapa_avanzada`) mientras el dominio escribía
-`folio_en_proceso`. Como `revisarClave` compara el tipo guardado contra el que
-recibe el comando, **toda repetición** de `IniciarProceso` caía en
-"clave de otro folio". Ahora pasa `TipoEventoFolioEnProceso`.
+**Huella de idempotencia (mutante C6), portada del #26.** La revisión del PR #26
+rechazó la regla original ("misma clave + mismo folio + mismo tipo = repetición"):
+con esa regla, reusar la clave con otro contenido —p. ej. mover el mismo artículo
+a `ROPERO` y luego a `COMEDOR`— respondía "ya hecho" y se perdía el segundo
+movimiento. La huella cierra eso:
+
+- `huellaEvento{tipo, articuloRef, etapaHasta}` es lo que el comando espera
+  encontrar detrás de su clave. Un campo `nil` significa "este comando no lleva
+  ese dato, no se compara"; el tipo se compara siempre, el artículo donde el
+  comando lo nombra, y la etapa sólo en `AvanzarArticulo` (la única que la declara).
+- `revisarClave` decide: ausente → sigue; mismo folio y misma huella → repetición
+  (éxito sin escribir); mismo folio y otra huella →
+  `ErrClaveIdempotenciaMismatch` (409); otro folio → `ErrClaveIdempotenciaDeOtroFolio`.
+- `AbrirGarantia` usa `huellaApertura()` (sólo `folio_abierto`) y `uuid.Nil` como
+  comodín de folio, porque es el único que todavía no tiene folio que comparar.
+- `AgregarArticulo` declara sólo el tipo: el dominio genera el `articuloRef` por
+  dentro, así que compararlo daría un falso mismatch en cada repetición.
+
+Con esto, `IniciarProceso` (que antes pasaba `etapa_avanzada` mientras el dominio
+escribía `folio_en_proceso`) ya no puede repetirse mal: la huella que declara es
+la que escribe, y el mutante C6 muere en la prueba compartida.
 
 ### 11.2 Pruebas de la Entrega 2 (hecho)
 
@@ -421,9 +453,10 @@ Estructura, para no repetir la mecánica en 14 archivos:
 - `app/comandos_compartidos_test.go` — una **tabla única** de los 13 comandos
   mutantes con la que se cubren los casos compartidos: sin usuario (401), sin
   permiso (403, **sin ninguna escritura**), clave de otro folio, clave de otro
-  tipo y repetición por clave. La repetición se registra con el tipo que la
-  tabla declara, así que un comando que pase otro tipo no puede repetirse: ahí
-  muere C6.
+  tipo (hoy `ErrClaveIdempotenciaMismatch`) y repetición por clave. Cada entrada
+  declara su **huella** y la repetición siembra justo ese evento, así que un
+  comando que declare una huella distinta de la que escribe no puede repetirse:
+  ahí muere C6.
 - `app/comandos_permisos_test.go` — la **matriz completa 14 × 5**: cada comando
   contra cada uno de los cinco permisos. Afirma las dos direcciones (negar el
   permiso propio lo detiene antes de la transacción; negar cualquier otro no lo
@@ -457,7 +490,7 @@ Ahora:
   `domain.ErrArticuloNoEncontrado`, nunca un INSERT silencioso.
 
 **R3 — la ubicación viaja en el evento.** `MSP_GA_EVENTO.UBICACION_DESDE` y
-`UBICACION_HASTA` (migración `000065`) no estaban en el INSERT ni en los SELECT,
+`UBICACION_HASTA` (migración `000070`) no estaban en el INSERT ni en los SELECT,
 y `eventoRow`/`scanEvento`/`hydrateEvento` no las leían. Se agregaron a
 `insertarEventoSQL`, `listarEventosPorGarantiaSQL` y
 `obtenerEventoPorClaveIdempotenciaSQL`, y a la hidratación (`parseUbicacionPtr`).
@@ -658,7 +691,7 @@ $ go list -deps ./internal/garantias/... | grep 'msp-api/internal/' \
 
 Control de encoding (`grep -rn 'Ã' internal/garantias`): vacío.
 
-### 11.7 Migración `000065`: el up y el down, con la salida literal
+### 11.7 Migración `000070`: el up y el down, con la salida literal
 
 Ciclo completo corrido sobre la base de desarrollo
 (`mueblera-firebird`, `/firebird/data/MUEBLERA.FDB`) tras el cierre de la
@@ -667,62 +700,92 @@ desde el shell de este entorno (PowerShell no tiene `make`), así que se ejecut�
 el mismo `docker exec … isql` que el Makefile usa dentro de esos targets, con el
 mismo contenedor, las mismas credenciales y el mismo `-ch UTF8`.
 
-#### 0. Estado de partida (la 000065 ya aplicada)
+#### 0. Estado de partida y renumeración
+
+La base de dev traía el rastro viejo de cuando la migración era la `000065` (las
+dos columnas y la fila `65`). Se retiró primero, para que la `000070` se aplicara
+limpia:
 
 ```
-$ docker exec -i mueblera-firebird /usr/local/firebird/bin/isql -u SYSDBA -p masterkey -ch UTF8 -q /firebird/data/MUEBLERA.FDB
-  <<< 'SELECT ID, NAME FROM MSP_MIGRATIONS WHERE ID = 65;'
+--- MSP_MIGRATIONS >= 63 tras retirar el rastro viejo ---
+(vacío)
 
-          ID NAME
-============ ========================================================================================================================
-          65 000065_add_ubicacion_a_msp_ga_evento
+--- columnas UBICACION% tras retirar el rastro viejo ---
+(vacío)
 ```
 
-#### 1. `make fb-migrate-down N=000065`
+#### 1. `make fb-migrate-up` (primera)
 
 ```
 $ docker exec -i mueblera-firebird /usr/local/firebird/bin/isql -u SYSDBA -p masterkey -ch UTF8 /firebird/data/MUEBLERA.FDB \
-      < migrations-firebird/000065_add_ubicacion_a_msp_ga_evento.down.sql
+      < migrations-firebird/000070_add_ubicacion_a_msp_ga_evento.up.sql
+exit=0   (isql no imprime nada cuando el DDL pasa)
+```
+
+Tras el up, la fila de control y las columnas existen:
+
+```
+--- MSP_MIGRATIONS (id 70) tras el up ---
+
+          ID NAME
+============ ========================================================================================================================
+          70 000070_add_ubicacion_a_msp_ga_evento
+
+--- columnas UBICACION% tras el up ---
+
+RDB$FIELD_NAME
+===============================================================
+UBICACION_DESDE
+UBICACION_HASTA
+```
+
+#### 2. `make fb-migrate-down N=000070`
+
+```
+$ docker exec -i mueblera-firebird /usr/local/firebird/bin/isql -u SYSDBA -p masterkey -ch UTF8 /firebird/data/MUEBLERA.FDB \
+      < migrations-firebird/000070_add_ubicacion_a_msp_ga_evento.down.sql
 exit=0
 ```
 
 Tras el down, la fila de `MSP_MIGRATIONS` desaparece y las columnas también:
 
 ```
---- MSP_MIGRATIONS (id 65) tras el down ---
+--- MSP_MIGRATIONS (id 70) tras el down ---
 (vacío)
 
---- columnas UBICACION* tras el down (vacío = reversibles) ---
+--- columnas UBICACION% tras el down (vacío = reversibles) ---
 (vacío)
 ```
 
-#### 2. `make fb-migrate-up`
+#### 3. `make fb-migrate-up` (de nuevo)
 
 ```
 $ docker exec -i mueblera-firebird /usr/local/firebird/bin/isql -u SYSDBA -p masterkey -ch UTF8 /firebird/data/MUEBLERA.FDB \
-      < migrations-firebird/000065_add_ubicacion_a_msp_ga_evento.up.sql
+      < migrations-firebird/000070_add_ubicacion_a_msp_ga_evento.up.sql
 exit=0
 ```
 
-Tras el up, la fila vuelve y las columnas existen con la forma que pide el
-brief:
+La fila vuelve y las columnas existen con la forma que pide el brief:
 
 ```
---- MSP_MIGRATIONS (id 65) tras el up ---
+--- MSP_MIGRATIONS (id 70) tras el up ---
 
           ID NAME
 ============ ========================================================================================================================
-          65 000065_add_ubicacion_a_msp_ga_evento
+          70 000070_add_ubicacion_a_msp_ga_evento
 
---- columnas UBICACION* tras el up ---
-COLUMNA                                                         NULABLE  CARACTERES CHARSET     POS
-=============================================================== ======== ========== =========== =====
-UBICACION_DESDE                                                 NULL             28 ASCII         14
-UBICACION_HASTA                                                 NULL             28 ASCII         15
+--- forma de las columnas (join con RDB$FIELDS) ---
+
+COLUMNA                                                         NULABLE CARACTERES CHARSET
+=============================================================== ======= ========== =======
+UBICACION_DESDE                                                  <null>         28       2
+UBICACION_HASTA                                                  <null>         28       2
 ```
 
-`VARCHAR(28) CHARACTER SET ASCII`, nulas y sin `DEFAULT`, en las posiciones 14
-y 15 de `MSP_GA_EVENTO`. El ciclo es idempotente: down borra, up recrea, y
+`VARCHAR(28) CHARACTER SET ASCII`, nulas (`NULABLE = <null>`) y sin `DEFAULT`
+(no hay columna de default en el modelo). El control con `ETAPA_DESDE`/`ETAPA_HASTA`
+da exactamente la misma forma (`28` caracteres, charset `2` = `ASCII`), que es lo
+que el brief pedía. El ciclo es idempotente: down borra, up recrea, y
 `MSP_MIGRATIONS` queda consistente en los dos sentidos.
 
 #### Y además, la prueba por la vía de los datos
@@ -754,7 +817,7 @@ incluye **sólo** lo del entregable (el tercero, además, sólo toca
   `docs/module-standards/ENCODING_HANDLING.md`.
 - Nuevos: `domain/{texto.go,avanzar_origen_test.go,cancelar_fuera_test.go,catalogos_test.go,desenlace_automatico_test.go,dirty_tracking_test.go,entregar_test.go,folio_eventos_test.go,folio_operacion_test.go,marcar_no_devuelto_test.go,r12_pendientes_test.go,ubicacion_movimiento_test.go}`.
 - Nuevos (del PR #26): `app/{service.go,abrir_garantia.go,abrir_garantia_test.go,agregar_articulo.go,avanzar_articulo.go,iniciar_proceso.go,fakes_test.go,fakes_repo_test.go}`.
-- Nuevos: `migrations-firebird/000065_add_ubicacion_a_msp_ga_evento.{up,down}.sql`.
+- Nuevos: `migrations-firebird/000070_add_ubicacion_a_msp_ga_evento.{up,down}.sql`.
 
 **Commit de la Entrega 2** (este):
 
@@ -767,8 +830,10 @@ incluye **sólo** lo del entregable (el tercero, además, sólo toca
   `comandos_permisos_test.go`, `ejecutar_folio_test.go`,
   `helpers_comandos_test.go`, y el resto de `_test.go` por comando.
 - Modificados: `app/service.go` (`actorDeConRol`, `rolDecisorPtr`,
-  `decisionCmd`/`nuevoDecisionCmd`), `app/iniciar_proceso.go`
-  (`TipoEventoFolioEnProceso`).
+  `decisionCmd`/`nuevoDecisionCmd`, y la maquinaria de huella:
+  `huellaEvento`/`coincideHuella`/`huellaApertura`/`revisarClave`/`resolverDuplicada`),
+  `app/iniciar_proceso.go` (huella `folio_en_proceso`), y los demás comandos para
+  declarar su huella. `domain/errors.go` suma `ErrClaveIdempotenciaMismatch`.
 - Modificados en `domain/`: `evento.go` (`claveDerivada`/`espacioDeEventos`) y
   `garantia.go` (claves derivadas por discriminador en `Entregar`).
 - Nuevos en `infra/garfb/`: `mappers_test.go`, `e2e_test.go`,
@@ -795,3 +860,62 @@ Archivos preexistentes fuera de esta tarea y **no tocados** por mí:
 `internal/cobranza/infra/ventfb/fb_event_source.go` (modificados), y
 `AGENTS.md`, `t.txt`, `tmp_fix.py`, `tmp_gps.py` (sin seguimiento). Todos
 quedaron **fuera** de ambos commits y siguen en el árbol de trabajo.
+
+**Entrega 3 — observaciones del líder al PR #30** (encima de la Entrega 2):
+
+- **Bloqueante, migración `000065` → `000070`**: `migrations-firebird/000070_*`
+  (renombrada con `git mv`), `ID`/`WHERE` a `70`, y las menciones en
+  `domain/articulo.go:192` y este reporte.
+- **Mayor, huella de idempotencia portada del #26** (§11.1): `domain/errors.go`
+  (`ErrClaveIdempotenciaMismatch`), `app/service.go`
+  (`huellaEvento`/`coincideHuella`/`huellaApertura`/`revisarClave`/
+  `resolverDuplicada`), los trece comandos declarando su huella, y
+  `app/abrir_garantia.go` (`uuid.Nil` como comodín).
+- **Mayor, pruebas de idempotencia adaptadas**: `app/comandos_compartidos_test.go`
+  (campo `huella` por comando y `TestComandos_ClaveDeOtroTipo` → `Mismatch`),
+  `app/fakes_test.go` (`huellaDeFolio`/`huellaDeArticulo`/`huellaDeEtapa`,
+  `eventoComoElPrimero`, `eventoDeArticulo`), `app/ejecutar_folio_test.go`,
+  `app/resolver_duplicada_test.go`, `app/abrir_garantia_errores_test.go`.
+- **Menor, prueba de ancho de columna** (§11.6): `domain/catalogos_test.go`
+  suma `TestR11_CatalogosCabenEnLaColumna` (etapas, ubicaciones y tipos de evento
+  ≤ 28 chars y ASCII).
+- **Menores de redacción de la migración**: `ToWallClock` fuera del comentario y
+  la afirmación "vacía en todos los entornos" acotada (ver §13).
+
+---
+
+## 13. Observaciones del líder que se resuelven aquí
+
+### 13.1 Mayor 3 — el mensaje de commit no se reescribió (errata declarada)
+
+El commit `ceaff16` (Entrega 2) lleva en su mensaje la frase "comandos de
+operación, R10 y punta a punta", y en el cuerpo una línea sobre el bug R7 que
+menciona `folio_entregado`/`folio_en_proceso`. El líder (observación menor 4) notó
+que el bug era de `IniciarProceso` → `folio_en_proceso`, no de `folio_entregado`.
+**No se hizo rebase interactivo** para reescribir el mensaje: el historial de la
+rama ya está empujado y rebasar forzaría un `--force-with-lease` sobre una rama
+con PR abierto. **Errata:** léase `folio_en_proceso` donde el mensaje de `ceaff16`
+dice `folio_entregado`. El código y las pruebas ya son correctos (§11.1); sólo el
+texto del commit viejo queda con la errata.
+
+### 13.2 De dónde sale el rol de quien decide (`USUARIO`, `RolDecisor`)
+
+El líder preguntó por qué `RegistrarDiagnostico`/`RegistrarDictamen`/
+`AutorizarCambioFisico`/`RegistrarDesenlace`/`MarcarNoDevuelto` llevan `RolDecisor`
+en el comando y no lo toman de la identidad. La razón está documentada en el
+propio puerto: `internal/garantias/ports/outbound/identity.go:9-11` — `Usuario{}`
+sólo trae `ID` y `Nombre` (el nombre es lo que `MSP_GA_EVENTO.USUARIO` y
+`MSP_GA_GARANTIA.ABIERTO_POR` graban). El **rol** ("qué área decide") no forma
+parte de la identidad autenticada: es un dato de la operación, y por eso viaja en
+el comando. El permiso dice *si* alguien puede decidir; el rol dice *desde qué
+área* lo hizo, y sin él el expediente no puede decir quién autorizó un cambio
+caro (`ErrRolDecisorObligatorio`).
+
+### 13.3 Menores de la migración (redacción)
+
+En `000070_..._up.sql` se corrigieron dos frases que el líder observó: (1) ya no
+se cita `firebird.ToWallClock` como si escribiera estas columnas —es una función
+de tiempos, aquí el valor es el string del catálogo, escrito por Go—; (2) la
+afirmación "MSP_GA_EVENTO está vacía en todos los entornos" se acotó a lo que se
+puede verificar: en dev está vacía porque el módulo aún no tiene escritura desde
+la API, y las filas que existieran quedan con `NULL` (que es el valor legítimo).

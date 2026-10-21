@@ -27,7 +27,11 @@ type AvanzarArticuloCmd struct {
 func (s *Service) AvanzarArticulo(ctx context.Context, cmd AvanzarArticuloCmd) (*domain.Garantia, error) {
 	return s.ejecutarFolio(ctx, cmd.GarantiaID, domain.PermisoActualizar,
 		actorDe(cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon),
-		domain.TipoEventoEtapaAvanzada,
+		huellaEvento{
+			tipo:        domain.TipoEventoEtapaAvanzada,
+			articuloRef: &cmd.ArticuloID,
+			etapaHasta:  &cmd.EtapaDestino,
+		},
 		func(_ context.Context, g *domain.Garantia, actor domain.ActorParams) error {
 			return g.AvanzarArticulo(cmd.ArticuloID, cmd.EtapaDestino, actor, s.clock.Now())
 		})
