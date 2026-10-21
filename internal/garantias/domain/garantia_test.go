@@ -31,6 +31,34 @@ func actorDecisor(usuario string) domain.ActorParams {
 	return a
 }
 
+// actorEntrega is actor() carrying the coordinates Entregar mandates (R9).
+func actorEntrega(usuario string) domain.ActorParams {
+	a := actor(usuario)
+	lat, lon := 19.427, -99.17
+	a.GPSLat, a.GPSLon = &lat, &lon
+	return a
+}
+
+// iniciar starts the folio's process (abierto -> en_proceso), the state every
+// article mutator now requires (R4). Tests that exercise the abierto state must
+// drive the aggregate directly instead of going through it.
+func iniciar(t *testing.T, g *domain.Garantia) {
+	t.Helper()
+	if err := g.IniciarProceso(actor("juan"), fixed); err != nil {
+		t.Fatalf("IniciarProceso: %v", err)
+	}
+}
+
+// ensureProceso starts the process the first time a walking helper moves an
+// article, so a test that just adds an article and advances it still reads the
+// same. It is a no-op once the folio left abierto.
+func ensureProceso(t *testing.T, g *domain.Garantia) {
+	t.Helper()
+	if g.Estado() == domain.EstadoFolioAbierto {
+		iniciar(t, g)
+	}
+}
+
 func countPending(g *domain.Garantia) int {
 	n := 0
 	for range g.EventosPendientes() {
@@ -85,6 +113,7 @@ func addArticle(t *testing.T, g *domain.Garantia, desc string) *domain.Articulo 
 
 func advance(t *testing.T, g *domain.Garantia, a *domain.Articulo, hasta domain.Etapa) *domain.Articulo {
 	t.Helper()
+	ensureProceso(t, g)
 	if err := g.AvanzarArticulo(a.ID(), hasta, actor("juan"), fixed); err != nil {
 		t.Fatalf("AvanzarArticulo(%s): %v", hasta, err)
 	}
@@ -93,6 +122,7 @@ func advance(t *testing.T, g *domain.Garantia, a *domain.Articulo, hasta domain.
 
 func diagnostico(t *testing.T, g *domain.Garantia, a *domain.Articulo, ruta domain.RutaReparacion) *domain.Articulo {
 	t.Helper()
+	ensureProceso(t, g)
 	if err := g.RegistrarDiagnostico(a.ID(), ruta, actorDecisor("juan"), fixed); err != nil {
 		t.Fatalf("RegistrarDiagnostico(%s): %v", ruta, err)
 	}
@@ -101,6 +131,7 @@ func diagnostico(t *testing.T, g *domain.Garantia, a *domain.Articulo, ruta doma
 
 func swap(t *testing.T, g *domain.Garantia, a *domain.Articulo) {
 	t.Helper()
+	ensureProceso(t, g)
 	if err := g.AutorizarCambioFisico(a.ID(), actorDecisor("juan"), fixed); err != nil {
 		t.Fatalf("AutorizarCambioFisico: %v", err)
 	}
@@ -511,8 +542,8 @@ func TestIniciarProceso(t *testing.T) {
 			t.Errorf("Estado() = %q, want en_proceso", g.Estado())
 		}
 		e := lastEvent(t, g)
-		if e.Tipo() != domain.TipoEventoEtapaAvanzada {
-			t.Errorf("evento = %q, want etapa_avanzada", e.Tipo())
+		if e.Tipo() != domain.TipoEventoFolioEnProceso {
+			t.Errorf("evento = %q, want folio_en_proceso", e.Tipo())
 		}
 		if e.EtapaDesde() != nil || e.EtapaHasta() != nil {
 			t.Errorf("folio events must not carry stage data")
@@ -585,6 +616,7 @@ func TestAvanzarArticulo_Invalida(t *testing.T) {
 	t.Parallel()
 	g := openPiso(t)
 	a := addArticle(t, g, "silla")
+	iniciar(t, g)
 	pendientes := countPending(g)
 
 	err := g.AvanzarArticulo(a.ID(), domain.EtapaEntregado, actor("juan"), fixed)
@@ -668,6 +700,7 @@ func TestArticulo_MutacionesActualizanUpdatedAt(t *testing.T) {
 	// debe moverse en cada uno (fallaría si un mutador perdiera MarkUpdatedAt).
 	g := openPiso(t)
 	a := addArticle(t, g, "silla")
+	iniciar(t, g)
 	if err := g.AvanzarArticulo(a.ID(), domain.EtapaEnRevision, mut, cambio); err != nil {
 		t.Fatalf("AvanzarArticulo: %v", err)
 	}
@@ -772,6 +805,7 @@ func TestRegistrarDiagnostico(t *testing.T) {
 		t.Parallel()
 		g := openPiso(t)
 		a := addArticle(t, g, "silla") // registrado
+		iniciar(t, g)
 		pendientes := countPending(g)
 		err := g.RegistrarDiagnostico(a.ID(), domain.RutaReparacionTaller, actorDecisor("juan"), fixed)
 		if !errors.Is(err, domain.ErrTransicionEtapaNoPermitida) {
@@ -798,6 +832,7 @@ func supplierToVerdict(t *testing.T) (*domain.Garantia, *domain.Articulo) {
 
 func dictamen(t *testing.T, g *domain.Garantia, a *domain.Articulo, d domain.Dictamen) *domain.Articulo {
 	t.Helper()
+	ensureProceso(t, g)
 	if err := g.RegistrarDictamen(a.ID(), d, actor("juan"), fixed); err != nil {
 		t.Fatalf("RegistrarDictamen(%s): %v", d, err)
 	}
@@ -942,7 +977,7 @@ func TestAutorizarCambioFisico(t *testing.T) {
 		artID := uuid.New()
 		g := domain.HydrateGarantia(domain.HydrateGarantiaParams{
 			ID: gID, Folio: "GA-000001", Origen: domain.OrigenFolioPiso,
-			Estado: domain.EstadoFolioAbierto, Description: "x", AbiertoPor: "juan",
+			Estado: domain.EstadoFolioEnProceso, Description: "x", AbiertoPor: "juan",
 			CreatedAt: fixed, UpdatedAt: fixed,
 			Articulos: []*domain.Articulo{
 				domain.HydrateArticulo(domain.HydrateArticuloParams{
@@ -967,6 +1002,7 @@ func TestAutorizarCambioFisico(t *testing.T) {
 		t.Parallel()
 		g := openPiso(t)
 		a := addArticle(t, g, "silla") // registrado
+		iniciar(t, g)
 		pendientes := countPending(g)
 		err := g.AutorizarCambioFisico(a.ID(), actorDecisor("juan"), fixed)
 		if !errors.Is(err, domain.ErrTransicionEtapaNoPermitida) {
@@ -1086,6 +1122,7 @@ func TestRegistrarDesenlace_NoDesdeStandby(t *testing.T) {
 	t.Parallel()
 	g := openPiso(t)
 	a := addArticle(t, g, "silla") // registrado: standby no alcanzado
+	iniciar(t, g)
 	pendientes := countPending(g)
 	err := g.RegistrarDesenlace(a.ID(), domain.DesenlaceMerma, actorDecisor("juan"), fixed)
 	if !errors.Is(err, domain.ErrTransicionEtapaNoPermitida) {
@@ -1132,6 +1169,7 @@ func TestMutaciones_RechazanActorInvalido(t *testing.T) {
 		t.Parallel()
 		g := openPiso(t)
 		a := addArticle(t, g, "silla")
+		iniciar(t, g)
 		pendientes := countPending(g)
 		err := g.AvanzarArticulo(a.ID(), domain.EtapaEnRevision, malo, fixed)
 		if !errors.Is(err, domain.ErrEventoUsuarioObligatorio) {
@@ -1246,7 +1284,12 @@ func TestMutaciones_RechazanActorInvalido(t *testing.T) {
 			t.Fatalf("setup: %v", err)
 		}
 		pendientes := countPending(g)
-		err := g.Entregar(malo, fixed)
+		// Entregar checks the GPS before building any event, so this actor
+		// carries coordinates while staying invalid on the user field: the
+		// subtest still asserts the actor-rejection path, not the GPS one.
+		lat, lon := 19.427, -99.17
+		maloEnt := domain.ActorParams{Usuario: "", ClaveIdempotencia: "k", DeviceCreatedAt: fixed, GPSLat: &lat, GPSLon: &lon}
+		err := g.Entregar(maloEnt, fixed)
 		if !errors.Is(err, domain.ErrEventoUsuarioObligatorio) {
 			t.Fatalf("want ErrEventoUsuarioObligatorio, got %v", err)
 		}
@@ -1268,7 +1311,7 @@ func TestMutaciones_RechazanActorInvalido(t *testing.T) {
 		if err := g.MarcarListoEntrega(actor("juan"), fixed); err != nil {
 			t.Fatalf("setup: %v", err)
 		}
-		if err := g.Entregar(actor("juan"), fixed); err != nil {
+		if err := g.Entregar(actorEntrega("juan"), fixed); err != nil {
 			t.Fatalf("setup: %v", err)
 		}
 		pendientes := countPending(g)
@@ -1512,7 +1555,7 @@ func TestFolio_EntregaYCierra(t *testing.T) {
 	}
 
 	// entregar
-	err := g.Entregar(actor("juan"), fixed)
+	err := g.Entregar(actorEntrega("juan"), fixed)
 	if err != nil {
 		t.Fatalf("Entregar: %v", err)
 	}
@@ -1525,7 +1568,7 @@ func TestFolio_EntregaYCierra(t *testing.T) {
 
 	// entregar de nuevo no procede
 	pendientes := countPending(g)
-	if err := g.Entregar(actor("juan"), fixed); !errors.Is(err, domain.ErrTransicionEstadoNoPermitida) {
+	if err := g.Entregar(actorEntrega("juan"), fixed); !errors.Is(err, domain.ErrTransicionEstadoNoPermitida) {
 		t.Fatalf("double Entregar: want ErrTransicionEstadoNoPermitida, got %v", err)
 	}
 	if g.Estado() != domain.EstadoFolioEntregado || countPending(g) != pendientes {
@@ -1868,6 +1911,7 @@ func TestEventosNoDecision_RolOpcionalSeGuarda(t *testing.T) {
 		t.Parallel()
 		g := openPiso(t)
 		a := addArticle(t, g, "silla")
+		iniciar(t, g)
 		if err := g.AvanzarArticulo(a.ID(), domain.EtapaEnRevision, actor("juan"), fixed); err != nil {
 			t.Fatalf("AvanzarArticulo sin rol: %v", err)
 		}
@@ -1879,6 +1923,7 @@ func TestEventosNoDecision_RolOpcionalSeGuarda(t *testing.T) {
 		t.Parallel()
 		g := openPiso(t)
 		a := addArticle(t, g, "silla")
+		iniciar(t, g)
 		act := actorDecisor("juan")
 		if err := g.AvanzarArticulo(a.ID(), domain.EtapaEnRevision, act, fixed); err != nil {
 			t.Fatalf("AvanzarArticulo con rol: %v", err)
@@ -1926,6 +1971,7 @@ func TestEventoGPS_InvalidoRechazado(t *testing.T) {
 			t.Parallel()
 			g := openPiso(t)
 			a := addArticle(t, g, "silla")
+			iniciar(t, g)
 			pendientes := countPending(g)
 			err := g.AvanzarArticulo(a.ID(), domain.EtapaEnRevision, actorGPS(c.lat, c.lon), fixed)
 			if !errors.Is(err, domain.ErrEventoGPSInvalido) {
@@ -1944,6 +1990,7 @@ func TestEventoGPS_InvalidoRechazado(t *testing.T) {
 		t.Parallel()
 		g := openPiso(t)
 		a := addArticle(t, g, "silla")
+		iniciar(t, g)
 		if err := g.AvanzarArticulo(a.ID(), domain.EtapaEnRevision, actorGPS(&arriba90, &arriba180), fixed); err != nil {
 			t.Fatalf("lat 90 / lon 180 rechazado: %v", err)
 		}
@@ -1963,6 +2010,7 @@ func TestEventoGPS_SeGuardaEnElEvento(t *testing.T) {
 		lat, lon := 19.427, -99.17
 		g := openPiso(t)
 		a := addArticle(t, g, "silla")
+		iniciar(t, g)
 		if err := g.AvanzarArticulo(a.ID(), domain.EtapaEnRevision, actorGPS(&lat, &lon), fixed); err != nil {
 			t.Fatalf("AvanzarArticulo: %v", err)
 		}
@@ -1978,6 +2026,7 @@ func TestEventoGPS_SeGuardaEnElEvento(t *testing.T) {
 		t.Parallel()
 		g := openPiso(t)
 		a := addArticle(t, g, "silla")
+		iniciar(t, g)
 		if err := g.AvanzarArticulo(a.ID(), domain.EtapaEnRevision, actorGPS(nil, nil), fixed); err != nil {
 			t.Fatalf("AvanzarArticulo sin GPS: %v", err)
 		}

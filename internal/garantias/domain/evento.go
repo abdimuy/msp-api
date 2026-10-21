@@ -22,6 +22,8 @@ type Evento struct {
 	description       string
 	etapaDesde        *Etapa
 	etapaHasta        *Etapa
+	ubicacionDesde    *Ubicacion
+	ubicacionHasta    *Ubicacion
 	usuario           string
 	rolDecisor        *RolDecisor
 	gpsLat            *float64
@@ -41,6 +43,8 @@ type EventoParams struct {
 	Description       string
 	EtapaDesde        *Etapa
 	EtapaHasta        *Etapa
+	UbicacionDesde    *Ubicacion
+	UbicacionHasta    *Ubicacion
 	Usuario           string
 	RolDecisor        *RolDecisor
 	GPSLat, GPSLon    *float64
@@ -53,7 +57,7 @@ type EventoParams struct {
 // event ID is generated here via uuid.New(). Tipo is a validated closed enum
 // fed by typed constants, so an invalid value can never reach this function.
 func newEvento(p EventoParams) (*Evento, error) {
-	usuario := strings.TrimSpace(p.Usuario)
+	usuario := normalizarNFC(strings.TrimSpace(p.Usuario))
 	if usuario == "" {
 		return nil, ErrEventoUsuarioObligatorio
 	}
@@ -88,9 +92,11 @@ func newEvento(p EventoParams) (*Evento, error) {
 		garantiaID:        p.GarantiaID,
 		articuloRef:       p.ArticuloRef,
 		tipo:              p.Tipo,
-		description:       p.Description,
+		description:       normalizarNFC(p.Description),
 		etapaDesde:        p.EtapaDesde,
 		etapaHasta:        p.EtapaHasta,
+		ubicacionDesde:    p.UbicacionDesde,
+		ubicacionHasta:    p.UbicacionHasta,
 		usuario:           usuario,
 		rolDecisor:        p.RolDecisor,
 		gpsLat:            p.GPSLat,
@@ -99,6 +105,24 @@ func newEvento(p EventoParams) (*Evento, error) {
 		deviceCreatedAt:   p.DeviceCreatedAt,
 		claveIdempotencia: parsed.String(),
 	}, nil
+}
+
+// espacioDeEventos is the fixed namespace under which the derived keys of a
+// multi-event command are minted. It exists so that Entregar can write one
+// event per article without every one of them carrying the command's single
+// CLAVE_IDEMPOTENCIA: the column is UNIQUE, and two articles delivered by the
+// same call would otherwise collide on the second INSERT.
+var espacioDeEventos = uuid.MustParse("6f6b0a7c-1f2e-5a3d-9b4c-7d8e9f0a1b2c")
+
+// claveDerivada mints the idempotency key of an extra event inside a command
+// that already owns una clave. It is a UUIDv5 of the command's key and a
+// discriminator, so it is deterministic: the same retry of the same command
+// produces the same keys and the UNIQUE index still answers "ya lo hice"
+// instead of writing the delivery twice. The caller keeps the original key for
+// the event its command is named after, which is the one the app's replay
+// lookup reads (revisarClave compares TIPO against it).
+func claveDerivada(clave, discriminator string) string {
+	return uuid.NewSHA1(espacioDeEventos, []byte(clave+"\x00"+discriminator)).String()
 }
 
 // gpsValido reports whether the event's coordinates are acceptable. They are
@@ -129,6 +153,8 @@ type HydrateEventoParams struct {
 	Description       string
 	EtapaDesde        *Etapa
 	EtapaHasta        *Etapa
+	UbicacionDesde    *Ubicacion
+	UbicacionHasta    *Ubicacion
 	Usuario           string
 	RolDecisor        *RolDecisor
 	GPSLat, GPSLon    *float64
@@ -148,6 +174,8 @@ func HydrateEvento(p HydrateEventoParams) *Evento {
 		description:       p.Description,
 		etapaDesde:        p.EtapaDesde,
 		etapaHasta:        p.EtapaHasta,
+		ubicacionDesde:    p.UbicacionDesde,
+		ubicacionHasta:    p.UbicacionHasta,
 		usuario:           p.Usuario,
 		rolDecisor:        p.RolDecisor,
 		gpsLat:            p.GPSLat,
@@ -178,6 +206,14 @@ func (e *Evento) EtapaDesde() *Etapa { return e.etapaDesde }
 
 // EtapaHasta returns the destination stage for stage-bearing events, if any.
 func (e *Evento) EtapaHasta() *Etapa { return e.etapaHasta }
+
+// UbicacionDesde returns the origin location for location-bearing events, if
+// any. A move that does not change where the item is leaves it nil.
+func (e *Evento) UbicacionDesde() *Ubicacion { return e.ubicacionDesde }
+
+// UbicacionHasta returns the destination location for location-bearing events,
+// if any.
+func (e *Evento) UbicacionHasta() *Ubicacion { return e.ubicacionHasta }
 
 // Usuario returns the actor who registered the event.
 func (e *Evento) Usuario() string { return e.usuario }

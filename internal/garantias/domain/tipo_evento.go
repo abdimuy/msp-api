@@ -1,23 +1,26 @@
 //nolint:misspell // domain vocabulary is Spanish (correccion, etc.) per project convention.
 package domain
 
-// TipoEvento identifies what a folklore event records on the timeline. The
-// ten stage-bearing types come from the folio method table plus the repair
-// branch facts (DiagnosticoRegistrado, DictamenRegistrado, CambioAutorizado,
-// DesenlaceRegistrado); the last three never carry a stage change.
+// TipoEvento identifies what a folio event records on the timeline: a stage
+// change (the stage-bearing types) or a folio-level, manual or correction fact
+// that never carries a stage change.
 type TipoEvento string
 
-// Event types this folio logs. The ten stage-bearing types mirror the folio
-// method table plus the repair-branch facts; the last three never carry a
-// stage change.
+// Event types this folio logs. The stage-bearing types mirror the folio method
+// table plus the repair-branch facts; the rest record folio-level or manual
+// facts and never carry a stage change.
 const (
 	TipoEventoFolioAbierto          TipoEvento = "folio_abierto"
+	TipoEventoFolioEnProceso        TipoEvento = "folio_en_proceso"
+	TipoEventoFolioListoEntrega     TipoEvento = "folio_listo_entrega"
 	TipoEventoArticuloAgregado      TipoEvento = "articulo_agregado"
+	TipoEventoArticuloMovido        TipoEvento = "articulo_movido"
 	TipoEventoEtapaAvanzada         TipoEvento = "etapa_avanzada"
 	TipoEventoDiagnosticoRegistrado TipoEvento = "diagnostico_registrado"
 	TipoEventoDictamenRegistrado    TipoEvento = "dictamen_registrado"
 	TipoEventoCambioAutorizado      TipoEvento = "cambio_autorizado"
 	TipoEventoDesenlaceRegistrado   TipoEvento = "desenlace_registrado"
+	TipoEventoDevolucionFallida     TipoEvento = "devolucion_fallida"
 	TipoEventoFolioEntregado        TipoEvento = "folio_entregado"
 	TipoEventoFolioCerrado          TipoEvento = "folio_cerrado"
 	TipoEventoFolioCancelado        TipoEvento = "folio_cancelado"
@@ -39,12 +42,16 @@ func ParseTipoEvento(s string) (TipoEvento, error) {
 func (t TipoEvento) IsValid() bool {
 	switch t {
 	case TipoEventoFolioAbierto,
+		TipoEventoFolioEnProceso,
+		TipoEventoFolioListoEntrega,
 		TipoEventoArticuloAgregado,
+		TipoEventoArticuloMovido,
 		TipoEventoEtapaAvanzada,
 		TipoEventoDiagnosticoRegistrado,
 		TipoEventoDictamenRegistrado,
 		TipoEventoCambioAutorizado,
 		TipoEventoDesenlaceRegistrado,
+		TipoEventoDevolucionFallida,
 		TipoEventoFolioEntregado,
 		TipoEventoFolioCerrado,
 		TipoEventoFolioCancelado,

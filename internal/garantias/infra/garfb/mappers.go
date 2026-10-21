@@ -396,6 +396,8 @@ type eventoRow struct {
 	description       []byte
 	etapaDesde        sql.NullString
 	etapaHasta        sql.NullString
+	ubicacionDesde    sql.NullString
+	ubicacionHasta    sql.NullString
 	usuario           string
 	rolDecisor        sql.NullString
 	gpsLat            sql.NullFloat64
@@ -416,6 +418,8 @@ func scanEvento(row rowScanner) (*eventoRow, error) {
 		&r.description,
 		&r.etapaDesde,
 		&r.etapaHasta,
+		&r.ubicacionDesde,
+		&r.ubicacionHasta,
 		&r.usuario,
 		&r.rolDecisor,
 		&r.gpsLat,
@@ -442,6 +446,19 @@ func parseEtapaPtr(v sql.NullString) (*domain.Etapa, error) {
 	}
 
 	return &etapa, nil
+}
+
+func parseUbicacionPtr(v sql.NullString) (*domain.Ubicacion, error) {
+	if !v.Valid {
+		return nil, nil
+	}
+
+	ubicacion, err := domain.ParseUbicacion(v.String)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ubicacion, nil
 }
 
 func parseRolDecisorPtr(v sql.NullString) (*domain.RolDecisor, error) {
@@ -488,6 +505,16 @@ func hydrateEvento(r *eventoRow) (*domain.Evento, error) {
 		return nil, hydrationError("evento", r.id, err)
 	}
 
+	ubicacionDesde, err := parseUbicacionPtr(r.ubicacionDesde)
+	if err != nil {
+		return nil, hydrationError("evento", r.id, err)
+	}
+
+	ubicacionHasta, err := parseUbicacionPtr(r.ubicacionHasta)
+	if err != nil {
+		return nil, hydrationError("evento", r.id, err)
+	}
+
 	rolDecisor, err := parseRolDecisorPtr(r.rolDecisor)
 	if err != nil {
 		return nil, hydrationError("evento", r.id, err)
@@ -511,6 +538,8 @@ func hydrateEvento(r *eventoRow) (*domain.Evento, error) {
 		Description:       string(r.description),
 		EtapaDesde:        etapaDesde,
 		EtapaHasta:        etapaHasta,
+		UbicacionDesde:    ubicacionDesde,
+		UbicacionHasta:    ubicacionHasta,
 		Usuario:           r.usuario,
 		RolDecisor:        rolDecisor,
 		GPSLat:            floatPtr(r.gpsLat),
