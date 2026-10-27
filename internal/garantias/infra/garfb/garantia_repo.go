@@ -109,7 +109,17 @@ func (r *GarantiaRepo) Guardar(ctx context.Context, g *domain.Garantia) error {
 		return domain.ErrGarantiaNoEncontrada
 	}
 
-	for _, a := range g.ArticulosForRepo() {
+	// R10: el agregado dice qué cambió. Los nuevos se insertan, los
+	// modificados se actualizan, y el resto no se toca. Un UPDATE sobre un
+	// artículo modificado que afecta 0 filas es un error, no un INSERT
+	// silencioso: significa que la fila desapareció por debajo del agregado.
+	for _, a := range g.ArticulosNuevosForRepo() {
+		if err := insertarArticulo(ctx, tx, a); err != nil {
+			return err
+		}
+	}
+
+	for _, a := range g.ArticulosModificadosForRepo() {
 		result, err := tx.ExecContext(
 			ctx,
 			actualizarArticuloSQL,
@@ -133,9 +143,7 @@ func (r *GarantiaRepo) Guardar(ctx context.Context, g *domain.Garantia) error {
 		}
 
 		if afectadas == 0 {
-			if err := insertarArticulo(ctx, tx, a); err != nil {
-				return err
-			}
+			return domain.ErrArticuloNoEncontrado
 		}
 	}
 
@@ -332,6 +340,8 @@ func insertarEvento(
 		nullableString(e.Description()),
 		enumPtrArg(e.EtapaDesde()),
 		enumPtrArg(e.EtapaHasta()),
+		enumPtrArg(e.UbicacionDesde()),
+		enumPtrArg(e.UbicacionHasta()),
 		e.Usuario(),
 		enumPtrArg(e.RolDecisor()),
 		e.GPSLat(),

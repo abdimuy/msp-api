@@ -160,6 +160,14 @@ var (
 		"domicilio no permitido en folio de piso",
 	)
 
+	// ErrDomicilioGPSInvalido is returned by AbrirGarantia when the folio's
+	// coordinates fail the same rule as the event's (gpsValido): the pair
+	// complete or absent, both in range and finite (R12).
+	ErrDomicilioGPSInvalido = apperror.NewValidation(
+		"warranty_address_gps_invalid",
+		"coordenadas gps del domicilio inválidas",
+	)
+
 	// ErrTransicionEtapaNoPermitida is returned when an article cannot move
 	// from its current stage to the requested one. The stage machine lives
 	// in transiciones.go and is the single source of truth.
@@ -282,6 +290,20 @@ var (
 	ErrClaveIdempotenciaDeOtroFolio = apperror.NewConflict(
 		"warranty_idempotency_key_other_folio",
 		"la clave de idempotencia pertenece a otro folio",
+	)
+
+	// ErrClaveIdempotenciaMismatch is returned when the idempotency key
+	// belongs to THIS folio and THIS command, but the stored event does not
+	// describe the same operation the retry is asking for: the key is a
+	// repeat, its content is not. Treating it as a plain repetition would
+	// answer "already done" and silently drop the second operation (review
+	// of the B, 20-oct: the same key with "ROPERO" and later with "COMEDOR"
+	// answered success and never stored the comedor). It is a conflict, not
+	// a validation error: the key itself is well formed, it is the reuse
+	// that is wrong.
+	ErrClaveIdempotenciaMismatch = apperror.NewConflict(
+		"warranty_idempotency_key_mismatch",
+		"la clave de idempotencia ya se usó con otro contenido",
 	)
 
 	// ErrRolDecisorObligatorio is returned by the three decision methods
@@ -453,5 +475,52 @@ var (
 	ErrArticuloDescriptionMuyLarga = apperror.NewValidation(
 		"warranty_article_description_too_long",
 		"descripción del artículo demasiado larga",
+	)
+
+	// ErrFolioNoAdmiteOperacion is returned when the folio state does not allow
+	// the requested article operation (R4). The single rule lives in
+	// folioAdmiteOperacion; this sentinel is what the caller sees.
+	ErrFolioNoAdmiteOperacion = apperror.NewValidation(
+		"warranty_folio_operation_not_allowed",
+		"el folio no admite esa operación en su estado actual",
+	)
+
+	// ErrFolioConArticuloFuera is returned by Cancelar when an article is still
+	// at the supplier or in transit (R5): the item must come back before the
+	// folio is voided.
+	ErrFolioConArticuloFuera = apperror.NewValidation(
+		"warranty_folio_item_outside",
+		"no se puede cancelar el folio con un artículo fuera del taller",
+	)
+
+	// ErrUbicacionManualNoPermitida is returned by MoverArticulo when the target
+	// location is not one a manual move may set (R3): entregado and baja belong
+	// to a stage, never to a direct call.
+	ErrUbicacionManualNoPermitida = apperror.NewValidation(
+		"warranty_location_manual_not_allowed",
+		"esa ubicación no se asigna a mano",
+	)
+
+	// ErrUbicacionSinCambio is returned by MoverArticulo when the article is
+	// already in the requested location (R3); a move that moves nothing is not
+	// a fact worth recording.
+	ErrUbicacionSinCambio = apperror.NewValidation(
+		"warranty_location_unchanged",
+		"el artículo ya está en esa ubicación",
+	)
+
+	// ErrArticuloTerminalNoSeMueve is returned by MoverArticulo when the article
+	// has reached a terminal stage (R3): its path is over.
+	ErrArticuloTerminalNoSeMueve = apperror.NewValidation(
+		"warranty_article_terminal",
+		"un artículo en etapa terminal no se mueve",
+	)
+
+	// ErrEntregaGPSRequerido is returned by Entregar when the agent did not
+	// capture coordinates (R9). The delivery GPS is the audit the process asks
+	// for; without it the delivery cannot be recorded.
+	ErrEntregaGPSRequerido = apperror.NewValidation(
+		"warranty_delivery_gps_required",
+		"el gps del agente es obligatorio para entregar",
 	)
 )

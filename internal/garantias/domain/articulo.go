@@ -32,6 +32,14 @@ type Articulo struct {
 	desenlace   *Desenlace
 	cerradoEn   *time.Time
 	audit       audit.Timestamped
+
+	// R10 dirty tracking: nuevo marks an article born in this session, which is
+	// still only an INSERT; modificado marks a hydrated one changed since, which
+	// is an UPDATE. They never hold together, and a hydrated untouched article
+	// is clean, so the repository writes exactly the rows that moved and none of
+	// the rest.
+	nuevo      bool
+	modificado bool
 }
 
 // NewArticuloParams carries the inputs to newArticulo.
@@ -51,7 +59,7 @@ type NewArticuloParams struct {
 // newArticulo validates and constructs an Articulo. Package-private:
 // external callers must go through the aggregate root.
 func newArticulo(p NewArticuloParams) (*Articulo, error) {
-	description := strings.TrimSpace(p.Description)
+	description := normalizarNFC(strings.TrimSpace(p.Description))
 	if description == "" {
 		return nil, ErrArticuloDescriptionObligatoria
 	}
@@ -71,6 +79,7 @@ func newArticulo(p NewArticuloParams) (*Articulo, error) {
 		description: description,
 		etapa:       p.Etapa,
 		ubicacion:   p.Ubicacion,
+		nuevo:       true,
 		audit:       audit.NewTimestamped(p.CreatedAt),
 	}, nil
 }
@@ -116,26 +125,79 @@ func HydrateArticulo(p HydrateArticuloParams) *Articulo {
 	}
 }
 
-// avanzar moves the article stage to hasta. Leaving en_revision through a
-// repair route requires a defined route (cross-validation #3) regardless of
-// whether the move comes from the diagnosis command or a bare AvanzarArticulo.
-// The two swap-only stages are deliberately not reachable here:
-// cambio_autorizado and standby can only be entered through
-// AutorizarCambioFisico, which also creates the replacement row.
-func (a *Articulo) avanzar(hasta Etapa, now time.Time) error {
-	if hasta == EtapaStandby || hasta == EtapaCambioAutorizado {
-		return ErrTransicionEtapaNoPermitida
-	}
+// avanzar moves the article stage to hasta. The origin decides which routes the
+// folio may walk (R1) and AvanzarArticulo's reach is bounded by R2; both rules
+// are resolved against the single table in transiciones.go via puedeAvanzar.
+// Leaving en_revision through a repair route still requires a defined route
+// (cross-validation #3), whether the move comes from the diagnosis command or a
+// bare AvanzarArticulo.
+func (a *Articulo) avanzar(hasta Etapa, origen OrigenFolio, now time.Time) error {
 	if a.etapa == EtapaEnRevision && a.ruta == nil &&
 		(hasta == EtapaOrdenGenerada || hasta == EtapaEnTaller) {
 		return ErrArticuloRutaRequerida
 	}
-	if !a.etapa.CanTransitionTo(hasta) {
+	if !puedeAvanzar(a.etapa, hasta, origen) {
 		return ErrTransicionEtapaNoPermitida
 	}
 	a.etapa = hasta
-	a.audit.MarkUpdatedAt(now)
+	a.aplicarUbicacion(hasta)
+	a.aplicarDesenlaceAutomatico()
+	a.tocar(now)
 	return nil
+}
+
+// aplicarUbicacion moves the article to the location its new stage dictates
+// (R3). Stages absent from the table leave the location untouched: the item
+// does not move just because its stage changed.
+func (a *Articulo) aplicarUbicacion(hasta Etapa) {
+	if ubicacion, impone := ubicacionParaEtapa(hasta); impone {
+		a.ubicacion = ubicacion
+	}
+}
+
+// aplicarDesenlaceAutomatico gives the article the outcome it earns by landing
+// on a terminal stage of the client or floor path (R6). It is a no-op on every
+// other stage, so it is safe to call from any stage mutator.
+func (a *Articulo) aplicarDesenlaceAutomatico() {
+	if a.etapa != EtapaEntregado && a.etapa != EtapaReingresadoInventario {
+		return
+	}
+	a.desenlace = desenlaceAutomatico(a)
+}
+
+// desenlaceAutomatico resolves R6 by priority: a replacement is always
+// reemplazado; a rejected or no-fault verdict returns the item; anything that
+// passed through a repair (workshop route, or supplier route accepted) is
+// reparado; a floor item reviewed without repair has no outcome.
+func desenlaceAutomatico(a *Articulo) *Desenlace {
+	if a.rol.EsReemplazo() {
+		d := DesenlaceReemplazado
+		return &d
+	}
+	if a.dictamen != nil && (a.dictamen.EsRechazada() || a.dictamen.EsSinFalla()) {
+		d := DesenlaceDevuelto
+		return &d
+	}
+	if a.pasoPorReparado() {
+		d := DesenlaceReparado
+		return &d
+	}
+	return nil
+}
+
+// pasoPorReparado reports whether the article went through a repair. It is
+// derived from RUTA + DICTAMEN rather than from a dedicated column: ruta taller
+// only reaches listo_entrega through reparado_taller, and ruta proveedor only
+// through reparado_proveedor when the verdict was aceptada. No new column is
+// needed (see the 000070 comment and the task report).
+func (a *Articulo) pasoPorReparado() bool {
+	if a.ruta == nil {
+		return false
+	}
+	if a.ruta.EsTaller() {
+		return true
+	}
+	return a.dictamen != nil && a.dictamen.EsAceptada()
 }
 
 // diagnosticoTarget returns the stage a route lands the article on. The
@@ -159,7 +221,8 @@ func (a *Articulo) registrarDiagnostico(r RutaReparacion, now time.Time) error {
 	ruta := r
 	a.ruta = &ruta
 	a.etapa = hasta
-	a.audit.MarkUpdatedAt(now)
+	a.aplicarUbicacion(hasta)
+	a.tocar(now)
 	return nil
 }
 
@@ -191,7 +254,8 @@ func (a *Articulo) registrarDictamen(d Dictamen, now time.Time) error {
 	dictamen := d
 	a.dictamen = &dictamen
 	a.etapa = hasta
-	a.audit.MarkUpdatedAt(now)
+	a.aplicarUbicacion(hasta)
+	a.tocar(now)
 	return nil
 }
 
@@ -203,7 +267,8 @@ func (a *Articulo) registrarDictamen(d Dictamen, now time.Time) error {
 func (a *Articulo) autorizarCambioFisico(now time.Time) error {
 	if a.rol.EsReemplazo() && a.etapa == EtapaListoEntrega {
 		a.etapa = EtapaStandby
-		a.audit.MarkUpdatedAt(now)
+		a.aplicarUbicacion(EtapaStandby)
+		a.tocar(now)
 		return nil
 	}
 	// The applied edges are validated against the stage machine: for espera
@@ -218,7 +283,8 @@ func (a *Articulo) autorizarCambioFisico(now time.Time) error {
 		return ErrTransicionEtapaNoPermitida
 	}
 	a.etapa = EtapaStandby
-	a.audit.MarkUpdatedAt(now)
+	a.aplicarUbicacion(EtapaStandby)
+	a.tocar(now)
 	return nil
 }
 
@@ -250,9 +316,74 @@ func (a *Articulo) registrarDesenlace(d Desenlace, hasta Etapa, now time.Time) e
 	desenlace := d
 	a.desenlace = &desenlace
 	a.etapa = hasta
-	a.audit.MarkUpdatedAt(now)
+	a.aplicarUbicacion(hasta)
+	a.tocar(now)
 	return nil
 }
+
+// marcarNoDevuelto moves an article from espera_respuesta_cliente to standby
+// without creating a replacement (R8): the client never answered or refused to
+// take back a working item. It is a decision, so the aggregate requires a
+// decider role. The location is untouched — standby does not move the item.
+func (a *Articulo) marcarNoDevuelto(now time.Time) error {
+	if a.etapa != EtapaEsperaRespuestaCliente {
+		return ErrTransicionEtapaNoPermitida
+	}
+	a.etapa = EtapaStandby
+	a.tocar(now)
+	return nil
+}
+
+// entregar closes an article's client path: listo_entrega -> entregado, with
+// the entregado location and the outcome it earns (R6). It is the one mutator
+// without a CanTransitionTo guard of its own: its only caller is Entregar, which
+// already filters to the articles it is delivering (R9), so handing it anything
+// else is a programmer error, not an input to reject.
+func (a *Articulo) entregar(now time.Time) {
+	a.etapa = EtapaEntregado
+	a.aplicarUbicacion(EtapaEntregado)
+	a.aplicarDesenlaceAutomatico()
+	a.tocar(now)
+}
+
+// moverA applies a manual location change (R3). The destination must be one a
+// manual move may set, the article must not be terminal, and the move must
+// actually move the item; the caller builds the articulo_movido event from the
+// from/to pair.
+func (a *Articulo) moverA(hasta Ubicacion, now time.Time) error {
+	if a.etapa.EsTerminal() {
+		return ErrArticuloTerminalNoSeMueve
+	}
+	if !ubicacionManualPermitida(hasta) {
+		return ErrUbicacionManualNoPermitida
+	}
+	if hasta == a.ubicacion {
+		return ErrUbicacionSinCambio
+	}
+	a.ubicacion = hasta
+	a.tocar(now)
+	return nil
+}
+
+// tocar records that a mutator changed the article: it flags the article as
+// modified for the repository (R10) and stamps the update time. A new article
+// stays nuevo — it is an INSERT, not an UPDATE — though it still gets the stamp,
+// so a load of every kind of change leaves the three states as the repository
+// needs them.
+func (a *Articulo) tocar(now time.Time) {
+	if !a.nuevo {
+		a.modificado = true
+	}
+	a.audit.MarkUpdatedAt(now)
+}
+
+// EsNuevo reports whether the article was born in this session and is still only
+// an INSERT for the repository (R10).
+func (a *Articulo) EsNuevo() bool { return a.nuevo }
+
+// EstaModificado reports whether a hydrated article changed in this session, the
+// UPDATE half of R10.
+func (a *Articulo) EstaModificado() bool { return a.modificado }
 
 // ID returns the article's primary key.
 func (a *Articulo) ID() uuid.UUID { return a.id }
