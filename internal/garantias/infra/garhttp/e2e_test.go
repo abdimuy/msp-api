@@ -92,7 +92,7 @@ func TestGarHTTP_E2E_BandejaFiltradaConFirebird(t *testing.T) {
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		base := time.Date(
-			2026, time.October, 13,
+			2099, time.March, 3,
 			16, 0, 0, 0,
 			time.UTC,
 		)
@@ -141,7 +141,9 @@ func TestGarHTTP_E2E_BandejaFiltradaConFirebird(t *testing.T) {
 
 		req := httptest.NewRequest(
 			http.MethodGet,
-			"/garantias?estado=en_proceso&limit=20",
+			"/garantias?estado=en_proceso&limit=20"+
+				"&desde=2099-03-03T15:59:59Z"+
+				"&hasta=2099-03-03T16:03:00Z",
 			nil,
 		).WithContext(ctx)
 

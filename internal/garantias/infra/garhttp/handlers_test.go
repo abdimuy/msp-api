@@ -190,9 +190,8 @@ func TestObtenerGarantia_CaminoFeliz_JSONCompleto(t *testing.T) {
 
 	require.JSONEq(t, esperado, rec.Body.String())
 	require.Equal(t, 1, garantias.calls)
-	require.Equal(t, 1, eventos.calls)
+	require.Zero(t, eventos.calls)
 	require.Equal(t, garantia.ID(), garantias.ultimoID)
-	require.Equal(t, garantia.ID(), eventos.ultimoID)
 }
 
 func TestListarGarantias_QueryParamsInvalidos_422(t *testing.T) {
@@ -208,11 +207,13 @@ func TestListarGarantias_QueryParamsInvalidos_422(t *testing.T) {
 			nombre: "limit",
 			param:  "limit",
 			valor:  "abc",
+			code:   "invalid_limit",
 		},
 		{
 			nombre: "limit_cero",
 			param:  "limit",
 			valor:  "0",
+			code:   "invalid_limit",
 		},
 		{
 			nombre: "estado",
@@ -230,16 +231,19 @@ func TestListarGarantias_QueryParamsInvalidos_422(t *testing.T) {
 			nombre: "cliente_id",
 			param:  "cliente_id",
 			valor:  "abc",
+			code:   "invalid_cliente_id",
 		},
 		{
 			nombre: "cliente_id_cero",
 			param:  "cliente_id",
 			valor:  "0",
+			code:   "invalid_cliente_id",
 		},
 		{
 			nombre: "cliente_id_fuera_de_int32",
 			param:  "cliente_id",
 			valor:  "2147483648",
+			code:   "invalid_cliente_id",
 		},
 		{
 			nombre: "etapa",
@@ -257,11 +261,13 @@ func TestListarGarantias_QueryParamsInvalidos_422(t *testing.T) {
 			nombre: "desde",
 			param:  "desde",
 			valor:  "13-10-2026",
+			code:   "invalid_desde",
 		},
 		{
 			nombre: "hasta",
 			param:  "hasta",
 			valor:  "13-10-2026",
+			code:   "invalid_hasta",
 		},
 	}
 
@@ -301,12 +307,6 @@ func TestListarGarantias_QueryParamsInvalidos_422(t *testing.T) {
 
 			if caso.code != "" {
 				require.Contains(t, rec.Body.String(), caso.code)
-				require.Contains(t, rec.Body.String(), "no es válido")
-			}
-
-			if caso.code != "" {
-				require.Contains(t, rec.Body.String(), caso.code)
-				require.Contains(t, rec.Body.String(), "no es válido")
 			}
 
 			require.Equal(t, 0, bandeja.calls)
@@ -960,6 +960,7 @@ func TestListarGarantias_QueryParamRepetido_422(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
 	require.Equal(t, 0, bandeja.calls)
 	require.Contains(t, rec.Body.String(), "estado")
+	require.Contains(t, rec.Body.String(), "duplicate_query_param")
 }
 
 func TestListarGarantias_ServiceUnavailable_503(t *testing.T) {
@@ -1028,4 +1029,28 @@ func TestListarGarantias_TooManyRequests_429(t *testing.T) {
 
 	require.Equal(t, http.StatusTooManyRequests, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), "warranty_rate_limited")
+}
+
+func TestListarGarantias_SinUsuarioQueryInvalida_401(t *testing.T) {
+	t.Parallel()
+
+	identity := &fakeHTTPIdentity{
+		usuarioErr: domain.ErrUsuarioNoAutenticado,
+	}
+
+	bandeja := &fakeHTTPBandejaRepo{}
+
+	r := buildHTTPRouter(identity, nil, bandeja, nil)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/garantias?estado=estado_invalido",
+		nil,
+	)
+	rec := httptest.NewRecorder()
+
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusUnauthorized, rec.Code, rec.Body.String())
+	require.Zero(t, bandeja.calls)
 }

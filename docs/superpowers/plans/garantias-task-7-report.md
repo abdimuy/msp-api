@@ -327,606 +327,243 @@ Se completó el lado de lectura desde la capa de aplicación hasta HTTP y se ate
 
 ### Implementado
 
-- `app.Consultas`.
-
-- Consulta de bandeja.
-
-- Consulta de detalle.
-
-- Validación de usuario autenticado.
-
-- Validación del permiso `garantias:leer`.
-
+- `app.Consultas` para bandeja y detalle.
+- Validación de usuario autenticado y permiso `garantias:leer`.
 - Adaptador `identidad`.
-
-- Rutas HTTP:
-
-   - `GET /garantias`
-
-   - `GET /garantias/{id}`
-
-- Filtros: `cursor`, `limit`, `estado`, `origen`, `cliente_id`, `etapa`, `ubicacion`, `desde`, `hasta`.
-
+- `GET /garantias`.
+- `GET /garantias/{id}`.
+- Filtros `cursor`, `limit`, `estado`, `origen`, `cliente_id`, `etapa`, `ubicacion`, `desde` y `hasta`.
 - Respuestas JSON en `snake_case`.
-
 - Fechas y horas en RFC3339 UTC.
-
-- `vigencia_hasta` en formato `YYYY-MM-DD`.
-
 - Traducción de errores HTTP.
-
 - Registro de rutas y errores esperados en OpenAPI.
-
 - Pruebas E2E HTTP → Consultas → garfb → Firebird.
-
-- Lectura de detalle de garantía y eventos dentro de una sola transacción de lectura.
+- Lectura consistente del detalle mediante una sola operación del puerto `GarantiaRepo.ObtenerDetalle`.
 
 ## Correcciones realizadas después de revisión
 
-- `cliente_id` se valida con rango de entero de 32 bits.
+Se aplicaron las observaciones recibidas en el PR:
 
-- `cliente_id=0` devuelve 422.
-
-- `cliente_id=2147483648` devuelve 422.
-
+- `cliente_id` se valida dentro del rango de entero de 32 bits.
+- `cliente_id=0` y valores fuera de rango devuelven 422.
 - `limit=0` devuelve 422.
-
-- `estado`, `origen`, `etapa` y `ubicacion` inválidos devuelven 422 con mensaje en español y código estable.
-
-- UUID inválido en `/garantias/{id}` devuelve 422 con código `invalid_uuid`.
-
-- Los parámetros repetidos son rechazados con 422.
-
+- `estado`, `origen`, `etapa` y `ubicacion` inválidos devuelven 422 con códigos estables.
+- UUID inválido en `/garantias/{id}` devuelve 422 con `invalid_uuid`.
+- Los parámetros query repetidos se detectan de forma genérica, sin mantener una lista manual.
+- Un parámetro repetido devuelve 422 con `duplicate_query_param`.
 - `desde` posterior a `hasta` devuelve 422.
-
-- Los errores de fecha indican correctamente que se requiere RFC3339.
-
-- Una fecha de origen con zona distinta de UTC se proyecta en la respuesta con sufijo `Z`.
-
-- Una garantía sin eventos devuelve `"eventos":[]` y no `null`.
-
+- Las fechas inválidas indican que se requiere RFC3339.
+- Las fechas se proyectan en UTC con sufijo `Z`.
+- Una garantía sin eventos devuelve `"eventos":[]`.
 - `KindTooManyRequests` conserva HTTP 429.
-
 - `KindServiceUnavailable` conserva HTTP 503.
-
-- Los errores internos 500 se registran mediante `slog` y no se exponen al cliente.
-
-- `MountRouter` falla inmediatamente si `Consultas` es `nil`.
-
-- OpenAPI incluye formatos `uuid`, `date-time` y `date`.
-
-- OpenAPI documenta respuestas 401, 403, 404 y 422.
-
-- El E2E de bandeja valida únicamente los IDs sembrados por la propia prueba.
-
-- Se agregó un E2E real del detalle contra Firebird.
-
-- Se agregó una prueba directa de `GarantiaRepo.ObtenerDetalle`.
+- Los errores internos se registran con `slog` sin exponer el mensaje interno al cliente.
+- `MountRouter` falla inmediatamente cuando `Consultas` es `nil`.
+- OpenAPI incluye los formatos y errores esperados.
+- La autenticación se valida antes de interpretar filtros HTTP, por lo que una petición sin usuario devuelve 401 aunque contenga una query inválida.
+- Se agregó `ObtenerDetalle` al puerto `GarantiaRepo`.
+- `app.Consultas.Detalle` realiza una sola llamada a `GarantiaRepo.ObtenerDetalle`.
+- Se eliminó el fallback que hacía lecturas separadas.
+- `GarantiaRepo.ObtenerDetalle` utiliza `firebird.RunInSnapshotTx`.
+- El E2E de bandeja utiliza una ventana de fechas propia para no depender de datos externos de la tabla.
+- Se mantiene el E2E real del detalle contra Firebird.
 
 ## Seguridad
 
-Las consultas verifican primero la identidad y después el permiso `garantias:leer`.
+Las consultas siguen validando identidad y permiso `garantias:leer` desde la capa de aplicación.
 
-Sin autenticación:
+Además, la capa HTTP realiza un prechequeo de autenticación antes de validar parámetros de entrada. Esto garantiza que la ausencia de sesión tenga prioridad sobre errores de formato.
 
-```text
-
-401 Unauthorized
-
-```
-
-Sin permiso:
+Resultados esperados:
 
 ```text
+Sin autenticación  → 401 Unauthorized
+Sin permiso        → 403 Forbidden
+También se agregó la prueba:
+TestListarGarantias_SinUsuarioQueryInvalida_401
 
-403 Forbidden
+que verifica que:
+GET /garantias?estado=estado_invalido
 
-```
+sin usuario autenticado devuelve 401 y no 422.
+Validaciones HTTP
+Los parámetros inválidos producen 422 con códigos estables.
 
-En ambos casos se verificó que los repositorios no fueran llamados.
+Casos comprobados:
+limit inválido             → invalid_limit
+cliente_id inválido        → invalid_cliente_id
+estado inválido            → invalid_estado
+origen inválido            → invalid_origen
+etapa inválida             → invalid_etapa
+ubicacion inválida         → invalid_ubicacion
+desde inválido             → invalid_desde
+hasta inválido             → invalid_hasta
+UUID inválido              → invalid_uuid
+parámetro repetido         → duplicate_query_param
+desde > hasta              → invalid_date_range
 
-Pruebas principales:
-
-```text
-
-TestGarHTTP_Seguridad_401_403
-
-TestConsultas_Bandeja_SinUsuarioNoTocaRepos
-
-TestConsultas_Bandeja_SinPermisoNoTocaRepos
-
-TestConsultas_Detalle_SinUsuarioNoTocaRepos
-
-TestConsultas_Detalle_SinPermisoNoTocaRepos
-
-```
-
-## Validaciones HTTP
-
-Los parámetros inválidos producen:
-
-```text
-
-422 Unprocessable Entity
-
-```
-
-Entre los casos comprobados están:
-
-```text
-
-limit=0
-
-cliente_id=0
-
-cliente_id=2147483648
-
-estado inválido
-
-origen inválido
-
-etapa inválida
-
-ubicacion inválida
-
-UUID inválido
-
-parámetro repetido
-
-desde > hasta
-
-fecha que no cumple RFC3339
-
-```
-
-Pruebas relacionadas:
-
-```text
-
-TestListarGarantias_QueryParamsInvalidos_422
-
-TestListarGarantias_QueryParamRepetido_422
-
-TestListarGarantias_DesdePosteriorAHasta_422
-
-TestObtenerGarantia_UUIDInvalido_422
-
-TestListarGarantias_CursorInvalido_422
-
-TestListarGarantias_InyeccionSQLFiltros_422
-
-```
-
-## Manejo de errores
-
+Los parámetros repetidos se detectan recorriendo directamente los valores presentes en la query, por lo que no es necesario actualizar una lista manual al agregar filtros nuevos.
+Manejo de errores
 Mapeo HTTP verificado:
-
-```text
-
 Validación             → 422
-
 No encontrado          → 404
-
 Conflicto              → 409
-
 Sin permiso            → 403
-
 No autenticado         → 401
-
 Too Many Requests      → 429
-
 Service Unavailable    → 503
-
 Error interno          → 500
 
-```
-
-Para los errores internos se devuelve:
-
-```text
-
+Para un error interno el cliente recibe únicamente:
 ocurrió un error interno
 
-```
+El error original se registra mediante slog.
+Consistencia del detalle
+Se declaró ObtenerDetalle en el puerto:
+ports/outbound.GarantiaRepo
 
-El error original se registra mediante `slog`, pero no se expone en la respuesta HTTP.
+La capa de aplicación utiliza directamente:
+GarantiaRepo.ObtenerDetalle
 
-Pruebas:
+para obtener la garantía y sus eventos con una sola llamada.
 
-```text
+El fallback anterior de:
+Obtener garantía
++
+Listar eventos
 
-TestListarGarantias_ErrorInterno_500NoFiltraMensaje
+fue eliminado.
 
-TestListarGarantias_ServiceUnavailable_503
+La implementación Firebird utiliza:
+firebird.RunInSnapshotTx
 
-TestListarGarantias_TooManyRequests_429
+por lo que la garantía, sus artículos y sus eventos se leen dentro de la misma transacción snapshot.
 
-TestObtenerGarantia_NoEncontrada_404
-
-```
-
-## Fechas y colecciones
-
-Los valores de fecha y hora se serializan en UTC mediante RFC3339.
-
-Se comprobó con una fixture creada en zona UTC-06:00 y la respuesta mantuvo el instante correcto en UTC con sufijo `Z`.
-
-También se verificó que una garantía sin eventos devuelva:
-
-```json
-
-"eventos": []
-
-```
-
-en lugar de:
-
-```json
-
-"eventos": null
-
-```
-
-Prueba:
-
-```text
-
-TestObtenerGarantia_SinEventos_DevuelveListaVacia
-
-```
-
-## OpenAPI
-
-La prueba `TestOpenAPI_PathsRegistered` verifica que el documento incluya:
-
-```text
-
-/garantias
-
-/garantias/{id}
-
-listar-garantias
-
-obtener-garantia
-
-bearerAuth
-
-format: uuid
-
-format: date-time
-
-format: date
-
-401
-
-403
-
-404
-
-422
-
-```
-
-También se verificó que `MountRouter` rechace una configuración sin `Consultas`:
-
-```text
-
-TestMountRouter_RechazaConsultasNil
-
-```
-
-## Consistencia del detalle
-
-Para evitar que la garantía y sus eventos se obtengan en transacciones independientes se agregó:
-
-```text
-
-garfb.GarantiaRepo.ObtenerDetalle
-
-```
-
-Este método abre un solo `firebird.RunInReadTx` y usa el mismo `Querier` para obtener garantía, artículos y eventos.
-
-`RunInReadTx` es reentrante, por lo que las operaciones internas reutilizan la transacción existente.
-
-La implementación mantiene los puertos existentes sin modificar `ports/outbound`.
+Esto evita que el detalle se construya mediante dos lecturas independientes que puedan observar estados distintos de la base de datos.
 
 Prueba directa:
-
-```text
-
 TestGarantiaRepo_ObtenerDetalle
 
-```
+La capa de aplicación también incluye un fake que cuenta llamadas y verifica que Detalle invoque una sola vez ObtenerDetalle.
 
-Resultado con Firebird:
+Cobertura actual:
+Detalle 100.0%
 
-```text
-
-=== RUN   TestGarantiaRepo_ObtenerDetalle
-
-INFO firebird: connected host=127.0.0.1 database=/firebird/data/MSPTEST.FDB charset=UTF8 pool_size=5
-
---- PASS: TestGarantiaRepo_ObtenerDetalle
-
-PASS
-
-```
-
-## E2E HTTP → Firebird
-
-Se verificó el flujo completo:
-
-```text
-
+E2E HTTP → Firebird
+Se verificó el flujo:
 HTTP
-
 → garhttp
-
 → app.Consultas
-
 → garfb
-
 → Firebird
 
-```
-
-Base utilizada:
-
-```text
-
-/firebird/data/MSPTEST.FDB
-
-```
-
 Pruebas:
-
-```text
-
 TestGarHTTP_E2E_BandejaFiltradaConFirebird
-
 TestGarHTTP_E2E_DetalleConFirebird
 
-```
+El E2E de bandeja utiliza datos sembrados dentro de una ventana propia:
+2099-03-03T15:59:59Z
+a
+2099-03-03T16:03:00Z
 
-El E2E de bandeja ya no presupone que existan exactamente dos garantías `en_proceso` en toda la tabla. La prueba identifica y valida únicamente las garantías sembradas por ella misma.
+De esta forma la comprobación de has_more=false no depende de otras garantías que puedan existir previamente en la tabla.
 
-El E2E de detalle crea una garantía real, la consulta mediante `GET /garantias/{id}` y verifica que la garantía y los eventos devueltos correspondan al mismo ID.
+El E2E de detalle crea una garantía real y verifica que la garantía y los eventos devueltos correspondan al mismo ID.
 
-Resultado directo del detalle:
-
-```text
-
-=== RUN   TestGarHTTP_E2E_DetalleConFirebird
-
-INFO firebird: connected host=127.0.0.1 database=/firebird/data/MSPTEST.FDB charset=UTF8 pool_size=5
-
---- PASS: TestGarHTTP_E2E_DetalleConFirebird
-
-PASS
-
-ok github.com/abdimuy/msp-api/internal/garantias/infra/garhttp
-
-```
-
-Todas las escrituras de estas pruebas se ejecutan dentro de `fbtestutil.WithTestTransaction` y son revertidas al finalizar.
-
-## Cobertura final
-
-Comando:
-
-```text
-
+Las escrituras se realizan dentro de fbtestutil.WithTestTransaction y se revierten al finalizar.
+Cobertura final
+Comando ejecutado:
 go clean -testcache && \
-
 go test -race -count=1 -p 1 \
-
--coverprofile=cov.out \
-
-./internal/garantias/...
-
-```
+  -coverprofile=cov.out \
+  ./internal/garantias/...
 
 Resultado:
-
-```text
-
 garantias                         100.0%
-
-app                                86.2%
-
+app                               100.0%
 domain                            100.0%
-
 garfb                              86.9%
-
-garhttp                            96.9%
-
+garhttp                            97.0%
 identidad                         100.0%
-
 storage                            85.5%
-
 ports/outbound                    100.0%
 
-```
-
-Cobertura de las consultas:
-
-```text
-
-NewConsultas        100.0%
-
-Bandeja             100.0%
-
-Detalle              71.4%
-
-autorizarLectura    100.0%
-
-```
+Cobertura de consultas:
+NewConsultas             100.0%
+ValidarAutenticacion     100.0%
+Bandeja                  100.0%
+Detalle                  100.0%
+autorizarLectura         100.0%
 
 Cobertura relevante de Firebird:
+GarantiaRepo.Obtener           100.0%
+GarantiaRepo.ObtenerDetalle     84.6%
+BandejaRepo.Listar              92.3%
+EventoRepo.ListarPorGarantia    88.9%
 
-```text
+Cobertura HTTP:
+garhttp 97.0%
 
-GarantiaRepo.Obtener          100.0%
-
-GarantiaRepo.ObtenerDetalle    84.6%
-
-BandejaRepo.Listar             92.3%
-
-EventoRepo.ListarPorGarantia   88.9%
-
-```
-
-Cobertura total de HTTP:
-
-```text
-
-garhttp 96.9%
-
-```
-
-Los mappers HTTP principales quedaron en:
-
-```text
-
-garantiaDTO       100.0%
-
-articuloDTO       100.0%
-
-eventoDTO         100.0%
-
-formatTime        100.0%
-
-stringOpcional    100.0%
-
-```
-
-## Mutation testing manual
-
+Mutation testing manual
 Se mantienen los tres mutantes requeridos para la Entrega 2:
+Mutante	Cambio	Resultado
+6	Eliminar la comprobación de garantias:leer	Killed
+7	Permitir que Identidad llame a PermisoFn con permiso inválido	Killed
+8	Exponer err.Error() en un error HTTP 500	Killed
 
-| Mutante | Cambio | Resultado |
-
-|---|---|---|
-
-| 6 | Eliminar la comprobación de `garantias:leer` | Killed |
-
-| 7 | Permitir que `Identidad` llame a `PermisoFn` con permiso inválido | Killed |
-
-| 8 | Exponer `err.Error()` en un error HTTP 500 | Killed |
 
 Los tres defectos fueron detectados por las pruebas y después se restauró el código correcto.
-
-## Gates finales
-
+Gates finales
 Formato:
-
-```text
-
 gofmt -l internal/garantias
-
-```
 
 Resultado: sin salida.
 
 Análisis estático:
-
-```text
-
 go vet ./internal/garantias/...
-
-```
 
 Resultado: sin salida.
 
 Build:
-
-```text
-
 go build ./...
-
-```
 
 Resultado: sin salida.
 
 Lint:
-
-```text
-
 golangci-lint run ./internal/garantias/...
 
-```
-
 Resultado:
-
-```text
-
 0 issues.
 
-```
-
 Pruebas con race y Firebird:
-
-```text
-
 go test -race -count=1 -p 1 -coverprofile=cov.out ./internal/garantias/...
-
-```
 
 Resultado: PASS.
 
 Módulo sellado:
-
-```text
-
 make check-sealed MODULE=garantias
 
-```
-
 Resultado:
-
-```text
-
 ✔ garantias is sealed
 
-```
+Resultado final
+app                    100.0%
+identidad              100.0%
+garhttp                  97.0%
+garfb                    86.9%
+ObtenerDetalle           84.6%
+golangci-lint            0 issues
+go vet                   OK
+go build                 OK
+race tests               PASS
+E2E bandeja              PASS
+E2E detalle              PASS
+check-sealed             PASS
+mutantes 6,7,8           Killed
 
-## Resultado final
+Desviaciones
+La revisión solicitó explícitamente declarar ObtenerDetalle en un puerto. Por esta razón se modificó internal/garantias/ports/outbound/repos.go, aunque la versión inicial de la tarea indicaba no modificar puertos.
 
-```text
+No se realizaron cambios en dominio, migraciones ni cmd/api.
 
-app                 86.2%
-
-identidad           100.0%
-
-garhttp              96.9%
-
-garfb                86.9%
-
-ObtenerDetalle       84.6%
-
-golangci-lint        0 issues
-
-go vet               OK
-
-go build             OK
-
-race tests           PASS
-
-E2E bandeja          PASS
-
-E2E detalle          PASS
-
-check-sealed         PASS
-
-mutantes 6,7,8       Killed
-
-```
-
-## Desviaciones
-
-No se modificaron archivos fuera de los permitidos por la Tarea 7.
-
-No se realizaron cambios en dominio, puertos, migraciones ni `cmd/api`.
-
-Las pruebas Firebird utilizan `/firebird/data/MSPTEST.FDB` y las escrituras están protegidas por `fbtestutil.WithTestTransaction`, por lo que se revierten al finalizar.
+Las pruebas Firebird utilizan /firebird/data/MSPTEST.FDB y las escrituras están protegidas por fbtestutil.WithTestTransaction, por lo que se revierten al finalizar.

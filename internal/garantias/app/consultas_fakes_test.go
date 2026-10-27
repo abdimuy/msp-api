@@ -58,8 +58,11 @@ func (f *fakeConsultaBandejaRepo) Listar(
 
 type fakeConsultaGarantiaRepo struct {
 	garantia     *domain.Garantia
+	eventos      []*domain.Evento
 	obtenerErr   error
 	obtenerCalls int
+	detalleErr   error
+	detalleCalls int
 	ultimoID     uuid.UUID
 }
 
@@ -92,6 +95,16 @@ func (f *fakeConsultaGarantiaRepo) Obtener(
 	f.ultimoID = id
 
 	return f.garantia, f.obtenerErr
+}
+
+func (f *fakeConsultaGarantiaRepo) ObtenerDetalle(
+	_ context.Context,
+	id uuid.UUID,
+) (*domain.Garantia, []*domain.Evento, error) {
+	f.detalleCalls++
+	f.ultimoID = id
+
+	return f.garantia, f.eventos, f.detalleErr
 }
 
 func (f *fakeConsultaGarantiaRepo) ObtenerPorFolio(

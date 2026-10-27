@@ -57,23 +57,17 @@ func MountRouter(r chi.Router, d Deps) huma.API {
 			u := ctx.URL()
 			query := u.Query()
 
-			for _, nombre := range []string{
-				"cursor",
-				"limit",
-				"estado",
-				"origen",
-				"cliente_id",
-				"etapa",
-				"ubicacion",
-				"desde",
-				"hasta",
-			} {
-				if len(query[nombre]) > 1 {
+			for nombre, valores := range query {
+				if len(valores) > 1 {
 					_ = huma.WriteErr(
 						api,
 						ctx,
 						http.StatusUnprocessableEntity,
 						"el parámetro "+nombre+" no puede repetirse",
+						&huma.ErrorDetail{
+							Location: "query." + nombre,
+							Message:  "code=duplicate_query_param",
+						},
 					)
 					return
 				}

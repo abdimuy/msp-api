@@ -62,6 +62,11 @@ type GarantiaRepo interface {
 	ObtenerParaActualizar(ctx context.Context, id uuid.UUID) (*domain.Garantia, error)
 	// Obtener loads the folio with its articles, without locking.
 	Obtener(ctx context.Context, id uuid.UUID) (*domain.Garantia, error)
+	// ObtenerDetalle loads the folio and its timeline from one consistent read.
+	ObtenerDetalle(
+		ctx context.Context,
+		id uuid.UUID,
+	) (*domain.Garantia, []*domain.Evento, error)
 	// ObtenerPorFolio is Obtener by the human-readable folio.
 	ObtenerPorFolio(ctx context.Context, folio domain.Folio) (*domain.Garantia, error)
 }
