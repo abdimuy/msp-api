@@ -57,6 +57,7 @@ func TestImagenRepo_RegistrarYListarPorEvento_UTF8(t *testing.T) {
 		eventoID := eventos[0].ID()
 
 		img, err := domain.NewImagen(domain.NewImagenParams{
+			Tipo:        domain.TipoImagenEvidencia,
 			EventoID:    eventoID,
 			Ruta:        "garantías/niño/sillón-daño-ñ.jpg",
 			Description: "Daño en el sillón: raspón, piñón y área húmeda",
@@ -141,6 +142,7 @@ func TestImagenRepo_ListarPorEvento_FiltraOrdenaYVacio(t *testing.T) {
 		otroEvento := eventos[1].ID()
 
 		imgTarde, err := domain.NewImagen(domain.NewImagenParams{
+			Tipo:        domain.TipoImagenEvidencia,
 			EventoID:    eventoObjetivo,
 			Ruta:        "garantias/img-tarde.jpg",
 			Description: "Imagen tarde",
@@ -150,6 +152,7 @@ func TestImagenRepo_ListarPorEvento_FiltraOrdenaYVacio(t *testing.T) {
 		require.NoError(t, err)
 
 		imgTemprana, err := domain.NewImagen(domain.NewImagenParams{
+			Tipo:        domain.TipoImagenEvidencia,
 			EventoID:    eventoObjetivo,
 			Ruta:        "garantias/img-temprana.jpg",
 			Description: "Imagen temprana",
@@ -159,6 +162,7 @@ func TestImagenRepo_ListarPorEvento_FiltraOrdenaYVacio(t *testing.T) {
 		require.NoError(t, err)
 
 		imgMedia, err := domain.NewImagen(domain.NewImagenParams{
+			Tipo:        domain.TipoImagenEvidencia,
 			EventoID:    eventoObjetivo,
 			Ruta:        "garantias/img-media.jpg",
 			Description: "Imagen media",
@@ -168,6 +172,7 @@ func TestImagenRepo_ListarPorEvento_FiltraOrdenaYVacio(t *testing.T) {
 		require.NoError(t, err)
 
 		imgOtroEvento, err := domain.NewImagen(domain.NewImagenParams{
+			Tipo:        domain.TipoImagenEvidencia,
 			EventoID:    otroEvento,
 			Ruta:        "garantias/otro-evento.jpg",
 			Description: "Imagen de otro evento",
@@ -205,6 +210,7 @@ func TestImagenRepo_Registrar_EventoInexistente(t *testing.T) {
 		now := time.Date(2026, 10, 9, 14, 0, 0, 0, time.UTC)
 
 		img, err := domain.NewImagen(domain.NewImagenParams{
+			Tipo:        domain.TipoImagenEvidencia,
 			EventoID:    uuid.New(),
 			Ruta:        "garantias/evento-inexistente.jpg",
 			Description: "Imagen con evento inexistente",
@@ -261,6 +267,7 @@ func TestImagenRepo_Registrar_SinTransaccion(t *testing.T) {
 		require.NotEmpty(t, eventos)
 
 		img, err := domain.NewImagen(domain.NewImagenParams{
+			Tipo:        domain.TipoImagenEvidencia,
 			EventoID:    eventos[0].ID(),
 			Ruta:        "garantias/sin-transaccion.jpg",
 			Description: "No debe guardarse",

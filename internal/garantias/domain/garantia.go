@@ -43,8 +43,9 @@ type Garantia struct {
 	cerradoEn      *time.Time
 	audit          audit.Timestamped
 
-	articulos         []*Articulo
-	eventosPendientes []*Evento
+	articulos          []*Articulo
+	eventosPendientes  []*Evento
+	imagenesPendientes []*Imagen
 }
 
 // ActorParams carries the event provenance every mutating method requires
@@ -56,12 +57,16 @@ type Garantia struct {
 // is stored when present. GPSLat/GPSLon are always optional but come as a
 // pair, each in range (spec §3.3): the column pair records where the agent
 // was, and half a position is not a position.
+//
+// Huella is the fingerprint of the request content (computed in app, opaque
+// here) and is copied to every event the command emits.
 type ActorParams struct {
 	Usuario           string
 	ClaveIdempotencia string
 	DeviceCreatedAt   time.Time
 	RolDecisor        *RolDecisor
 	GPSLat, GPSLon    *float64
+	Huella            string
 }
 
 // AbrirGarantiaParams carries the inputs to AbrirGarantia.
@@ -253,6 +258,7 @@ func (g *Garantia) buildEvent(actor ActorParams, now time.Time, tipo TipoEvento,
 		CreatedAt:         now,
 		DeviceCreatedAt:   actor.DeviceCreatedAt,
 		ClaveIdempotencia: actor.ClaveIdempotencia,
+		Huella:            actor.Huella,
 	})
 }
 
@@ -873,3 +879,11 @@ func (g *Garantia) EventosPendientesCount() int { return len(g.eventosPendientes
 // EventosPendientesForRepo returns a copy of the pending events slice for the
 // repository.
 func (g *Garantia) EventosPendientesForRepo() []*Evento { return slices.Clone(g.eventosPendientes) }
+
+// ImagenesPendientesForRepo returns a copy of the images the aggregate created
+// in this session and that GarantiaRepo.Guardar must insert in the same
+// transaction, after the events they hang from. Today the only one is the
+// delivery signature Entregar attaches to its folio_entregado event (spec
+// §4.1); evidence uploaded through AdjuntarImagen does not travel here, it is
+// registered by ImagenRepo directly.
+func (g *Garantia) ImagenesPendientesForRepo() []*Imagen { return slices.Clone(g.imagenesPendientes) }

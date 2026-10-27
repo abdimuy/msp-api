@@ -31,11 +31,19 @@ type Evento struct {
 	createdAt         time.Time
 	deviceCreatedAt   time.Time
 	claveIdempotencia string
+	huella            string
+	distanciaEntregaM *float64
+	auditoriaGPS      *AuditoriaGPS
 }
 
 // EventoParams carries everything newEvento needs. The caller (the
 // aggregate) supplies the actor, the idempotency key and the device
 // timestamp; the aggregate never invents them (decision 8).
+//
+// Huella is the fingerprint of the request content, computed in app and
+// carried through ActorParams. DistanciaEntregaM and AuditoriaGPS are only
+// set on folio_cerrado (the delivery audit of spec §4.1); every other event
+// leaves them nil.
 type EventoParams struct {
 	GarantiaID        uuid.UUID
 	ArticuloRef       *uuid.UUID
@@ -51,6 +59,9 @@ type EventoParams struct {
 	CreatedAt         time.Time
 	DeviceCreatedAt   time.Time
 	ClaveIdempotencia string
+	Huella            string
+	DistanciaEntregaM *float64
+	AuditoriaGPS      *AuditoriaGPS
 }
 
 // newEvento is the package-private constructor used by the aggregate. The
@@ -87,6 +98,12 @@ func newEvento(p EventoParams) (*Evento, error) {
 	if !gpsValido(p.GPSLat, p.GPSLon) {
 		return nil, ErrEventoGPSInvalido
 	}
+	if !huellaValida(p.Huella) {
+		return nil, ErrHuellaInvalida
+	}
+	if p.AuditoriaGPS != nil && !p.AuditoriaGPS.IsValid() {
+		return nil, ErrAuditoriaGPSInvalida
+	}
 	return &Evento{
 		id:                uuid.New(),
 		garantiaID:        p.GarantiaID,
@@ -104,6 +121,9 @@ func newEvento(p EventoParams) (*Evento, error) {
 		createdAt:         p.CreatedAt,
 		deviceCreatedAt:   p.DeviceCreatedAt,
 		claveIdempotencia: parsed.String(),
+		huella:            p.Huella,
+		distanciaEntregaM: p.DistanciaEntregaM,
+		auditoriaGPS:      p.AuditoriaGPS,
 	}, nil
 }
 
@@ -161,6 +181,9 @@ type HydrateEventoParams struct {
 	CreatedAt         time.Time
 	DeviceCreatedAt   time.Time
 	ClaveIdempotencia string
+	Huella            string
+	DistanciaEntregaM *float64
+	AuditoriaGPS      *AuditoriaGPS
 }
 
 // HydrateEvento rebuilds an Evento from a persisted row without any
@@ -183,6 +206,9 @@ func HydrateEvento(p HydrateEventoParams) *Evento {
 		createdAt:         p.CreatedAt,
 		deviceCreatedAt:   p.DeviceCreatedAt,
 		claveIdempotencia: p.ClaveIdempotencia,
+		huella:            p.Huella,
+		distanciaEntregaM: p.DistanciaEntregaM,
+		auditoriaGPS:      p.AuditoriaGPS,
 	}
 }
 
@@ -235,3 +261,17 @@ func (e *Evento) DeviceCreatedAt() time.Time { return e.deviceCreatedAt }
 
 // ClaveIdempotencia returns the idempotency key.
 func (e *Evento) ClaveIdempotencia() string { return e.claveIdempotencia }
+
+// Huella returns the fingerprint of the request that produced the event, or
+// empty when none was recorded. The replay check compares it against the
+// fingerprint of the incoming request.
+func (e *Evento) Huella() string { return e.huella }
+
+// DistanciaEntregaM returns, on folio_cerrado, the meters between the
+// delivery GPS and the farthest pickup GPS; nil on every other event and when
+// the audit did not apply.
+func (e *Evento) DistanciaEntregaM() *float64 { return e.distanciaEntregaM }
+
+// AuditoriaGPS returns, on folio_cerrado, the outcome of the delivery audit;
+// nil on every other event.
+func (e *Evento) AuditoriaGPS() *AuditoriaGPS { return e.auditoriaGPS }

@@ -93,8 +93,21 @@ type EventoRepo interface {
 // ImagenRepo persists evidence metadata. The blob itself goes through
 // StorageProvider.
 type ImagenRepo interface {
+	// Registrar inserts one image row. Must run inside a transaction. An ID
+	// already registered surfaces as domain.ErrImagenDuplicada.
 	Registrar(ctx context.Context, img *domain.Imagen) error
+	// Obtener returns one image by its primary key, or
+	// domain.ErrImagenNoEncontrada.
+	Obtener(ctx context.Context, id uuid.UUID) (*domain.Imagen, error)
+	// ListarPorEvento returns the images of one event ordered by
+	// CREATED_AT, then ID.
 	ListarPorEvento(ctx context.Context, eventoID uuid.UUID) ([]*domain.Imagen, error)
+	// ListarPorEventos returns the images of every event in eventoIDs in ONE
+	// query, ordered by EVENTO_ID, CREATED_AT, ID. An empty eventoIDs
+	// returns an empty slice without touching the database. It exists so the
+	// folio detail costs a fixed number of queries whatever the length of its
+	// timeline.
+	ListarPorEventos(ctx context.Context, eventoIDs []uuid.UUID) ([]*domain.Imagen, error)
 }
 
 // FolioGenerator hands out the next folio number from GEN_MSP_GA_FOLIO.

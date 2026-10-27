@@ -7,7 +7,17 @@ import (
 
 	"github.com/abdimuy/msp-api/internal/garantias/domain"
 	"github.com/abdimuy/msp-api/internal/garantias/ports/outbound"
+	"github.com/abdimuy/msp-api/internal/platform/apperror"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
+)
+
+// errImagenRepoPendiente marks the two ImagenRepo methods the contract of
+// tareas 9 y 10 declares and tarea 10 implements. It is an internal error on
+// purpose: nothing is wired to them yet, and if something were, it must fail
+// loudly as a 500 instead of answering "no images".
+var errImagenRepoPendiente = apperror.NewInternal(
+	"warranty_image_repo_pending",
+	"operación de imágenes pendiente de implementar",
 )
 
 var _ outbound.ImagenRepo = (*ImagenRepo)(nil)
@@ -100,4 +110,15 @@ func (r *ImagenRepo) ListarPorEvento(
 	}
 
 	return imagenes, nil
+}
+
+// Obtener is declared by the contract of tareas 9 y 10; tarea 10 implements it.
+func (r *ImagenRepo) Obtener(_ context.Context, _ uuid.UUID) (*domain.Imagen, error) {
+	return nil, errImagenRepoPendiente
+}
+
+// ListarPorEventos is declared by the contract of tareas 9 y 10; tarea 10
+// implements it.
+func (r *ImagenRepo) ListarPorEventos(_ context.Context, _ []uuid.UUID) ([]*domain.Imagen, error) {
+	return nil, errImagenRepoPendiente
 }

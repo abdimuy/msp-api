@@ -14,13 +14,19 @@ import (
 )
 
 // Deps holds the outbound dependencies of the garantias application service.
+//
+// ImagenRepo and Storage belong to the contract of tareas 9 y 10: the
+// delivery signature (Entregar, tarea 9) and the evidence upload
+// (AdjuntarImagen, tarea 10) are the two commands that write a blob.
 type Deps struct {
 	GarantiaRepo   outbound.GarantiaRepo
 	EventoRepo     outbound.EventoRepo
+	ImagenRepo     outbound.ImagenRepo
 	FolioGenerator outbound.FolioGenerator
 	TxRunner       outbound.TxRunner
 	Identity       outbound.Identity
 	Clock          outbound.Clock
+	Storage        outbound.StorageProvider
 }
 
 // Service is the application service for garantias commands.
@@ -31,10 +37,12 @@ type Deps struct {
 type Service struct {
 	garantias outbound.GarantiaRepo
 	eventos   outbound.EventoRepo
+	imagenes  outbound.ImagenRepo
 	folios    outbound.FolioGenerator
 	tx        outbound.TxRunner
 	identity  outbound.Identity
 	clock     outbound.Clock
+	storage   outbound.StorageProvider
 }
 
 // NewService creates a new Service.
@@ -42,10 +50,12 @@ func NewService(deps Deps) *Service {
 	return &Service{
 		garantias: deps.GarantiaRepo,
 		eventos:   deps.EventoRepo,
+		imagenes:  deps.ImagenRepo,
 		folios:    deps.FolioGenerator,
 		tx:        deps.TxRunner,
 		identity:  deps.Identity,
 		clock:     deps.Clock,
+		storage:   deps.Storage,
 	}
 }
 

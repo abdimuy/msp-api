@@ -524,3 +524,93 @@ var (
 		"el gps del agente es obligatorio para entregar",
 	)
 )
+
+// Sentinels added by the contract of tareas 9 y 10 (firma de conformidad,
+// auditoría GPS, imágenes idempotentes y huella de la petición).
+var (
+	// ErrTipoImagenInvalido is returned by ParseTipoImagen and NewImagen when
+	// the type is not "evidencia" or "firma".
+	ErrTipoImagenInvalido = apperror.NewValidation(
+		"warranty_image_type_invalid",
+		"tipo de imagen inválido",
+	)
+
+	// ErrAuditoriaGPSInvalida is returned by ParseAuditoriaGPS and newEvento
+	// when the audit outcome is not one of the three known values.
+	ErrAuditoriaGPSInvalida = apperror.NewValidation(
+		"warranty_gps_audit_invalid",
+		"resultado de auditoría gps inválido",
+	)
+
+	// ErrHuellaInvalida is returned by newEvento and NewImagen when the
+	// fingerprint is not empty and not 64 lowercase hex characters.
+	ErrHuellaInvalida = apperror.NewValidation(
+		"warranty_fingerprint_invalid",
+		"huella de la petición inválida",
+	)
+
+	// ErrImagenIDInvalido is returned by NewImagen when the caller supplies
+	// an explicit ID and it is the nil UUID.
+	ErrImagenIDInvalido = apperror.NewValidation(
+		"warranty_image_id_invalid",
+		"identificador de imagen inválido",
+	)
+
+	// ErrImagenDuplicada is returned by the repository when an image ID is
+	// already registered and the replay could not be resolved as the same
+	// upload (two uploads raced on the same Idempotency-Key).
+	ErrImagenDuplicada = apperror.NewConflict(
+		"warranty_image_duplicate",
+		"la imagen ya está registrada",
+	)
+
+	// ErrImagenEventoAjeno is returned when the event named in the route does
+	// not exist or belongs to another folio. Both answer the same on purpose:
+	// the caller learns nothing about events outside the folio it named.
+	ErrImagenEventoAjeno = apperror.NewNotFound(
+		"warranty_image_event_not_in_folio",
+		"el evento no pertenece a la garantía",
+	)
+
+	// ErrImagenNoEncontrada is returned by ImagenRepo.Obtener and by the image
+	// download when the image does not exist under that folio and event.
+	ErrImagenNoEncontrada = apperror.NewNotFound(
+		"warranty_image_not_found",
+		"imagen no encontrada",
+	)
+
+	// ErrImagenVacia is returned when an upload carries no bytes.
+	ErrImagenVacia = apperror.NewValidation(
+		"warranty_image_empty",
+		"la imagen está vacía",
+	)
+
+	// ErrImagenFormatoInvalido is returned when the bytes of an upload are not
+	// a JPEG or a PNG (sniffed from the content, not from the declared type).
+	ErrImagenFormatoInvalido = apperror.NewValidation(
+		"warranty_image_format_invalid",
+		"la imagen debe ser jpeg o png",
+	)
+
+	// ErrImagenMuyGrande is returned when an upload exceeds the size limit of
+	// its type (evidence or signature).
+	ErrImagenMuyGrande = apperror.NewValidation(
+		"warranty_image_too_large",
+		"la imagen excede el tamaño permitido",
+	)
+
+	// ErrFirmaRequerida is returned by Entregar when the client's conformity
+	// signature is missing (spec §4.1).
+	ErrFirmaRequerida = apperror.NewValidation(
+		"warranty_signature_required",
+		"la firma de conformidad es obligatoria para entregar",
+	)
+
+	// ErrJustificacionDesvioRequerida is returned by Cerrar when the delivery
+	// GPS is farther from the pickup GPS than the threshold and no
+	// justification came with the request (spec §4.1).
+	ErrJustificacionDesvioRequerida = apperror.NewValidation(
+		"warranty_deviation_justification_required",
+		"la entrega se desvió del domicilio de recolección: se requiere justificación",
+	)
+)

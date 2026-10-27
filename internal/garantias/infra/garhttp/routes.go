@@ -1,3 +1,4 @@
+//nolint:misspell // vocabulario español (comando, Comandos) por convención del proyecto.
 package garhttp
 
 import (
@@ -13,14 +14,23 @@ import (
 const securitySchemeName = "bearerAuth"
 
 // Deps contiene las dependencias HTTP del módulo de garantías.
+//
+// Consultas atiende las lecturas; Comandos, las rutas POST. Las dos son
+// obligatorias: un módulo montado a medias respondería 404 a la mitad de su
+// contrato sin que nada truene en el arranque.
 type Deps struct {
 	Consultas *app.Consultas
+	Comandos  *app.Service
 }
 
 // MountRouter monta las rutas HTTP de garantías sobre el router recibido.
 func MountRouter(r chi.Router, d Deps) huma.API {
 	if d.Consultas == nil {
 		panic("garhttp: Consultas es requerida")
+	}
+
+	if d.Comandos == nil {
+		panic("garhttp: Comandos es requerido")
 	}
 
 	config := huma.DefaultConfig("MSP API · Garantías", "v2")
@@ -84,6 +94,7 @@ func MountRouter(r chi.Router, d Deps) huma.API {
 	})
 
 	registerOperations(api, handlers)
+	registrarComandos(api, d.Comandos)
 
 	return api
 }

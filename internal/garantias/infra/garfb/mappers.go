@@ -594,8 +594,12 @@ func hydrateImagen(r *imagenRow) (*domain.Imagen, error) {
 	}
 
 	return domain.HydrateImagen(domain.HydrateImagenParams{
-		ID:          id,
-		EventoID:    eventoID,
+		ID:       id,
+		EventoID: eventoID,
+		// Contrato de las tareas 9 y 10: hasta que la migración 000071
+		// agregue MSP_GA_IMAGEN.TIPO (tarea 10), toda fila es evidencia,
+		// que es exactamente como se leerá una fila vieja con TIPO NULL.
+		Tipo:        domain.TipoImagenEvidencia,
 		Ruta:        r.ruta,
 		Description: r.description.String,
 		SubidaPor:   r.subidaPor,

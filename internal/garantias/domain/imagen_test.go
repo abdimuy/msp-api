@@ -16,6 +16,7 @@ func TestNewImagen(t *testing.T) {
 	t.Parallel()
 	eventoID := uuid.New()
 	img, err := domain.NewImagen(domain.NewImagenParams{
+		Tipo:        domain.TipoImagenEvidencia,
 		EventoID:    eventoID,
 		Ruta:        "garantias/2026/08/abc-123.jpg",
 		Description: "  mueble recién recogido  ",
@@ -48,6 +49,7 @@ func TestNewImagen(t *testing.T) {
 func TestNewImagen_DescriptionVacia(t *testing.T) {
 	t.Parallel()
 	img, err := domain.NewImagen(domain.NewImagenParams{
+		Tipo:      domain.TipoImagenEvidencia,
 		EventoID:  uuid.New(),
 		Ruta:      "garantias/x.jpg",
 		SubidaPor: "juan",
@@ -86,6 +88,7 @@ func TestNewImagen_RutaInvalida(t *testing.T) {
 		t.Run(c.nombre, func(t *testing.T) {
 			t.Parallel()
 			img, err := domain.NewImagen(domain.NewImagenParams{
+				Tipo:      domain.TipoImagenEvidencia,
 				EventoID:  uuid.New(),
 				Ruta:      c.ruta,
 				SubidaPor: "juan",
@@ -104,6 +107,7 @@ func TestNewImagen_RutaInvalida(t *testing.T) {
 func TestNewImagen_SubidaPorObligatorio(t *testing.T) {
 	t.Parallel()
 	img, err := domain.NewImagen(domain.NewImagenParams{
+		Tipo:      domain.TipoImagenEvidencia,
 		EventoID:  uuid.New(),
 		Ruta:      "garantias/x.jpg",
 		SubidaPor: "   ",
@@ -120,6 +124,7 @@ func TestNewImagen_SubidaPorObligatorio(t *testing.T) {
 func TestNewImagen_EventoObligatorio(t *testing.T) {
 	t.Parallel()
 	img, err := domain.NewImagen(domain.NewImagenParams{
+		Tipo:      domain.TipoImagenEvidencia,
 		EventoID:  uuid.Nil,
 		Ruta:      "garantias/x.jpg",
 		SubidaPor: "juan",
@@ -136,6 +141,7 @@ func TestNewImagen_EventoObligatorio(t *testing.T) {
 func TestNewImagen_CreatedAtObligatorio(t *testing.T) {
 	t.Parallel()
 	img, err := domain.NewImagen(domain.NewImagenParams{
+		Tipo:      domain.TipoImagenEvidencia,
 		EventoID:  uuid.New(),
 		Ruta:      "garantias/x.jpg",
 		SubidaPor: "juan",
@@ -167,6 +173,7 @@ func TestNewImagen_Longitudes(t *testing.T) {
 		t.Run(c.nombre, func(t *testing.T) {
 			t.Parallel()
 			p := domain.NewImagenParams{
+				Tipo:        domain.TipoImagenEvidencia,
 				EventoID:    uuid.New(),
 				Ruta:        ruta,
 				Description: "pieza",
@@ -186,6 +193,7 @@ func TestNewImagen_Longitudes(t *testing.T) {
 	t.Run("limites_aceptados", func(t *testing.T) {
 		t.Parallel()
 		if _, err := domain.NewImagen(domain.NewImagenParams{
+			Tipo:        domain.TipoImagenEvidencia,
 			EventoID:    uuid.New(),
 			Ruta:        ruta,
 			Description: string(make([]rune, 500)),
@@ -212,6 +220,7 @@ func TestNewImagen_RutasValidas(t *testing.T) {
 		filepath.Join("garantias", "sub", "x.jpg"),
 	} {
 		if _, err := domain.NewImagen(domain.NewImagenParams{
+			Tipo:      domain.TipoImagenEvidencia,
 			EventoID:  uuid.New(),
 			Ruta:      ruta,
 			SubidaPor: "juan",
@@ -227,6 +236,7 @@ func TestNewImagen_RutasValidas(t *testing.T) {
 func TestNewImagen_RutaSeValidaAntesQueSubidaPor(t *testing.T) {
 	t.Parallel()
 	_, err := domain.NewImagen(domain.NewImagenParams{
+		Tipo:      domain.TipoImagenEvidencia,
 		EventoID:  uuid.New(),
 		Ruta:      "/absoluta.jpg",
 		SubidaPor: "",

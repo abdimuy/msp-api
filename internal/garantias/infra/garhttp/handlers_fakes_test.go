@@ -145,6 +145,11 @@ func buildHTTPRouter(
 	r := chi.NewRouter()
 	garhttp.MountRouter(r, garhttp.Deps{
 		Consultas: consultas,
+		Comandos: app.NewService(app.Deps{
+			GarantiaRepo: garantias,
+			EventoRepo:   eventos,
+			Identity:     identity,
+		}),
 	})
 
 	return r
