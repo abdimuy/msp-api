@@ -1,4 +1,4 @@
-.PHONY: help setup build build-winback run dev test test-unit test-mutation test-mutation-domain test-mutation-app test-mutation-ventas test-mutation-ventas-domain test-mutation-ventas-app test-mutation-cobranza test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-cobranza-eventbus test-mutation-visitas test-mutation-visitas-domain test-mutation-visitas-app test-mutation-httpdispatch lint lint-fix check-sealed fmt generate clean test-firebird test-firebird-all test-firebird-ventas coverage-auth coverage-auth-full coverage-ventas coverage-ventas-full coverage-canal precommit-strict fb-migrate-up fb-migrate-down fb-migrate-status fb-seed-admin fb-snapshot fb-snapshot-list fb-restore fb-snapshot-delete fb-emu-up fb-emu-down fb-emu-logs meilisearch-up meilisearch-down test-meilisearch
+.PHONY: help setup build build-winback run dev test test-unit test-mutation test-mutation-domain test-mutation-app test-mutation-ventas test-mutation-ventas-domain test-mutation-ventas-app test-mutation-cobranza test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-cobranza-eventbus test-mutation-visitas test-mutation-visitas-domain test-mutation-visitas-app test-mutation-httpdispatch lint lint-fix check-sealed fmt generate clean test-firebird test-firebird-all test-firebird-ventas coverage-auth coverage-auth-full coverage-ventas coverage-ventas-full coverage-canal coverage-visitas precommit-strict test-makefile fb-migrate-up fb-migrate-down fb-migrate-status fb-seed-admin fb-snapshot fb-snapshot-list fb-restore fb-snapshot-delete fb-emu-up fb-emu-down fb-emu-logs meilisearch-up meilisearch-down test-meilisearch
 
 # ── Config ───────────────────────────────────────────────────────────
 APP_NAME      := msp-api
@@ -13,6 +13,35 @@ LDFLAGS       := -s -w -X main.version=$(shell git rev-parse --short HEAD 2>/dev
 # internal/platform — not even another module's contracts. Verified by
 # `make check-sealed`; also enforced statically by depguard in .golangci.yml.
 # Adding a module here without its matching depguard rule leaves half the gate.
+#
+# ── Dos hechos medidos el 2026-09-08 (Arreglo B), sin cambiar comportamiento ──
+#
+# 1. `internal/asistencia` NO EXISTE. El target lo saltea imprimiendo
+#    "· internal/asistencia does not exist yet — skipped" y sigue en verde: una
+#    cuarta parte de esta lista no verifica nada y nadie se entera. Es la misma
+#    forma que las compuertas vacías que el Arreglo B cerró; se documenta y no
+#    se toca porque quitar un módulo de la lista de ADR 0009 es una decisión de
+#    política, no de andamiaje.
+#
+# 2. `visitas` no está en la lista, y **si se lo agrega, FALLA**:
+#       $ make check-sealed MODULE=visitas
+#       ✘ visitas is no longer sealed — it depends on (ADR 0009):
+#           github.com/abdimuy/msp-api/internal/auth
+#           github.com/abdimuy/msp-api/internal/auth/domain
+#    O sea que la afirmación del plan `pagos-y-visitas` de que visitas cumple la
+#    disciplina de módulo sellado es **falsa**, no "pendiente de medir".
+#    Sellarlo pide mover la dependencia de `internal/auth` fuera del módulo, que
+#    es tarea propia y no la de este arreglo.
+#
+# 3. Esta variable tiene un ESPEJO ESCRITO A MANO en `.golangci.yml`: un bloque
+#    `<modulo>-sealed` de depguard por cada entrada de acá (`:459 asistencia-sealed`,
+#    y sus hermanos de garantias/flota/canal). El comentario de arriba ya lo
+#    admite —"adding a module here without its matching depguard rule leaves half
+#    the gate"— o sea que la sincronización es manual y nadie la verifica. Y ya
+#    divergió del mundo real por el mismo lado que esta lista: `asistencia-sealed`
+#    protege un módulo que no existe, y `.golangci.yml:438` sigue listando
+#    `internal/asistencia/domain` entre los imports permitidos. Documentado y no
+#    tocado: qué módulos sella el ADR 0009 es política, no andamiaje.
 SEALED_MODULES := asistencia garantias flota canal
 
 # Load .env if present (FB_* and other vars consumed by Go binaries + targets).
@@ -119,8 +148,20 @@ sqlc: ## Generate SQL code from queries/
 # `golang-migrate` no soporta Firebird, así que aplicamos los .sql via isql
 # dentro del container `mueblera-firebird`. Estos targets son para desarrollo
 # local — en producción se aplican manualmente con autorización del DBA.
+#
+# isql corre SIEMPRE con -bail: sin él, una sentencia que falla se salta y el
+# resto del archivo sigue — incluido el INSERT INTO MSP_MIGRATIONS del final —,
+# así que una migración rota quedaba registrada como aplicada y el ciclo seguía
+# con la siguiente. Con -bail isql se detiene en el primer error con exit 1 y
+# el `exit 1` dentro de { } corta el for. Guardado por
+# scripts/makefile-migrate_test.sh. OJO: con AUTODDL (default de isql) las
+# sentencias DDL anteriores a la que falla YA quedaron confirmadas.
+#
+# FB_MIGRATIONS_DIR / FB_CONTAINER / FB_DATABASE se pueden pasar en la línea de
+# make (`make fb-migrate-up FB_CONTAINER=x`). Como variable de ENTORNO no basta
+# para las que define .env: `include .env` les gana al entorno.
 
-FB_MIGRATIONS_DIR    := migrations-firebird
+FB_MIGRATIONS_DIR    ?= migrations-firebird
 FB_SEEDS_DIR         := seeds-firebird
 FB_CONTAINER         ?= mueblera-firebird
 FB_USER              ?= SYSDBA
@@ -145,8 +186,8 @@ fb-migrate-up: ## Apply pending Firebird migrations (idempotent; dev only)
 		fi; \
 		echo "▶ $$f (id=$$id)"; \
 		docker exec -i $(FB_CONTAINER) /usr/local/firebird/bin/isql \
-			-u $(FB_USER) -p $(FB_PASSWORD) -ch UTF8 $(FB_DATABASE) < $$f \
-			|| (echo "❌ Failed at $$f" && exit 1); \
+			-bail -u $(FB_USER) -p $(FB_PASSWORD) -ch UTF8 $(FB_DATABASE) < $$f \
+			|| { echo "❌ Failed at $$f (id=$$id) — NOT registered in MSP_MIGRATIONS; stopping. Statements before the failing one may already be committed (AUTODDL): check by hand, or roll back with the snapshot you took before migrating: make fb-restore NAME=<el que tomaste>."; exit 1; }; \
 	done
 	@echo "✔ Firebird migrations applied"
 
@@ -154,10 +195,11 @@ fb-migrate-up: ## Apply pending Firebird migrations (idempotent; dev only)
 fb-migrate-down: ## Rollback one Firebird migration. Usage: make fb-migrate-down N=000002
 	@[ -n "$(N)" ] || (echo "❌ N required: make fb-migrate-down N=000002" && exit 1)
 	@f=$$(ls $(FB_MIGRATIONS_DIR)/$(N)_*.down.sql 2>/dev/null); \
-	[ -n "$$f" ] || (echo "❌ No down migration found for N=$(N)" && exit 1); \
+	[ -n "$$f" ] || { echo "❌ No down migration found for N=$(N)"; exit 1; }; \
 	echo "▶ $$f"; \
 	docker exec -i $(FB_CONTAINER) /usr/local/firebird/bin/isql \
-		-u $(FB_USER) -p $(FB_PASSWORD) -ch UTF8 $(FB_DATABASE) < $$f
+		-bail -u $(FB_USER) -p $(FB_PASSWORD) -ch UTF8 $(FB_DATABASE) < $$f \
+		|| { echo "❌ Failed at $$f — stopped at the first error; the MSP_MIGRATIONS row was NOT removed if the DELETE comes after it."; exit 1; }
 
 # List applied Firebird migrations
 fb-migrate-status: ## Show applied Firebird migrations
@@ -171,49 +213,65 @@ fb-migrate-status: ## Show applied Firebird migrations
 # the active DB file (destructive — you lose anything written since the
 # snapshot).
 #
-# Snapshots live under data/firebird-snapshots/ (gitignored). The dir is
-# created on first snapshot.
+# Snapshots live under <checkout principal>/data/firebird-snapshots/
+# (gitignored), en ruta ABSOLUTA: el checkout principal se deriva de
+# `git rev-parse --git-common-dir`, que desde cualquier worktree apunta al .git
+# del checkout principal. Antes era relativa (data/firebird-snapshots) y un
+# snapshot tomado desde un worktree caía dentro del worktree y se perdía al
+# borrarlo. Se sobreescribe con FB_SNAPSHOTS_DIR=/otra/ruta (entorno o línea de
+# make). Fuera de git, cae al directorio actual. El dir se crea en el primer
+# snapshot. Guardado por scripts/makefile-migrate_test.sh.
 
-FB_SNAPSHOTS_DIR := data/firebird-snapshots
+FB_REPO_ROOT     := $(shell d=$$(git rev-parse --git-common-dir 2>/dev/null) && cd "$$d/.." && pwd)
+FB_SNAPSHOTS_DIR ?= $(if $(FB_REPO_ROOT),$(FB_REPO_ROOT),$(CURDIR))/data/firebird-snapshots
 
-fb-snapshot: ## Take a hot snapshot of the dev DB. NAME=foo optional (defaults to timestamp).
-	@mkdir -p $(FB_SNAPSHOTS_DIR)
+fb-snapshot: ## Take a hot snapshot of the dev DB. NAME=foo optional (defaults to timestamp). FORCE=1 to overwrite an existing NAME.
+	@mkdir -p "$(FB_SNAPSHOTS_DIR)"
 	@name="$${NAME:-snapshot_$$(date +%Y%m%d_%H%M%S)}"; \
+	dst="$(FB_SNAPSHOTS_DIR)/$$name.fbk"; \
+	if [ -e "$$dst" ] && [ "$(FORCE)" != "1" ]; then \
+		echo "❌ snapshot already exists: $$dst"; \
+		echo "   El directorio lo comparten todos los worktrees: usa otro NAME, o FORCE=1 para sobreescribirlo."; \
+		exit 1; \
+	fi; \
 	echo "▶ creating snapshot $$name.fbk (this takes ~30s for 3.6GB)"; \
 	docker exec $(FB_CONTAINER) /usr/local/firebird/bin/gbak \
 		-b -v -t -user $(FB_USER) -password $(FB_PASSWORD) \
 		$(FB_DATABASE) /tmp/$$name.fbk \
-		|| (echo "❌ gbak backup failed" && exit 1); \
-	docker cp $(FB_CONTAINER):/tmp/$$name.fbk $(FB_SNAPSHOTS_DIR)/$$name.fbk \
-		|| (echo "❌ docker cp failed" && exit 1); \
+		|| { echo "❌ gbak backup failed"; exit 1; }; \
+	docker cp $(FB_CONTAINER):/tmp/$$name.fbk "$$dst" \
+		|| { echo "❌ docker cp failed"; exit 1; }; \
 	docker exec $(FB_CONTAINER) rm -f /tmp/$$name.fbk; \
-	echo "✔ snapshot saved to $(FB_SNAPSHOTS_DIR)/$$name.fbk"; \
-	ls -lh $(FB_SNAPSHOTS_DIR)/$$name.fbk
+	echo "✔ snapshot saved to $$dst"; \
+	ls -lh "$$dst"
 
 fb-snapshot-list: ## List available Firebird snapshots
-	@if [ ! -d $(FB_SNAPSHOTS_DIR) ] || [ -z "$$(ls -A $(FB_SNAPSHOTS_DIR) 2>/dev/null)" ]; then \
+	@if [ ! -d "$(FB_SNAPSHOTS_DIR)" ] || [ -z "$$(ls -A "$(FB_SNAPSHOTS_DIR)" 2>/dev/null)" ]; then \
 		echo "(no snapshots in $(FB_SNAPSHOTS_DIR))"; \
 	else \
-		ls -lht $(FB_SNAPSHOTS_DIR)/ | grep -v '^total'; \
+		ls -lht "$(FB_SNAPSHOTS_DIR)/" | grep -v '^total'; \
 	fi
 
-fb-restore: ## Restore from a snapshot. NAME=foo (default: latest). DESTRUCTIVE — replaces current DB.
-	@name="$${NAME:-}"; \
+# NAME es OBLIGATORIO: el directorio de snapshots lo comparten todos los
+# worktrees, así que "el más reciente" puede ser el de otro worktree/agente.
+fb-restore: ## Restore from a snapshot. NAME=foo (REQUIRED). DESTRUCTIVE — replaces current DB.
+	@name="$(NAME)"; \
 	if [ -z "$$name" ]; then \
-		name=$$(ls -t $(FB_SNAPSHOTS_DIR)/*.fbk 2>/dev/null | head -1 | xargs -n1 basename | sed 's/\.fbk$$//'); \
-		[ -n "$$name" ] || (echo "❌ no snapshots found in $(FB_SNAPSHOTS_DIR)" && exit 1); \
-		echo "ℹ no NAME given; using latest: $$name"; \
+		echo "❌ NAME required: make fb-restore NAME=<snapshot> (shared dir, no 'latest' default)"; \
+		echo "Available in $(FB_SNAPSHOTS_DIR):"; \
+		ls -lht "$(FB_SNAPSHOTS_DIR)/" 2>/dev/null | grep -v '^total'; \
+		exit 1; \
 	fi; \
-	src=$(FB_SNAPSHOTS_DIR)/$$name.fbk; \
-	[ -f "$$src" ] || (echo "❌ snapshot file not found: $$src" && echo "Available:" && ls $(FB_SNAPSHOTS_DIR)/ 2>/dev/null && exit 1); \
+	src="$(FB_SNAPSHOTS_DIR)/$$name.fbk"; \
+	[ -f "$$src" ] || { echo "❌ snapshot file not found: $$src"; echo "Available:"; ls "$(FB_SNAPSHOTS_DIR)/" 2>/dev/null; exit 1; }; \
 	echo "⚠  RESTORE WILL REPLACE $(FB_DATABASE) WITH $$src"; \
 	echo "   Current DB will be wiped. Anything written since the snapshot is gone."; \
 	echo ""; \
 	read -p "Type 'restore' to confirm: " confirm; \
-	[ "$$confirm" = "restore" ] || (echo "aborted" && exit 1); \
+	[ "$$confirm" = "restore" ] || { echo "aborted"; exit 1; }; \
 	echo "▶ copying $$src into container"; \
 	docker cp "$$src" $(FB_CONTAINER):/tmp/restore.fbk \
-		|| (echo "❌ docker cp failed" && exit 1); \
+		|| { echo "❌ docker cp failed"; exit 1; }; \
 	echo "▶ shutting down DB connections (gfix shutdown full -force 30)"; \
 	docker exec $(FB_CONTAINER) /usr/local/firebird/bin/gfix \
 		-user $(FB_USER) -password $(FB_PASSWORD) \
@@ -224,7 +282,7 @@ fb-restore: ## Restore from a snapshot. NAME=foo (default: latest). DESTRUCTIVE 
 		-c -v -user $(FB_USER) -password $(FB_PASSWORD) \
 		-replace_database \
 		/tmp/restore.fbk $(FB_DATABASE) \
-		|| (echo "❌ gbak restore failed — DB may be in inconsistent state" && exit 1); \
+		|| { echo "❌ gbak restore failed — DB may be in inconsistent state"; exit 1; }; \
 	docker exec $(FB_CONTAINER) /usr/local/firebird/bin/gfix \
 		-user $(FB_USER) -password $(FB_PASSWORD) \
 		-online normal $(FB_DATABASE) || true; \
@@ -233,8 +291,8 @@ fb-restore: ## Restore from a snapshot. NAME=foo (default: latest). DESTRUCTIVE 
 
 fb-snapshot-delete: ## Delete a snapshot. NAME=foo (required).
 	@[ -n "$(NAME)" ] || (echo "❌ NAME required: make fb-snapshot-delete NAME=snapshot_20260513_120000" && exit 1)
-	@f=$(FB_SNAPSHOTS_DIR)/$(NAME).fbk; \
-	[ -f "$$f" ] || (echo "❌ not found: $$f" && exit 1); \
+	@f="$(FB_SNAPSHOTS_DIR)/$(NAME).fbk"; \
+	[ -f "$$f" ] || { echo "❌ not found: $$f"; exit 1; }; \
 	rm -f "$$f"; \
 	echo "✔ deleted $$f"
 
@@ -243,7 +301,41 @@ fb-seed-admin: ## Apply admin seed file (must be created from the .example templ
 	@[ -f $(FB_SEEDS_DIR)/000001_admin_user.sql ] || \
 		(echo "❌ Missing $(FB_SEEDS_DIR)/000001_admin_user.sql — copy from .example and fill in values" && exit 1)
 	docker exec -i $(FB_CONTAINER) /usr/local/firebird/bin/isql \
-		-u $(FB_USER) -p $(FB_PASSWORD) -ch UTF8 $(FB_DATABASE) < $(FB_SEEDS_DIR)/000001_admin_user.sql
+		-bail -u $(FB_USER) -p $(FB_PASSWORD) -ch UTF8 $(FB_DATABASE) < $(FB_SEEDS_DIR)/000001_admin_user.sql
+
+# ── Pruebas de los targets Firebird y del generador de la base de pruebas ──
+# Levantan contenedores Firebird DESECHABLES propios (nombre *-desechable; los
+# scripts se niegan a borrar cualquier otro) con bases vacías/sintéticas.
+# Nunca tocan mueblera-firebird, la base de dev ni el artefacto publicado.
+# Sin docker se saltan solos. FB_TEST_IMAGES elige las imágenes (FB4 y FB5 por
+# defecto). Deliberadamente NO está en lefthook ni en CI: se corre a mano al
+# tocar los targets fb-* o scripts/make-test-db.sh.
+FB_TEST_IMAGES  ?= jacobalberty/firebird:v4.0 firebirdsql/firebird:5.0.4
+FB_TEST_SCRIPTS ?= scripts/makefile-migrate_test.sh scripts/make-test-db_test.sh
+
+# El resultado NO depende de `set -e`: se revisa el exit de cada prueba Y su
+# salida — una prueba que imprime una línea FAIL hace fallar el target aunque
+# salga con 0. Guardado por el caso 8 de scripts/makefile-migrate_test.sh.
+test-makefile: ## Test fb-migrate/fb-snapshot/fb-restore targets and make-test-db.sh on throwaway *-desechable Firebird containers (FB4+FB5)
+	@failed=""; \
+	for img in $(FB_TEST_IMAGES); do \
+		for t in $(FB_TEST_SCRIPTS); do \
+			echo "═══ $$img · $$t"; \
+			log=$$(mktemp); \
+			FB_IMAGE=$$img CONTAINER=msp-test-makefile-$$(basename $$t .sh | tr '_' '-')-desechable \
+				"$$t" >"$$log" 2>&1; \
+			rc=$$?; \
+			cat "$$log"; \
+			if [ "$$rc" -ne 0 ]; then \
+				failed="$$failed $$img·$$t(exit=$$rc)"; \
+			elif grep -q '^FAIL' "$$log"; then \
+				failed="$$failed $$img·$$t(imprimió FAIL)"; \
+			fi; \
+			rm -f "$$log"; \
+		done; \
+	done; \
+	if [ -n "$$failed" ]; then echo "❌ test-makefile falló:$$failed"; exit 1; fi; \
+	echo "✔ test-makefile"
 
 # ── Firebird integration tests (against the real Microsip dev DB) ───
 # Tests connect to the same Firebird container the API uses in dev
@@ -284,6 +376,7 @@ test-firebird-all: ## Run ALL Firebird-backed tests: platform, module repos (aut
 	          ./internal/visitas/infra/visitasfb/... ./internal/visitas/infra/visitashttp/... \
 	          ./internal/clientes/infra/clientesfb/... ./internal/config/infra/configfb/... \
 	          ./internal/rutas/infra/rutasfb/... ./internal/microsip/infra/microsipfb/... \
+	          ./internal/desempeno/infra/desempenofb/... ./internal/desempeno/infra/desempenohttp/... \
 	          -p 1 -race -count=1 -timeout 600s
 
 test-firebird-ventas: ## Run Firebird-backed tests for the venta creation flow (platform + ventas)
@@ -318,6 +411,16 @@ coverage-ventas-full: ## Generate ventas coverage INCLUDING Firebird integration
 	$(GO) tool cover -html=coverage-ventas.out -o coverage-ventas.html
 	@echo "✔ Full coverage report: coverage-ventas.html"
 
+# ── Cobertura con piso de verdad (Arreglo B) ─────────────────────────
+# A diferencia de los `coverage-*` de arriba —que generan un reporte y NO
+# comparan nada—, este target FALLA. Y falla también si falta `FB_DATABASE`, en
+# vez de saltarse los tests de Firebird y decir `ok` con `visitasfb` en 0.0%
+# contra un piso de 80%, que es lo que hacía hasta hoy.
+#
+# Make carga `.env` solo, así que las FB_* llegan sin sourcear nada.
+coverage-visitas: ## Cobertura de internal/visitas CON pisos que fallan (requiere FB_DATABASE)
+	./scripts/go-cover-gate.sh ./internal/visitas/... scripts/cover-floors-visitas.txt
+
 coverage-canal: ## Generate per-package coverage report for the canal module (short mode)
 	$(GO) test ./internal/canal/... -count=1 -short -coverprofile=coverage-canal.out -covermode=atomic
 	$(GO) tool cover -func=coverage-canal.out | tail -20
@@ -337,21 +440,39 @@ precommit-strict: ## Full local quality gate before opening a PR — equivalent 
 # high business value (domain, app) where false negatives in tests are
 # most costly. Config in .gremlins.yaml. Install with:
 #   go install github.com/go-gremlins/gremlins/cmd/gremlins@latest
+#
+# TODOS los targets pasan por `scripts/gremlins-gate.sh`, y esa uniformidad es
+# el arreglo, no un refactor de estilo: `gremlins unleash --threshold-efficacy
+# N` **sale 0 pase lo que pase** (medido: eficacia 100% contra umbral 101 sale
+# 0, por flag y por config). Cada target que invoque el binario directo es un
+# target sin compuerta, y dejar cinco así garantizaba que el próximo naciera
+# igual. El script hace cumplir dos pisos: la eficacia Y la fracción de
+# mutantes EVALUADOS — sin el segundo, un paquete donde expiran 50 de 52
+# mutantes reporta 100.00% sobre los 2 que corrieron.
+#
+# Los pisos: <eficacia> <evaluados>. `auth` y `ventas` conservan el 75% de
+# eficacia que ya tenían por defecto (nadie decidió subírselos en este trabajo),
+# y su piso de evaluados es 80 — medido hoy bajo esta misma compuerta:
+# auth/domain 90%, auth/app 90%, ventas/domain 94%, ventas/app 90%. Ochenta y no
+# noventa para dejar margen; un piso pegado al número de hoy se vuelve rojo con
+# el primer refactor honesto y termina bajándose para pasar.
+GREMLINS_GATE := ./scripts/gremlins-gate.sh
+GREMLINS_TMPDIR := TMPDIR=/Volumes/M2-1TB/.go-cache/tmp
 test-mutation: test-mutation-domain test-mutation-app test-mutation-ventas-domain test-mutation-ventas-app test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-visitas-domain test-mutation-visitas-app test-mutation-httpdispatch ## Run mutation testing on critical packages
 
-test-mutation-domain: ## Run mutation testing on auth/domain only
-	gremlins unleash ./internal/auth/domain
+test-mutation-domain: ## Run mutation testing on auth/domain only (gate 75% eficacia + 80% evaluados)
+	$(GREMLINS_TMPDIR) $(GREMLINS_GATE) ./internal/auth/domain 75 80
 
-test-mutation-app: ## Run mutation testing on auth/app only
-	gremlins unleash ./internal/auth/app
+test-mutation-app: ## Run mutation testing on auth/app only (gate 75% eficacia + 80% evaluados)
+	$(GREMLINS_TMPDIR) $(GREMLINS_GATE) ./internal/auth/app 75 80
 
 test-mutation-ventas: test-mutation-ventas-domain test-mutation-ventas-app ## Run mutation testing on the ventas module (domain + app)
 
-test-mutation-ventas-domain: ## Run mutation testing on ventas/domain only
-	gremlins unleash ./internal/ventas/domain
+test-mutation-ventas-domain: ## Run mutation testing on ventas/domain only (gate 75% eficacia + 80% evaluados)
+	$(GREMLINS_TMPDIR) $(GREMLINS_GATE) ./internal/ventas/domain 75 80
 
-test-mutation-ventas-app: ## Run mutation testing on ventas/app only
-	gremlins unleash ./internal/ventas/app
+test-mutation-ventas-app: ## Run mutation testing on ventas/app only (gate 75% eficacia + 80% evaluados)
+	$(GREMLINS_TMPDIR) $(GREMLINS_GATE) ./internal/ventas/app 75 80
 
 test-mutation-cobranza: test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-cobranza-eventbus ## Run mutation testing on the cobranza module (domain + app + eventbus) with 80% kill-ratio gate
 
@@ -363,13 +484,13 @@ test-mutation-cobranza: test-mutation-cobranza-domain test-mutation-cobranza-app
 # TMPDIR, no GOTMPDIR. Sin esto, una corrida de cobranza/app llena ~24 GB
 # de /private/tmp y puede explotar el disco interno (jun 2026 incidente).
 test-mutation-cobranza-domain: ## Run mutation testing on cobranza/domain only (gate 80%)
-	TMPDIR=/Volumes/M2-1TB/.go-cache/tmp gremlins unleash --threshold-efficacy 80 ./internal/cobranza/domain
+	$(GREMLINS_TMPDIR) $(GREMLINS_GATE) ./internal/cobranza/domain 80 90
 
 test-mutation-cobranza-app: ## Run mutation testing on cobranza/app only (gate 80%)
-	TMPDIR=/Volumes/M2-1TB/.go-cache/tmp gremlins unleash --threshold-efficacy 80 ./internal/cobranza/app
+	$(GREMLINS_TMPDIR) $(GREMLINS_GATE) ./internal/cobranza/app 80 90
 
-test-mutation-cobranza-eventbus: ## Run mutation testing on cobranza/app/eventbus only (gate 80%)
-	TMPDIR=/Volumes/M2-1TB/.go-cache/tmp gremlins unleash --threshold-efficacy 80 ./internal/cobranza/app/eventbus
+test-mutation-cobranza-eventbus: ## Run mutation testing on platform/eventbus only (gate 80%)
+	$(GREMLINS_TMPDIR) $(GREMLINS_GATE) ./internal/platform/eventbus 80 90
 
 test-mutation-visitas: test-mutation-visitas-domain test-mutation-visitas-app ## Run mutation testing on the visitas module (domain + app) with 80% kill-ratio gate
 
@@ -379,14 +500,19 @@ test-mutation-visitas: test-mutation-visitas-domain test-mutation-visitas-app ##
 #
 # TMPDIR redirige los workdirs de gremlins al SSD externo (ver comentario en
 # test-mutation-cobranza-domain — mismo incidente, mismo fix).
-test-mutation-visitas-domain: ## Run mutation testing on visitas/domain only (gate 80%)
-	TMPDIR=/Volumes/M2-1TB/.go-cache/tmp gremlins unleash --threshold-efficacy 80 ./internal/visitas/domain
+test-mutation-visitas-domain: ## Run mutation testing on visitas/domain only (gate 80% eficacia + 90% evaluados)
+	$(GREMLINS_TMPDIR) $(GREMLINS_GATE) ./internal/visitas/domain 80 90
 
-test-mutation-visitas-app: ## Run mutation testing on visitas/app only (gate 80%)
-	TMPDIR=/Volumes/M2-1TB/.go-cache/tmp gremlins unleash --threshold-efficacy 80 ./internal/visitas/app
+test-mutation-visitas-app: ## Run mutation testing on visitas/app only (gate 80% eficacia + 90% evaluados)
+	$(GREMLINS_TMPDIR) $(GREMLINS_GATE) ./internal/visitas/app 80 90
 
-test-mutation-httpdispatch: ## Run mutation testing on platform/httpdispatch
-	gremlins unleash ./internal/platform/httpdispatch
+# NOMUTANTS y no un piso: este paquete es plomería de `context` (envuelve el
+# RouteContext de chi) y no tiene un solo operador mutable, así que gremlins
+# genera CERO mutantes. Este target venía saliendo 0 desde siempre midiendo
+# exactamente nada; ahora eso está declarado, y si el paquete gana código
+# mutable la compuerta falla pidiendo un piso de verdad.
+test-mutation-httpdispatch: ## Run mutation testing on platform/httpdispatch (cero mutantes, declarado)
+	$(GREMLINS_TMPDIR) $(GREMLINS_GATE) ./internal/platform/httpdispatch 75 NOMUTANTS
 
 # ── Meilisearch (dev) ────────────────────────────────────────────────
 meilisearch-up: ## Start Meilisearch dev container (http://localhost:7700)

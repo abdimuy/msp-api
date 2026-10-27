@@ -173,6 +173,11 @@ type PagoDetalle struct {
 	RecibidoAt     time.Time
 	AplicadoAt     time.Time
 	Origen         string // "app" | "microsip"
+	// PagoRecibidoID es el UUID de MSP_PAGOS_RECIBIDOS; "" cuando el pago no
+	// pasó por la app (oficina, legado anterior a 2.18.0).
+	PagoRecibidoID string
+	// NumFotos: comprobantes en MSP_PAGOS_IMAGENES de ese pago.
+	NumFotos int
 }
 
 // ClientesRepo is the primary read port for the clientes hub. Each method maps

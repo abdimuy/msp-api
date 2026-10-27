@@ -756,6 +756,8 @@ type pagoDetalleRowRaw struct {
 	mspLon          sql.NullString
 	mspRecibidoAt   any
 	mspAplicadoAt   any
+	pagoRecibidoID  sql.NullString // MSP_PAGOS_RECIBIDOS.ID — NONE, UUID ASCII
+	numFotos        int
 }
 
 func (r *pagoDetalleRowRaw) scanFrom(s scannable) error {
@@ -785,6 +787,8 @@ func (r *pagoDetalleRowRaw) scanFrom(s scannable) error {
 		&r.mspLon,
 		&r.mspRecibidoAt,
 		&r.mspAplicadoAt,
+		&r.pagoRecibidoID,
+		&r.numFotos,
 	)
 }
 
@@ -914,6 +918,8 @@ func (r *pagoDetalleRowRaw) assemble() (outbound.PagoDetalle, error) {
 		RecibidoAt:     enr.recibidoAt,
 		AplicadoAt:     enr.aplicadoAt,
 		Origen:         enr.origen,
+		PagoRecibidoID: strings.TrimSpace(r.pagoRecibidoID.String),
+		NumFotos:       r.numFotos,
 	}, nil
 }
 

@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,6 +66,29 @@ func (r *fakeVisitasRepo) FindByID(_ context.Context, id uuid.UUID) (*domain.Vis
 		return nil, domain.ErrVisitaNoEncontrada
 	}
 	return v, nil
+}
+
+// FindExistingIDs mirrors visitasfb.Repo.FindExistingIDs: only ids present
+// in the in-memory store are returned, in no particular order, deduplicated
+// (a SQL "WHERE ID IN (...)" answers once per matching row regardless of how
+// many times a value repeats in the list). An empty ids slice short-circuits
+// to an empty slice, matching the real repo's contract.
+func (r *fakeVisitasRepo) FindExistingIDs(_ context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
+	if len(ids) == 0 {
+		return []uuid.UUID{}, nil
+	}
+	seen := make(map[uuid.UUID]bool, len(ids))
+	out := make([]uuid.UUID, 0, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		if _, ok := r.byID[id]; ok {
+			out = append(out, id)
+			seen[id] = true
+		}
+	}
+	return out, nil
 }
 
 // ─── CurrentUser fixtures ───────────────────────────────────────────────────
@@ -126,7 +151,7 @@ func visitaBodyJSON(id, fecha string) string {
 		`"lat":19.432608,` +
 		`"lng":-99.133209,` +
 		`"nota":"María salió, vuelve mañana",` +
-		`"tipo_visita":"cobro",` +
+		`"tipo_visita":"No se encontraba",` +
 		`"zona_cliente_id":7,` +
 		`"fecha":"` + fecha + `"` +
 		`}`
@@ -157,7 +182,7 @@ func TestHTTP_CrearVisita_HappyPath(t *testing.T) {
 	assert.Equal(t, 42, dto.CobradorID)
 	assert.Equal(t, "Ramírez García, Jorge", dto.Cobrador)
 	assert.Equal(t, 87327, dto.FormaCobroID)
-	assert.Equal(t, "cobro", dto.TipoVisita)
+	assert.Equal(t, "No se encontraba", dto.TipoVisita)
 	assert.Equal(t, 7, dto.ZonaClienteID)
 	assert.Nil(t, dto.ImpteDoctoCCID)
 	assert.Len(t, repo.byID, 1)
@@ -179,7 +204,7 @@ func TestHTTP_CrearVisita_HappyPath_WithImpteDoctoCCID(t *testing.T) {
 		`"forma_cobro_id":87327,` +
 		`"lat":19.432608,` +
 		`"lng":-99.133209,` +
-		`"tipo_visita":"cobro",` +
+		`"tipo_visita":"No se encontraba",` +
 		`"zona_cliente_id":7,` +
 		`"impte_docto_cc_id":789012,` +
 		`"fecha":"` + fecha + `"` +
@@ -353,7 +378,7 @@ func TestHTTP_CrearVisita_DomainValidationError_Returns422(t *testing.T) {
 		`"forma_cobro_id":87327,` +
 		`"lat":19.432608,` +
 		`"lng":-99.133209,` +
-		`"tipo_visita":"cobro",` +
+		`"tipo_visita":"No se encontraba",` +
 		`"zona_cliente_id":7,` +
 		`"fecha":"` + fecha + `"` +
 		`}`
@@ -404,4 +429,226 @@ func TestHTTP_CrearVisita_IdempotentReplay_ReturnsStoredVisita(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec2.Body.Bytes(), &dto2))
 	assert.Equal(t, dto1.ID, dto2.ID)
 	assert.Len(t, repo.byID, 1, "exactly one row stored")
+}
+
+// ─── GET /visitas/{id} ──────────────────────────────────────────────────────
+
+// obtenerVisitaRequest builds a GET /visitas/{id} request for the given path
+// segment. The segment is percent-escaped so the REQUEST is always
+// well-formed — httptest.NewRequest panics on an unparseable target, which
+// would abort the test in the client instead of exercising the server. Chi
+// unescapes before routing, so the handler still receives the raw junk the
+// caller asked for.
+func obtenerVisitaRequest(rawID string) *http.Request {
+	return httptest.NewRequest(http.MethodGet, "/visitas/"+url.PathEscape(rawID), nil)
+}
+
+// seedVisita registers a visita through the write path so the read path has
+// something to find, and returns its id.
+func seedVisita(t *testing.T, svc *app.Service, repo *fakeVisitasRepo) uuid.UUID {
+	t.Helper()
+	_ = repo
+	id := uuid.New()
+	fecha := fixedNow.Add(-time.Hour).Format(time.RFC3339)
+	req := httptest.NewRequest(http.MethodPost, "/visitas", bytes.NewBufferString(visitaBodyJSON(id.String(), fecha)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", id.String())
+	rec := httptest.NewRecorder()
+	mountWithUser(visitaUser(), svc).ServeHTTP(rec, req)
+	require.Equal(t, http.StatusCreated, rec.Code, "seed must succeed; body=%s", rec.Body.String())
+	return id
+}
+
+func TestHTTP_ObtenerVisita_HappyPath(t *testing.T) {
+	t.Parallel()
+
+	repo := newFakeVisitasRepo()
+	svc := app.NewService(repo, &fakeClock{t: fixedNow})
+	id := seedVisita(t, svc, repo)
+
+	rec := httptest.NewRecorder()
+	mountWithUser(visitaUser(), svc).ServeHTTP(rec, obtenerVisitaRequest(id.String()))
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	var dto visitashttp.VisitaDTO
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dto))
+	assert.Equal(t, id.String(), dto.ID)
+	assert.Equal(t, 11486, dto.ClienteID)
+	assert.Equal(t, 42, dto.CobradorID)
+	assert.Equal(t, "Ramírez García, Jorge", dto.Cobrador)
+	assert.Equal(t, 87327, dto.FormaCobroID)
+	assert.InDelta(t, 19.432608, dto.Lat, 0.000001)
+	assert.InDelta(t, -99.133209, dto.Lng, 0.000001)
+	assert.Equal(t, "María salió, vuelve mañana", dto.Nota)
+	assert.Equal(t, "No se encontraba", dto.TipoVisita)
+	assert.Equal(t, 7, dto.ZonaClienteID)
+}
+
+func TestHTTP_ObtenerVisita_NotFound_Returns404(t *testing.T) {
+	t.Parallel()
+
+	repo := newFakeVisitasRepo()
+	svc := app.NewService(repo, &fakeClock{t: fixedNow})
+
+	rec := httptest.NewRecorder()
+	mountWithUser(visitaUser(), svc).ServeHTTP(rec, obtenerVisitaRequest(uuid.New().String()))
+
+	require.Equal(t, http.StatusNotFound, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "visita_not_found")
+}
+
+// TestHTTP_ObtenerVisita_InvalidUUIDInPath asserts a non-UUID path segment is
+// a clean 4xx, never a 500 — Huma's format:"uuid" rejects it at the schema
+// before the handler's own uuid.Parse is reached.
+func TestHTTP_ObtenerVisita_InvalidUUIDInPath(t *testing.T) {
+	t.Parallel()
+
+	repo := newFakeVisitasRepo()
+	svc := app.NewService(repo, &fakeClock{t: fixedNow})
+
+	for _, raw := range []string{"no-soy-un-uuid", "123", "'; DROP TABLE MSP_VISITAS; --", "%20"} {
+		t.Run(raw, func(t *testing.T) {
+			t.Parallel()
+
+			rec := httptest.NewRecorder()
+			mountWithUser(visitaUser(), svc).ServeHTTP(rec, obtenerVisitaRequest(raw))
+
+			assert.GreaterOrEqual(t, rec.Code, 400, "body=%s", rec.Body.String())
+			assert.Less(t, rec.Code, 500, "must never be a 5xx; body=%s", rec.Body.String())
+		})
+	}
+}
+
+func TestHTTP_ObtenerVisita_NoAuth_Returns401(t *testing.T) {
+	t.Parallel()
+
+	repo := newFakeVisitasRepo()
+	svc := app.NewService(repo, &fakeClock{t: fixedNow})
+
+	r := chi.NewRouter() // no planter: unauthenticated
+	visitashttp.MountRouter(r, svc)
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, obtenerVisitaRequest(uuid.New().String()))
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code, "body=%s", rec.Body.String())
+}
+
+func TestHTTP_ObtenerVisita_MissingPermission_Returns403(t *testing.T) {
+	t.Parallel()
+
+	repo := newFakeVisitasRepo()
+	svc := app.NewService(repo, &fakeClock{t: fixedNow})
+
+	rec := httptest.NewRecorder()
+	mountWithUser(noPermUser(), svc).ServeHTTP(rec, obtenerVisitaRequest(uuid.New().String()))
+
+	assert.Equal(t, http.StatusForbidden, rec.Code, "body=%s", rec.Body.String())
+}
+
+// TestHTTP_ObtenerVisita_DevuelveTipoLegacySinValidar is the read-path
+// guarantee at the transport boundary. A row whose TIPO_VISITA predates the
+// closed catalogue must serialize normally — 200, with the stored value
+// echoed verbatim — instead of erroring because the write-path rule does not
+// recognize it. Without this the endpoint would 500 (or 422) on roughly a
+// quarter of MSP_VISITAS.
+func TestHTTP_ObtenerVisita_DevuelveTipoLegacySinValidar(t *testing.T) {
+	t.Parallel()
+
+	legacy := []struct {
+		name string
+		tipo string
+	}{
+		{"empty string (200 real rows)", ""},
+		{"retired literal (38,855 real rows)", "No va a dar pago"},
+		{"retired literal (16,925 real rows)", "Dijo que no va a pagar"},
+		{"retired literal (3,682 real rows)", "Se esconde y no sale"},
+		{"never in any catalogue", "cobro"},
+	}
+
+	for _, tc := range legacy {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			id := uuid.New()
+			repo := newFakeVisitasRepo()
+			repo.byID[id] = domain.RehydrateVisita(domain.RehydrateVisitaParams{
+				ID:            id,
+				Cobrador:      "Ramírez García, Jorge",
+				CobradorID:    42,
+				Fecha:         time.Date(2024, 9, 15, 9, 59, 46, 0, time.UTC),
+				FormaCobroID:  87327,
+				Lat:           19.432608,
+				Lng:           -99.133209,
+				TipoVisita:    tc.tipo,
+				ZonaClienteID: 7,
+				ClienteID:     11486,
+			})
+			svc := app.NewService(repo, &fakeClock{t: fixedNow})
+
+			rec := httptest.NewRecorder()
+			mountWithUser(visitaUser(), svc).ServeHTTP(rec, obtenerVisitaRequest(id.String()))
+
+			require.Equal(t, http.StatusOK, rec.Code, "legacy row must read back cleanly; body=%s", rec.Body.String())
+
+			var dto visitashttp.VisitaDTO
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dto))
+			assert.Equal(t, tc.tipo, dto.TipoVisita, "the stored value must be echoed verbatim")
+		})
+	}
+}
+
+// TestHTTP_CrearVisita_TipoFueraDelCatalogo_Returns422 is the write-path
+// counterpart: the same values the GET returns happily are refused on POST,
+// with a distinguishable code and never a 500.
+func TestHTTP_CrearVisita_TipoFueraDelCatalogo_Returns422(t *testing.T) {
+	t.Parallel()
+
+	repo := newFakeVisitasRepo()
+	svc := app.NewService(repo, &fakeClock{t: fixedNow})
+
+	for _, tipo := range []string{"cobro", "no_encontrado", "no se encontraba", "No va a dar pago XL"} {
+		t.Run(tipo, func(t *testing.T) {
+			t.Parallel()
+
+			id := uuid.New()
+			fecha := fixedNow.Add(-time.Hour).Format(time.RFC3339)
+			body := strings.Replace(visitaBodyJSON(id.String(), fecha),
+				`"tipo_visita":"No se encontraba"`, `"tipo_visita":"`+tipo+`"`, 1)
+
+			req := httptest.NewRequest(http.MethodPost, "/visitas", bytes.NewBufferString(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Idempotency-Key", id.String())
+			rec := httptest.NewRecorder()
+			mountWithUser(visitaUser(), svc).ServeHTTP(rec, req)
+
+			require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body=%s", rec.Body.String())
+			assert.Contains(t, rec.Body.String(), "visita_tipo_invalido",
+				"the client must get a distinguishable code, not an opaque failure")
+		})
+	}
+}
+
+// TestHTTP_CrearVisita_AceptaLiteralRetirado proves a phone running the build
+// from before commit f7de5f02 (2025-09-02) is still served. Those phones were
+// still writing "Dijo que no va a pagar" on 2026-02-18.
+func TestHTTP_CrearVisita_AceptaLiteralRetirado(t *testing.T) {
+	t.Parallel()
+
+	repo := newFakeVisitasRepo()
+	svc := app.NewService(repo, &fakeClock{t: fixedNow})
+
+	id := uuid.New()
+	fecha := fixedNow.Add(-time.Hour).Format(time.RFC3339)
+	body := strings.Replace(visitaBodyJSON(id.String(), fecha),
+		`"tipo_visita":"No se encontraba"`, `"tipo_visita":"Dijo que no va a pagar"`, 1)
+
+	req := httptest.NewRequest(http.MethodPost, "/visitas", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", id.String())
+	rec := httptest.NewRecorder()
+	mountWithUser(visitaUser(), svc).ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusCreated, rec.Code, "an unupdated phone must not be rejected; body=%s", rec.Body.String())
 }

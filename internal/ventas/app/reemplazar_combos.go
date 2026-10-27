@@ -14,6 +14,11 @@ import (
 type ReemplazarCombosInput struct {
 	VentaID uuid.UUID
 	Combos  []CrearVentaComboInput
+	// ExpectedVersion is the optional If-Match precondition. Nil means "no
+	// precondition sent" — see domain.Venta.checkVersion. No route currently
+	// wires an If-Match header to this endpoint (the phone uses
+	// ReemplazarLineas instead), so this is always nil in practice today.
+	ExpectedVersion *int
 }
 
 // ReemplazarCombos replaces the venta's combos collection and keeps the
@@ -26,9 +31,10 @@ func (s *Service) ReemplazarCombos(ctx context.Context, in ReemplazarCombosInput
 		return nil, err
 	}
 	if err := venta.ReemplazarCombos(domain.ReemplazarCombosParams{
-		Combos: buildComboInputs(in.Combos),
-		By:     by,
-		Now:    now,
+		Combos:          buildComboInputs(in.Combos),
+		By:              by,
+		Now:             now,
+		ExpectedVersion: in.ExpectedVersion,
 	}); err != nil {
 		return nil, err
 	}

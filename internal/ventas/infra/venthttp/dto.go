@@ -152,6 +152,7 @@ type AprobacionDTO struct {
 // VentaDTO is the full projection of a domain.Venta.
 type VentaDTO struct {
 	ID                     string             `json:"id"                    format:"uuid"`
+	Version                int                `json:"version"                doc:"contador de concurrencia optimista; mándalo de vuelta en el encabezado If-Match de la siguiente edición para exigir que la venta no haya cambiado desde que la leíste"`
 	Cliente                ClienteSnapshotDTO `json:"cliente"`
 	Direccion              DireccionDTO       `json:"direccion"`
 	GPS                    GPSDTO             `json:"gps"`
@@ -415,19 +416,26 @@ type ListarVentasInput struct {
 
 // ─── Edit input wrappers ───────────────────────────────────────────────────
 
-// ActualizarHeaderInput wraps the path param + body.
+// ActualizarHeaderInput wraps the path param + body. IfMatch is the
+// optional optimistic-concurrency precondition: an entity-tag ("<version>",
+// quoted, RFC 7232) matching the version last read via GET. Absent ⇒ no
+// precondition, the write is unconditional — required for the desktop app,
+// which does not send it.
 type ActualizarHeaderInput struct {
-	ID   string `path:"id" format:"uuid"`
-	Body ActualizarHeaderBody
+	ID      string `path:"id" format:"uuid"`
+	IfMatch string `header:"If-Match" doc:"version esperada de la venta, entre comillas (p. ej. \"3\"); si no coincide con la versión actual responde 412"`
+	Body    ActualizarHeaderBody
 }
 
 // ActualizarHeaderOutput wraps the response.
 type ActualizarHeaderOutput struct{ Body VentaDTO }
 
-// ActualizarClienteInput wraps the path param + body.
+// ActualizarClienteInput wraps the path param + body. IfMatch: see
+// ActualizarHeaderInput.
 type ActualizarClienteInput struct {
-	ID   string `path:"id" format:"uuid"`
-	Body ActualizarClienteBody
+	ID      string `path:"id" format:"uuid"`
+	IfMatch string `header:"If-Match" doc:"version esperada de la venta, entre comillas (p. ej. \"3\"); si no coincide con la versión actual responde 412"`
+	Body    ActualizarClienteBody
 }
 
 // ActualizarClienteOutput wraps the response.
@@ -451,19 +459,23 @@ type ReemplazarCombosInput struct {
 // ReemplazarCombosOutput wraps the response.
 type ReemplazarCombosOutput struct{ Body VentaDTO }
 
-// ReemplazarLineasInput wraps the path param + body.
+// ReemplazarLineasInput wraps the path param + body. IfMatch: see
+// ActualizarHeaderInput.
 type ReemplazarLineasInput struct {
-	ID   string `path:"id" format:"uuid"`
-	Body ReemplazarLineasBody
+	ID      string `path:"id" format:"uuid"`
+	IfMatch string `header:"If-Match" doc:"version esperada de la venta, entre comillas (p. ej. \"3\"); si no coincide con la versión actual responde 412"`
+	Body    ReemplazarLineasBody
 }
 
 // ReemplazarLineasOutput wraps the response.
 type ReemplazarLineasOutput struct{ Body VentaDTO }
 
-// ReemplazarVendedoresInput wraps the path param + body.
+// ReemplazarVendedoresInput wraps the path param + body. IfMatch: see
+// ActualizarHeaderInput.
 type ReemplazarVendedoresInput struct {
-	ID   string `path:"id" format:"uuid"`
-	Body ReemplazarVendedoresBody
+	ID      string `path:"id" format:"uuid"`
+	IfMatch string `header:"If-Match" doc:"version esperada de la venta, entre comillas (p. ej. \"3\"); si no coincide con la versión actual responde 412"`
+	Body    ReemplazarVendedoresBody
 }
 
 // ReemplazarVendedoresOutput wraps the response.

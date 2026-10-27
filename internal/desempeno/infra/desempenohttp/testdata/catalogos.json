@@ -1,0 +1,97 @@
+{
+  "formas_cobro": [
+    {
+      "codigo": "efectivo",
+      "etiqueta": "Efectivo"
+    },
+    {
+      "codigo": "transferencia",
+      "etiqueta": "Transferencia"
+    },
+    {
+      "codigo": "cheque",
+      "etiqueta": "Cheque"
+    },
+    {
+      "codigo": "condonacion",
+      "etiqueta": "Condonación"
+    },
+    {
+      "codigo": "otra",
+      "etiqueta": "Otra"
+    }
+  ],
+  "tipos_visita": [
+    {
+      "literal": "No se encontraba",
+      "estado": "no_estaba",
+      "grupo": "No estaba"
+    },
+    {
+      "literal": "Casa cerrada con candado",
+      "estado": "no_estaba",
+      "grupo": "No estaba"
+    },
+    {
+      "literal": "Solo había menores",
+      "estado": "no_estaba",
+      "grupo": "No estaba"
+    },
+    {
+      "literal": "No pagará esta ocasión",
+      "estado": "se_nego",
+      "grupo": "Se negó"
+    },
+    {
+      "literal": "Pidió que regrese otro día",
+      "estado": "visite_vuelvo",
+      "grupo": "Visité, vuelvo"
+    },
+    {
+      "literal": "Tiene dinero pero no quiso pagar",
+      "estado": "se_nego",
+      "grupo": "Se negó"
+    },
+    {
+      "literal": "Fue grosero o agresivo",
+      "estado": "se_nego",
+      "grupo": "Se negó"
+    },
+    {
+      "literal": "Se asomó pero no salió",
+      "estado": "visite_vuelvo",
+      "grupo": "Visité, vuelvo"
+    },
+    {
+      "literal": "No responde aunque está",
+      "estado": "visite_vuelvo",
+      "grupo": "Visité, vuelvo"
+    },
+    {
+      "literal": "Se escuchan ruidos pero no abre",
+      "estado": "visite_vuelvo",
+      "grupo": "Visité, vuelvo"
+    },
+    {
+      "literal": "Pidió reagendar visita",
+      "estado": "prometio_proxima",
+      "grupo": "Prometió"
+    },
+    {
+      "literal": "No va a dar pago",
+      "estado": "se_nego",
+      "grupo": "Se negó"
+    },
+    {
+      "literal": "Dijo que no va a pagar",
+      "estado": "se_nego",
+      "grupo": "Se negó"
+    },
+    {
+      "literal": "Se esconde y no sale",
+      "estado": "visite_vuelvo",
+      "grupo": "Visité, vuelvo"
+    }
+  ]
+}
+

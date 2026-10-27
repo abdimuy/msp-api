@@ -137,6 +137,13 @@ func (NoopCalendarioClient) FechaInicioPorCobrador(_ context.Context) (map[int]t
 	return map[int]time.Time{}, nil
 }
 
+// Compile-time check: the noop declares itself unconfigured.
+var _ outbound.CalendarioConfigurable = NoopCalendarioClient{}
+
+// Configurado reports false: there is no Firestore behind the noop, so an
+// empty list means "unknown", not "no cobradores".
+func (NoopCalendarioClient) Configurado() bool { return false }
+
 // ListarCobradores always returns an empty slice without error.
 func (NoopCalendarioClient) ListarCobradores(_ context.Context) ([]outbound.UsuarioCobrador, error) {
 	return []outbound.UsuarioCobrador{}, nil

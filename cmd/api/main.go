@@ -230,8 +230,13 @@ func appOptions() []fx.Option {
 			provideFlotaSnapshotWorker,
 			// Visitas module.
 			provideVisitasClock,
+			provideVisitasRepoConcrete,
 			provideVisitasRepo,
+			provideVisitasImagenesRepo,
+			provideVisitasStorage,
 			provideVisitasService,
+			// Desempeño de cobradores (solo lectura).
+			provideDesempenoService,
 			provideRootHandler,
 			provideHTTPServer,
 		),

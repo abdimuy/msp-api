@@ -1,0 +1,280 @@
+{
+  "uid": "abc123",
+  "fecha": "2026-10-14",
+  "pausa_min": 45,
+  "generado_at": "2026-10-14T22:40:00Z",
+  "actividades": [
+    {
+      "id": "visita:412cc2fc-0000-4000-8000-000000000002",
+      "tipo": "visita",
+      "hora": "2026-10-14T15:00:00Z",
+      "recibido_at": null,
+      "cliente_id": 1544900,
+      "cliente_nombre": "ROSARIO VILLA",
+      "venta_id": null,
+      "folio": null,
+      "registrado_por": {
+        "usuario_uid": "abc123",
+        "cobrador_id": 11502,
+        "nombre": "Juan Carlos Méndez",
+        "origen": "app"
+      },
+      "lat": null,
+      "lng": null,
+      "con_gps": false,
+      "num_fotos": 0,
+      "docto_pv_id": null,
+      "captura_tardia": false,
+      "pago": null,
+      "visita": {
+        "visita_id": "412cc2fc-0000-4000-8000-000000000002",
+        "tipo_visita": "No se encontraba",
+        "nota": "Vecina dice que regresa el lunes",
+        "estado": "no_estaba",
+        "trato": "nadie",
+        "etiqueta": "No estaba"
+      }
+    },
+    {
+      "id": "pago:15082369",
+      "tipo": "pago",
+      "hora": "2026-10-14T16:31:00Z",
+      "recibido_at": "2026-10-14T16:31:05Z",
+      "cliente_id": 1544855,
+      "cliente_nombre": "JUANA ANDRADE LECHUGA",
+      "venta_id": 13785217,
+      "folio": "Z1677035",
+      "registrado_por": {
+        "usuario_uid": "abc123",
+        "cobrador_id": 11502,
+        "nombre": "Juan Carlos Méndez",
+        "origen": "app"
+      },
+      "lat": 18.4617,
+      "lng": -97.3928,
+      "con_gps": true,
+      "num_fotos": 2,
+      "docto_pv_id": 9921,
+      "captura_tardia": false,
+      "pago": {
+        "importe": "150.00",
+        "forma_cobro": "efectivo",
+        "forma_cobro_id": 157,
+        "aplicado": true,
+        "rechazado": false,
+        "docto_cc_id": 15082300,
+        "pago_recibido_id": "7a1f39e4-0000-4000-8000-000000000001"
+      },
+      "visita": null
+    }
+  ],
+  "linea": {
+    "dia": "2026-10-14",
+    "puntos": [
+      {
+        "id": "visita:412cc2fc-0000-4000-8000-000000000002",
+        "tipo": "visita",
+        "hora": "2026-10-14T15:00:00Z",
+        "cliente_nombre": "ROSARIO VILLA",
+        "importe": null,
+        "resultado": "No se encontraba",
+        "num_fotos": 0
+      },
+      {
+        "id": "pago:15082369",
+        "tipo": "pago",
+        "hora": "2026-10-14T16:31:00Z",
+        "cliente_nombre": "JUANA ANDRADE LECHUGA",
+        "importe": "150.00",
+        "resultado": null,
+        "num_fotos": 2
+      }
+    ],
+    "tramos": [
+      {
+        "desde": "2026-10-14T15:00:00Z",
+        "hasta": "2026-10-14T15:00:00Z",
+        "pagos": {
+          "n": 0,
+          "importe": "0.00"
+        },
+        "visitas": 1,
+        "condonaciones": 0,
+        "clientes": 1
+      },
+      {
+        "desde": "2026-10-14T16:31:00Z",
+        "hasta": "2026-10-14T16:31:00Z",
+        "pagos": {
+          "n": 1,
+          "importe": "150.00"
+        },
+        "visitas": 0,
+        "condonaciones": 0,
+        "clientes": 1
+      }
+    ],
+    "por_hora": [
+      {
+        "hora": 7,
+        "pagos": 0,
+        "visitas": 0,
+        "condonaciones": 0,
+        "importe": "0.00"
+      },
+      {
+        "hora": 8,
+        "pagos": 0,
+        "visitas": 0,
+        "condonaciones": 0,
+        "importe": "0.00"
+      },
+      {
+        "hora": 9,
+        "pagos": 0,
+        "visitas": 1,
+        "condonaciones": 0,
+        "importe": "0.00"
+      },
+      {
+        "hora": 10,
+        "pagos": 1,
+        "visitas": 0,
+        "condonaciones": 0,
+        "importe": "150.00"
+      },
+      {
+        "hora": 11,
+        "pagos": 0,
+        "visitas": 0,
+        "condonaciones": 0,
+        "importe": "0.00"
+      },
+      {
+        "hora": 12,
+        "pagos": 0,
+        "visitas": 0,
+        "condonaciones": 0,
+        "importe": "0.00"
+      },
+      {
+        "hora": 13,
+        "pagos": 0,
+        "visitas": 0,
+        "condonaciones": 0,
+        "importe": "0.00"
+      },
+      {
+        "hora": 14,
+        "pagos": 0,
+        "visitas": 0,
+        "condonaciones": 0,
+        "importe": "0.00"
+      },
+      {
+        "hora": 15,
+        "pagos": 0,
+        "visitas": 0,
+        "condonaciones": 0,
+        "importe": "0.00"
+      },
+      {
+        "hora": 16,
+        "pagos": 0,
+        "visitas": 0,
+        "condonaciones": 0,
+        "importe": "0.00"
+      },
+      {
+        "hora": 17,
+        "pagos": 0,
+        "visitas": 0,
+        "condonaciones": 0,
+        "importe": "0.00"
+      },
+      {
+        "hora": 18,
+        "pagos": 0,
+        "visitas": 0,
+        "condonaciones": 0,
+        "importe": "0.00"
+      },
+      {
+        "hora": 19,
+        "pagos": 0,
+        "visitas": 0,
+        "condonaciones": 0,
+        "importe": "0.00"
+      }
+    ],
+    "pausas": [
+      {
+        "desde": "2026-10-14T15:00:00Z",
+        "hasta": "2026-10-14T16:31:00Z",
+        "minutos": 91,
+        "anterior_id": "visita:412cc2fc-0000-4000-8000-000000000002",
+        "siguiente_id": "pago:15082369",
+        "en_curso": false
+      },
+      {
+        "desde": "2026-10-14T16:31:00Z",
+        "hasta": "2026-10-14T22:40:00Z",
+        "minutos": 369,
+        "anterior_id": "pago:15082369",
+        "siguiente_id": null,
+        "en_curso": true
+      }
+    ]
+  },
+  "senales": [
+    {
+      "tipo": "pausa_larga",
+      "actividad_ids": [
+        "visita:412cc2fc-0000-4000-8000-000000000002",
+        "pago:15082369"
+      ],
+      "desde": "2026-10-14T15:00:00Z",
+      "hasta": "2026-10-14T16:31:00Z",
+      "detalle": "Pausa de 1 h 31 min (09:00–10:31)",
+      "regla": "≥ 45 min sin registrar"
+    },
+    {
+      "tipo": "pausa_larga",
+      "actividad_ids": [
+        "pago:15082369"
+      ],
+      "desde": "2026-10-14T16:31:00Z",
+      "hasta": "2026-10-14T22:40:00Z",
+      "detalle": "Pausa en curso de 6 h 9 min (desde 10:31)",
+      "regla": "≥ 45 min sin registrar"
+    },
+    {
+      "tipo": "sin_gps",
+      "actividad_ids": [
+        "visita:412cc2fc-0000-4000-8000-000000000002"
+      ],
+      "desde": "2026-10-14T15:00:00Z",
+      "hasta": "2026-10-14T15:00:00Z",
+      "detalle": "1 actividad sin GPS",
+      "regla": "coordenadas 0,0 o ausentes"
+    }
+  ],
+  "resumen": {
+    "primera_actividad": "2026-10-14T15:00:00Z",
+    "ultima_actividad": "2026-10-14T16:31:00Z",
+    "minutos_activos": 0,
+    "pausas": {
+      "n": 2,
+      "minutos": 460,
+      "en_curso": true
+    },
+    "pagos": {
+      "n": 1,
+      "importe": "150.00"
+    },
+    "visitas": 1,
+    "condonaciones": 0,
+    "clientes": 2
+  }
+}
+

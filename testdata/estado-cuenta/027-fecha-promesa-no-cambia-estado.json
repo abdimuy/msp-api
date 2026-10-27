@@ -1,0 +1,33 @@
+{
+  "nombre": "la fecha de promesa no cambia el estado",
+  "ventana": {
+    "inicio": "2026-10-09T13:46:00Z",
+    "fin": "2026-10-14T22:40:00Z"
+  },
+  "cuentas": [
+    {
+      "venta_id": 1,
+      "cliente_id": 10,
+      "parcialidad": "150.00"
+    }
+  ],
+  "pagos": [],
+  "visitas": [
+    {
+      "cliente_id": 10,
+      "venta_id": 1,
+      "tipo_visita": "Pidió reagendar visita",
+      "fecha_hora": "2026-10-11T16:00:00Z",
+      "fecha_cita": null,
+      "hora_cita": null,
+      "fecha_promesa": "2026-10-20"
+    }
+  ],
+  "esperado": [
+    {
+      "venta_id": 1,
+      "estado": "prometio_proxima",
+      "con_algo": true
+    }
+  ]
+}

@@ -14,6 +14,9 @@ import (
 type ReemplazarVendedoresInput struct {
 	VentaID    uuid.UUID
 	Vendedores []CrearVentaVendedorInput
+	// ExpectedVersion is the optional If-Match precondition. Nil means "no
+	// precondition sent" — see domain.Venta.checkVersion.
+	ExpectedVersion *int
 }
 
 // ReemplazarVendedores replaces the venta's vendedores collection.
@@ -23,9 +26,10 @@ func (s *Service) ReemplazarVendedores(ctx context.Context, in ReemplazarVendedo
 		return nil, err
 	}
 	if err := venta.ReemplazarVendedores(domain.ReemplazarVendedoresParams{
-		Vendedores: buildVendedorInputs(in.Vendedores),
-		By:         by,
-		Now:        s.clock.Now(),
+		Vendedores:      buildVendedorInputs(in.Vendedores),
+		By:              by,
+		Now:             s.clock.Now(),
+		ExpectedVersion: in.ExpectedVersion,
 	}); err != nil {
 		return nil, err
 	}

@@ -16,6 +16,18 @@ type CobranzaRepo interface {
 	// paid in window). The caller provides the reporting window so the
 	// query can filter pagos without a second round-trip.
 	VentasPorZona(ctx context.Context, zonaID int, desde, hasta time.Time) ([]rutasdomain.VentaCobranza, error)
+	// VentasPorZonas answers several (zona, desde) windows sharing the same
+	// hasta with a fixed number of statements, whatever the number of zonas.
+	// out[i] is exactly what VentasPorZona(consultas[i].ZonaID,
+	// consultas[i].Desde, hasta) returns — same rows, same order — and is a
+	// slice of its own (callers enrich it in place).
+	VentasPorZonas(ctx context.Context, consultas []ConsultaVentasZona, hasta time.Time) ([][]rutasdomain.VentaCobranza, error)
+}
+
+// ConsultaVentasZona is one window of VentasPorZonas.
+type ConsultaVentasZona struct {
+	ZonaID int
+	Desde  time.Time
 }
 
 // UsuarioCobrador is one Firestore `users` document projected to the fields the
@@ -50,4 +62,12 @@ type CalendarioCobradorClient interface {
 	// ListarCobradores returns one entry per user document that has a COBRADOR_ID,
 	// each with its own FECHA_CARGA_INICIAL window.
 	ListarCobradores(ctx context.Context) ([]UsuarioCobrador, error)
+}
+
+// CalendarioConfigurable es opcional: lo implementa un cliente de calendario
+// que puede estar SIN Firestore detrás (rutasfirestore.NoopCalendarioClient).
+// Quien no puede tratar "sin calendario" como "flota vacía" lo consulta; un
+// cliente que no lo implementa se considera configurado.
+type CalendarioConfigurable interface {
+	Configurado() bool
 }

@@ -337,6 +337,11 @@ func toPagoDetalleDTO(d outbound.PagoDetalle) PagoDetalleDTO {
 	if !d.AplicadoAt.IsZero() {
 		dto.AplicadoAt = formatTime(d.AplicadoAt)
 	}
+	if d.PagoRecibidoID != "" {
+		id := d.PagoRecibidoID
+		dto.PagoRecibidoID = &id
+	}
+	dto.NumFotos = d.NumFotos
 	return dto
 }
 

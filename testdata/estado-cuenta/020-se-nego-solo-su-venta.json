@@ -1,0 +1,43 @@
+{
+  "nombre": "una negativa de alcance venta marca solo su venta",
+  "ventana": {
+    "inicio": "2026-10-09T13:46:00Z",
+    "fin": "2026-10-14T22:40:00Z"
+  },
+  "cuentas": [
+    {
+      "venta_id": 1,
+      "cliente_id": 10,
+      "parcialidad": "150.00"
+    },
+    {
+      "venta_id": 2,
+      "cliente_id": 10,
+      "parcialidad": "200.00"
+    }
+  ],
+  "pagos": [],
+  "visitas": [
+    {
+      "cliente_id": 10,
+      "venta_id": 1,
+      "tipo_visita": "No pagará esta ocasión",
+      "fecha_hora": "2026-10-11T16:00:00Z",
+      "fecha_cita": null,
+      "hora_cita": null,
+      "fecha_promesa": null
+    }
+  ],
+  "esperado": [
+    {
+      "venta_id": 1,
+      "estado": "se_nego",
+      "con_algo": true
+    },
+    {
+      "venta_id": 2,
+      "estado": "sin_tocar",
+      "con_algo": false
+    }
+  ]
+}

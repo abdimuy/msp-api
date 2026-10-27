@@ -204,6 +204,12 @@ func (s *Service) registrarFalloAparte(
 			// writing one would erase its Microsip references.
 			return nil
 		}
+		// El motivo llega ya saneado: firebird.MapError envuelve el error del
+		// driver para que su texto sea UTF-8 válido. Sin eso, un mensaje de
+		// Microsip con acento —la "é" de "crédito" viaja en Windows-1252— hace
+		// que este UPDATE muera con "-303 Malformed string" y deshaga la
+		// transacción entera, dejando la fila sin motivo y con INTENTOS en 0.
+		// Medido en producción el 2026-09-04.
 		fresh.RegistrarFallo(cause.Error(), s.clock.Now(), by)
 		return s.pagosRecibidos.Update(ctx, fresh)
 	})

@@ -15,6 +15,29 @@ Two facts about production frame everything below.
 
 **And `cmd/winback/` was designed but never built.** The June spec already called for a separate always-on binary deployed as a second `nssm` service, precisely to isolate the WhatsApp/LLM connection from the API core. `cmd/` contains `api`, `analytics-refresh`, `analytics-export-creditdata`, `fscfg` and `seed-cobrador`. It does not contain `winback`.
 
+## Status update — 2026-09-04
+
+**The Context above was accurate on 2026-08-30 and went stale on 2026-08-31.** Verified
+against the code, not against notes:
+
+- ✅ **`cmd/winback/` exists** since `f223c07` (2026-08-31 13:15). It builds, its tests
+  pass, and `app_wiring.go` mounts `canal.Module()`.
+- ✅ **`reactivacionsender/whatsmeow_stub.go` is deleted** (`09d0225`), replaced by
+  `cloudapi.go`. `whatsmeow` was never in `go.mod`.
+- ✅ **The channel is built**: `internal/platform/whatsapp/` is a real Cloud API client
+  with Meta's error codes mapped as sentinels, and `internal/canal/` carries the webhook
+  with HMAC verification, the `hub.challenge` handshake, a durable SQLite inbox and a
+  forwarding worker.
+
+**What is left is not code.** One code item remains — item 5 below, the cohort snapshot
+push. Everything else is infrastructure, Meta's own processes, the annex, and three
+switches that default to off: `REACTIVACION_SENDER=fake`, `REACTIVACION_AUTO_SEND=false`,
+`LLM_ENABLED=false`.
+
+⚠️ **Both this ADR and the project notes went stale the day after they were written.**
+A status paragraph with no expiry date ages silently, and it cost a planned block spent
+building something that already existed.
+
 ## Decision
 
 ### 1. The pilot channel is the WhatsApp Cloud API, not whatsmeow
@@ -115,11 +138,11 @@ Both categories coexist on one number; that is normal. Submitting a comprobante 
 
 ## What this leaves to build
 
-1. `cmd/winback/` — already decided in the June spec, never built
+1. ~~`cmd/winback/`~~ — ✅ **built 2026-08-31**
 2. VPS, subdomain, HTTPS (Caddy + Let's Encrypt)
-3. A Cloud API adapter behind the existing `MessageSender` signature — the stub's contract does not change
-4. Webhook receiver plus durable inbox
-5. Cohort snapshot push from on-premise
+3. ~~A Cloud API adapter behind the existing `MessageSender` signature~~ — ✅ **built**, `reactivacionsender/cloudapi.go`
+4. ~~Webhook receiver plus durable inbox~~ — ✅ **built**, `internal/canal/`
+5. 🔴 **Cohort snapshot push from on-premise — the only code item still open**
 6. Templates submitted: Utility for comprobantes, three or four Marketing variants for the opener
 
 ## Prerequisites that are not ours
@@ -143,3 +166,45 @@ Meta account ownership matters: **the Business portfolio must belong to the stor
 > **7 · 🔴 Agregar al contrato de crédito y al ticket una cláusula de autorización de contacto por WhatsApp**, desde ya. Y **revisar si los contratos actuales ya traen algo equivalente** — de eso depende si el piloto puede correr con clientes existentes o solo con los nuevos.
 
 **El punto 7 es el único sin atajo.** El consentimiento no se puede retroactivar, y si se mandan mensajes de marketing sin él y algunos clientes reportan, **cae la calidad del número y se congelan los límites — incluidos los de comprobantes.**
+
+### Punto 7 — resuelto el 2026-09-04
+
+**La auditoría que pedía el punto 7 ya se hizo, contra una nota de remisión firmada.**
+La cláusula que hoy firma el cliente dice, textual: *"acepto que se me haga la llamada de
+validación de información de la compra que he realizado."*
+
+> 🔴 **No cubre el winback.** Consiente **una llamada**, para **un fin** —validar una
+> compra ya hecha—, y la reactivación comercial es otro canal y otro fin. **El piloto no
+> puede correr contra el padrón actual.**
+
+**Lo que sí quedó verificado contra la documentación de Meta, y abarata mucho la
+solución:** el opt-in **no tiene que nombrar a WhatsApp** —basta que diga que la persona
+acepta recibir comunicaciones del negocio, con el nombre del negocio— y **se puede
+recoger en persona o en papel**. Sólo pide, además, cumplir la ley local.
+
+**Y de ahí sale la ruta, que ya existe y no cuesta nada montarla:** la venta es a crédito
+con **pago semanal, día de cobro fijo y cobrador asignado**. **Hay una persona visitando
+a cada cliente todas las semanas.**
+
+🔴 **El consentimiento se separa por segmento, y eso decide con quién arranca el piloto:**
+
+| Segmento de la cohorte | ¿Lo visita el cobrador? | Ruta |
+|---|---|---|
+| **`por_liquidar_hueco`** — sigue pagando | ✅ cada semana | **Formato firmado en la ruta.** Consentible en una o dos vueltas de cobranza |
+| **`recien_liquidado`** — ya liquidó | ❌ ya no | **Firmarlo en el último pago**, de aquí en adelante. Los que ya se fueron quedan fuera |
+
+**El piloto no necesita el padrón completo: necesita suficientes para el split
+control/tratamiento**, que el módulo ya hace al 50% de forma determinista. **Arranca con
+`por_liquidar_hueco`.**
+
+**Entonces el punto 7 deja de ser una cláusula y son dos entregables:**
+
+> **7a ·** La línea en el contrato de crédito y en el ticket, desde la próxima impresión.
+> **7b ·** Un formato de una línea que el cobrador lleve en su ruta — firma y fecha.
+
+⚠️ **Lo que no decidimos nosotros:** la redacción exacta la revisa un abogado (aviso de
+privacidad y LFPDPPP), y que el cobrador lo cargue es decisión de operaciones.
+
+**Y el orden importa:** el VPS, las plantillas y la verificación **no dependen del
+consentimiento** y tardan. Se hacen en paralelo, para que el día que llegue el
+consentimiento no falte nada más.

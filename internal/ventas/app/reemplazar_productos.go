@@ -14,6 +14,11 @@ import (
 type ReemplazarProductosInput struct {
 	VentaID   uuid.UUID
 	Productos []CrearVentaProductoInput
+	// ExpectedVersion is the optional If-Match precondition. Nil means "no
+	// precondition sent" — see domain.Venta.checkVersion. No route currently
+	// wires an If-Match header to this endpoint (the phone uses
+	// ReemplazarLineas instead), so this is always nil in practice today.
+	ExpectedVersion *int
 }
 
 // ReemplazarProductos replaces the venta's productos collection and keeps the
@@ -30,9 +35,10 @@ func (s *Service) ReemplazarProductos(ctx context.Context, in ReemplazarProducto
 		return nil, err
 	}
 	if err := venta.ReemplazarProductos(domain.ReemplazarProductosParams{
-		Productos: productos,
-		By:        by,
-		Now:       now,
+		Productos:       productos,
+		By:              by,
+		Now:             now,
+		ExpectedVersion: in.ExpectedVersion,
 	}); err != nil {
 		return nil, err
 	}

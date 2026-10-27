@@ -28,9 +28,9 @@ import (
 	"github.com/abdimuy/msp-api/internal/ventas/infra/venthttp"
 
 	cobranzaapp "github.com/abdimuy/msp-api/internal/cobranza/app"
-	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
 	"github.com/abdimuy/msp-api/internal/cobranza/infra/cobranzahttp"
 	cobranzaoutbound "github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
+	"github.com/abdimuy/msp-api/internal/platform/eventbus"
 
 	microsipapp "github.com/abdimuy/msp-api/internal/microsip/app"
 	"github.com/abdimuy/msp-api/internal/microsip/infra/microsiphttp"
@@ -52,6 +52,9 @@ import (
 
 	reactivacionapp "github.com/abdimuy/msp-api/internal/reactivacion/app"
 	reactivacionhttp "github.com/abdimuy/msp-api/internal/reactivacion/infra/reactivacionhttp"
+
+	desempenoapp "github.com/abdimuy/msp-api/internal/desempeno/app"
+	desempenohttp "github.com/abdimuy/msp-api/internal/desempeno/infra/desempenohttp"
 
 	visitasapp "github.com/abdimuy/msp-api/internal/visitas/app"
 	visitashttp "github.com/abdimuy/msp-api/internal/visitas/infra/visitashttp"
@@ -170,7 +173,7 @@ func provideRootHandler(
 	cobranzaSvc *cobranzaapp.Service,
 	cobranzaReconciler *cobranzaapp.Reconciler,
 	cobranzaErrors cobranzaoutbound.ErrorsRepo,
-	cobranzaBus *eventbus.Bus,
+	eventBus *eventbus.Bus,
 	cobranzaPagosRepo cobranzaoutbound.PagosRepo,
 	cobranzaVentasRepo cobranzaoutbound.VentasRepo,
 	cobranzaClock cobranzaoutbound.Clock,
@@ -182,6 +185,7 @@ func provideRootHandler(
 	configSvc *configapp.Service,
 	reactivacionSvc *reactivacionapp.Service,
 	visitasSvc *visitasapp.Service,
+	desempenoSvc *desempenoapp.Service,
 	logger *slog.Logger,
 ) RootHandler {
 	r := chi.NewRouter()
@@ -355,9 +359,34 @@ func provideRootHandler(
 		// /v2/visitas/visitas. Final path: POST /v2/visitas.
 		r.Group(func(r chi.Router) {
 			// Same split as ventas and cobranza: one instance outside
-			// authn, one inside it.
+			// authn, one inside it. Kept from main — it is what production
+			// runs, and it is what makes a 401 leave a captured intent.
 			r.Use(visitasCapture.OutsideAuth, authn.Handler, visitasCapture.InsideAuth)
-			visitashttp.MountRouter(r, visitasSvc)
+			// WithSSE also mounts GET
+			// /v2/visitas/sync/visitas/zona/{zona_id}/stream — a route of its
+			// own rather than a second event type on cobranza's streams. The
+			// shipped client decides an event's meaning from which socket it
+			// arrived on and ignores the event name, so multiplexing would
+			// make every old phone re-sync cobranza on every visit; a separate
+			// path they never open makes their exposure zero by construction.
+			visitashttp.MountRouter(r, visitasSvc,
+				visitashttp.WithSSE(eventBus, cfg.Visitas, logger))
+		})
+
+		// Desempeño de cobradores — solo lectura, authn únicamente (sin
+		// idempotencia ni captura de intents: no hay escrituras). desempeno:ver
+		// se exige dentro de cada handler. MountRouter registra rutas
+		// /desempeno/*, así que va en un Group (como rutas), NO en
+		// r.Route("/desempeno"), que duplicaría el prefijo.
+		// Rutas finales: GET /v2/desempeno/catalogos y
+		// /v2/desempeno/usuarios[/{uid}/jornada|actividad|cuentas].
+		r.Group(func(r chi.Router) {
+			r.Use(skipAuthForPublicDocs(authn.Handler))
+			// Tope de sentencia de Firebird por debajo del Timeout HTTP: el
+			// driver ignora la cancelación, así que sin él la sentencia
+			// seguía corriendo después del 503 (config.Desempeno).
+			desempenohttp.MountRouter(r, desempenoSvc,
+				desempenohttp.WithStatementTimeout(cfg.Desempeno.StatementTimeout))
 		})
 
 		// Cobranza endpoints — authn only. Read (saldos, pagos, sync) plus
@@ -374,7 +403,7 @@ func provideRootHandler(
 			// 401 and leave nothing behind.
 			r.Use(cobranzaCapture.OutsideAuth, authn.Handler, cobranzaCapture.InsideAuth)
 			cobranzahttp.MountReadRouter(
-				r, cobranzaSvc, cobranzaBus, cfg.Cobranza, logger,
+				r, cobranzaSvc, eventBus, cfg.Cobranza, logger,
 				cobranzaPagosRepo, cobranzaVentasRepo, cobranzaClock,
 			)
 		})

@@ -84,6 +84,8 @@ make fb-migrate-status    # ¿qué migrations están aplicadas?
 make fb-migrate-up        # aplica las pendientes (incluye MSP_OUTBOX_EVENTS, MSP_IDEMPOTENCY_KEYS, MSP_FAILED_INTENTS)
 ```
 
+`fb-migrate-up`, `fb-migrate-down` y `fb-seed-admin` corren isql con `-bail`: se detienen en la primera sentencia que falla, salen con exit distinto de 0 y dicen qué archivo falló. Una migración rota **no** queda en `MSP_MIGRATIONS` (antes sí: isql se saltaba el error, llegaba al `INSERT` del final y el ciclo seguía). Ojo: con AUTODDL las sentencias DDL anteriores a la que falló ya quedaron confirmadas; revísalas a mano antes de reintentar. Guardado por `scripts/makefile-migrate_test.sh` (contenedor desechable; se salta sin docker). `make test-makefile` corre esa prueba y la de `scripts/make-test-db.sh` contra Firebird 4 y 5, en contenedores propios `*-desechable` (los scripts se niegan a borrar otro nombre). No está en lefthook ni en CI: córrelo a mano cuando toques los targets `fb-*` o el generador. Para apuntar a otro contenedor/base pásalo en la línea de make (`make fb-migrate-up FB_CONTAINER=x FB_DATABASE=/ruta`): como variable de entorno no basta para las que define `.env` (`FB_DATABASE`, `FB_USER`, `FB_PASSWORD`), porque `include .env` le gana al entorno.
+
 Snapshot / restore del estado del dev DB: [`docs/firebird-snapshots.md`](docs/firebird-snapshots.md).
 
 ## Admin inicial

@@ -1,0 +1,935 @@
+{
+  "generado_at": "2026-10-14T22:40:00Z",
+  "periodo": "semana",
+  "pausa_min": 60,
+  "usuarios": [
+    {
+      "uid": "sinzona",
+      "nombre": "Rosa María Hernández",
+      "email": "rosa.hernandez@muebleriamsp.mx",
+      "zona_id": null,
+      "zona_nombre": null,
+      "configurado": false,
+      "motivo_no_configurado": "sin_zona",
+      "inicio_semana": "2026-10-09T14:46:00Z",
+      "ventas_universo": 0,
+      "estado_ahora": "no_ha_empezado",
+      "estado_desde": null,
+      "ultima": null,
+      "primera_actividad": null,
+      "ultima_actividad": null,
+      "minutos_activos": 0,
+      "pausas": {
+        "n": 0,
+        "minutos": 0,
+        "en_curso": false
+      },
+      "pagos": {
+        "n": 0,
+        "importe": "0.00"
+      },
+      "pagos_por_forma": {
+        "efectivo": {
+          "n": 0,
+          "importe": "0.00"
+        },
+        "transferencia": {
+          "n": 0,
+          "importe": "0.00"
+        },
+        "cheque": {
+          "n": 0,
+          "importe": "0.00"
+        }
+      },
+      "condonaciones": {
+        "n": 0,
+        "importe": "0.00"
+      },
+      "no_aplicados": {
+        "n": 0,
+        "importe": "0.00"
+      },
+      "visitas": 0,
+      "cobertura": {
+        "con_algo": 0,
+        "total": 0
+      },
+      "cobertura_por_segmento": {
+        "sin_visitar": 0,
+        "volver": 0,
+        "despues": 0,
+        "pagados": 0,
+        "sin_nada": 0
+      },
+      "cobro": {
+        "cobrado": "0.00",
+        "esperado": "0.00",
+        "falta": "0.00",
+        "pct": null
+      },
+      "lineas": []
+    },
+    {
+      "uid": "abc123",
+      "nombre": "Juan Carlos Méndez",
+      "email": "juan.mendez@muebleriamsp.mx",
+      "zona_id": 21563,
+      "zona_nombre": "RUTA 21",
+      "configurado": true,
+      "motivo_no_configurado": null,
+      "inicio_semana": "2026-10-09T14:46:00Z",
+      "ventas_universo": 1,
+      "estado_ahora": "sin_actividad",
+      "estado_desde": "2026-10-14T16:31:00Z",
+      "ultima": {
+        "id": "pago:15082369",
+        "tipo": "pago",
+        "hora": "2026-10-14T16:31:00Z",
+        "cliente_nombre": "JUANA ANDRADE LECHUGA"
+      },
+      "primera_actividad": "2026-10-14T15:00:00Z",
+      "ultima_actividad": "2026-10-14T16:31:00Z",
+      "minutos_activos": 0,
+      "pausas": {
+        "n": 2,
+        "minutos": 460,
+        "en_curso": true
+      },
+      "pagos": {
+        "n": 1,
+        "importe": "150.00"
+      },
+      "pagos_por_forma": {
+        "efectivo": {
+          "n": 1,
+          "importe": "150.00"
+        },
+        "transferencia": {
+          "n": 0,
+          "importe": "0.00"
+        },
+        "cheque": {
+          "n": 0,
+          "importe": "0.00"
+        }
+      },
+      "condonaciones": {
+        "n": 0,
+        "importe": "0.00"
+      },
+      "no_aplicados": {
+        "n": 0,
+        "importe": "0.00"
+      },
+      "visitas": 1,
+      "cobertura": {
+        "con_algo": 1,
+        "total": 1
+      },
+      "cobertura_por_segmento": {
+        "sin_visitar": 0,
+        "volver": 0,
+        "despues": 0,
+        "pagados": 1,
+        "sin_nada": 0
+      },
+      "cobro": {
+        "cobrado": "150.00",
+        "esperado": "150.00",
+        "falta": "0.00",
+        "pct": "65.90"
+      },
+      "lineas": [
+        {
+          "dia": "2026-10-09",
+          "puntos": [],
+          "tramos": [],
+          "por_hora": [
+            {
+              "hora": 7,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 8,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 9,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 10,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 11,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 12,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 13,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 14,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 15,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 16,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 17,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 18,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 19,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            }
+          ],
+          "pausas": []
+        },
+        {
+          "dia": "2026-10-10",
+          "puntos": [],
+          "tramos": [],
+          "por_hora": [
+            {
+              "hora": 7,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 8,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 9,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 10,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 11,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 12,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 13,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 14,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 15,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 16,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 17,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 18,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 19,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            }
+          ],
+          "pausas": []
+        },
+        {
+          "dia": "2026-10-11",
+          "puntos": [],
+          "tramos": [],
+          "por_hora": [
+            {
+              "hora": 7,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 8,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 9,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 10,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 11,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 12,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 13,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 14,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 15,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 16,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 17,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 18,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 19,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            }
+          ],
+          "pausas": []
+        },
+        {
+          "dia": "2026-10-12",
+          "puntos": [],
+          "tramos": [],
+          "por_hora": [
+            {
+              "hora": 7,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 8,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 9,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 10,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 11,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 12,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 13,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 14,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 15,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 16,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 17,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 18,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 19,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            }
+          ],
+          "pausas": []
+        },
+        {
+          "dia": "2026-10-13",
+          "puntos": [],
+          "tramos": [],
+          "por_hora": [
+            {
+              "hora": 7,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 8,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 9,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 10,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 11,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 12,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 13,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 14,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 15,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 16,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 17,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 18,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 19,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            }
+          ],
+          "pausas": []
+        },
+        {
+          "dia": "2026-10-14",
+          "puntos": [
+            {
+              "id": "visita:412cc2fc-0000-4000-8000-000000000002",
+              "tipo": "visita",
+              "hora": "2026-10-14T15:00:00Z",
+              "cliente_nombre": "ROSARIO VILLA",
+              "importe": null,
+              "resultado": "No se encontraba",
+              "num_fotos": 0
+            },
+            {
+              "id": "pago:15082369",
+              "tipo": "pago",
+              "hora": "2026-10-14T16:31:00Z",
+              "cliente_nombre": "JUANA ANDRADE LECHUGA",
+              "importe": "150.00",
+              "resultado": null,
+              "num_fotos": 2
+            }
+          ],
+          "tramos": [
+            {
+              "desde": "2026-10-14T15:00:00Z",
+              "hasta": "2026-10-14T15:00:00Z",
+              "pagos": {
+                "n": 0,
+                "importe": "0.00"
+              },
+              "visitas": 1,
+              "condonaciones": 0,
+              "clientes": 1
+            },
+            {
+              "desde": "2026-10-14T16:31:00Z",
+              "hasta": "2026-10-14T16:31:00Z",
+              "pagos": {
+                "n": 1,
+                "importe": "150.00"
+              },
+              "visitas": 0,
+              "condonaciones": 0,
+              "clientes": 1
+            }
+          ],
+          "por_hora": [
+            {
+              "hora": 7,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 8,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 9,
+              "pagos": 0,
+              "visitas": 1,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 10,
+              "pagos": 1,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "150.00"
+            },
+            {
+              "hora": 11,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 12,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 13,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 14,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 15,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 16,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 17,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 18,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            },
+            {
+              "hora": 19,
+              "pagos": 0,
+              "visitas": 0,
+              "condonaciones": 0,
+              "importe": "0.00"
+            }
+          ],
+          "pausas": [
+            {
+              "desde": "2026-10-14T15:00:00Z",
+              "hasta": "2026-10-14T16:31:00Z",
+              "minutos": 91,
+              "anterior_id": "visita:412cc2fc-0000-4000-8000-000000000002",
+              "siguiente_id": "pago:15082369",
+              "en_curso": false
+            },
+            {
+              "desde": "2026-10-14T16:31:00Z",
+              "hasta": "2026-10-14T22:40:00Z",
+              "minutos": 369,
+              "anterior_id": "pago:15082369",
+              "siguiente_id": null,
+              "en_curso": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "uid": "sininicio",
+      "nombre": "Pedro Ramírez Soto",
+      "email": "pedro.ramirez@muebleriamsp.mx",
+      "zona_id": 21564,
+      "zona_nombre": "RUTA 22",
+      "configurado": false,
+      "motivo_no_configurado": "sin_inicio_semana",
+      "inicio_semana": null,
+      "ventas_universo": 0,
+      "estado_ahora": "no_ha_empezado",
+      "estado_desde": null,
+      "ultima": null,
+      "primera_actividad": null,
+      "ultima_actividad": null,
+      "minutos_activos": 0,
+      "pausas": {
+        "n": 0,
+        "minutos": 0,
+        "en_curso": false
+      },
+      "pagos": {
+        "n": 0,
+        "importe": "0.00"
+      },
+      "pagos_por_forma": {
+        "efectivo": {
+          "n": 0,
+          "importe": "0.00"
+        },
+        "transferencia": {
+          "n": 0,
+          "importe": "0.00"
+        },
+        "cheque": {
+          "n": 0,
+          "importe": "0.00"
+        }
+      },
+      "condonaciones": {
+        "n": 0,
+        "importe": "0.00"
+      },
+      "no_aplicados": {
+        "n": 0,
+        "importe": "0.00"
+      },
+      "visitas": 0,
+      "cobertura": {
+        "con_algo": 0,
+        "total": 0
+      },
+      "cobertura_por_segmento": {
+        "sin_visitar": 0,
+        "volver": 0,
+        "despues": 0,
+        "pagados": 0,
+        "sin_nada": 0
+      },
+      "cobro": {
+        "cobrado": "0.00",
+        "esperado": "0.00",
+        "falta": "0.00",
+        "pct": null
+      },
+      "lineas": []
+    },
+    {
+      "uid": "futuro",
+      "nombre": "Lucía Gómez Torres",
+      "email": "lucia.gomez@muebleriamsp.mx",
+      "zona_id": 21565,
+      "zona_nombre": "RUTA 23",
+      "configurado": false,
+      "motivo_no_configurado": "inicio_semana_futuro",
+      "inicio_semana": "2026-10-16T00:40:00Z",
+      "ventas_universo": 0,
+      "estado_ahora": "no_ha_empezado",
+      "estado_desde": null,
+      "ultima": null,
+      "primera_actividad": null,
+      "ultima_actividad": null,
+      "minutos_activos": 0,
+      "pausas": {
+        "n": 0,
+        "minutos": 0,
+        "en_curso": false
+      },
+      "pagos": {
+        "n": 0,
+        "importe": "0.00"
+      },
+      "pagos_por_forma": {
+        "efectivo": {
+          "n": 0,
+          "importe": "0.00"
+        },
+        "transferencia": {
+          "n": 0,
+          "importe": "0.00"
+        },
+        "cheque": {
+          "n": 0,
+          "importe": "0.00"
+        }
+      },
+      "condonaciones": {
+        "n": 0,
+        "importe": "0.00"
+      },
+      "no_aplicados": {
+        "n": 0,
+        "importe": "0.00"
+      },
+      "visitas": 0,
+      "cobertura": {
+        "con_algo": 0,
+        "total": 0
+      },
+      "cobertura_por_segmento": {
+        "sin_visitar": 0,
+        "volver": 0,
+        "despues": 0,
+        "pagados": 0,
+        "sin_nada": 0
+      },
+      "cobro": {
+        "cobrado": "0.00",
+        "esperado": "0.00",
+        "falta": "0.00",
+        "pct": null
+      },
+      "lineas": []
+    }
+  ]
+}
+

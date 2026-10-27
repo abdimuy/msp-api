@@ -125,6 +125,9 @@ type ventaRowRaw struct {
 	microsipDoctoPVID     sql.NullInt32
 	microsipFolio         sql.NullString
 	microsipAplicadaAtRaw any
+
+	// version is the optimistic-concurrency counter (MSP_VENTAS.VERSION).
+	version int
 }
 
 // scanVentaRowRaw runs the wide Scan over an MSP_VENTAS row.
@@ -144,7 +147,7 @@ func scanVentaRowRaw(s rowScanner) (*ventaRowRaw, error) {
 		&r.clienteID, &r.status, &r.approvedAtRaw, &r.approvedByRaw,
 		&r.situacion, &r.sincronizacion,
 		&r.microsipDoctoPVID, &r.microsipFolio, &r.microsipAplicadaAtRaw,
-		&r.clienteReferencia,
+		&r.clienteReferencia, &r.version,
 	); err != nil {
 		return nil, err
 	}
@@ -223,6 +226,7 @@ func assembleVenta(
 		Imagenes:           imagenes,
 		Cancelacion:        cancelacion,
 		Aprobacion:         aprobacion,
+		Version:            r.version,
 		CreatedAt:          times.createdAt,
 		UpdatedAt:          times.updatedAt,
 		CreatedBy:          ids.createdBy,

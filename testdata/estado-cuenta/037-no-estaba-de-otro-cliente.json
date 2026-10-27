@@ -1,0 +1,33 @@
+{
+  "nombre": "no estaba de otro cliente no aplica",
+  "ventana": {
+    "inicio": "2026-10-09T13:46:00Z",
+    "fin": "2026-10-14T22:40:00Z"
+  },
+  "cuentas": [
+    {
+      "venta_id": 1,
+      "cliente_id": 10,
+      "parcialidad": "150.00"
+    }
+  ],
+  "pagos": [],
+  "visitas": [
+    {
+      "cliente_id": 11,
+      "venta_id": null,
+      "tipo_visita": "No se encontraba",
+      "fecha_hora": "2026-10-11T16:00:00Z",
+      "fecha_cita": null,
+      "hora_cita": null,
+      "fecha_promesa": null
+    }
+  ],
+  "esperado": [
+    {
+      "venta_id": 1,
+      "estado": "sin_tocar",
+      "con_algo": false
+    }
+  ]
+}

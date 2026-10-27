@@ -100,6 +100,47 @@ Coverage gates, mutation testing and benchmarks stay in Make targets and lefthoo
 
 > Historical note: this rule used to forbid remote CI outright. That was a stop-gap for the period when no CI existed, not an architectural position. It no longer applies.
 
+### 8. Nivel de evidencia obligatorio en todo cambio que toque dinero
+
+**Dinero** es pagos, saldos, ventas, cobranza y el sync que los mueve. Para
+cambios ahí, esto no es recomendación:
+
+> **Ninguna afirmación por debajo de MEDIDO justifica un cambio.** Si está en
+> INFERIDO, primero se mide; si no se puede medir, **no se cambia**.
+
+Los cuatro niveles: **MEDIDO** (se ejecutó y hay salida, con fecha, con dónde
+—dev o producción— y con **control positivo**) · **LEÍDO** (`archivo:línea`, no
+se ejecutó) · **INFERIDO** (se deduce, y dice qué lo volvería MEDIDO) ·
+**SUPUESTO** (nadie lo revisó). Corolario que ya cobró factura: **una ausencia
+no es un hallazgo** hasta enseñar el control positivo que demuestre que la
+búsqueda habría encontrado el caso.
+
+**Las dos compuertas**, y las dos las corre un agente **independiente**, no el
+autor del cambio ni el mismo agente dos veces:
+
+1. **Antes** — verificación de la evidencia. Recibe la pregunta, no la
+   conclusión, y vuelve a derivar cada afirmación en la que se apoya el cambio.
+   Devuelve SOSTIENE, CONTRADICE, FALTA EVIDENCIA o PARCIAL. **Todo lo que no
+   sea SOSTIENE detiene el cambio.**
+2. **Después** — verificación de alcance. Tres cosas: que la prueba que lo
+   guarda **se ponga roja al revertir el arreglo**; que se **enumeren** —no se
+   adivinen— todos los consumidores de lo que se tocó; y que se diga en voz alta
+   lo que quedó sin verificar. "No medido" es respuesta válida; inventarlo no.
+
+Las afirmaciones, con su prueba, viven en **`docs/evidencia/<área>.md`**
+(`cobranza.md`, `ventas.md`, `app-android.md`, `infra.md`), con identificador
+correlativo por área (`E-COB-014`) que se cita **desde el comentario del código, el nombre de la prueba y
+el mensaje del commit** — para llegar a la evidencia desde el código, sin leer
+el documento entero. Los números **nunca se reutilizan** y **lo refutado no se
+borra**: cambia de estado a REFUTADA y se queda, con qué lo volvería cierto.
+El diseño completo está en **`docs/registro-de-evidencia.md`**.
+
+Por qué: un comentario del código decía que el recompute movía `UPDATED_AT`
+*"cuando la fila cambia"*; lo mueve **siempre**, y esa frase justificó el diseño
+durante meses porque nadie podía preguntarle quién la había medido. El mismo día
+se escaló una inferencia a casi certeza y resultó falsa al medirla. Una
+afirmación equivocada, una vez escrita, es indistinguible de una verificada.
+
 ## Architecture summary
 
 ```

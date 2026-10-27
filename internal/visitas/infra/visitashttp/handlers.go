@@ -5,8 +5,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/abdimuy/msp-api/internal/auth"
 	"github.com/abdimuy/msp-api/internal/platform/apperror"
 	"github.com/abdimuy/msp-api/internal/platform/httpdispatch"
@@ -23,17 +21,44 @@ func NewHandlers(svc *visitasapp.Service) *Handlers {
 	return &Handlers{svc: svc}
 }
 
-// CrearVisita handles POST /visitas.
+// CrearVisita handles POST /visitas in BOTH supported wire formats.
 //
-// Idempotency: the client-generated UUID in body.id is the idempotency key
-// end-to-end (see visitasapp.Service.RegistrarVisita) — a retried request
-// with the same id returns the already-stored visita instead of an error.
+// # Coexistence
 //
-// The Idempotency-Key header must match body.id for real clients (the
+// The route accepts application/json — the shape the phones already in the
+// field send — and multipart/form-data, which carries that same JSON in a
+// `datos` field plus 0..N `imagen` parts. Both land here, take the same
+// validation path, and reach the same service call. A build that predates
+// photos keeps working with no change and no feature flag; see
+// [CrearVisitaInput] for why the body is read as raw bytes to make that
+// possible.
+//
+// This is NOT how cobranza handled its own JSON→multipart move. There the
+// change was a deliberate breaking one — POST /cobranza/pagos rejects a JSON
+// Content-Type outright, and a test pins that rejection — which was
+// affordable because that endpoint had no production consumers. Visitas does
+// not get that luxury, so the coexistence is built here rather than copied.
+//
+// # Idempotency
+//
+// The client-generated UUID in the body is the idempotency key end-to-end
+// (see visitasapp.Service.RegistrarVisitaConImagenes). A retried request with
+// the same id returns the already-stored visita — 201, not 409 — and, when it
+// carries photos, neither duplicates them nor orphans their blobs.
+//
+// The Idempotency-Key header must match the body id for real clients (the
 // mobile app sets both to the visita UUID). An internal replay — a desk
-// operator re-applying a captured request via the failed-intent replay
-// path — mints a fresh transport key by design, so the cross-check is
-// skipped for those (mirrors cobranza's CrearPago).
+// operator re-applying a captured request via the failed-intent replay path —
+// mints a fresh transport key by design, so the cross-check is skipped for
+// those (mirrors cobranza's CrearPago).
+//
+// # Failure modes
+//
+// Everything a client can get wrong — a malformed multipart envelope, a
+// missing boundary, an image type outside the whitelist, a tipo_visita
+// outside the closed catalogue — answers a 4xx with its own code. None of it
+// reaches a 500: on this route a 500 would look like the server silently
+// losing a cobrador's visit.
 func (h *Handlers) CrearVisita(ctx context.Context, in *CrearVisitaInput) (*CrearVisitaOutput, error) {
 	cu, err := currentUserOrError(ctx)
 	if err != nil {
@@ -43,48 +68,130 @@ func (h *Handlers) CrearVisita(ctx context.Context, in *CrearVisitaInput) (*Crea
 		return nil, err
 	}
 
-	visitaID, err := uuid.Parse(in.Body.ID)
-	if err != nil {
-		return nil, mapAppError(
-			apperror.NewValidation("visita_id_invalido", "el id de la visita no es un UUID válido").WithError(err),
-		)
+	decoded, decodeErr := decodeCrearVisitaRequest(in.ContentType, in.RawBody)
+	// Closing every part the decoder opened is not optional: without it the
+	// request leaks a file descriptor per image, which only surfaces under
+	// load. The defer is registered BEFORE the error check on purpose — a
+	// decode that failed halfway still returns the handles it opened.
+	defer func() {
+		for _, c := range decoded.Closers {
+			_ = c.Close()
+		}
+	}()
+	if decodeErr != nil {
+		return nil, mapAppError(decodeErr)
 	}
 
-	if in.IdempotencyKey != "" && in.IdempotencyKey != in.Body.ID && !httpdispatch.IsInternal(ctx) {
+	visitaID, err := parseVisitaID(decoded.Body.ID)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+
+	if in.IdempotencyKey != "" && in.IdempotencyKey != decoded.Body.ID && !httpdispatch.IsInternal(ctx) {
 		return nil, mapAppError(
 			apperror.NewValidation("idempotency_key_mismatch", "Idempotency-Key debe coincidir con body.id"),
 		)
 	}
 
-	fecha, err := time.Parse(time.RFC3339, in.Body.Fecha)
+	fecha, err := time.Parse(time.RFC3339, decoded.Body.Fecha)
 	if err != nil {
 		return nil, mapAppError(
 			apperror.NewValidation("visita_fecha_invalida", "fecha no es una fecha-hora RFC3339 válida").WithError(err),
 		)
 	}
 
-	appIn := visitasapp.RegistrarVisitaInput{
-		ID:             visitaID,
-		Cobrador:       in.Body.Cobrador,
-		CobradorID:     in.Body.CobradorID,
-		Fecha:          fecha.UTC(),
-		FormaCobroID:   in.Body.FormaCobroID,
-		Lat:            in.Body.Lat,
-		Lng:            in.Body.Lng,
-		Nota:           in.Body.Nota,
-		TipoVisita:     in.Body.TipoVisita,
-		ZonaClienteID:  in.Body.ZonaClienteID,
-		ClienteID:      in.Body.ClienteID,
-		ImpteDoctoCCID: in.Body.ImpteDoctoCCID,
+	lat, lng, err := requireCoordenadas(decoded.Body)
+	if err != nil {
+		return nil, mapAppError(err)
 	}
 
-	visita, err := h.svc.RegistrarVisita(ctx, appIn, cu.ID)
+	appIn := visitasapp.RegistrarVisitaInput{
+		ID:             visitaID,
+		Cobrador:       decoded.Body.Cobrador,
+		CobradorID:     decoded.Body.CobradorID,
+		Fecha:          fecha.UTC(),
+		FormaCobroID:   decoded.Body.FormaCobroID,
+		Lat:            lat,
+		Lng:            lng,
+		Nota:           decoded.Body.Nota,
+		TipoVisita:     decoded.Body.TipoVisita,
+		ZonaClienteID:  decoded.Body.ZonaClienteID,
+		ClienteID:      decoded.Body.ClienteID,
+		ImpteDoctoCCID: decoded.Body.ImpteDoctoCCID,
+	}
+
+	visita, err := h.svc.RegistrarVisitaConImagenes(ctx, appIn, decoded.Uploads, cu.ID)
 	if err != nil {
 		return nil, mapAppError(err)
 	}
 	return &CrearVisitaOutput{Body: toVisitaDTO(visita)}, nil
 }
 
+// requireCoordenadas enforces that lat and lng were SENT — present in the
+// document and not null — and returns their values.
+//
+// It checks presence only. The values themselves are unconstrained: 0,0 is a
+// legitimate reading, and a cobrador whose phone has no fix must still be
+// able to register the visit. Rejecting the value would lose visits; rejecting
+// the omission catches the client bug that would otherwise be stored as a
+// coordinate nobody ever measured.
+//
+// This restores the pre-change contract exactly. Huma used to require every
+// field lacking an `omitempty` tag, lat and lng among them; reading the body
+// by hand dropped that, and this puts it back for the two fields where the
+// zero value is indistinguishable from a real measurement.
+func requireCoordenadas(body CrearVisitaBody) (float64, float64, error) {
+	if body.Lat == nil {
+		return 0, 0, apperror.NewValidation(
+			"visita_lat_requerida", "la latitud de la visita es obligatoria",
+		)
+	}
+	if body.Lng == nil {
+		return 0, 0, apperror.NewValidation(
+			"visita_lng_requerida", "la longitud de la visita es obligatoria",
+		)
+	}
+	return *body.Lat, *body.Lng, nil
+}
+
+// ObtenerVisita handles GET /visitas/{id}.
+//
+// Loads a single visita from MSP_VISITAS by UUID. Returns 404
+// (visita_not_found) when no row matches, and 422 when the path segment is
+// not a UUID — never a 500.
+//
+// Requires the same permission as the write side (cobranza:ver_pagos): a
+// cobrador who may record a visita may read it back.
+//
+// Reads are catalogue-agnostic. A row whose TIPO_VISITA predates the closed
+// catalogue — a retired literal, or the empty string on the 200 oldest rows —
+// loads and serializes normally, because the repo rehydrates without
+// validating (domain.RehydrateVisita). Enforcing the catalogue here would
+// break exactly the legacy rows this endpoint exists to expose.
+func (h *Handlers) ObtenerVisita(ctx context.Context, in *ObtenerVisitaInput) (*ObtenerVisitaOutput, error) {
+	cu, err := currentUserOrError(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := requirePerm(cu, auth.PermCobranzaVerPagos); err != nil {
+		return nil, err
+	}
+
+	visitaID, err := parseVisitaID(in.ID)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+
+	visita, err := h.svc.ObtenerVisita(ctx, visitaID)
+	if err != nil {
+		return nil, mapAppError(err)
+	}
+	return &ObtenerVisitaOutput{Body: toVisitaDTO(visita)}, nil
+}
+
 // ─── Compile-time handler signature checks ────────────────────────────────────
 
-var _ func(context.Context, *CrearVisitaInput) (*CrearVisitaOutput, error) = (*Handlers)(nil).CrearVisita
+var (
+	_ func(context.Context, *CrearVisitaInput) (*CrearVisitaOutput, error)     = (*Handlers)(nil).CrearVisita
+	_ func(context.Context, *ObtenerVisitaInput) (*ObtenerVisitaOutput, error) = (*Handlers)(nil).ObtenerVisita
+)

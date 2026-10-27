@@ -310,7 +310,7 @@ func TestE2E_Visitas_HappyWrite_PersistsEveryField(t *testing.T) {
 		fecha := time.Now().UTC().Add(-2 * time.Hour)
 		cobrador := visitasE2EMarkerCobrador("María de los Ángeles Hernández")
 		nota := "cliente no estaba, vuelvo mañana"
-		body := visitasE2EBuildBody(t, visitaID, clienteID, cobrador, nota, "no_encontrado", fecha)
+		body := visitasE2EBuildBody(t, visitaID, clienteID, cobrador, nota, "No se encontraba", fecha)
 
 		rec := visitasE2EDoRequest(t, root, http.MethodPost, "/v2/visitas", body, visitaID.String())
 		require.Equal(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
@@ -327,7 +327,7 @@ func TestE2E_Visitas_HappyWrite_PersistsEveryField(t *testing.T) {
 		assert.InDelta(t, 19.432608, got.Lat(), 0.000001)
 		assert.InDelta(t, -99.133209, got.Lng(), 0.000001)
 		assert.Equal(t, nota, got.Nota())
-		assert.Equal(t, "no_encontrado", got.TipoVisita())
+		assert.Equal(t, "No se encontraba", got.TipoVisita().String())
 		assert.Equal(t, 7, got.ZonaClienteID())
 		assert.Equal(t, clienteID, got.ClienteID())
 		assert.Nil(t, got.ImpteDoctoCCID())
@@ -362,7 +362,7 @@ func TestE2E_Visitas_IdempotentReplay_RowUnchanged(t *testing.T) {
 		visitaID := uuid.New()
 		fecha := time.Now().UTC().Add(-1 * time.Hour)
 		cobrador := visitasE2EMarkerCobrador("Ramírez García, Jorge")
-		body := visitasE2EBuildBody(t, visitaID, clienteID, cobrador, "salió, vuelve mañana", "cobro", fecha)
+		body := visitasE2EBuildBody(t, visitaID, clienteID, cobrador, "salió, vuelve mañana", "Pidió reagendar visita", fecha)
 
 		rec1 := visitasE2EDoRequest(t, root, http.MethodPost, "/v2/visitas", body, visitaID.String())
 		require.Equal(t, http.StatusCreated, rec1.Code, "first: body=%s", rec1.Body.String())
@@ -403,7 +403,7 @@ func TestE2E_Visitas_Exitoso_NoSeCaptura(t *testing.T) {
 
 		visitaID := uuid.New()
 		fecha := time.Now().UTC().Add(-1 * time.Hour)
-		body := visitasE2EBuildBody(t, visitaID, clienteID, visitasE2EMarkerCobrador("Hernández Solís, Patricia"), "", "cobro", fecha)
+		body := visitasE2EBuildBody(t, visitaID, clienteID, visitasE2EMarkerCobrador("Hernández Solís, Patricia"), "", "Pidió reagendar visita", fecha)
 
 		rec := visitasE2EDoRequest(t, root, http.MethodPost, "/v2/visitas", body, visitaID.String())
 		require.Equal(t, http.StatusCreated, rec.Code, "valid visita must succeed; body=%s", rec.Body.String())
@@ -455,7 +455,7 @@ func TestE2E_Visitas_CapturaReplayResolve_CicloDeskCorrection(t *testing.T) {
 
 		// ── Intent A · step 1: rejected POST is captured ──────────────────
 		visitaA := uuid.New()
-		badBodyA := visitasE2EBuildBody(t, visitaA, 0, cobrador, "", "cobro", fecha)
+		badBodyA := visitasE2EBuildBody(t, visitaA, 0, cobrador, "", "Pidió reagendar visita", fecha)
 		recA := visitasE2EDoRequest(t, root, http.MethodPost, "/v2/visitas", badBodyA, visitaA.String())
 		require.Equal(t, http.StatusUnprocessableEntity, recA.Code,
 			"cliente_id=0 must be rejected; body=%s", recA.Body.String())
@@ -471,7 +471,7 @@ func TestE2E_Visitas_CapturaReplayResolve_CicloDeskCorrection(t *testing.T) {
 		assert.Equal(t, 0, visitasE2ECountByID(ctx, t, q, visitaA), "rejected visita must not have been persisted")
 
 		// ── Intent A · step 2: replay-with corrected cliente_id → 2xx + row ─
-		correctedBodyA := visitasE2EBuildBody(t, visitaA, clienteID, cobrador, "", "cobro", fecha)
+		correctedBodyA := visitasE2EBuildBody(t, visitaA, clienteID, cobrador, "", "Pidió reagendar visita", fecha)
 		replayWithBody, err := json.Marshal(map[string]json.RawMessage{"body": json.RawMessage(correctedBodyA)})
 		require.NoError(t, err)
 
@@ -506,7 +506,7 @@ func TestE2E_Visitas_CapturaReplayResolve_CicloDeskCorrection(t *testing.T) {
 
 		// ── Intent B · steps 3-4: capture then manual resolve ─────────────
 		visitaB := uuid.New()
-		badBodyB := visitasE2EBuildBody(t, visitaB, 0, cobrador, "", "cobro", fecha)
+		badBodyB := visitasE2EBuildBody(t, visitaB, 0, cobrador, "", "Pidió reagendar visita", fecha)
 		recB := visitasE2EDoRequest(t, root, http.MethodPost, "/v2/visitas", badBodyB, visitaB.String())
 		require.Equal(t, http.StatusUnprocessableEntity, recB.Code, "second rejected visita; body=%s", recB.Body.String())
 
@@ -553,7 +553,7 @@ func TestE2E_Visitas_AccentRoundTrip_FullStack(t *testing.T) {
 		fecha := time.Now().UTC().Add(-3 * time.Hour)
 		cobrador := visitasE2EMarkerCobrador("Peña Núñez, José Ángel")
 		nota := "Pagó la mensualidad, muy amable; regresa en año nuevo"
-		body := visitasE2EBuildBody(t, visitaID, clienteID, cobrador, nota, "cobro", fecha)
+		body := visitasE2EBuildBody(t, visitaID, clienteID, cobrador, nota, "Pidió reagendar visita", fecha)
 
 		rec := visitasE2EDoRequest(t, root, http.MethodPost, "/v2/visitas", body, visitaID.String())
 		require.Equal(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())

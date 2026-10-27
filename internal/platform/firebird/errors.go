@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"unicode/utf8"
 
 	"github.com/nakagami/firebirdsql"
 
@@ -41,54 +42,91 @@ func MapError(err error) error {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			return apperror.NewServiceUnavailable("firebird_timeout",
 				"la base de datos no respondió a tiempo").
-				WithSource("firebird").WithError(err)
+				WithSource("firebird").WithError(conTextoSaneado(err))
 		}
 		// Connection-shaped non-FbError: net errors, io.EOF, etc.
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 			return apperror.NewInternal("firebird_connection_lost",
 				"conexión con base de datos perdida").
-				WithSource("firebird").WithError(err)
+				WithSource("firebird").WithError(conTextoSaneado(err))
 		}
-		return err
+		// Se sanea aunque no se mapee: este error también acaba escrito en
+		// columnas nuestras que son UTF8, y ahí un byte suelto da -303.
+		return conTextoSaneado(err)
 	}
 	for _, code := range fbErr.GDSCodes {
 		switch code {
 		case gdsUniquePrimary, gdsUniqueDup:
 			return apperror.NewConflict("firebird_unique_violation",
 				"registro duplicado").
-				WithSource("firebird").WithError(err)
+				WithSource("firebird").WithError(conTextoSaneado(err))
 		case gdsForeignKey:
 			return apperror.NewConflict("firebird_fk_violation",
 				"referencia inválida").
-				WithSource("firebird").WithError(err)
+				WithSource("firebird").WithError(conTextoSaneado(err))
 		case gdsCheck:
 			return apperror.NewValidation("firebird_check_failed",
 				"datos no cumplen restricción del modelo").
-				WithSource("firebird").WithError(err)
+				WithSource("firebird").WithError(conTextoSaneado(err))
 		case gdsDeadlock, gdsLockNoWait, gdsLockTimeout:
 			return apperror.NewConflict("firebird_lock_conflict",
 				"operación bloqueada, intente de nuevo").
-				WithSource("firebird").WithError(err)
+				WithSource("firebird").WithError(conTextoSaneado(err))
 		case gdsAttStmtTimeout, gdsReqStmtTimeout:
 			// The server cut the statement at its configured ceiling. Not a
 			// lock conflict: retrying the same slow query would only burn the
 			// same budget again.
 			return apperror.NewServiceUnavailable("firebird_timeout",
 				"la base de datos no respondió a tiempo").
-				WithSource("firebird").WithError(err)
+				WithSource("firebird").WithError(conTextoSaneado(err))
 		case gdsIOError:
 			return apperror.NewInternal("firebird_io_error",
 				"error de entrada/salida de base de datos").
-				WithSource("firebird").WithError(err)
+				WithSource("firebird").WithError(conTextoSaneado(err))
 		case gdsConnLostPipe, gdsConnLostDB:
 			return apperror.NewInternal("firebird_connection_lost",
 				"conexión con base de datos perdida").
-				WithSource("firebird").WithError(err)
+				WithSource("firebird").WithError(conTextoSaneado(err))
 		}
 	}
 	return apperror.NewInternal("firebird_error",
 		"error de base de datos").
-		WithSource("firebird").WithError(err)
+		WithSource("firebird").WithError(conTextoSaneado(err))
+}
+
+// saneadoError envuelve un error del driver para que su TEXTO sea UTF-8 válido,
+// conservando la cadena para errors.Is / errors.As.
+//
+// Existe porque el mensaje que devuelve Firebird cuando Microsip lanza una
+// EXCEPTION llega en Windows-1252: la "é" de "crédito" viaja como 0xE9. Ese
+// texto termina, vía apperror.Error(), escrito en columnas nuestras que son
+// CHARACTER SET UTF8 —MSP_PAGOS_RECIBIDOS.ULTIMO_ERROR,
+// MSP_OUTBOX_EVENTS.LAST_ERROR— y ahí Firebird lo rechaza con
+// "-303 Malformed string", deshaciendo la transacción ENTERA.
+//
+// Se saneo AQUÍ, y no en cada sitio que guarda un motivo, porque éste es el
+// punto donde los bytes ajenos entran a nuestro mundo: es la frontera que
+// ENCODING_HANDLING.md llama el adapter de Microsip. Sanearlo en cada
+// consumidor sería repetir la misma guarda en sitios que se irán olvidando.
+//
+// Unwrap conserva el error original, así que errors.As(err, &fbErr) y las
+// comprobaciones de GDS siguen funcionando igual.
+type saneadoError struct{ err error }
+
+func (e saneadoError) Error() string { return SanearParaUTF8(e.err.Error()) }
+func (e saneadoError) Unwrap() error { return e.err }
+
+// conTextoSaneado envuelve err sólo cuando hace falta. Un error cuyo texto ya
+// es UTF-8 válido se devuelve tal cual: envolver por envolver añadiría una capa
+// a cada error de base de datos del sistema sin arreglar nada.
+func conTextoSaneado(err error) error {
+	if err == nil {
+		return nil
+	}
+	if utf8.ValidString(err.Error()) {
+		return err
+	}
+	return saneadoError{err: err}
 }
 
 // IsTransient reports whether err is a Firebird error whose retry has a real

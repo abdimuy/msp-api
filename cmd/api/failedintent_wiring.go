@@ -230,11 +230,22 @@ func provideFailedIntentCapturas(
 	}
 
 	// visitas is a third capture instance scoped to the visitas write path.
-	// JSON-only (no multipart, no Blob/MaxMultipartBytes) — a visita has no
-	// comprobante attachments, unlike a pago.
+	//
+	// It carries Blob + MaxMultipartBytes for the same reason cobranza does:
+	// POST /v2/visitas accepts multipart now, and shouldCapture returns FALSE
+	// for a multipart request when Blob is nil (failedintent.go:820-823). A
+	// rejected visita that carried a photo would therefore leave no durable
+	// row and could never be replayed — which is the exact failure the
+	// capture desk exists to prevent, and it would only ever happen to the
+	// requests that took the most work to produce.
+	//
+	// (This comment used to say visitas was JSON-only and had no attachments.
+	// That stopped being true when the multipart contract landed.)
 	visitas := failedintent.Config{
-		Store:   store,
-		Resumen: resumen,
+		Store:             store,
+		Blob:              blob,
+		MaxMultipartBytes: cfg.FailedIntent.MaxMultipartBytes,
+		Resumen:           resumen,
 		// El registro no tiene extractor para /v2/visitas, así que estas
 		// filas quedan sin módulo y sin resumen. Se pasa igual para que el
 		// día que visitas quiera un renglón legible baste registrar su

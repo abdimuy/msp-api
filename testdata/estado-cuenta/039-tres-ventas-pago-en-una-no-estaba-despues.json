@@ -1,0 +1,61 @@
+{
+  "nombre": "pago completo en una venta y no estaba despues marca las otras dos",
+  "ventana": {
+    "inicio": "2026-10-09T13:46:00Z",
+    "fin": "2026-10-14T22:40:00Z"
+  },
+  "cuentas": [
+    {
+      "venta_id": 1,
+      "cliente_id": 10,
+      "parcialidad": "150.00"
+    },
+    {
+      "venta_id": 2,
+      "cliente_id": 10,
+      "parcialidad": "200.00"
+    },
+    {
+      "venta_id": 3,
+      "cliente_id": 10,
+      "parcialidad": "100.00"
+    }
+  ],
+  "pagos": [
+    {
+      "venta_id": 1,
+      "importe": "150.00",
+      "forma_cobro_id": 157,
+      "fecha_hora": "2026-10-11T15:00:00Z",
+      "rechazado": false
+    }
+  ],
+  "visitas": [
+    {
+      "cliente_id": 10,
+      "venta_id": null,
+      "tipo_visita": "Casa cerrada con candado",
+      "fecha_hora": "2026-10-11T19:00:00Z",
+      "fecha_cita": null,
+      "hora_cita": null,
+      "fecha_promesa": null
+    }
+  ],
+  "esperado": [
+    {
+      "venta_id": 1,
+      "estado": "pago",
+      "con_algo": true
+    },
+    {
+      "venta_id": 2,
+      "estado": "no_estaba",
+      "con_algo": true
+    },
+    {
+      "venta_id": 3,
+      "estado": "no_estaba",
+      "con_algo": true
+    }
+  ]
+}

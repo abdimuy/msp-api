@@ -131,6 +131,10 @@ const (
 	// PermReactivacionAdministrar grants triggering a rebuild of the
 	// reactivación cohorte snapshot.
 	PermReactivacionAdministrar Permission = "reactivacion:administrar"
+
+	// PermDesempenoVer grants read access to the "Desempeño de cobradores"
+	// screen: tablero, jornada, actividad de la zona y cuentas de la semana.
+	PermDesempenoVer Permission = "desempeno:ver"
 )
 
 // PermissionMeta is a catalog entry pairing a permission code with the
@@ -157,6 +161,7 @@ const (
 	categoriaClientes      = "clientes"
 	categoriaConfig        = "configuracion"
 	categoriaReactivacion  = "reactivacion"
+	categoriaDesempeno     = "desempeno"
 )
 
 // AllPermissions returns every permission known to the auth module, sorted
@@ -216,6 +221,8 @@ func AllPermissions() []PermissionMeta {
 
 		{PermReactivacionLeer, "ver la cohorte y atribución del piloto de reactivación", categoriaReactivacion},
 		{PermReactivacionAdministrar, "reconstruir la cohorte del piloto de reactivación", categoriaReactivacion},
+
+		{PermDesempenoVer, "ver el desempeño de cobradores (tablero, jornada, actividad y cuentas)", categoriaDesempeno},
 	}
 	sort.Slice(perms, func(i, j int) bool { return perms[i].Code < perms[j].Code })
 	return perms

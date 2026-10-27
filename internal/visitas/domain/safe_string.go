@@ -94,3 +94,24 @@ func trimOptionalBounded(s string, maxLen int, errTooLong error) (string, error)
 	}
 	return trimmed, nil
 }
+
+// trimOptionalBoundedPtr is the *string flavor of trimOptionalBounded, used
+// for columns whose "absent" is a SQL NULL rather than an empty string (the
+// per-image note column). A nil pointer and a blank string both mean "not
+// provided" and both come back as nil.
+func trimOptionalBoundedPtr(p *string, maxLen int, errTooLong error) (*string, error) {
+	if p == nil {
+		return nil, nil //nolint:nilnil // optional pointer pattern: nil ptr + nil err means "not provided".
+	}
+	trimmed := normalizeNFC(strings.TrimSpace(*p))
+	if trimmed == "" {
+		return nil, nil //nolint:nilnil // optional pointer pattern: blank input normalizes to "not provided".
+	}
+	if utf8RuneLen(trimmed) > maxLen {
+		return nil, errTooLong
+	}
+	if err := validateSafeChars(trimmed); err != nil {
+		return nil, err
+	}
+	return &trimmed, nil
+}

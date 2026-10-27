@@ -37,6 +37,19 @@ func (f *fakeCobranzaRepo) VentasPorZona(_ context.Context, zonaID int, _, _ tim
 	return f.rows[zonaID], nil
 }
 
+func (f *fakeCobranzaRepo) VentasPorZonas(
+	_ context.Context, cs []outbound.ConsultaVentasZona, _ time.Time,
+) ([][]rutasdomain.VentaCobranza, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	out := make([][]rutasdomain.VentaCobranza, len(cs))
+	for i, c := range cs {
+		out[i] = append([]rutasdomain.VentaCobranza(nil), f.rows[c.ZonaID]...)
+	}
+	return out, nil
+}
+
 // fakeCalendario is a test double for outbound.CalendarioCobradorClient.
 type fakeCalendario struct {
 	m         map[int]time.Time

@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/abdimuy/msp-api/internal/cobranza/app/eventbus"
 	"github.com/abdimuy/msp-api/internal/cobranza/ports/outbound"
+	"github.com/abdimuy/msp-api/internal/platform/eventbus"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 )
 

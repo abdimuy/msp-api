@@ -360,6 +360,18 @@ linters:
           alias: visitasfb
         - pkg: github.com/abdimuy/msp-api/internal/visitas/infra/visitashttp
           alias: visitashttp
+        - pkg: github.com/abdimuy/msp-api/internal/desempeno/app
+          alias: desempenoapp
+        - pkg: github.com/abdimuy/msp-api/internal/desempeno/domain
+          alias: desempenodomain
+        - pkg: github.com/abdimuy/msp-api/internal/desempeno/ports/outbound
+          alias: desempenooutbound
+        - pkg: github.com/abdimuy/msp-api/internal/desempeno/infra/desempenofb
+          alias: desempenofb
+        - pkg: github.com/abdimuy/msp-api/internal/desempeno/infra/desempenohttp
+          alias: desempenohttp
+        - pkg: github.com/abdimuy/msp-api/internal/desempeno/infra/clients
+          alias: desempenoclients
         - pkg: github.com/abdimuy/msp-api/internal/canal/domain
           alias: canaldomain
         - pkg: github.com/abdimuy/msp-api/internal/canal/app
@@ -440,6 +452,7 @@ linters:
             - github.com/abdimuy/msp-api/internal/asistencia/domain
             - github.com/abdimuy/msp-api/internal/garantias/domain
             - github.com/abdimuy/msp-api/internal/visitas/domain
+            - github.com/abdimuy/msp-api/internal/desempeno/domain
             - github.com/abdimuy/msp-api/internal/flota/domain
             - github.com/abdimuy/msp-api/internal/canal/domain
 

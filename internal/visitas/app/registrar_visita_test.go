@@ -32,11 +32,13 @@ func (c *fakeClock) Now() time.Time { return c.t }
 type fakeVisitasRepo struct {
 	byID map[uuid.UUID]*domain.Visita
 
-	insertErr   error // when non-nil, Insert returns this error instead of storing
-	findByIDErr error // when non-nil, FindByID returns this error instead of looking up
+	insertErr          error // when non-nil, Insert returns this error instead of storing
+	findByIDErr        error // when non-nil, FindByID returns this error instead of looking up
+	findExistingIDsErr error // when non-nil, FindExistingIDs returns this error instead of looking up
 
-	insertCalls   int
-	findByIDCalls int
+	insertCalls          int
+	findByIDCalls        int
+	findExistingIDsCalls int
 }
 
 func newFakeVisitasRepo() *fakeVisitasRepo {
@@ -64,6 +66,35 @@ func (r *fakeVisitasRepo) FindByID(_ context.Context, id uuid.UUID) (*domain.Vis
 	return v, nil
 }
 
+// FindExistingIDs mirrors visitasfb.Repo.FindExistingIDs against the
+// in-memory store: only ids present in byID come back, in no particular
+// order, deduplicated — a SQL "WHERE ID IN (...)" answers once per matching
+// row regardless of how many times a value repeats in the list, and the
+// fake preserves that contract rather than the caller's raw slice — and an
+// empty ids slice short-circuits to an empty slice without touching
+// findExistingIDsErr.
+func (r *fakeVisitasRepo) FindExistingIDs(_ context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
+	if len(ids) == 0 {
+		return []uuid.UUID{}, nil
+	}
+	r.findExistingIDsCalls++
+	if r.findExistingIDsErr != nil {
+		return nil, r.findExistingIDsErr
+	}
+	seen := make(map[uuid.UUID]bool, len(ids))
+	out := make([]uuid.UUID, 0, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		if _, ok := r.byID[id]; ok {
+			out = append(out, id)
+			seen[id] = true
+		}
+	}
+	return out, nil
+}
+
 // ─── Test helpers ───────────────────────────────────────────────────────────
 
 // validInput returns a RegistrarVisitaInput that passes domain validation,
@@ -79,7 +110,7 @@ func validInput() app.RegistrarVisitaInput {
 		Lat:           19.432608,
 		Lng:           -99.133209,
 		Nota:          "María salió, vuelve mañana",
-		TipoVisita:    "cobro",
+		TipoVisita:    string(domain.TipoVisitaNoSeEncontraba),
 		ZonaClienteID: 7,
 		ClienteID:     11486,
 	}
@@ -108,7 +139,7 @@ func TestRegistrarVisita_HappyPath(t *testing.T) {
 	assert.InDelta(t, in.Lat, got.Lat(), 0)
 	assert.InDelta(t, in.Lng, got.Lng(), 0)
 	assert.Equal(t, in.Nota, got.Nota())
-	assert.Equal(t, in.TipoVisita, got.TipoVisita())
+	assert.Equal(t, in.TipoVisita, got.TipoVisita().String())
 	assert.Equal(t, in.ZonaClienteID, got.ZonaClienteID())
 	assert.Equal(t, in.ClienteID, got.ClienteID())
 	assert.Nil(t, got.ImpteDoctoCCID())
