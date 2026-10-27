@@ -27,6 +27,8 @@ func NewEventoRepo(pool *firebird.Pool) *EventoRepo {
 }
 
 // ListarPorGarantia returns the events for a warranty in timeline order.
+//
+//nolint:dupl // El flujo de lectura es similar al de ImagenRepo, pero usa otro dominio y mapper.
 func (r *EventoRepo) ListarPorGarantia(
 	ctx context.Context,
 	garantiaID uuid.UUID,
@@ -36,38 +38,50 @@ func (r *EventoRepo) ListarPorGarantia(
 	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
 		q := firebird.GetQuerier(ctx, r.pool.DB)
 
-		rows, err := q.QueryContext(
-			ctx,
-			listarEventosPorGarantiaSQL,
-			garantiaID.String(),
-		)
-		if err != nil {
-			return firebird.MapError(err)
-		}
-		defer func() { _ = rows.Close() }()
-
-		for rows.Next() {
-			er, err := scanEvento(rows)
-			if err != nil {
-				return err
-			}
-
-			e, err := hydrateEvento(er)
-			if err != nil {
-				return err
-			}
-
-			eventos = append(eventos, e)
-		}
-
-		if err := rows.Err(); err != nil {
-			return firebird.MapError(err)
-		}
-
-		return nil
+		var err error
+		eventos, err = listarEventosPorGarantia(ctx, q, garantiaID)
+		return err
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	return eventos, nil
+}
+
+func listarEventosPorGarantia(
+	ctx context.Context,
+	q firebird.Querier,
+	garantiaID uuid.UUID,
+) ([]*domain.Evento, error) {
+	eventos := make([]*domain.Evento, 0)
+
+	rows, err := q.QueryContext(
+		ctx,
+		listarEventosPorGarantiaSQL,
+		garantiaID.String(),
+	)
+	if err != nil {
+		return nil, firebird.MapError(err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		er, err := scanEvento(rows)
+		if err != nil {
+			return nil, err
+		}
+
+		e, err := hydrateEvento(er)
+		if err != nil {
+			return nil, err
+		}
+
+		eventos = append(eventos, e)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, firebird.MapError(err)
 	}
 
 	return eventos, nil
