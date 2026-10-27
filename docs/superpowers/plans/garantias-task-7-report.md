@@ -52,32 +52,41 @@ Con esto se detecta el caso en el que los artículos de varios folios fueran asi
 
 ## Aislamiento de las pruebas
 
-Las pruebas que podían depender del contenido previo de la base fueron acotadas mediante filtros de fecha.
+Las pruebas identificadas durante la revisión fueron acotadas mediante ventanas de fecha propias para evitar depender de filas dejadas por otras personas en la base de desarrollo.
 
 Entre las pruebas ajustadas se encuentran:
 
 ```text
+TestBandejaRepo_Listar_FiltroEstado
+TestBandejaRepo_Listar_FiltroOrigen
+TestBandejaRepo_Listar_FiltroEtapa
+TestBandejaRepo_Listar_FiltroDesde
 TestBandejaRepo_Listar_FiltroHasta
 TestBandejaRepo_Listar_FiltroUbicacion
+TestBandejaRepo_Listar_NoDuplicaGarantiaConDosArticulos
 TestBandejaRepo_Listar_PaginacionSinRepetirNiSaltar
 TestBandejaRepo_Listar_PaginacionConCreatedAtIgual
 TestBandejaRepo_ListarYObtener_ArticulosOrdenados
 TestBandejaRepo_ListarUsaDosConsultasPorPagina
 ```
 
-Así las pruebas trabajan únicamente con los datos que ellas mismas necesitan evaluar.
+También se agregó:
+
+```text
+TestBandejaRepo_Listar_IgnoraFilasAjenasFueraDeLaVentana
+```
+
+La prueba siembra cuatro folios ajenos fuera de la ventana consultada y comprueba que sólo se devuelva el folio creado para el caso.
 
 ## Orden de artículos
 
-La prueba de orden utiliza UUID fijos colocados en un orden contrario al orden de creación esperado.
+La prueba de orden utiliza UUID fijos deliberadamente desordenados respecto al orden de creación. De esta forma, tanto `ORDER BY ID ASC` como `ORDER BY ID DESC` producen un resultado incorrecto y la prueba falla.
 
 El orden correcto es:
 
 ```text
 CREATED_AT, ID
 ```
-
-Esto evita que una implementación incorrecta con `ORDER BY ID` pueda pasar la prueba por casualidad.
 
 ## Validación del cursor
 
@@ -141,7 +150,15 @@ Cuando los filtros `Etapa` y `Ubicacion` se utilizan al mismo tiempo, las dos co
 
 Esto significa que debe existir un mismo artículo que cumpla simultáneamente la etapa y la ubicación solicitadas.
 
+Se agregó la prueba combinada:
+
+```text
+TestBandejaRepo_Listar_FiltroEtapaYUbicacionMismoArticulo
+```
+
 ## Mutantes de Entrega 1
+
+### Mutantes requeridos por el brief
 
 | # | Mutante | Resultado |
 |---|---|---|
@@ -152,6 +169,19 @@ Esto significa que debe existir un mismo artículo que cumpla simultáneamente l
 | 5 | `esClaveDuplicada` regresa siempre `true` | Killed |
 | 9 | Cambiar `Hasta` exclusivo por inclusivo | Killed |
 
+### Mutantes adicionales de revisión
+
+| Mutante | Cambio | Resultado |
+|---|---|---|
+| M20 | Asociar los artículos de la página al primer folio en vez de a su folio real | Killed |
+| Adicional | Ordenar artículos solamente por `ID ASC` | Killed |
+| Adicional | Ordenar artículos solamente por `ID DESC` | Killed |
+| Adicional | Omitir validación de versión, ID o fecha del cursor decodificado | Killed |
+| Adicional | Quitar el desempate por `ID` de imágenes con el mismo `CREATED_AT` | Killed |
+| Adicional | Devolver `nil` cuando un evento no tiene imágenes | Killed |
+| Adicional | Agregar una tercera consulta durante `BandejaRepo.Listar` | Killed |
+| Adicional | Reconocer como duplicado una restricción distinta de `UQ_MSP_GA_EVENTO_CLAVE` | Killed |
+
 ## Verificación de garfb con race
 
 Comando:
@@ -161,7 +191,7 @@ FB_HOST=localhost \
 FB_PORT=3050 \
 FB_DATABASE=/firebird/data/MSPTEST.FDB \
 FB_USER=SYSDBA \
-FB_PASSWORD=masterkey \
+FB_PASSWORD="$FB_PASSWORD" \
 FB_CHARSET=UTF8 \
 go test -race -count=1 \
 ./internal/garantias/infra/garfb
@@ -170,7 +200,7 @@ go test -race -count=1 \
 Salida:
 
 ```text
-ok  	github.com/abdimuy/msp-api/internal/garantias/infra/garfb	5.844s
+ok      github.com/abdimuy/msp-api/internal/garantias/infra/garfb   5.968s
 ```
 
 ## Cobertura con Firebird
@@ -183,7 +213,7 @@ FB_HOST=localhost \
 FB_PORT=3050 \
 FB_DATABASE=/firebird/data/MSPTEST.FDB \
 FB_USER=SYSDBA \
-FB_PASSWORD=masterkey \
+FB_PASSWORD="$FB_PASSWORD" \
 FB_CHARSET=UTF8 \
 go test -race -count=1 -p 1 \
 -coverprofile=cov.out \
@@ -193,11 +223,11 @@ go test -race -count=1 -p 1 \
 Salida:
 
 ```text
-ok  	github.com/abdimuy/msp-api/internal/garantias	1.026s	coverage: 100.0% of statements
-ok  	github.com/abdimuy/msp-api/internal/garantias/domain	1.083s	coverage: 100.0% of statements
-ok  	github.com/abdimuy/msp-api/internal/garantias/infra/garfb	6.335s	coverage: 86.8% of statements
-ok  	github.com/abdimuy/msp-api/internal/garantias/infra/storage	1.058s	coverage: 85.5% of statements
-ok  	github.com/abdimuy/msp-api/internal/garantias/ports/outbound	1.029s	coverage: 100.0% of statements
+ok      github.com/abdimuy/msp-api/internal/garantias   1.026s  coverage: 100.0% of statements
+ok      github.com/abdimuy/msp-api/internal/garantias/domain    1.081s  coverage: 100.0% of statements
+ok      github.com/abdimuy/msp-api/internal/garantias/infra/garfb   6.209s  coverage: 86.8% of statements
+ok      github.com/abdimuy/msp-api/internal/garantias/infra/storage 1.056s  coverage: 85.5% of statements
+ok      github.com/abdimuy/msp-api/internal/garantias/ports/outbound    1.028s  coverage: 100.0% of statements
 ```
 
 El piso requerido para `infra/garfb` es 85%.
@@ -260,16 +290,16 @@ go test -race -count=1 -p 1 ./internal/garantias/...
 Salida:
 
 ```text
-ok  	github.com/abdimuy/msp-api/internal/garantias	1.022s
-ok  	github.com/abdimuy/msp-api/internal/garantias/domain	1.060s
-ok  	github.com/abdimuy/msp-api/internal/garantias/infra/garfb	1.037s
-ok  	github.com/abdimuy/msp-api/internal/garantias/infra/storage	1.044s
-ok  	github.com/abdimuy/msp-api/internal/garantias/ports/outbound	1.026s
+ok      github.com/abdimuy/msp-api/internal/garantias   1.022s
+ok      github.com/abdimuy/msp-api/internal/garantias/domain    1.060s
+ok      github.com/abdimuy/msp-api/internal/garantias/infra/garfb   1.037s
+ok      github.com/abdimuy/msp-api/internal/garantias/infra/storage 1.044s
+ok      github.com/abdimuy/msp-api/internal/garantias/ports/outbound    1.026s
 ```
 
 ## Resultado de la Entrega 1
 
-La entrega queda con las pruebas de bandeja e imágenes reforzadas, paginación estable, asociación correcta de artículos, detección específica de la clave duplicada y pruebas independientes del contenido previo de la base.
+La entrega queda con las pruebas de bandeja e imágenes reforzadas, paginación estable, asociación correcta de artículos y detección específica de la clave duplicada. Las pruebas señaladas durante la revisión fueron acotadas con ventanas de fecha para no depender de filas ajenas.
 
 La cobertura final de `infra/garfb` es:
 
@@ -283,6 +313,8 @@ También se verificó el módulo con `race`, `go vet`, compilación, linter y `c
 
 La detección de la clave duplicada ahora exige tanto el código GDS `335544665` como el nombre `UQ_MSP_GA_EVENTO_CLAVE`.
 
-Los filtros `Etapa` y `Ubicacion` se aplican al mismo artículo dentro del mismo `EXISTS`.
+Los filtros `Etapa` y `Ubicacion` se aplican al mismo artículo dentro del mismo `EXISTS`. Este comportamiento también está cubierto por una prueba combinada.
 
-En consultas sin filtros Firebird puede terminar realizando un recorrido y ordenamiento general de la tabla. No afecta la corrección de esta entrega, pero deberá revisarse si aumenta considerablemente el volumen de garantías.
+Una fila corrupta que no pueda hidratarse provoca actualmente que falle la lectura completa de la bandeja y termine como error 500. Se mantiene documentado como límite conocido de esta entrega.
+
+En consultas sin filtros Firebird puede terminar realizando un recorrido y ordenamiento general de la tabla (`PLAN SORT (G NATURAL)`). No afecta la corrección de esta entrega, pero deberá revisarse si aumenta considerablemente el volumen de garantías.
