@@ -33,7 +33,8 @@ func TestEventosDeFolio_ConTipoPropio(t *testing.T) {
 		a = advance(t, g, a, domain.EtapaEnRevision)
 		a = diagnostico(t, g, a, domain.RutaReparacionTaller)
 		a = advance(t, g, a, domain.EtapaReparadoTaller)
-		advance(t, g, a, domain.EtapaListoEntrega)
+		a = advance(t, g, a, domain.EtapaListoEntrega)
+		advance(t, g, a, domain.EtapaReingresadoInventario)
 
 		if err := g.MarcarListoEntrega(actor("juan"), fixed); err != nil {
 			t.Fatalf("MarcarListoEntrega: %v", err)

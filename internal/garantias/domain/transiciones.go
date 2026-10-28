@@ -107,10 +107,12 @@ func transicionPermitidaPorOrigen(desde, hasta Etapa, origen OrigenFolio) bool {
 
 // reservadaPorDecision reports whether reaching hasta is reserved for a
 // decision command (R2): cambio_autorizado and standby only come from
-// AutorizarCambioFisico or MarcarNoDevuelto, and entregado is moved by the
-// folio (Entregar), never by AvanzarArticulo.
+// AutorizarCambioFisico or MarcarNoDevuelto, entregado is moved by the folio
+// (Entregar), and orden_generada/en_taller only from en_revision through
+// RegistrarDiagnostico (no other edge enters them).
 func reservadaPorDecision(hasta Etapa) bool {
-	return hasta == EtapaCambioAutorizado || hasta == EtapaStandby || hasta == EtapaEntregado
+	return hasta == EtapaCambioAutorizado || hasta == EtapaStandby || hasta == EtapaEntregado ||
+		hasta == EtapaOrdenGenerada || hasta == EtapaEnTaller
 }
 
 // etapaConSalidaReservada reports whether desde is a stage whose exits belong

@@ -46,6 +46,33 @@ func TestNewImagen(t *testing.T) {
 	}
 }
 
+// TestNewImagen_NormalizaNFC pins the domain-wide NFC rule on the three free
+// strings: two spellings of the same text must reach Firebird as the same
+// bytes, or byte-equal comparisons stop matching.
+func TestNewImagen_NormalizaNFC(t *testing.T) {
+	t.Parallel()
+	img, err := domain.NewImagen(domain.NewImagenParams{
+		EventoID:    uuid.New(),
+		Tipo:        domain.TipoImagenEvidencia,
+		Ruta:        "garantias/cafe\u0301.jpg",
+		Description: "pieza de cafe\u0301",
+		SubidaPor:   "Jose\u0301",
+		CreatedAt:   fixed,
+	})
+	if err != nil {
+		t.Fatalf("NewImagen: %v", err)
+	}
+	if img.Ruta() != "garantias/caf\u00e9.jpg" {
+		t.Errorf("Ruta() = %q, want NFC", img.Ruta())
+	}
+	if img.Description() != "pieza de caf\u00e9" {
+		t.Errorf("Description() = %q, want NFC", img.Description())
+	}
+	if img.SubidaPor() != "Jos\u00e9" {
+		t.Errorf("SubidaPor() = %q, want NFC", img.SubidaPor())
+	}
+}
+
 func TestNewImagen_DescriptionVacia(t *testing.T) {
 	t.Parallel()
 	img, err := domain.NewImagen(domain.NewImagenParams{

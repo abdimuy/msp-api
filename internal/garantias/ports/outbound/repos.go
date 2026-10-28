@@ -87,7 +87,11 @@ type BandejaRepo interface {
 // writes next.
 type EventoRepo interface {
 	// ListarPorGarantia returns the folio's timeline ordered by
-	// DEVICE_CREATED_AT, then CREATED_AT, then ID.
+	// DEVICE_CREATED_AT, then CREATED_AT, then insertion order. Two events can
+	// share both timestamps (a command that emits several events at the same
+	// instant), and the stored ID is a random UUID, so it cannot settle that
+	// tie: the physical write order does, and any implementation must preserve
+	// it.
 	ListarPorGarantia(ctx context.Context, garantiaID uuid.UUID) ([]*domain.Evento, error)
 	// ObtenerPorClaveIdempotencia returns the event carrying that key, or
 	// (nil, nil) when none does. A repeated key is a repetition, not an

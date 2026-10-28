@@ -3,6 +3,7 @@ package garfb
 
 import (
 	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -11,6 +12,12 @@ import (
 	"github.com/abdimuy/msp-api/internal/platform/apperror"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 )
+
+// errCerradoEnInconsistente marks a persisted folio whose ESTADO and CERRADO_EN
+// disagree. Only Cerrar sets the timestamp, and it always moves the folio to
+// cerrado in the same call, so a cerrado folio without CERRADO_EN (or a
+// timestamp on any other estado) is a corrupt row, not something to hydrate.
+var errCerradoEnInconsistente = errors.New("estado y cerrado_en no concuerdan")
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -333,6 +340,9 @@ func hydrateGarantia(
 	cerrado, err := firebird.ScanNullUTCTime(r.cerradoRaw)
 	if err != nil {
 		return nil, hydrationError("garantia", r.id, err)
+	}
+	if (estado == domain.EstadoFolioCerrado) != cerrado.Valid {
+		return nil, hydrationError("garantia", r.id, errCerradoEnInconsistente)
 	}
 
 	createdAt, err := firebird.ScanUTCTime(r.createdRaw)

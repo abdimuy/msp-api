@@ -191,6 +191,14 @@ INSERT INTO MSP_GA_EVENTO (
 	?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )`
 
+// listarEventosPorGarantiaSQL returns the folio timeline in the order the port
+// promises: device time, then creation time, then insertion order. The ID is a
+// random UUID, so using it as the last key would scatter events that share both
+// timestamps in an arbitrary order. RDB$DB_KEY points at the physical slot the
+// row was written to, which on this append-only table is the order the command
+// wrote them in. It is a physical address, not a logical sequence: a rebuilt
+// table or a sweep could renumber it, so a causal sequence column would be the
+// durable fix; until then it is the only ordering key the schema offers.
 const listarEventosPorGarantiaSQL = `
 SELECT
 	ID,
@@ -211,7 +219,7 @@ SELECT
 	CLAVE_IDEMPOTENCIA
 FROM MSP_GA_EVENTO
 WHERE GARANTIA_ID = ?
-ORDER BY DEVICE_CREATED_AT, CREATED_AT, ID`
+ORDER BY DEVICE_CREATED_AT, CREATED_AT, RDB$DB_KEY`
 
 const obtenerEventoPorClaveIdempotenciaSQL = `
 SELECT

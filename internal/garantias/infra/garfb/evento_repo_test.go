@@ -13,6 +13,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/garantias/domain"
 	"github.com/abdimuy/msp-api/internal/garantias/infra/garfb"
 	"github.com/abdimuy/msp-api/internal/platform/fbtestutil"
+	"github.com/abdimuy/msp-api/internal/platform/firebird"
 )
 
 func TestEventoRepo_ListarYObtenerPorClave(t *testing.T) {
@@ -222,5 +223,112 @@ func TestEventoRepo_ListarOrdenadoPorDeviceCreatedAt(t *testing.T) {
 			claveFolio,
 			eventos[totalEmpatados].ClaveIdempotencia(),
 		)
+	})
+}
+
+// insertarEventoDirecto skips the aggregate on purpose: the tie-break under
+// test is physical insertion order, and domain events carry a fresh random ID
+// and the clock times, so they cannot set that order up.
+const insertarEventoDirecto = `
+INSERT INTO MSP_GA_EVENTO (
+	ID, GARANTIA_ID, TIPO, USUARIO,
+	CREATED_AT, DEVICE_CREATED_AT, CLAVE_IDEMPOTENCIA
+) VALUES (?, ?, ?, ?, ?, ?, ?)`
+
+// TestEventoRepo_ListarDesempataPorInsercion pins the last ordering key: with
+// DEVICE_CREATED_AT and CREATED_AT tied, the timeline must come back in the
+// order the rows were written, not in ID order. The IDs descend precisely so
+// that the old ID tie-break would return them backwards.
+func TestEventoRepo_ListarDesempataPorInsercion(t *testing.T) {
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	garantiaRepo := garfb.NewGarantiaRepo(pool)
+	eventoRepo := garfb.NewEventoRepo(pool)
+	folios := garfb.NewFolioGenerator(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		numero, err := folios.Siguiente(ctx)
+		require.NoError(t, err)
+
+		folio, err := domain.NewFolio(numero)
+		require.NoError(t, err)
+
+		origen, err := domain.ParseOrigenFolio("cliente")
+		require.NoError(t, err)
+
+		estadoCuenta, err := domain.ParseEstadoCuenta("liquidada")
+		require.NoError(t, err)
+
+		now := time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)
+		clienteID := 990001
+		ventaID := 990002
+
+		g, err := domain.AbrirGarantia(domain.AbrirGarantiaParams{
+			Folio:          folio,
+			Origen:         origen,
+			ClienteID:      &clienteID,
+			VentaID:        &ventaID,
+			EstadoCuenta:   &estadoCuenta,
+			Description:    "Garantía para probar el desempate por inserción",
+			Calle:          "Calle 10",
+			NumeroExterior: "1000",
+			Colonia:        "Centro",
+			Localidad:      "Puebla",
+			Ciudad:         "Puebla",
+			CodigoPostal:   "72000",
+			AbiertoPor:     "ruben",
+			Now:            now,
+			Actor: domain.ActorParams{
+				Usuario:           "ruben",
+				ClaveIdempotencia: uuid.NewString(),
+				DeviceCreatedAt:   now.Add(20 * time.Minute),
+			},
+		})
+		require.NoError(t, err)
+		require.NoError(t, garantiaRepo.Crear(ctx, g))
+
+		ids := []string{
+			"ffffffff-ffff-4fff-8fff-ffffffffffff",
+			"88888888-8888-4888-8888-888888888888",
+			"00000000-0000-4000-8000-000000000000",
+		}
+		instante := now.Add(20 * time.Minute)
+		wall := firebird.ToWallClock(instante)
+		q := firebird.GetQuerier(ctx, pool.DB)
+
+		for _, id := range ids {
+			_, err = q.ExecContext(
+				ctx,
+				insertarEventoDirecto,
+				id,
+				g.ID().String(),
+				string(domain.TipoEventoNota),
+				"ruben",
+				wall,
+				wall,
+				uuid.NewString(),
+			)
+			require.NoError(t, err)
+		}
+
+		eventos, err := eventoRepo.ListarPorGarantia(ctx, g.ID())
+		require.NoError(t, err)
+
+		var empatados []*domain.Evento
+		for _, e := range eventos {
+			for _, id := range ids {
+				if e.ID().String() == id {
+					empatados = append(empatados, e)
+				}
+			}
+		}
+		require.Len(t, empatados, len(ids), "faltan los eventos insertados directo")
+
+		for i, id := range ids {
+			require.Equal(t, id, empatados[i].ID().String(),
+				"el desempate no respetó el orden de inserción")
+			require.Equal(t, instante, empatados[i].DeviceCreatedAt())
+			require.Equal(t, instante, empatados[i].CreatedAt())
+		}
 	})
 }

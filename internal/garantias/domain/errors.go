@@ -198,17 +198,17 @@ var (
 	)
 
 	// ErrArticulosNoListosParaEntrega is returned by MarcarListoEntrega when
-	// an article is neither in listo_entrega nor standby nor terminal.
+	// an article is not in a stage the folio origin admits for delivery.
 	ErrArticulosNoListosParaEntrega = apperror.NewValidation(
 		"warranty_article_not_ready",
-		"todos los artículos deben estar en listo_entrega, standby o una etapa terminal",
+		"hay artículos que todavía no están listos para entrega",
 	)
 
-	// ErrArticuloRutaRequerida is returned when leaving en_revision through
-	// a repair route without a defined route.
-	ErrArticuloRutaRequerida = apperror.NewValidation(
-		"warranty_route_required",
-		"no se puede salir de en_revision sin ruta definida",
+	// ErrArticuloPisoSinReingresar is returned by MarcarListoEntrega when a
+	// piso article is still in standby but was never reingresado_inventario.
+	ErrArticuloPisoSinReingresar = apperror.NewValidation(
+		"warranty_floor_article_not_reentered",
+		"los artículos de piso deben pasar por reingresado_inventario antes de marcar listo para entrega",
 	)
 
 	// ErrArticuloDictamenSoloProveedor is returned when a dictamen is
@@ -293,14 +293,15 @@ var (
 	)
 
 	// ErrClaveIdempotenciaMismatch is returned when the idempotency key
-	// belongs to THIS folio and THIS command, but the stored event does not
-	// describe the same operation the retry is asking for: the key is a
-	// repeat, its content is not. Treating it as a plain repetition would
-	// answer "already done" and silently drop the second operation (review
-	// of the B, 20-oct: the same key with "ROPERO" and later with "COMEDOR"
-	// answered success and never stored the comedor). It is a conflict, not
-	// a validation error: the key itself is well formed, it is the reuse
-	// that is wrong.
+	// already has an event on THIS folio, but that event does not describe
+	// the operation this call is asking for. The reuse may come from the
+	// same command with other content or from a different command on the
+	// same folio: either way the key is a repeat, its content is not.
+	// Treating it as a plain repetition would answer "already done" and
+	// silently drop the second operation (review of the B, 20-oct: the same
+	// key with "ROPERO" and later with "COMEDOR" answered success and never
+	// stored the comedor). It is a conflict, not a validation error: the key
+	// itself is well formed, it is the reuse that is wrong.
 	ErrClaveIdempotenciaMismatch = apperror.NewConflict(
 		"warranty_idempotency_key_mismatch",
 		"la clave de idempotencia ya se usó con otro contenido",

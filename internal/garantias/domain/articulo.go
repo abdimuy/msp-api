@@ -40,6 +40,8 @@ type Articulo struct {
 	// the rest.
 	nuevo      bool
 	modificado bool
+
+	reingresadoInventario bool
 }
 
 // NewArticuloParams carries the inputs to newArticulo.
@@ -128,14 +130,7 @@ func HydrateArticulo(p HydrateArticuloParams) *Articulo {
 // avanzar moves the article stage to hasta. The origin decides which routes the
 // folio may walk (R1) and AvanzarArticulo's reach is bounded by R2; both rules
 // are resolved against the single table in transiciones.go via puedeAvanzar.
-// Leaving en_revision through a repair route still requires a defined route
-// (cross-validation #3), whether the move comes from the diagnosis command or a
-// bare AvanzarArticulo.
 func (a *Articulo) avanzar(hasta Etapa, origen OrigenFolio, now time.Time) error {
-	if a.etapa == EtapaEnRevision && a.ruta == nil &&
-		(hasta == EtapaOrdenGenerada || hasta == EtapaEnTaller) {
-		return ErrArticuloRutaRequerida
-	}
 	if !puedeAvanzar(a.etapa, hasta, origen) {
 		return ErrTransicionEtapaNoPermitida
 	}
@@ -152,6 +147,9 @@ func (a *Articulo) avanzar(hasta Etapa, origen OrigenFolio, now time.Time) error
 func (a *Articulo) aplicarUbicacion(hasta Etapa) {
 	if ubicacion, impone := ubicacionParaEtapa(hasta); impone {
 		a.ubicacion = ubicacion
+	}
+	if hasta == EtapaReingresadoInventario {
+		a.reingresadoInventario = true
 	}
 }
 
@@ -183,6 +181,15 @@ func desenlaceAutomatico(a *Articulo) *Desenlace {
 		return &d
 	}
 	return nil
+}
+
+// pasoPorReingresadoInventario reports whether the article passed through
+// reingresado_inventario in its history.
+func (a *Articulo) pasoPorReingresadoInventario() bool {
+	if a.etapa == EtapaReingresadoInventario {
+		return true
+	}
+	return a.reingresadoInventario
 }
 
 // pasoPorReparado reports whether the article went through a repair. It is
@@ -242,10 +249,15 @@ func dictamenTarget(d Dictamen) Etapa {
 // advances toward the branch target (aceptada -> reparado_proveedor,
 // rechazada -> listo_entrega, sin_falla -> espera_respuesta_cliente). It is
 // only legal for the supplier route (cross-validation #1) and only from
-// dictamen_recibido.
+// dictamen_recibido: the machine alone is not enough, because its
+// reparado_proveedor -> listo_entrega and espera_respuesta_cliente ->
+// listo_entrega edges would otherwise let a second verdict be applied.
 func (a *Articulo) registrarDictamen(d Dictamen, now time.Time) error {
 	if a.ruta == nil || !a.ruta.EsProveedor() {
 		return ErrArticuloDictamenSoloProveedor
+	}
+	if a.etapa != EtapaDictamenRecibido {
+		return ErrTransicionEtapaNoPermitida
 	}
 	hasta := dictamenTarget(d)
 	if !a.etapa.CanTransitionTo(hasta) {
@@ -259,33 +271,44 @@ func (a *Articulo) registrarDictamen(d Dictamen, now time.Time) error {
 	return nil
 }
 
-// autorizarCambioFisico moves the article into standby, opening the parallel
-// replacement flow. A replacement born in listo_entrega can be swapped too
-// (decision 9 carve-out), since the machine gives listo_entrega no other
-// exit; that carve-out is the deliberate deviation the task report calls
-// out.
+// autorizarCambioFisico moves the article along the swap path resolved by
+// swapPath, ending in standby and opening the parallel replacement flow.
 func (a *Articulo) autorizarCambioFisico(now time.Time) error {
-	if a.rol.EsReemplazo() && a.etapa == EtapaListoEntrega {
-		a.etapa = EtapaStandby
-		a.aplicarUbicacion(EtapaStandby)
-		a.tocar(now)
-		return nil
+	path, err := a.swapPath()
+	if err != nil {
+		return err
 	}
-	// The applied edges are validated against the stage machine: for espera
-	// the direct espera -> standby edge, for en_taller its composed path
-	// en_taller -> cambio_autorizado -> standby, whose meaningful guard is the
-	// cambio_autorizado -> standby edge (the first hop is machine-guaranteed).
-	from := a.etapa
-	if from == EtapaEnTaller {
-		from = EtapaCambioAutorizado
-	}
-	if !from.CanTransitionTo(EtapaStandby) {
-		return ErrTransicionEtapaNoPermitida
-	}
-	a.etapa = EtapaStandby
-	a.aplicarUbicacion(EtapaStandby)
+	a.etapa = path[len(path)-1]
+	a.aplicarUbicacion(a.etapa)
 	a.tocar(now)
 	return nil
+}
+
+// swapPath resolves the stage hops a physical swap walks from the current
+// stage, validating every edge against the machine. The workshop path passes
+// through cambio_autorizado, so authorizing the swap stays a fact of its own in
+// the timeline instead of jumping straight from en_taller to standby; the
+// customer path (espera_respuesta_cliente -> standby) is a single hop. A
+// replacement born in listo_entrega is swapped too (decision 9 carve-out),
+// since the machine gives listo_entrega no other exit; that carve-out is the
+// deliberate deviation the task report calls out.
+func (a *Articulo) swapPath() ([]Etapa, error) {
+	if a.rol.EsReemplazo() && a.etapa == EtapaListoEntrega {
+		return []Etapa{EtapaStandby}, nil
+	}
+	if a.etapa == EtapaEnTaller {
+		if !a.etapa.CanTransitionTo(EtapaCambioAutorizado) {
+			return nil, ErrTransicionEtapaNoPermitida
+		}
+		if !EtapaCambioAutorizado.CanTransitionTo(EtapaStandby) {
+			return nil, ErrTransicionEtapaNoPermitida
+		}
+		return []Etapa{EtapaCambioAutorizado, EtapaStandby}, nil
+	}
+	if !a.etapa.CanTransitionTo(EtapaStandby) {
+		return nil, ErrTransicionEtapaNoPermitida
+	}
+	return []Etapa{EtapaStandby}, nil
 }
 
 // desenlaceTarget returns the terminal stage a parallel outcome lands the
@@ -408,7 +431,13 @@ func (a *Articulo) Clave() string { return a.clave }
 func (a *Articulo) Description() string { return a.description }
 
 // Ruta returns the repair route (nil until a diagnosis selects one).
-func (a *Articulo) Ruta() *RutaReparacion { return a.ruta }
+func (a *Articulo) Ruta() *RutaReparacion {
+	if a.ruta == nil {
+		return nil
+	}
+	r := *a.ruta
+	return &r
+}
 
 // Etapa returns the article's position in the stage machine.
 func (a *Articulo) Etapa() Etapa { return a.etapa }
@@ -417,10 +446,22 @@ func (a *Articulo) Etapa() Etapa { return a.etapa }
 func (a *Articulo) Ubicacion() Ubicacion { return a.ubicacion }
 
 // Dictamen returns the supplier verdict after dictamen_recibido.
-func (a *Articulo) Dictamen() *Dictamen { return a.dictamen }
+func (a *Articulo) Dictamen() *Dictamen {
+	if a.dictamen == nil {
+		return nil
+	}
+	d := *a.dictamen
+	return &d
+}
 
 // Desenlace returns the parallel-flow outcome after standby.
-func (a *Articulo) Desenlace() *Desenlace { return a.desenlace }
+func (a *Articulo) Desenlace() *Desenlace {
+	if a.desenlace == nil {
+		return nil
+	}
+	d := *a.desenlace
+	return &d
+}
 
 // CerradoEn returns when the article was dropped from the folio, if it was.
 func (a *Articulo) CerradoEn() *time.Time { return a.cerradoEn }

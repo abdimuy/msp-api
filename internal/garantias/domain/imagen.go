@@ -91,21 +91,21 @@ func NewImagen(p NewImagenParams) (*Imagen, error) {
 	if !huellaValida(p.Huella) {
 		return nil, ErrHuellaInvalida
 	}
-	ruta := strings.TrimSpace(p.Ruta)
+	ruta := normalizarNFC(strings.TrimSpace(p.Ruta))
 	if !rutaRelativa(ruta) {
 		return nil, ErrImagenRutaInvalida
 	}
 	if utf8.RuneCountInString(ruta) > 500 {
 		return nil, ErrImagenRutaMuyLarga
 	}
-	subidaPor := strings.TrimSpace(p.SubidaPor)
+	subidaPor := normalizarNFC(strings.TrimSpace(p.SubidaPor))
 	if subidaPor == "" {
 		return nil, ErrImagenSubidaPorObligatorio
 	}
 	if utf8.RuneCountInString(subidaPor) > 64 {
 		return nil, ErrImagenSubidaPorMuyLargo
 	}
-	description := strings.TrimSpace(p.Description)
+	description := normalizarNFC(strings.TrimSpace(p.Description))
 	if utf8.RuneCountInString(description) > 500 {
 		return nil, ErrImagenDescriptionMuyLarga
 	}
