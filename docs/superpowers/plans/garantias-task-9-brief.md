@@ -2,7 +2,7 @@
 
 > **Rama:** `feat/garantias-t9`, que creas tú desde `feat/garantias-integracion` (`git fetch && git switch -c feat/garantias-t9 origin/feat/garantias-integracion`). El PR va contra `feat/garantias-integracion`, no contra `main`.
 > **Spec:** [`2026-07-27-garantias-design.md`](../specs/2026-07-27-garantias-design.md), actualizado el 26 de octubre: §3.3, §3.4, **§4.1 completo**, §6 (idempotencia y rutas), §7, §8 y §10.
-> **Plazo:** **una sola entrega, lunes 2 de noviembre, 1pm**, con la tarea completa e integrada con Ruben (tarea 10). No hay entregas parciales ni revisiones intermedias: empujas a tu rama antes de irte cada día (1pm) y avanzas lo más que puedas. No hay holgura.
+> **Plazo:** **una sola entrega, martes 3 de noviembre, 1pm**, con la tarea completa e integrada con Ruben (tarea 10). No hay entregas parciales ni revisiones intermedias: empujas a tu rama antes de irte cada día (1pm) y avanzas lo más que puedas. No hay holgura.
 > **En paralelo:** Ruben hace la tarea 10. Los archivos de cada uno están listados abajo y **no se cruzan**.
 
 ## Qué construyes
@@ -250,8 +250,8 @@ Lo que hayas hecho distinto al brief, declarado con el porqué.
 | **Jueves 29, temprano** | `app/huella.go` empujado a tu rama y avisado a Ruben |
 | **Jueves 29, 1pm** | Empujado lo que lleves (orden sugerido: D1, D2 y D3, las trece rutas JSON, los pendientes del #30) |
 | **Viernes 30, 1pm** | Empujado `entregar-garantia` multipart y `cerrar` con justificación |
-| **Lunes 2, a primera hora** | Tu parte terminada: los tres e2e por HTTP, K1–K15 y cobertura |
-| **Lunes 2, 1pm** | **Entrega única**, con Ruben: integración, barrido de seguridad final sobre las diecinueve operaciones, reporte y PR contra `feat/garantias-integracion` |
+| **Lunes 2, 1pm** | Tu parte terminada: los tres e2e por HTTP, K1–K15 y cobertura |
+| **Martes 3, 1pm** | **Entrega única**, con Ruben: integración, barrido de seguridad final sobre las diecinueve operaciones, reporte y PR contra `feat/garantias-integracion` |
 
 Los avances diarios los reviso. Si en algún momento ves que no llegas, avísame ese mismo día.
 
