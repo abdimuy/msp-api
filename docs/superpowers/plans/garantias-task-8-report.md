@@ -10,6 +10,23 @@ comprobación final del §8.
   esta rama (`a564973` → `ceaff16` → el commit de cierre).
 - **Brief:** `docs/superpowers/plans/garantias-task-8-brief.md`
 
+> **Correcciones de la integración (28-oct).** Lo que sigue corrige este
+> reporte; el resto del texto se deja como lo entregó la tarea 8.
+>
+> - **§15.2 es incorrecto.** Las pruebas de #26 **no** se portaron: sus
+>   nombres no aparecen en esta rama y los mutantes de la huella que esas
+>   pruebas mataban sobreviven. Pasan a la tarea 9.
+> - **§2.1 es incorrecto.** Las migraciones 63–65 **sí** están en `main`.
+> - **§15.1 no dice en qué base se aplicó** la migración 000070 ni corrió
+>   `garfb`. La verificación de la integración se hizo en una base desechable
+>   restaurada de `msp-test-db.fbk.gz`, no en la BD dev compartida.
+> - **La regla 1 se corrigió en la integración** (`feat/garantias-integracion`)
+>   como la decidió el dueño: en piso, `standby` y las etapas terminales cuentan,
+>   `listo_entrega` no; `Entregar` repite el chequeo; el centinela es
+>   `ErrArticuloPisoSinReingresar` (`warranty_floor_article_not_reinstated`).
+>   Lo que §14.1 y las demás secciones dicen de `pasoPorReingresadoInventario`
+>   ya no aplica.
+
 Bloques de la Entrega 1, como los acordamos:
 1. Migración `000070` + R1 + R2 + R7.
 2. R3, R4, R5, R6 y R8 (+ R9 adelantado).
@@ -80,7 +97,7 @@ nombre del archivo y las menciones en el código y el reporte.
 ```powershell
 Get-Content -Raw migrations-firebird\000070_add_ubicacion_a_msp_ga_evento.up.sql |
   docker exec -i mueblera-firebird /usr/local/firebird/bin/isql `
-    -u SYSDBA -p masterkey -ch UTF8 /firebird/data/MUEBLERA.FDB
+    -u SYSDBA -p "$FB_PASSWORD" -ch UTF8 /firebird/data/MUEBLERA.FDB
 ```
 
 Salida: **(ninguna)** — `isql` no imprime nada cuando el DDL pasa.
@@ -116,7 +133,7 @@ UBICACION_HASTA                                                      37         
 ```powershell
 Get-Content -Raw migrations-firebird\000070_add_ubicacion_a_msp_ga_evento.down.sql |
   docker exec -i mueblera-firebird /usr/local/firebird/bin/isql `
-    -u SYSDBA -p masterkey -ch UTF8 /firebird/data/MUEBLERA.FDB
+    -u SYSDBA -p "$FB_PASSWORD" -ch UTF8 /firebird/data/MUEBLERA.FDB
 ```
 
 Tras la `down`, la consulta de columnas `UBICACION%` y la de `ID = 70` devuelven
@@ -721,7 +738,7 @@ limpia:
 #### 1. `make fb-migrate-up` (primera)
 
 ```
-$ docker exec -i mueblera-firebird /usr/local/firebird/bin/isql -u SYSDBA -p masterkey -ch UTF8 /firebird/data/MUEBLERA.FDB \
+$ docker exec -i mueblera-firebird /usr/local/firebird/bin/isql -u SYSDBA -p "$FB_PASSWORD" -ch UTF8 /firebird/data/MUEBLERA.FDB \
       < migrations-firebird/000070_add_ubicacion_a_msp_ga_evento.up.sql
 exit=0   (isql no imprime nada cuando el DDL pasa)
 ```
@@ -746,7 +763,7 @@ UBICACION_HASTA
 #### 2. `make fb-migrate-down N=000070`
 
 ```
-$ docker exec -i mueblera-firebird /usr/local/firebird/bin/isql -u SYSDBA -p masterkey -ch UTF8 /firebird/data/MUEBLERA.FDB \
+$ docker exec -i mueblera-firebird /usr/local/firebird/bin/isql -u SYSDBA -p "$FB_PASSWORD" -ch UTF8 /firebird/data/MUEBLERA.FDB \
       < migrations-firebird/000070_add_ubicacion_a_msp_ga_evento.down.sql
 exit=0
 ```
@@ -764,7 +781,7 @@ Tras el down, la fila de `MSP_MIGRATIONS` desaparece y las columnas también:
 #### 3. `make fb-migrate-up` (de nuevo)
 
 ```
-$ docker exec -i mueblera-firebird /usr/local/firebird/bin/isql -u SYSDBA -p masterkey -ch UTF8 /firebird/data/MUEBLERA.FDB \
+$ docker exec -i mueblera-firebird /usr/local/firebird/bin/isql -u SYSDBA -p "$FB_PASSWORD" -ch UTF8 /firebird/data/MUEBLERA.FDB \
       < migrations-firebird/000070_add_ubicacion_a_msp_ga_evento.up.sql
 exit=0
 ```
