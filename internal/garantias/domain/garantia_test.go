@@ -632,16 +632,21 @@ func TestAvanzarArticulo_Invalida(t *testing.T) {
 	}
 }
 
-func TestAvanzarArticulo_RequiereRutaDesdeEnRevision(t *testing.T) {
+// TestAvanzarArticulo_NoSaltaElDiagnostico pins R2 on the repair route:
+// orden_generada and en_taller only come out of RegistrarDiagnostico, so a bare
+// AvanzarArticulo may not take them from en_revision.
+func TestAvanzarArticulo_NoSaltaElDiagnostico(t *testing.T) {
 	t.Parallel()
 	g := openPiso(t)
 	a := addArticle(t, g, "silla")
 	a = advance(t, g, a, domain.EtapaEnRevision)
 	pendientes := countPending(g)
 
-	err := g.AvanzarArticulo(a.ID(), domain.EtapaOrdenGenerada, actor("juan"), fixed)
-	if !errors.Is(err, domain.ErrArticuloRutaRequerida) {
-		t.Fatalf("want ErrArticuloRutaRequerida, got %v", err)
+	for _, hasta := range []domain.Etapa{domain.EtapaOrdenGenerada, domain.EtapaEnTaller} {
+		err := g.AvanzarArticulo(a.ID(), hasta, actor("juan"), fixed)
+		if !errors.Is(err, domain.ErrTransicionEtapaNoPermitida) {
+			t.Fatalf("AvanzarArticulo(%s): want ErrTransicionEtapaNoPermitida, got %v", hasta, err)
+		}
 	}
 	if a.Etapa() != domain.EtapaEnRevision || countPending(g) != pendientes {
 		t.Fatalf("no mutation/event expected")
@@ -1259,7 +1264,8 @@ func TestMutaciones_RechazanActorInvalido(t *testing.T) {
 		a = advance(t, g, a, domain.EtapaEnRevision)
 		a = diagnostico(t, g, a, domain.RutaReparacionTaller)
 		a = advance(t, g, a, domain.EtapaReparadoTaller)
-		advance(t, g, a, domain.EtapaListoEntrega)
+		a = advance(t, g, a, domain.EtapaListoEntrega)
+		advance(t, g, a, domain.EtapaReingresadoInventario)
 		pendientes := countPending(g)
 		err := g.MarcarListoEntrega(malo, fixed)
 		if !errors.Is(err, domain.ErrEventoUsuarioObligatorio) {
@@ -1279,7 +1285,8 @@ func TestMutaciones_RechazanActorInvalido(t *testing.T) {
 		a = advance(t, g, a, domain.EtapaEnRevision)
 		a = diagnostico(t, g, a, domain.RutaReparacionTaller)
 		a = advance(t, g, a, domain.EtapaReparadoTaller)
-		advance(t, g, a, domain.EtapaListoEntrega)
+		a = advance(t, g, a, domain.EtapaListoEntrega)
+		advance(t, g, a, domain.EtapaReingresadoInventario)
 		if err := g.MarcarListoEntrega(actor("juan"), fixed); err != nil {
 			t.Fatalf("setup: %v", err)
 		}
@@ -1307,7 +1314,8 @@ func TestMutaciones_RechazanActorInvalido(t *testing.T) {
 		a = advance(t, g, a, domain.EtapaEnRevision)
 		a = diagnostico(t, g, a, domain.RutaReparacionTaller)
 		a = advance(t, g, a, domain.EtapaReparadoTaller)
-		advance(t, g, a, domain.EtapaListoEntrega)
+		a = advance(t, g, a, domain.EtapaListoEntrega)
+		advance(t, g, a, domain.EtapaReingresadoInventario)
 		if err := g.MarcarListoEntrega(actor("juan"), fixed); err != nil {
 			t.Fatalf("setup: %v", err)
 		}
@@ -1468,11 +1476,13 @@ func TestMarcarListoEntrega_Guardia(t *testing.T) {
 	t.Parallel()
 	t.Run("pasa_con_standby_y_reemplazo", func(t *testing.T) {
 		t.Parallel()
-		g := openPiso(t)
+		g := openCliente(t)
 		a := addArticle(t, g, "silla")
 		if err := g.IniciarProceso(actor("juan"), fixed); err != nil {
 			t.Fatalf("setup: %v", err)
 		}
+		a = advance(t, g, a, domain.EtapaPendienteRecoleccion)
+		a = advance(t, g, a, domain.EtapaRecolectado)
 		a = advance(t, g, a, domain.EtapaEnRevision)
 		a = diagnostico(t, g, a, domain.RutaReparacionTaller)
 		swap(t, g, a) // original standby + reemplazo listo_entrega
@@ -1484,7 +1494,7 @@ func TestMarcarListoEntrega_Guardia(t *testing.T) {
 			t.Fatalf("Estado() = %q, want listo_entrega", g.Estado())
 		}
 	})
-	t.Run("rechaza_articulo_en_camino", func(t *testing.T) {
+	t.Run("rechaza_standby_sin_reingresar", func(t *testing.T) {
 		t.Parallel()
 		g := openPiso(t)
 		a := addArticle(t, g, "silla")
@@ -1493,12 +1503,29 @@ func TestMarcarListoEntrega_Guardia(t *testing.T) {
 		}
 		a = advance(t, g, a, domain.EtapaEnRevision)
 		a = diagnostico(t, g, a, domain.RutaReparacionTaller)
-		swap(t, g, a)
+		swap(t, g, a) // original standby sin pasar por reingresado_inventario
 
-		// tercer artículo atascado en en_taller
-		tercero := addArticle(t, g, "mesa")
-		tercero = advance(t, g, tercero, domain.EtapaEnRevision)
-		diagnostico(t, g, tercero, domain.RutaReparacionTaller)
+		pendientes := countPending(g)
+		err := g.MarcarListoEntrega(actor("juan"), fixed)
+		if !errors.Is(err, domain.ErrArticuloPisoSinReingresar) {
+			t.Fatalf("want ErrArticuloPisoSinReingresar, got %v", err)
+		}
+		if g.Estado() != domain.EstadoFolioEnProceso {
+			t.Fatalf("estado mutado: %q", g.Estado())
+		}
+		if countPending(g) != pendientes {
+			t.Fatalf("evento encolado en fallo — §4.4 rota")
+		}
+	})
+	t.Run("rechaza_articulo_en_camino", func(t *testing.T) {
+		t.Parallel()
+		g := openPiso(t)
+		a := addArticle(t, g, "silla")
+		if err := g.IniciarProceso(actor("juan"), fixed); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		a = advance(t, g, a, domain.EtapaEnRevision)
+		diagnostico(t, g, a, domain.RutaReparacionTaller) // atascado en en_taller
 
 		pendientes := countPending(g)
 		err := g.MarcarListoEntrega(actor("juan"), fixed)
@@ -1549,7 +1576,8 @@ func TestFolio_EntregaYCierra(t *testing.T) {
 	a = advance(t, g, a, domain.EtapaEnRevision)
 	a = diagnostico(t, g, a, domain.RutaReparacionTaller)
 	a = advance(t, g, a, domain.EtapaReparadoTaller)
-	advance(t, g, a, domain.EtapaListoEntrega)
+	a = advance(t, g, a, domain.EtapaListoEntrega)
+	advance(t, g, a, domain.EtapaReingresadoInventario)
 	if err := g.MarcarListoEntrega(actor("juan"), fixed); err != nil {
 		t.Fatalf("setup: %v", err)
 	}

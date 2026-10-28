@@ -256,18 +256,18 @@ func TestE2E_PisoDeLaRecepcionAlCierre(t *testing.T) {
 			require.NoError(t, err, "avanzar a %s", etapa)
 		}
 
-		_, err = svc.MarcarListoEntrega(ctx, app.MarcarListoEntregaCmd{
-			GarantiaID:        id,
-			ClaveIdempotencia: clave(),
-			DeviceCreatedAt:   clk.Now(),
-		})
-		require.NoError(t, err)
-
 		// Piso: listo_entrega -> reingresado_inventario, sin Entregar.
 		_, err = svc.AvanzarArticulo(ctx, app.AvanzarArticuloCmd{
 			GarantiaID:        id,
 			ArticuloID:        articulo.ID(),
 			EtapaDestino:      domain.EtapaReingresadoInventario,
+			ClaveIdempotencia: clave(),
+			DeviceCreatedAt:   clk.Now(),
+		})
+		require.NoError(t, err)
+
+		_, err = svc.MarcarListoEntrega(ctx, app.MarcarListoEntregaCmd{
+			GarantiaID:        id,
 			ClaveIdempotencia: clave(),
 			DeviceCreatedAt:   clk.Now(),
 		})

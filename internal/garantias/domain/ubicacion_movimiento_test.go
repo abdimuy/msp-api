@@ -118,7 +118,6 @@ func eventoDeArticulo(t *testing.T, g *domain.Garantia, id uuid.UUID) *domain.Ev
 // stage event records.
 func TestUbicacionAutomatica_PorEtapa(t *testing.T) {
 	t.Parallel()
-	rutaTaller := domain.RutaReparacionTaller
 	casos := []struct {
 		nombre         string
 		origen         domain.OrigenFolio
@@ -140,11 +139,6 @@ func TestUbicacionAutomatica_PorEtapa(t *testing.T) {
 			"enviado_proveedor", domain.OrigenFolioCliente,
 			domain.EtapaOrdenGenerada, domain.EtapaEnviadoProveedor,
 			domain.UbicacionAlmacenRevision, domain.UbicacionProveedor, nil,
-		},
-		{
-			"en_taller", domain.OrigenFolioPiso,
-			domain.EtapaEnRevision, domain.EtapaEnTaller,
-			domain.UbicacionAlmacenRevision, domain.UbicacionTaller, &rutaTaller,
 		},
 		{
 			"reingresado_inventario", domain.OrigenFolioPiso,
@@ -176,6 +170,34 @@ func TestUbicacionAutomatica_PorEtapa(t *testing.T) {
 				t.Fatalf("UbicacionHasta = %v, want %q", e.UbicacionHasta(), tc.quiero)
 			}
 		})
+	}
+}
+
+// TestUbicacionAutomatica_Diagnostico covers the en_taller R3 row: that stage
+// is only reachable through RegistrarDiagnostico, since AvanzarArticulo may not
+// take the en_revision -> en_taller edge (R2 keeps the decision commands).
+func TestUbicacionAutomatica_Diagnostico(t *testing.T) {
+	t.Parallel()
+	g, a := hidratarFolio(t, hidratarParams{
+		origen:    domain.OrigenFolioPiso,
+		etapa:     domain.EtapaEnRevision,
+		ubicacion: domain.UbicacionAlmacenRevision,
+	})
+	if err := g.RegistrarDiagnostico(a.ID(), domain.RutaReparacionTaller, actorDecisor("juan"), fixed); err != nil {
+		t.Fatalf("RegistrarDiagnostico: %v", err)
+	}
+	if a.Ubicacion() != domain.UbicacionTaller {
+		t.Fatalf("ubicacion = %q, want %q", a.Ubicacion(), domain.UbicacionTaller)
+	}
+	e := lastEvent(t, g)
+	if e.Tipo() != domain.TipoEventoDiagnosticoRegistrado {
+		t.Fatalf("evento = %q, want diagnostico_registrado", e.Tipo())
+	}
+	if e.UbicacionDesde() == nil || *e.UbicacionDesde() != domain.UbicacionAlmacenRevision {
+		t.Fatalf("UbicacionDesde = %v, want %q", e.UbicacionDesde(), domain.UbicacionAlmacenRevision)
+	}
+	if e.UbicacionHasta() == nil || *e.UbicacionHasta() != domain.UbicacionTaller {
+		t.Fatalf("UbicacionHasta = %v, want %q", e.UbicacionHasta(), domain.UbicacionTaller)
 	}
 }
 

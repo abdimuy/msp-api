@@ -198,17 +198,17 @@ var (
 	)
 
 	// ErrArticulosNoListosParaEntrega is returned by MarcarListoEntrega when
-	// an article is neither in listo_entrega nor standby nor terminal.
+	// an article is not in a stage the folio origin admits for delivery.
 	ErrArticulosNoListosParaEntrega = apperror.NewValidation(
 		"warranty_article_not_ready",
-		"todos los artículos deben estar en listo_entrega, standby o una etapa terminal",
+		"hay artículos que todavía no están listos para entrega",
 	)
 
-	// ErrArticuloRutaRequerida is returned when leaving en_revision through
-	// a repair route without a defined route.
-	ErrArticuloRutaRequerida = apperror.NewValidation(
-		"warranty_route_required",
-		"no se puede salir de en_revision sin ruta definida",
+	// ErrArticuloPisoSinReingresar is returned by MarcarListoEntrega when a
+	// piso article is still in standby but was never reingresado_inventario.
+	ErrArticuloPisoSinReingresar = apperror.NewValidation(
+		"warranty_floor_article_not_reentered",
+		"los artículos de piso deben pasar por reingresado_inventario antes de marcar listo para entrega",
 	)
 
 	// ErrArticuloDictamenSoloProveedor is returned when a dictamen is

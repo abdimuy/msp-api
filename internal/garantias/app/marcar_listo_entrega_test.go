@@ -11,12 +11,12 @@ import (
 )
 
 // TestMarcarListoEntrega_CaminoFeliz closes the working phase: every article is
-// ready (a standby one does not block, decision 4) and the folio waits for the
-// client.
+// ready (a standby one does not block on a cliente folio, decision 4) and the
+// folio waits for the client.
 func TestMarcarListoEntrega_CaminoFeliz(t *testing.T) {
 	t.Parallel()
 	svc, grepo, _, _, tx, _, clk, _ := setupService()
-	s := sembrar(t, grepo, domain.EstadoFolioEnProceso, piso(), domain.EtapaStandby)
+	s := sembrar(t, grepo, domain.EstadoFolioEnProceso, cliente(), domain.EtapaStandby)
 
 	res, err := svc.MarcarListoEntrega(context.Background(), app.MarcarListoEntregaCmd{
 		GarantiaID:        s.g.ID(),

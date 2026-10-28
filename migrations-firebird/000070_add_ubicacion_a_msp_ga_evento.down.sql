@@ -1,5 +1,5 @@
 -- ============================================================================
--- Rollback de la migración 000065: MSP_GA_EVENTO.UBICACION_DESDE / _HASTA
+-- Rollback de la migración 000070: MSP_GA_EVENTO.UBICACION_DESDE / _HASTA
 -- ============================================================================
 -- Orden inverso al up. Es destructivo por definición —se pierde el rastro de
 -- ubicación de cada evento—, pero no hay nada que preservar: el dato sólo
@@ -20,5 +20,5 @@ COMMIT;
 ALTER TABLE MSP_GA_EVENTO DROP UBICACION_DESDE;
 COMMIT;
 
-DELETE FROM MSP_MIGRATIONS WHERE ID = 65;
+DELETE FROM MSP_MIGRATIONS WHERE ID = 70;
 COMMIT;

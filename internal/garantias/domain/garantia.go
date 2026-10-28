@@ -562,13 +562,27 @@ func (g *Garantia) IniciarProceso(actor ActorParams, now time.Time) error {
 }
 
 // MarcarListoEntrega moves the folio to listo_entrega once every article is
-// in listo_entrega, standby or a terminal stage (decision 4). It emits the
-// folio_listo_entrega event (R7).
+// ready. For cliente folios, listo_entrega, standby or a terminal stage is
+// allowed. For piso folios, listo_entrega does not count: articles must be in
+// standby or terminal stages, and a piso article in standby must have passed
+// through reingresado_inventario.
 func (g *Garantia) MarcarListoEntrega(actor ActorParams, now time.Time) error {
 	if !g.estado.CanTransitionTo(EstadoFolioListoEntrega) {
 		return ErrTransicionEstadoNoPermitida
 	}
 	for _, a := range g.articulos {
+		if g.origen.EsPiso() {
+			if a.Etapa() == EtapaListoEntrega {
+				return ErrArticulosNoListosParaEntrega
+			}
+			if a.Etapa() == EtapaStandby && !a.pasoPorReingresadoInventario() {
+				return ErrArticuloPisoSinReingresar
+			}
+			if a.Etapa() == EtapaStandby || a.Etapa().EsTerminal() {
+				continue
+			}
+			return ErrArticulosNoListosParaEntrega
+		}
 		if !stageListoParaEntrega(a.Etapa()) {
 			return ErrArticulosNoListosParaEntrega
 		}

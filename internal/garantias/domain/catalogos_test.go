@@ -73,7 +73,7 @@ func TestR11_SiguientesPorAvanzar_OrdenEstable(t *testing.T) {
 	t.Parallel()
 	got := domain.SiguientesPorAvanzar(domain.EtapaEnRevision, domain.OrigenFolioPiso)
 	quiero := []domain.Etapa{
-		domain.EtapaOrdenGenerada, domain.EtapaEnTaller, domain.EtapaReingresadoInventario,
+		domain.EtapaReingresadoInventario,
 	}
 	if len(got) != len(quiero) {
 		t.Fatalf("SiguientesPorAvanzar(en_revision, piso) = %v, want %v", got, quiero)

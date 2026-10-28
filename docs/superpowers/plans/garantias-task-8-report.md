@@ -51,28 +51,25 @@ migración, como pide el brief.
 
 ### 2.1 Estado previo de la base (dev)
 
-La base tenía migraciones hasta `000062` (la `000063`/`000064` existen sólo en
-producción). Este entregable se escribió en su momento como `000065`, con ese
-número ya aplicado en la base de dev; al renumerarlo a `000070` (ver §2.0) hubo
-que retirar primero ese rastro viejo — las dos columnas y la fila `65` — antes de
-aplicar la `000070` limpia:
+La base tenía migraciones hasta `000062` (las migraciones posteriores existen sólo en
+producción). El entregable se renumeró a `000070` (ver §2.0); antes de aplicar
+la `000070` limpia hubo que retirar el rastro de la versión previa — las dos
+columnas y la fila correspondiente — de la base de dev:
 
 ```
---- tras retirar el rastro viejo 000065 ---
+--- tras retirar el rastro previo ---
 SELECT ID, NAME FROM MSP_MIGRATIONS WHERE ID >= 63 ORDER BY ID;
 (vacío)
 SELECT RDB$FIELD_NAME ... LIKE 'UBICACION%';
 (vacío)
 ```
 
-### 2.0 Por qué la migración es la `000070` y no la `000065`
+### 2.0 Por qué la migración es la `000070`
 
-El brief pedía la `000065` (era el número libre en `main` cuando se escribió).
-Desde entonces `main` y la base de dev avanzaron con las migraciones de flota
-(`000062`) y el líder pidió renumerar a `000070` para no chocar con las
-`000063`/`000064` de producción ni con las que se agregaron después. El
-contenido no cambia: sólo el número (`000070`), el `ID` de `MSP_MIGRATIONS`
-(`70`), el nombre del archivo y las menciones en el código y el reporte.
+El líder pidió renumerar a `000070` para no chocar con las migraciones que
+aparecieron en `main`/producción tras redactar el entregable. El contenido no
+cambia: sólo el número (`000070`), el `ID` de `MSP_MIGRATIONS` (`70`), el
+nombre del archivo y las menciones en el código y el reporte.
 
 ### 2.2 Aplicar la `up`
 
@@ -364,13 +361,17 @@ para que el líder lo sepa antes de mergear el #26.
    `feat/garantias-dominio-v2` (dos commits, un PR), por decisión tuya. Se
    declara aquí porque difiere del brief.
 7. **`RegistrarDesenlace` comparte archivo con `RegistrarDiagnostico`**
-   (`app/registrar_diagnostico.go`). El brief pide "cada uno en su archivo"
-   (línea 235), pero los dos comparten la envoltura de comando y `dupl` —que el
-   repo tiene activo en producción, con umbral 150— la marcaba como duplicada
+   (`app/registrar_diagnostico.go`), y `MoverArticulo` con `RegistrarDictamen`
+   (`app/articulo_no_decision.go`). El brief pide "cada uno en su archivo"
+   (línea 235), pero cada par comparte la envoltura de comando y `dupl` —que el
+   repo tiene activo en producción, con umbral 150— los marcaba como duplicados
    estando separados. Separarlos exigía incrustar la envoltura, lo que rompe los
-   literales con nombre de campo en 25 puntos de llamada. Unirlos deja los
-   llamadores intactos y el código se lee igual. Es la única desviación sobre el
-   "cada uno en su archivo"; los otros ocho comandos sí están cada uno en el suyo.
+   literales con nombre de campo en los puntos de llamada; unirlos deja los
+   llamadores intactos y el código se lee igual. Son las dos únicas desviaciones
+   sobre el "cada uno en su archivo"; los otros seis comandos sí están cada uno
+   en el suyo. Nada de esto usa `//nolint`: la directiva a nivel de función no
+   suprime `dupl` (el hallazgo arranca en la cláusula `package`) y las directivas
+   a nivel de archivo/paquete están descartadas en la revisión.
 8. **El ciclo up/down de la `000070`** se corrió con `docker exec … isql` en vez
    de `make fb-migrate-*`, porque `make` no existe en el shell de este entorno.
    Es el mismo comando que el Makefile arma dentro de esos targets; la salida
@@ -386,7 +387,8 @@ para que el líder lo sepa antes de mergear el #26.
 
 ### 11.1 Los 10 comandos (hecho)
 
-Cada uno en su archivo, todos por `ejecutarFolio`, pasando la **huella** del
+Cada comando en un archivo, salvo los dos pares que comparten envoltura (ver
+§10.7), todos por `ejecutarFolio`, pasando la **huella** del
 evento que producen (su tipo, y el artículo y/o la etapa cuando el comando los
 nombra) y parseando con el `Parse` del dominio los strings que vienen de fuera
 (el error del dominio se devuelve tal cual):
@@ -394,11 +396,11 @@ nombra) y parseando con el `Parse` del dominio los strings que vienen de fuera
 | Comando | Archivo | Permiso | Tipo de evento |
 |---|---|---|---|
 | `RegistrarDiagnostico` | `app/registrar_diagnostico.go` | `actualizar` | `diagnostico_registrado` |
-| `RegistrarDictamen` | `app/registrar_dictamen.go` | `actualizar` | `dictamen_registrado` |
+| `RegistrarDictamen` | `app/articulo_no_decision.go` | `actualizar` | `dictamen_registrado` |
 | `AutorizarCambioFisico` | `app/autorizar_cambio_fisico.go` | `autorizar` | `cambio_autorizado` |
 | `MarcarNoDevuelto` | `app/marcar_no_devuelto.go` | `autorizar` | `devolucion_fallida` |
 | `RegistrarDesenlace` | `app/registrar_diagnostico.go` | `autorizar` | `desenlace_registrado` |
-| `MoverArticulo` | `app/mover_articulo.go` | `actualizar` | `articulo_movido` |
+| `MoverArticulo` | `app/articulo_no_decision.go` | `actualizar` | `articulo_movido` |
 | `MarcarListoEntrega` | `app/marcar_listo_entrega.go` | `actualizar` | `folio_listo_entrega` |
 | `Entregar` | `app/entregar.go` | `cerrar` | `folio_entregado` (GPS obligatorio) |
 | `Cerrar` | `app/cerrar.go` | `cerrar` | `folio_cerrado` |
@@ -406,9 +408,11 @@ nombra) y parseando con el `Parse` del dominio los strings que vienen de fuera
 
 `RegistrarDesenlace` vive en el mismo archivo que `RegistrarDiagnostico` porque
 los dos comparten la misma envoltura de comando (folio, artículo, rol, clave,
-GPS) y `dupl` la marca como duplicada cuando cada uno está en su propio archivo.
-Separarlos exigiría incrustar la envoltura, lo que rompe los literales con
-nombre de campo en 25 puntos de llamada; juntarlos deja todos los llamadores
+GPS), y `MoverArticulo` comparte `articulo_no_decision.go` con
+`RegistrarDictamen` porque ambos comparten la envoltura de artículo sin rol
+decisor. En los dos casos `dupl` los marcaba como duplicados al estar separados:
+separarlos exigiría incrustar la envoltura, lo que rompe los literales con
+nombre de campo en los puntos de llamada; juntarlos deja todos los llamadores
 intactos y mantiene la lectura.
 
 Ayudantes nuevos en `app/service.go`: `actorDeConRol` (el rol viaja en el
@@ -702,15 +706,15 @@ mismo contenedor, las mismas credenciales y el mismo `-ch UTF8`.
 
 #### 0. Estado de partida y renumeración
 
-La base de dev traía el rastro viejo de cuando la migración era la `000065` (las
-dos columnas y la fila `65`). Se retiró primero, para que la `000070` se aplicara
+La base de dev traía el rastro previo de esa migración (las dos columnas y la
+fila correspondiente). Se retiró primero, para que la `000070` se aplicara
 limpia:
 
 ```
---- MSP_MIGRATIONS >= 63 tras retirar el rastro viejo ---
+--- MSP_MIGRATIONS >= 63 tras retirar el rastro previo ---
 (vacío)
 
---- columnas UBICACION% tras retirar el rastro viejo ---
+--- columnas UBICACION% tras retirar el rastro previo ---
 (vacío)
 ```
 
@@ -822,8 +826,9 @@ incluye **sólo** lo del entregable (el tercero, además, sólo toca
 **Commit de la Entrega 2** (este):
 
 - Nuevos en `app/`: los 10 comandos (`registrar_diagnostico.go` —que también
-  contiene `RegistrarDesenlace`—, `registrar_dictamen.go`,
-  `autorizar_cambio_fisico.go`, `marcar_no_devuelto.go`, `mover_articulo.go`,
+  contiene `RegistrarDesenlace`—, `articulo_no_decision.go` —que contiene
+  `RegistrarDictamen` y `MoverArticulo`—,
+  `autorizar_cambio_fisico.go`, `marcar_no_devuelto.go`,
   `marcar_listo_entrega.go`, `entregar.go`, `cerrar.go`, `cancelar.go`) y sus
   `_test.go`.
 - Nuevos en `app/` (pruebas compartidas): `comandos_compartidos_test.go`,
@@ -863,7 +868,7 @@ quedaron **fuera** de ambos commits y siguen en el árbol de trabajo.
 
 **Entrega 3 — observaciones del líder al PR #30** (encima de la Entrega 2):
 
-- **Bloqueante, migración `000065` → `000070`**: `migrations-firebird/000070_*`
+- **Bloqueante, migración renumerada a `000070`**: `migrations-firebird/000070_*`
   (renombrada con `git mv`), `ID`/`WHERE` a `70`, y las menciones en
   `domain/articulo.go:192` y este reporte.
 - **Mayor, huella de idempotencia portada del #26** (§11.1): `domain/errors.go`
@@ -879,8 +884,8 @@ quedaron **fuera** de ambos commits y siguen en el árbol de trabajo.
 - **Menor, prueba de ancho de columna** (§11.6): `domain/catalogos_test.go`
   suma `TestR11_CatalogosCabenEnLaColumna` (etapas, ubicaciones y tipos de evento
   ≤ 28 chars y ASCII).
-- **Menores de redacción de la migración**: `ToWallClock` fuera del comentario y
-  la afirmación "vacía en todos los entornos" acotada (ver §13).
+- **Menores de redacción de la migración**: se corrigió la redacción del comentario
+  y se acotó la afirmación sobre el estado de la tabla (ver §13).
 
 ---
 
@@ -900,7 +905,7 @@ texto del commit viejo queda con la errata.
 
 ### 13.2 De dónde sale el rol de quien decide (`USUARIO`, `RolDecisor`)
 
-El líder preguntó por qué `RegistrarDiagnostico`/`RegistrarDictamen`/
+El líder preguntó por qué `RegistrarDiagnostico`/
 `AutorizarCambioFisico`/`RegistrarDesenlace`/`MarcarNoDevuelto` llevan `RolDecisor`
 en el comando y no lo toman de la identidad. La razón está documentada en el
 propio puerto: `internal/garantias/ports/outbound/identity.go:9-11` — `Usuario{}`
@@ -913,9 +918,92 @@ caro (`ErrRolDecisorObligatorio`).
 
 ### 13.3 Menores de la migración (redacción)
 
-En `000070_..._up.sql` se corrigieron dos frases que el líder observó: (1) ya no
-se cita `firebird.ToWallClock` como si escribiera estas columnas —es una función
-de tiempos, aquí el valor es el string del catálogo, escrito por Go—; (2) la
-afirmación "MSP_GA_EVENTO está vacía en todos los entornos" se acotó a lo que se
-puede verificar: en dev está vacía porque el módulo aún no tiene escritura desde
-la API, y las filas que existieran quedan con `NULL` (que es el valor legítimo).
+En `000070_..._up.sql` se corrigió la redacción del comentario: se acotó la
+afirmación sobre el estado de la tabla a lo verificable (en dev está vacía por
+el momento porque el módulo aún no tiene escritura desde la API), y las filas
+que existieran quedan con `NULL` (que es el valor legítimo).
+
+---
+
+## 14. Re-revisión del PR #30 (reglas de piso y de diagnóstico)
+
+Segunda vuelta de observaciones sobre la rama. Los cambios de esta sección
+están **sin commit** al escribir el reporte; el estado del árbol es el de §12
+más lo que sigue.
+
+### 14.1 Regla 1 — folio de piso: `listo_entrega` no cuenta
+
+`MarcarListoEntrega` ya no trata igual a los dos orígenes. En un folio de piso:
+
+- un artículo en `listo_entrega` **bloquea** (`ErrArticulosNoListosParaEntrega`):
+  el piso no entrega por la rama del cliente, su salida es
+  `reingresado_inventario`;
+- un artículo en `standby` sólo pasa si pasó por `reingresado_inventario`; si no,
+  el comando falla con el error nuevo `ErrArticuloPisoSinReingresar`
+  (`warranty_floor_article_not_reentered`);
+- las etapas terminales pasan.
+
+El artículo recuerda el paso por `reingresado_inventario` con el flag privado
+`reingresadoInventario` (se marca en `aplicarUbicacion`) y lo expone por
+`pasoPorReingresadoInventario()`. Como `reingresado_inventario` es terminal, el
+flag es defensivo: cubre filas históricas o hidratadas, no una ruta normal. Los
+folios de **cliente** conservan la regla anterior (decisión 4: `standby` no
+bloquea), y por eso el caso "standby no bloquea" de
+`TestMarcarListoEntrega_Guardia` se prueba con folio cliente.
+
+`ErrArticulosNoListosParaEntrega` también cambió de mensaje: ya no enumera una
+lista de etapas que ahora depende del origen, dice sólo que hay artículos que
+todavía no están listos.
+
+### 14.2 Regla 2 — `en_revision → orden_generada|en_taller` sólo por diagnóstico
+
+`AvanzarArticulo` ya no puede tomar esas dos aristas: `orden_generada` y
+`en_taller` entraron a `reservadaPorDecision`, así que sólo las alcanza
+`RegistrarDiagnostico` (que fija `RUTA` y emite `diagnostico_registrado`). Con la
+ruta cerrada, la guarda que exigía `RUTA` dentro de `articulo.avanzar` quedó
+muerta y se retiró junto con `ErrArticuloRutaRequerida`; la validación de la
+ruta sigue viviendo en `RegistrarDiagnostico`.
+
+Pruebas: `TestAvanzarArticulo_NoSaltaElDiagnostico` (antes
+`..._RequiereRutaDesdeEnRevision`) cubre los dos destinos y comprueba que no hay
+mutación ni evento; `TestUbicacionAutomatica_Diagnostico` cubre la fila R3 de
+`en_taller` (`almacen_revision → taller`) por el único camino que la alcanza, y
+la tabla de `TestUbicacionAutomatica_PorEtapa` ya no incluye ese caso. El E2E de
+piso y los oráculos de transición (`avanzar_origen_test.go`, `catalogos_test.go`,
+`folio_eventos_test.go`) se ajustaron al flujo real.
+
+### 14.3 Mutaciones del agregado que devolvían punteros internos
+
+`Dictamen()`, `Ruta()` y `Desenlace()` devuelven una copia del valor. Antes
+exponían el puntero interno y un llamador podía mutar el estado del artículo sin
+pasar por el agregado.
+
+### 14.4 `dupl` sin `//nolint`
+
+`MoverArticulo` y `RegistrarDictamen` comparten la envoltura de artículo sin rol
+decisor y `dupl` (umbral 150) los marcaba como duplicados con un hallazgo que
+arranca en la cláusula `package`; una directiva a nivel de función no lo suprime
+y las de archivo/paquete están descartadas en la revisión. Se resolvió como en
+`RegistrarDiagnostico`/`RegistrarDesenlace`: los dos comandos viven juntos en
+`app/articulo_no_decision.go`, sin ninguna directiva `nolint:dupl`.
+
+### 14.5 Verificación de esta vuelta
+
+```
+gofmt -l internal/garantias                                   (sin salida)
+go build ./...                                                (sin salida)
+go test ./internal/garantias/... -count=1                      ok (6 paquetes)
+golangci-lint run ./internal/garantias/...                     0 issues
+```
+
+La suite Firebird (`infra/garfb`) no se pudo correr contra la base en esta
+vuelta: Docker no está levantado en el entorno, así que los tests de integración
+se saltaron como está previsto (`t.Skip` sin `FB_DATABASE`). El flujo de piso
+del E2E quedó ajustado en el código y se validará cuando el contenedor esté
+disponible.
+
+### 14.6 Aplazado
+
+La idempotencia "misma clave, contenido distinto" sigue aplazada a la tarea 9
+(huella SHA-256 completa). El candado `primerPaso` y el registro de
+`usuarioEventos` no se tocaron en esta vuelta.

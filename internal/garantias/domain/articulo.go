@@ -40,6 +40,8 @@ type Articulo struct {
 	// the rest.
 	nuevo      bool
 	modificado bool
+
+	reingresadoInventario bool
 }
 
 // NewArticuloParams carries the inputs to newArticulo.
@@ -128,14 +130,7 @@ func HydrateArticulo(p HydrateArticuloParams) *Articulo {
 // avanzar moves the article stage to hasta. The origin decides which routes the
 // folio may walk (R1) and AvanzarArticulo's reach is bounded by R2; both rules
 // are resolved against the single table in transiciones.go via puedeAvanzar.
-// Leaving en_revision through a repair route still requires a defined route
-// (cross-validation #3), whether the move comes from the diagnosis command or a
-// bare AvanzarArticulo.
 func (a *Articulo) avanzar(hasta Etapa, origen OrigenFolio, now time.Time) error {
-	if a.etapa == EtapaEnRevision && a.ruta == nil &&
-		(hasta == EtapaOrdenGenerada || hasta == EtapaEnTaller) {
-		return ErrArticuloRutaRequerida
-	}
 	if !puedeAvanzar(a.etapa, hasta, origen) {
 		return ErrTransicionEtapaNoPermitida
 	}
@@ -152,6 +147,9 @@ func (a *Articulo) avanzar(hasta Etapa, origen OrigenFolio, now time.Time) error
 func (a *Articulo) aplicarUbicacion(hasta Etapa) {
 	if ubicacion, impone := ubicacionParaEtapa(hasta); impone {
 		a.ubicacion = ubicacion
+	}
+	if hasta == EtapaReingresadoInventario {
+		a.reingresadoInventario = true
 	}
 }
 
@@ -183,6 +181,15 @@ func desenlaceAutomatico(a *Articulo) *Desenlace {
 		return &d
 	}
 	return nil
+}
+
+// pasoPorReingresadoInventario reports whether the article passed through
+// reingresado_inventario in its history.
+func (a *Articulo) pasoPorReingresadoInventario() bool {
+	if a.etapa == EtapaReingresadoInventario {
+		return true
+	}
+	return a.reingresadoInventario
 }
 
 // pasoPorReparado reports whether the article went through a repair. It is
@@ -408,7 +415,13 @@ func (a *Articulo) Clave() string { return a.clave }
 func (a *Articulo) Description() string { return a.description }
 
 // Ruta returns the repair route (nil until a diagnosis selects one).
-func (a *Articulo) Ruta() *RutaReparacion { return a.ruta }
+func (a *Articulo) Ruta() *RutaReparacion {
+	if a.ruta == nil {
+		return nil
+	}
+	r := *a.ruta
+	return &r
+}
 
 // Etapa returns the article's position in the stage machine.
 func (a *Articulo) Etapa() Etapa { return a.etapa }
@@ -417,10 +430,22 @@ func (a *Articulo) Etapa() Etapa { return a.etapa }
 func (a *Articulo) Ubicacion() Ubicacion { return a.ubicacion }
 
 // Dictamen returns the supplier verdict after dictamen_recibido.
-func (a *Articulo) Dictamen() *Dictamen { return a.dictamen }
+func (a *Articulo) Dictamen() *Dictamen {
+	if a.dictamen == nil {
+		return nil
+	}
+	d := *a.dictamen
+	return &d
+}
 
 // Desenlace returns the parallel-flow outcome after standby.
-func (a *Articulo) Desenlace() *Desenlace { return a.desenlace }
+func (a *Articulo) Desenlace() *Desenlace {
+	if a.desenlace == nil {
+		return nil
+	}
+	d := *a.desenlace
+	return &d
+}
 
 // CerradoEn returns when the article was dropped from the folio, if it was.
 func (a *Articulo) CerradoEn() *time.Time { return a.cerradoEn }
