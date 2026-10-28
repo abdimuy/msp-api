@@ -49,12 +49,37 @@ func TestEntregar(t *testing.T) {
 		}
 	})
 
-	t.Run("piso_no_mueve_articulos", func(t *testing.T) {
+	t.Run("piso_rechaza_listo_entrega", func(t *testing.T) {
+		t.Parallel()
+		// Regla 1, defensive: a hydrated inconsistent piso folio with an
+		// article still in listo_entrega is refused. Delivering it would let
+		// R4 freeze the article without an outcome.
+		g, a := hidratarFolio(t, hidratarParams{
+			origen:    domain.OrigenFolioPiso,
+			estado:    domain.EstadoFolioListoEntrega,
+			etapa:     domain.EtapaListoEntrega,
+			ubicacion: domain.UbicacionAlmacenRevision,
+		})
+		pendientes := g.EventosPendientesCount()
+		err := g.Entregar(actorEntrega("juan"), fixed)
+		if !errors.Is(err, domain.ErrArticuloPisoSinReingresar) {
+			t.Fatalf("want ErrArticuloPisoSinReingresar, got %v", err)
+		}
+		if g.Estado() != domain.EstadoFolioListoEntrega {
+			t.Fatalf("estado mutado: %q", g.Estado())
+		}
+		if a.Etapa() != domain.EtapaListoEntrega || a.Ubicacion() != domain.UbicacionAlmacenRevision {
+			t.Fatalf("artículo mutado: %q/%q", a.Etapa(), a.Ubicacion())
+		}
+		if g.EventosPendientesCount() != pendientes {
+			t.Fatalf("evento encolado pese al rechazo")
+		}
+	})
+
+	t.Run("piso_reingresado_no_mueve_articulos", func(t *testing.T) {
 		t.Parallel()
 		// entregado only exists for cliente items (R1): a piso folio records the
-		// folio fact and moves no article. The article reaches listo_entrega
-		// only through reingresado_inventario (R1 of the piso path), which is
-		// why this folio can stand there at all.
+		// folio fact and moves no article.
 		g, a := hidratarFolio(t, hidratarParams{
 			origen:    domain.OrigenFolioPiso,
 			estado:    domain.EstadoFolioListoEntrega,
@@ -70,6 +95,9 @@ func TestEntregar(t *testing.T) {
 		}
 		if got := g.EventosPendientesCount() - pendientes; got != 1 {
 			t.Fatalf("eventos encolados = %d, want 1 (folio_entregado)", got)
+		}
+		if e := lastEvent(t, g); e.Tipo() != domain.TipoEventoFolioEntregado {
+			t.Fatalf("último evento = %q, want folio_entregado", e.Tipo())
 		}
 	})
 
@@ -141,7 +169,8 @@ func TestEntregar(t *testing.T) {
 		// With nothing to deliver, the folio event is the one that validates the
 		// actor.
 		g, _ := hidratarFolio(t, hidratarParams{
-			origen: domain.OrigenFolioPiso, estado: domain.EstadoFolioListoEntrega, etapa: domain.EtapaListoEntrega,
+			origen: domain.OrigenFolioPiso, estado: domain.EstadoFolioListoEntrega,
+			etapa: domain.EtapaReingresadoInventario,
 		})
 		pendientes := g.EventosPendientesCount()
 		err := g.Entregar(actorEntrega(""), fixed)

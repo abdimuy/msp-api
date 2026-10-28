@@ -148,6 +148,18 @@ func swap(t *testing.T, g *domain.Garantia, a *domain.Articulo) {
 	}
 }
 
+// reemplazoDe returns the folio's only replacement article.
+func reemplazoDe(t *testing.T, g *domain.Garantia) *domain.Articulo {
+	t.Helper()
+	for a := range g.Articulos() {
+		if a.Rol().EsReemplazo() {
+			return a
+		}
+	}
+	t.Fatalf("el folio no tiene artículo de reemplazo")
+	return nil
+}
+
 func openPiso(t *testing.T) *domain.Garantia {
 	t.Helper()
 	g, err := domain.AbrirGarantia(domain.AbrirGarantiaParams{
@@ -1588,26 +1600,9 @@ func TestMarcarListoEntrega_Guardia(t *testing.T) {
 	t.Parallel()
 	t.Run("pasa_con_standby_y_reemplazo", func(t *testing.T) {
 		t.Parallel()
-		g := openCliente(t)
-		a := addArticle(t, g, "silla")
-		if err := g.IniciarProceso(actor("juan"), fixed); err != nil {
-			t.Fatalf("setup: %v", err)
-		}
-		a = advance(t, g, a, domain.EtapaPendienteRecoleccion)
-		a = advance(t, g, a, domain.EtapaRecolectado)
-		a = advance(t, g, a, domain.EtapaEnRevision)
-		a = diagnostico(t, g, a, domain.RutaReparacionTaller)
-		swap(t, g, a) // original standby + reemplazo listo_entrega
-
-		if err := g.MarcarListoEntrega(actor("juan"), fixed); err != nil {
-			t.Fatalf("MarcarListoEntrega: %v", err)
-		}
-		if g.Estado() != domain.EstadoFolioListoEntrega {
-			t.Fatalf("Estado() = %q, want listo_entrega", g.Estado())
-		}
-	})
-	t.Run("rechaza_standby_sin_reingresar", func(t *testing.T) {
-		t.Parallel()
+		// Regla 1 on piso: standby counts for both origins. The original
+		// stays in standby after the swap; its replacement is reinstated
+		// before the folio is marked ready.
 		g := openPiso(t)
 		a := addArticle(t, g, "silla")
 		if err := g.IniciarProceso(actor("juan"), fixed); err != nil {
@@ -1615,7 +1610,36 @@ func TestMarcarListoEntrega_Guardia(t *testing.T) {
 		}
 		a = advance(t, g, a, domain.EtapaEnRevision)
 		a = diagnostico(t, g, a, domain.RutaReparacionTaller)
-		swap(t, g, a) // original standby sin pasar por reingresado_inventario
+		swap(t, g, a) // original standby + reemplazo listo_entrega
+		r := reemplazoDe(t, g)
+		if r.Etapa() != domain.EtapaListoEntrega {
+			t.Fatalf("reemplazo en %q, want listo_entrega", r.Etapa())
+		}
+		advance(t, g, r, domain.EtapaReingresadoInventario)
+
+		if err := g.MarcarListoEntrega(actor("juan"), fixed); err != nil {
+			t.Fatalf("MarcarListoEntrega: %v", err)
+		}
+		if g.Estado() != domain.EstadoFolioListoEntrega {
+			t.Fatalf("Estado() = %q, want listo_entrega", g.Estado())
+		}
+		if got := articuloByID(t, g, a.ID()).Etapa(); got != domain.EtapaStandby {
+			t.Fatalf("original en %q, want standby", got)
+		}
+	})
+	t.Run("piso_rechaza_listo_entrega_con_control", func(t *testing.T) {
+		t.Parallel()
+		// Regla 1: on piso, listo_entrega does not count. The same folio
+		// passes once the article is reinstated (positive control).
+		g := openPiso(t)
+		a := addArticle(t, g, "silla")
+		if err := g.IniciarProceso(actor("juan"), fixed); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		a = advance(t, g, a, domain.EtapaEnRevision)
+		a = diagnostico(t, g, a, domain.RutaReparacionTaller)
+		a = advance(t, g, a, domain.EtapaReparadoTaller)
+		a = advance(t, g, a, domain.EtapaListoEntrega)
 
 		pendientes := countPending(g)
 		err := g.MarcarListoEntrega(actor("juan"), fixed)
@@ -1628,27 +1652,119 @@ func TestMarcarListoEntrega_Guardia(t *testing.T) {
 		if countPending(g) != pendientes {
 			t.Fatalf("evento encolado en fallo — §4.4 rota")
 		}
+
+		a = advance(t, g, a, domain.EtapaReingresadoInventario)
+		if err := g.MarcarListoEntrega(actor("juan"), fixed); err != nil {
+			t.Fatalf("control: MarcarListoEntrega tras reingresar: %v", err)
+		}
+		if g.Estado() != domain.EstadoFolioListoEntrega {
+			t.Fatalf("control: Estado() = %q, want listo_entrega", g.Estado())
+		}
+		if a.Desenlace() == nil || *a.Desenlace() != domain.DesenlaceReparado {
+			t.Fatalf("control: Desenlace() = %v, want reparado", a.Desenlace())
+		}
+		if a.Ubicacion() != domain.UbicacionAlmacenRevision {
+			t.Fatalf("control: Ubicacion() = %q, want almacen_revision", a.Ubicacion())
+		}
 	})
-	t.Run("rechaza_articulo_en_camino", func(t *testing.T) {
+	t.Run("cliente_pasa_con_listo_entrega", func(t *testing.T) {
 		t.Parallel()
-		g := openPiso(t)
+		// The same stage on a cliente folio still counts: regla 1 is about
+		// piso only, so nobody "fixes" it by dropping listo_entrega for all.
+		g := openCliente(t)
 		a := addArticle(t, g, "silla")
 		if err := g.IniciarProceso(actor("juan"), fixed); err != nil {
 			t.Fatalf("setup: %v", err)
 		}
+		a = advance(t, g, a, domain.EtapaPendienteRecoleccion)
+		a = advance(t, g, a, domain.EtapaRecolectado)
 		a = advance(t, g, a, domain.EtapaEnRevision)
-		diagnostico(t, g, a, domain.RutaReparacionTaller) // atascado en en_taller
+		a = diagnostico(t, g, a, domain.RutaReparacionTaller)
+		a = advance(t, g, a, domain.EtapaReparadoTaller)
+		advance(t, g, a, domain.EtapaListoEntrega)
 
-		pendientes := countPending(g)
-		err := g.MarcarListoEntrega(actor("juan"), fixed)
-		if !errors.Is(err, domain.ErrArticulosNoListosParaEntrega) {
-			t.Fatalf("want ErrArticulosNoListosParaEntrega, got %v", err)
+		if err := g.MarcarListoEntrega(actor("juan"), fixed); err != nil {
+			t.Fatalf("MarcarListoEntrega: %v", err)
 		}
-		if g.Estado() != domain.EstadoFolioEnProceso {
-			t.Fatalf("estado mutado: %q", g.Estado())
+		if g.Estado() != domain.EstadoFolioListoEntrega {
+			t.Fatalf("Estado() = %q, want listo_entrega", g.Estado())
 		}
-		if countPending(g) != pendientes {
-			t.Fatalf("evento encolado en fallo — §4.4 rota")
+	})
+	t.Run("piso_standby_hasta_cierre_y_desenlace", func(t *testing.T) {
+		t.Parallel()
+		// Regla 1 + R4: one article reinstated and one in standby. The folio
+		// is marked ready, delivered and closed, and the standby article still
+		// takes its outcome afterwards (the R4 exception).
+		g := openPiso(t)
+		a := addArticle(t, g, "silla")
+		b := addArticle(t, g, "mesa")
+		if err := g.IniciarProceso(actor("juan"), fixed); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		a = advance(t, g, a, domain.EtapaEnRevision)
+		advance(t, g, a, domain.EtapaReingresadoInventario)
+		b = advance(t, g, b, domain.EtapaEnRevision)
+		b = diagnostico(t, g, b, domain.RutaReparacionTaller)
+		swap(t, g, b) // b standby; its replacement listo_entrega
+		advance(t, g, reemplazoDe(t, g), domain.EtapaReingresadoInventario)
+
+		if err := g.MarcarListoEntrega(actor("juan"), fixed); err != nil {
+			t.Fatalf("MarcarListoEntrega: %v", err)
+		}
+		if err := g.Entregar(actorEntrega("juan"), fixed); err != nil {
+			t.Fatalf("Entregar: %v", err)
+		}
+		if err := g.Cerrar(actor("juan"), fixed); err != nil {
+			t.Fatalf("Cerrar: %v", err)
+		}
+		if g.Estado() != domain.EstadoFolioCerrado {
+			t.Fatalf("Estado() = %q, want cerrado", g.Estado())
+		}
+		if err := g.RegistrarDesenlace(b.ID(), domain.DesenlaceSegundaMano, actorDecisor("juan"), fixed); err != nil {
+			t.Fatalf("RegistrarDesenlace(segunda_mano) tras cerrar: %v", err)
+		}
+		b = articuloByID(t, g, b.ID())
+		if b.Etapa() != domain.EtapaSegundaMano {
+			t.Fatalf("Etapa() = %q, want segunda_mano", b.Etapa())
+		}
+	})
+	t.Run("rechaza_articulo_en_camino", func(t *testing.T) {
+		t.Parallel()
+		// An article still on its way (en_taller) blocks both origins, each
+		// with its own sentinel.
+		for _, tc := range []struct {
+			origen domain.OrigenFolio
+			want   error
+		}{
+			{domain.OrigenFolioPiso, domain.ErrArticuloPisoSinReingresar},
+			{domain.OrigenFolioCliente, domain.ErrArticulosNoListosParaEntrega},
+		} {
+			g := openPiso(t)
+			if tc.origen.EsCliente() {
+				g = openCliente(t)
+			}
+			a := addArticle(t, g, "silla")
+			if err := g.IniciarProceso(actor("juan"), fixed); err != nil {
+				t.Fatalf("setup: %v", err)
+			}
+			if tc.origen.EsCliente() {
+				a = advance(t, g, a, domain.EtapaPendienteRecoleccion)
+				a = advance(t, g, a, domain.EtapaRecolectado)
+			}
+			a = advance(t, g, a, domain.EtapaEnRevision)
+			diagnostico(t, g, a, domain.RutaReparacionTaller) // atascado en en_taller
+
+			pendientes := countPending(g)
+			err := g.MarcarListoEntrega(actor("juan"), fixed)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("%s: want %v, got %v", tc.origen, tc.want, err)
+			}
+			if g.Estado() != domain.EstadoFolioEnProceso {
+				t.Fatalf("%s: estado mutado: %q", tc.origen, g.Estado())
+			}
+			if countPending(g) != pendientes {
+				t.Fatalf("%s: evento encolado en fallo — §4.4 rota", tc.origen)
+			}
 		}
 	})
 	t.Run("pasa_con_terminal", func(t *testing.T) {

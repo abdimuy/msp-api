@@ -40,8 +40,6 @@ type Articulo struct {
 	// the rest.
 	nuevo      bool
 	modificado bool
-
-	reingresadoInventario bool
 }
 
 // NewArticuloParams carries the inputs to newArticulo.
@@ -148,9 +146,6 @@ func (a *Articulo) aplicarUbicacion(hasta Etapa) {
 	if ubicacion, impone := ubicacionParaEtapa(hasta); impone {
 		a.ubicacion = ubicacion
 	}
-	if hasta == EtapaReingresadoInventario {
-		a.reingresadoInventario = true
-	}
 }
 
 // aplicarDesenlaceAutomatico gives the article the outcome it earns by landing
@@ -181,15 +176,6 @@ func desenlaceAutomatico(a *Articulo) *Desenlace {
 		return &d
 	}
 	return nil
-}
-
-// pasoPorReingresadoInventario reports whether the article passed through
-// reingresado_inventario in its history.
-func (a *Articulo) pasoPorReingresadoInventario() bool {
-	if a.etapa == EtapaReingresadoInventario {
-		return true
-	}
-	return a.reingresadoInventario
 }
 
 // pasoPorReparado reports whether the article went through a repair. It is

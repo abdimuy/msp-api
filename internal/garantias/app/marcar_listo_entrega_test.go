@@ -11,12 +11,12 @@ import (
 )
 
 // TestMarcarListoEntrega_CaminoFeliz closes the working phase: every article is
-// ready (a standby one does not block on a cliente folio, decision 4) and the
-// folio waits for the client.
+// ready (a standby one does not block, decision 4 and regla 1: standby counts
+// for both origins) and the folio waits for the client.
 func TestMarcarListoEntrega_CaminoFeliz(t *testing.T) {
 	t.Parallel()
 	svc, grepo, _, _, tx, _, clk, _ := setupService()
-	s := sembrar(t, grepo, domain.EstadoFolioEnProceso, cliente(), domain.EtapaStandby)
+	s := sembrar(t, grepo, domain.EstadoFolioEnProceso, piso(), domain.EtapaStandby)
 
 	res, err := svc.MarcarListoEntrega(context.Background(), app.MarcarListoEntregaCmd{
 		GarantiaID:        s.g.ID(),
@@ -39,22 +39,38 @@ func TestMarcarListoEntrega_CaminoFeliz(t *testing.T) {
 }
 
 // TestMarcarListoEntrega_ArticuloNoListo refuses to declare the folio ready
-// while an article is still being worked on.
+// while an article is still being worked on, with the sentinel of each origin.
+// On piso, listo_entrega does not count either (regla 1): the article has to
+// be reinstated first.
 func TestMarcarListoEntrega_ArticuloNoListo(t *testing.T) {
 	t.Parallel()
-	svc, grepo, _, _, _, _, clk, _ := setupService()
-	s := sembrar(t, grepo, domain.EstadoFolioEnProceso, piso(), domain.EtapaEnRevision)
+	for _, tc := range []struct {
+		nombre string
+		origen opcionesSemilla
+		etapa  domain.Etapa
+		want   error
+	}{
+		{"cliente_en_revision", cliente(), domain.EtapaEnRevision, domain.ErrArticulosNoListosParaEntrega},
+		{"piso_en_revision", piso(), domain.EtapaEnRevision, domain.ErrArticuloPisoSinReingresar},
+		{"piso_listo_entrega", piso(), domain.EtapaListoEntrega, domain.ErrArticuloPisoSinReingresar},
+	} {
+		t.Run(tc.nombre, func(t *testing.T) {
+			t.Parallel()
+			svc, grepo, _, _, _, _, clk, _ := setupService()
+			s := sembrar(t, grepo, domain.EstadoFolioEnProceso, tc.origen, tc.etapa)
 
-	_, err := svc.MarcarListoEntrega(context.Background(), app.MarcarListoEntregaCmd{
-		GarantiaID:        s.g.ID(),
-		ClaveIdempotencia: clave(),
-		DeviceCreatedAt:   clk.Now(),
-	})
-	if !errors.Is(err, domain.ErrArticulosNoListosParaEntrega) {
-		t.Fatalf("want ErrArticulosNoListosParaEntrega, got %v", err)
-	}
-	if !sinFilas(grepo) {
-		t.Errorf("no debe escribir: saved=%d created=%d", len(grepo.saved), len(grepo.created))
+			_, err := svc.MarcarListoEntrega(context.Background(), app.MarcarListoEntregaCmd{
+				GarantiaID:        s.g.ID(),
+				ClaveIdempotencia: clave(),
+				DeviceCreatedAt:   clk.Now(),
+			})
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("want %v, got %v", tc.want, err)
+			}
+			if !sinFilas(grepo) {
+				t.Errorf("no debe escribir: saved=%d created=%d", len(grepo.saved), len(grepo.created))
+			}
+		})
 	}
 }
 

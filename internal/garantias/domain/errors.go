@@ -204,11 +204,16 @@ var (
 		"hay artículos que todavía no están listos para entrega",
 	)
 
-	// ErrArticuloPisoSinReingresar is returned by MarcarListoEntrega when a
-	// piso article is still in standby but was never reingresado_inventario.
+	// ErrArticuloPisoSinReingresar is returned by MarcarListoEntrega and
+	// Entregar when a piso article is still in a stage that does not count for
+	// a floor folio — above all listo_entrega, which counts only for cliente.
+	// A floor item must be reinstated (AvanzarArticulo → reingresado_inventario)
+	// before the folio is marked ready: R4 freezes every non-standby article
+	// once the folio is delivered, so one left in listo_entrega would be
+	// stranded with no outcome.
 	ErrArticuloPisoSinReingresar = apperror.NewValidation(
-		"warranty_floor_article_not_reentered",
-		"los artículos de piso deben pasar por reingresado_inventario antes de marcar listo para entrega",
+		"warranty_floor_article_not_reinstated",
+		"en un folio de piso, todos los artículos deben estar reingresados al inventario, en standby o con su desenlace",
 	)
 
 	// ErrArticuloDictamenSoloProveedor is returned when a dictamen is

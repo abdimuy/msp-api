@@ -592,30 +592,18 @@ func (g *Garantia) IniciarProceso(actor ActorParams, now time.Time) error {
 }
 
 // MarcarListoEntrega moves the folio to listo_entrega once every article is
-// ready. For cliente folios, listo_entrega, standby or a terminal stage is
-// allowed. For piso folios, listo_entrega does not count: articles must be in
-// standby or terminal stages, and a piso article in standby must have passed
-// through reingresado_inventario.
+// ready (regla 1). standby and the terminal stages count for both origins;
+// listo_entrega counts only for cliente. A floor item is reinstated with
+// AvanzarArticulo(→ reingresado_inventario) before the folio is marked ready,
+// so a piso folio with an article still in another stage is refused with
+// ErrArticuloPisoSinReingresar, and a cliente one with
+// ErrArticulosNoListosParaEntrega.
 func (g *Garantia) MarcarListoEntrega(actor ActorParams, now time.Time) error {
 	if !g.estado.CanTransitionTo(EstadoFolioListoEntrega) {
 		return ErrTransicionEstadoNoPermitida
 	}
-	for _, a := range g.articulos {
-		if g.origen.EsPiso() {
-			if a.Etapa() == EtapaListoEntrega {
-				return ErrArticulosNoListosParaEntrega
-			}
-			if a.Etapa() == EtapaStandby && !a.pasoPorReingresadoInventario() {
-				return ErrArticuloPisoSinReingresar
-			}
-			if a.Etapa() == EtapaStandby || a.Etapa().EsTerminal() {
-				continue
-			}
-			return ErrArticulosNoListosParaEntrega
-		}
-		if !stageListoParaEntrega(a.Etapa()) {
-			return ErrArticulosNoListosParaEntrega
-		}
+	if err := g.verificarListosParaEntrega(); err != nil {
+		return err
 	}
 	e, err := g.buildEvent(actor, now, TipoEventoFolioListoEntrega, nil, "", nil, nil, nil, nil)
 	if err != nil {
@@ -627,10 +615,31 @@ func (g *Garantia) MarcarListoEntrega(actor ActorParams, now time.Time) error {
 	return nil
 }
 
-// stageListoParaEntrega reports whether an article blocks the delivery
-// readiness check.
-func stageListoParaEntrega(e Etapa) bool {
-	return e == EtapaListoEntrega || e == EtapaStandby || e.EsTerminal()
+// verificarListosParaEntrega walks the articles with listoParaEntrega and
+// returns the sentinel of the folio origin on the first one that is not ready.
+func (g *Garantia) verificarListosParaEntrega() error {
+	for _, a := range g.articulos {
+		if listoParaEntrega(a.etapa, g.origen) {
+			continue
+		}
+		if g.origen.EsPiso() {
+			return ErrArticuloPisoSinReingresar
+		}
+		return ErrArticulosNoListosParaEntrega
+	}
+	return nil
+}
+
+// listoParaEntrega reports whether an article in stage e lets a folio of the
+// given origin be marked ready or delivered (regla 1). standby and the
+// terminal stages count for both origins; listo_entrega counts only for
+// cliente, because a floor item's destination is reingresado_inventario
+// (spec §4.2) and R4 would strand it once the folio is delivered.
+func listoParaEntrega(e Etapa, origen OrigenFolio) bool {
+	if e == EtapaStandby || e.EsTerminal() {
+		return true
+	}
+	return e == EtapaListoEntrega && origen.EsCliente()
 }
 
 // Entregar hands the folio to the client and closes the client path. The agent
@@ -640,7 +649,10 @@ func stageListoParaEntrega(e Etapa) bool {
 // of its own, plus the folio_entregado. Articles in standby are not touched:
 // the folio may close with one still there (§3.2). A piso folio moves no
 // articles — entregado exists only for cliente items (R1) — and simply records
-// the folio fact.
+// the folio fact; it also re-checks regla 1 as a defence, so a hydrated
+// inconsistent floor folio with an article still in listo_entrega is refused
+// with ErrArticuloPisoSinReingresar instead of freezing that article without
+// an outcome.
 //
 // Every event is built before the first mutation, so an invalid actor leaves
 // the aggregate untouched. The per-article events go first (they validate the
@@ -651,6 +663,9 @@ func (g *Garantia) Entregar(actor ActorParams, now time.Time) error {
 	}
 	if actor.GPSLat == nil || actor.GPSLon == nil {
 		return ErrEntregaGPSRequerido
+	}
+	if err := g.verificarListosParaEntrega(); err != nil {
+		return err
 	}
 	type entregaPendiente struct {
 		articulo *Articulo

@@ -126,7 +126,7 @@ func TestEntregar_EstadoNoCorresponde(t *testing.T) {
 func TestEntregar_FolioDePiso(t *testing.T) {
 	t.Parallel()
 	svc, grepo, _, _, _, _, clk, _ := setupService()
-	s := sembrar(t, grepo, domain.EstadoFolioListoEntrega, piso(), domain.EtapaListoEntrega)
+	s := sembrar(t, grepo, domain.EstadoFolioListoEntrega, piso(), domain.EtapaReingresadoInventario)
 	lat, lon := gpsPrueba()
 
 	res, err := svc.Entregar(context.Background(), app.EntregarCmd{
@@ -142,7 +142,31 @@ func TestEntregar_FolioDePiso(t *testing.T) {
 	if res.Estado() != domain.EstadoFolioEntregado {
 		t.Errorf("estado = %s, want entregado", res.Estado())
 	}
-	if art := articuloDe(t, res, s.primero()); art.Etapa() != domain.EtapaListoEntrega {
-		t.Errorf("etapa del articulo = %s, want listo_entrega: un folio de piso no entrega articulos", art.Etapa())
+	if art := articuloDe(t, res, s.primero()); art.Etapa() != domain.EtapaReingresadoInventario {
+		t.Errorf("etapa del articulo = %s, want reingresado_inventario: un folio de piso no entrega articulos", art.Etapa())
+	}
+}
+
+// TestEntregar_FolioDePisoConListoEntrega pins the defensive check of regla 1:
+// a piso folio stored in listo_entrega with an article still in listo_entrega
+// is refused before any write, so R4 cannot strand the article.
+func TestEntregar_FolioDePisoConListoEntrega(t *testing.T) {
+	t.Parallel()
+	svc, grepo, _, _, _, _, clk, _ := setupService()
+	s := sembrar(t, grepo, domain.EstadoFolioListoEntrega, piso(), domain.EtapaListoEntrega)
+	lat, lon := gpsPrueba()
+
+	_, err := svc.Entregar(context.Background(), app.EntregarCmd{
+		GarantiaID:        s.g.ID(),
+		ClaveIdempotencia: clave(),
+		DeviceCreatedAt:   clk.Now(),
+		GPSLat:            lat,
+		GPSLon:            lon,
+	})
+	if !errors.Is(err, domain.ErrArticuloPisoSinReingresar) {
+		t.Fatalf("want ErrArticuloPisoSinReingresar, got %v", err)
+	}
+	if !sinFilas(grepo) {
+		t.Errorf("no debe escribir: saved=%d created=%d", len(grepo.saved), len(grepo.created))
 	}
 }
