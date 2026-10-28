@@ -2,7 +2,7 @@
 
 > **Rama:** `feat/garantias-t10`, que creas tú desde `feat/garantias-integracion` (`git fetch && git switch -c feat/garantias-t10 origin/feat/garantias-integracion`). Los PR van contra `feat/garantias-integracion`, no contra `main`.
 > **Spec:** [`2026-07-27-garantias-design.md`](../specs/2026-07-27-garantias-design.md), actualizado el 26 de octubre: §2.1, §2.2, **§3.3 y §3.4** (columnas nuevas), §4.1, §5, **§6 completo**, §7, §8 y §10.
-> **Plazo:** **una sola entrega, martes 3 de noviembre, 1pm**, con la tarea completa e integrada con Kevin (tarea 9). No hay entregas parciales ni revisiones intermedias: empujas a tu rama antes de irte cada día (1pm) y avanzas lo más que puedas. No hay holgura.
+> **Plazo:** **una sola entrega, martes 3 de noviembre, 1pm**, con la tarea completa e integrada con Kevin (tarea 9). Todo se entrega al final, de una vez: no hay entregas parciales, avances obligatorios ni revisiones intermedias. No hay holgura.
 > **En paralelo:** Kevin hace la tarea 9. Los archivos de cada uno están listados abajo y **no se cruzan**.
 
 ## Qué construyes
@@ -72,7 +72,7 @@ ALTER TABLE MSP_GA_EVENTO ADD AUDITORIA_GPS VARCHAR(20) CHARACTER SET ASCII;
 
 ### D3. El helper de blobs — `app/blob.go`, primero que nada
 
-Lo usan tu subida de evidencia y la firma de Kevin, así que su firma es exactamente ésta y lo subes a tu rama el **jueves 29 temprano** y le avisas a Kevin:
+Lo usan tu subida de evidencia y la firma de Kevin, así que su firma es exactamente ésta y no se cambia; ponte de acuerdo con Kevin para compartirlo:
 
 ```go
 // guardarBlob valida (no vacío, JPEG o PNG por contenido, máximo maxBytes) y
@@ -91,7 +91,7 @@ func (s *Service) descartarBlobSiNoQuedo(ctx context.Context, imagenID uuid.UUID
 ### D4. Subida de evidencia — `AdjuntarImagen`
 
 - `app/adjuntar_imagen.go` (tuyo): `func (s *Service) AdjuntarImagen(ctx, cmd AdjuntarImagenCmd) (*domain.Imagen, error)`, con `AdjuntarImagenCmd{GarantiaID, EventoID uuid.UUID; Description string; Contenido []byte; ClaveIdempotencia string}`.
-- Orden: usuario → permiso **`actualizar`** → clave normalizada → huella con **`huellaDe(cmd)`** de Kevin (`app/huella.go`, que Kevin sube a su rama el jueves temprano; incluye los bytes) → `guardarBlob` (máximo **10 MB**) → transacción: el evento existe **y** es de esa garantía (si no, `ErrImagenEventoAjeno`), ¿ya hay imagen con `ID` = clave? (misma huella → devuelve la existente sin escribir; otra huella o sin huella → `ErrClaveIdempotenciaMismatch`), `NewImagen` con `ID` = clave, `Tipo: TipoImagenEvidencia`, `SubidaPor` del usuario, `Huella`; `Registrar` → al final, **siempre**, `descartarBlobSiNoQuedo`.
+- Orden: usuario → permiso **`actualizar`** → clave normalizada → huella con **`huellaDe(cmd)`** de Kevin (`app/huella.go`, de Kevin; incluye los bytes) → `guardarBlob` (máximo **10 MB**) → transacción: el evento existe **y** es de esa garantía (si no, `ErrImagenEventoAjeno`), ¿ya hay imagen con `ID` = clave? (misma huella → devuelve la existente sin escribir; otra huella o sin huella → `ErrClaveIdempotenciaMismatch`), `NewImagen` con `ID` = clave, `Tipo: TipoImagenEvidencia`, `SubidaPor` del usuario, `Huella`; `Registrar` → al final, **siempre**, `descartarBlobSiNoQuedo`.
 - Un `ErrImagenDuplicada` de `Registrar` (dos subidas simultáneas con la misma clave) se resuelve como en `resolverDuplicada`: se relee y se compara la huella.
 - **Nunca** crea firmas: el formulario no tiene campo de tipo.
 - Ruta: `POST /garantias/{id}/eventos/{eid}/imagenes` (`adjuntar-imagen`), multipart con `archivo` y `descripcion`, embebiendo `EncabezadoIdempotencia`. Responde **200** con la imagen (`id`, `tipo`, `descripcion`, `subida_por`, `created_at`, `url`).
@@ -115,7 +115,7 @@ func (s *Service) descartarBlobSiNoQuedo(ctx context.Context, imagenID uuid.UUID
 
 ### D7. El barrido de seguridad final — con Kevin, parte 3
 
-En `garhttp/security_test.go` (tuyo): table-driven sobre **todas** las operaciones del OpenAPI montado (diecinueve). Por cada una, sin usuario → 401 y sin el permiso → 403, **sin ninguna escritura**; y con cada uno de los otros cuatro permisos → 403. La tabla se compara contra `api.OpenAPI().Paths`: una operación sin fila **hace fallar** la prueba. Para las catorce de Kevin usas su `ejemplosComandos()` (`garhttp/ejemplos_comandos_test.go`, que Kevin sube el jueves), que trae una petición válida de cada una; las tuyas las agregas con el mismo tipo `ejemploOperacion`.
+En `garhttp/security_test.go` (tuyo): table-driven sobre **todas** las operaciones del OpenAPI montado (diecinueve). Por cada una, sin usuario → 401 y sin el permiso → 403, **sin ninguna escritura**; y con cada uno de los otros cuatro permisos → 403. La tabla se compara contra `api.OpenAPI().Paths`: una operación sin fila **hace fallar** la prueba. Para las catorce de Kevin usas su `ejemplosComandos()` (`garhttp/ejemplos_comandos_test.go`, de Kevin), que trae una petición válida de cada una; las tuyas las agregas con el mismo tipo `ejemploOperacion`.
 
 ### D8. Cómo convivir en el mismo paquete
 
@@ -263,15 +263,10 @@ Lo que hayas hecho distinto al brief, declarado con el porqué.
 
 ## Calendario
 
-| Cuándo | Qué tiene que estar empujado |
+| Cuándo | Qué |
 |---|---|
-| **Miércoles 28, hasta la 1pm** | Leer el brief, el spec y el commit de contrato; rama creada desde `feat/garantias-integracion` y empezar la `000071` |
-| **Jueves 29, temprano** | `app/blob.go` empujado a tu rama y avisado a Kevin |
-| **Jueves 29, 1pm** | Empujado lo que lleves (orden sugerido: la `000071`, D2, los dos pendientes del #28 y el #29, `AdjuntarImagen`) |
-| **Viernes 30, 1pm** | Las tres rutas, el detalle con imágenes y `Guardar` con la firma |
-| **Lunes 2, 1pm** | `module.go`, el cableado y los permisos |
-| **Martes 3, 1pm** | **Entrega única**, con Kevin: integración, barrido de seguridad final, prueba de arranque, `Makefile`, R1–R16, reporte y PR contra `feat/garantias-integracion` |
+| **Martes 3 de noviembre, 1pm** | **Entrega única**: la tarea completa, con Kevin: integración, barrido de seguridad final, prueba de arranque, `Makefile`, R1–R16, reporte y PR contra `feat/garantias-integracion` |
 
-Los avances diarios los reviso. Si en algún momento ves que no llegas, avísame ese mismo día.
+Si en algún momento ves que no llegas, avísame ese mismo día.
 
 Si necesitas algo, dime.
