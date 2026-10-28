@@ -2,7 +2,7 @@
 
 > **Rama:** `feat/garantias-t10`, que creas tú desde `feat/garantias-integracion` (`git fetch && git switch -c feat/garantias-t10 origin/feat/garantias-integracion`). Los PR van contra `feat/garantias-integracion`, no contra `main`.
 > **Spec:** [`2026-07-27-garantias-design.md`](../specs/2026-07-27-garantias-design.md), actualizado el 26 de octubre: §2.1, §2.2, **§3.3 y §3.4** (columnas nuevas), §4.1, §5, **§6 completo**, §7, §8 y §10.
-> **Plazo:** **una sola entrega, viernes 30 de octubre, 4pm**, con la tarea completa e integrada con Kevin (tarea 9). No hay entregas parciales ni revisiones intermedias: empujas a tu rama al cierre de cada día y avanzas lo más que puedas. No hay holgura.
+> **Plazo:** **una sola entrega, lunes 2 de noviembre, 1pm**, con la tarea completa e integrada con Kevin (tarea 9). No hay entregas parciales ni revisiones intermedias: empujas a tu rama antes de irte cada día (1pm) y avanzas lo más que puedas. No hay holgura.
 > **En paralelo:** Kevin hace la tarea 9. Los archivos de cada uno están listados abajo y **no se cruzan**.
 
 ## Qué construyes
@@ -13,7 +13,7 @@ Al terminar, el módulo de garantías **está encendido** en el API: montado, co
 |---|---|---|
 | **1** | Migración `000071`, toda la persistencia nueva en `garfb` y el helper de blobs | Primero |
 | **2** | Subida de evidencia, descarga de imagen, catálogos y detalle con imágenes | Después |
-| **3** | `module.go`, cableado en `cmd/api`, permisos, prueba de arranque, barrido de seguridad final y targets del `Makefile`, **con Kevin** | Al final, viernes 30 |
+| **3** | `module.go`, cableado en `cmd/api`, permisos, prueba de arranque, barrido de seguridad final y targets del `Makefile`, **con Kevin** | Al final, lunes 2 |
 
 ### Antes que nada: lo que queda del #28 y el #29
 
@@ -267,9 +267,10 @@ Lo que hayas hecho distinto al brief, declarado con el porqué.
 |---|---|
 | **Miércoles 28, hasta la 1pm** | Leer el brief, el spec y el commit de contrato; rama creada desde `feat/garantias-integracion` y empezar la `000071` |
 | **Jueves 29, temprano** | `app/blob.go` empujado a tu rama y avisado a Kevin |
-| **Jueves 29, al cierre** | Empujado lo que lleves (orden sugerido: la `000071`, D2, los dos pendientes del #28 y el #29, `AdjuntarImagen`) |
-| **Viernes 30, 12pm** | Las tres rutas, el detalle con imágenes, `Guardar` con la firma, `module.go`, el cableado y los permisos |
-| **Viernes 30, 12pm a 4pm** | **Entrega única**, con Kevin: integración, barrido de seguridad final, prueba de arranque, `Makefile`, R1–R16, reporte y PR contra `feat/garantias-integracion` |
+| **Jueves 29, 1pm** | Empujado lo que lleves (orden sugerido: la `000071`, D2, los dos pendientes del #28 y el #29, `AdjuntarImagen`) |
+| **Viernes 30, 1pm** | Las tres rutas, el detalle con imágenes y `Guardar` con la firma |
+| **Lunes 2, a primera hora** | `module.go`, el cableado y los permisos |
+| **Lunes 2, 1pm** | **Entrega única**, con Kevin: integración, barrido de seguridad final, prueba de arranque, `Makefile`, R1–R16, reporte y PR contra `feat/garantias-integracion` |
 
 Los avances diarios los reviso. Si en algún momento ves que no llegas, avísame ese mismo día.
 
