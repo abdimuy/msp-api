@@ -1116,3 +1116,16 @@ golangci-lint run ./internal/garantias/...                     0 issues
 
 Queda pendiente, fuera de esta entrega, la columna de secuencia causal que
 reemplace a `RDB$DB_KEY` como desempate durable (requiere migración nueva).
+
+### 15.2 Cierre de la sección 1
+
+Los diez puntos de la tercera vuelta (§15) quedan **cerrados**: implementados en
+`084eccb` y verificados contra Firebird en `bf8b4fd` (§15.1). Las pruebas del #26
+que aplican a este código ya se integraron o adaptaron en la Entrega 3 (§11.1),
+donde viven las tablas de comandos compartidos y la prueba del candado
+(`TestComandos_CandadoAntesDeLaClave`).
+
+La idempotencia "misma clave, otro contenido" sigue **fuera de este PR**: la
+rehace la tarea 9 con la huella SHA-256 completa del comando y la prueba campo
+por campo (brief en `feat/garantias-integracion`,
+`docs/superpowers/plans/garantias-task-9-brief.md`, D1).
