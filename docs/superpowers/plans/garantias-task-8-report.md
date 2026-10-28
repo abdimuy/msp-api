@@ -1000,7 +1000,8 @@ La suite Firebird (`infra/garfb`) no se pudo correr contra la base en esta
 vuelta: Docker no está levantado en el entorno, así que los tests de integración
 se saltaron como está previsto (`t.Skip` sin `FB_DATABASE`). El flujo de piso
 del E2E quedó ajustado en el código y se validará cuando el contenedor esté
-disponible.
+disponible. **Ya se validó: ver §15.1**, donde además se verifica el ciclo
+`up → down → up` de la 000070.
 
 ### 14.6 Aplazado
 
@@ -1078,19 +1079,40 @@ La idempotencia "misma clave, contenido distinto" sigue aplazada a la tarea 9
     lógica; un `gbak -r` o un barrido pueden renumerarla. Sirve para desempatar
     eventos del mismo folio, pero la solución durable es una columna de
     secuencia causal, que exige esquema (migración nueva) y quedó fuera de esta
-    entrega. No se pudo ejecutar contra Firebird en esta vuelta (Docker abajo),
-    así que el `ORDER BY` con `RDB$DB_KEY` y la prueba quedan **pendientes de
-    verificación en base real**.
+    entrega.
 
-### 15.1 Verificación de esta vuelta
+### 15.1 Verificación en base real (Firebird)
+
+La vuelta anterior quedó sin cotejar contra Firebird. Ya con Docker arriba se
+verificó todo:
+
+- **Estado aplicado en dev:** `MSP_MIGRATIONS` tiene la fila
+  `70 000070_add_ubicacion_a_msp_ga_evento` y `MSP_GA_EVENTO` tiene
+  `UBICACION_DESDE`/`UBICACION_HASTA` en las posiciones 14/15, `VARCHAR(28)`,
+  charset `ASCII` (id 2), nullable y sin default — idéntico al `up.sql` actual.
+  La tabla estaba en 0 filas (los tests escriben con rollback), así que no hubo
+  dato que arriesgar.
+- **Ciclo `up → down → up` en base desechable** (`/firebird/data/verify070.fdb`,
+  esquema mínimo `MSP_MIGRATIONS` + `MSP_GA_EVENTO`, borrada al terminar):
+  el up crea las dos columnas con la forma esperada y la fila 70; el down las
+  elimina y borra la fila; el segundo up vuelve a dejar todo en su sitio sin
+  chocar con nada. Los tres pasos salieron con exit 0.
+- **`TestE2E_PisoDeLaRecepcionAlCierre`** (con `Entregar` + `Cerrar`) → PASS.
+- **`TestEventoRepo_ListarDesempataPorInsercion`** → PASS. Los IDs insertados
+  van `ffff…`, `8888…`, `0000…` y la lectura volvió en ese orden, así que el
+  desempate es el de inserción y no el UUID (con el `ORDER BY ... ID` anterior
+  habría vuelto al revés).
+- **Paquete `infra/garfb` completo** → ok (9.5s; ya no se salta).
+
+Verificación final:
 
 ```
 gofmt -l internal/garantias                                   (sin salida)
 go build ./...                                                (sin salida)
-go test ./internal/garantias/... -count=1                      ok (6 paquetes)
+go test ./internal/garantias/... -count=1                      ok (6 paquetes, Firebird incluido)
+go test ./internal/garantias/... -p 1 -race -count=1           ok (6 paquetes)
 golangci-lint run ./internal/garantias/...                     0 issues
 ```
 
-La suite `infra/garfb` se volvió a saltar por falta de base (Docker apagado);
-los cambios 8, 9 y 10 viven ahí y se validarán cuando el contenedor esté
-disponible.
+Queda pendiente, fuera de esta entrega, la columna de secuencia causal que
+reemplace a `RDB$DB_KEY` como desempate durable (requiere migración nueva).
