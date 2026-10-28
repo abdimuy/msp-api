@@ -30,13 +30,6 @@ type Detalle struct {
 	Eventos  []*domain.Evento
 }
 
-type detalleReader interface {
-	ObtenerDetalle(
-		ctx context.Context,
-		id uuid.UUID,
-	) (*domain.Garantia, []*domain.Evento, error)
-}
-
 // ConsultasDeps contiene las dependencias del lado de lectura.
 type ConsultasDeps struct {
 	Garantias outbound.GarantiaRepo
@@ -61,6 +54,13 @@ func NewConsultas(deps ConsultasDeps) *Consultas {
 		eventos:   deps.Eventos,
 		identity:  deps.Identity,
 	}
+}
+
+// ValidarAutenticacion comprueba que exista un usuario antes de procesar
+// entradas HTTP que podrían fallar por validación.
+func (c *Consultas) ValidarAutenticacion(ctx context.Context) error {
+	_, err := c.identity.UsuarioActual(ctx)
+	return err
 }
 
 // Bandeja devuelve una página de garantías después de validar el acceso.
@@ -99,24 +99,7 @@ func (c *Consultas) Detalle(
 		return Detalle{}, err
 	}
 
-	if reader, ok := c.garantias.(detalleReader); ok {
-		garantia, eventos, err := reader.ObtenerDetalle(ctx, id)
-		if err != nil {
-			return Detalle{}, err
-		}
-
-		return Detalle{
-			Garantia: garantia,
-			Eventos:  eventos,
-		}, nil
-	}
-
-	garantia, err := c.garantias.Obtener(ctx, id)
-	if err != nil {
-		return Detalle{}, err
-	}
-
-	eventos, err := c.eventos.ListarPorGarantia(ctx, id)
+	garantia, eventos, err := c.garantias.ObtenerDetalle(ctx, id)
 	if err != nil {
 		return Detalle{}, err
 	}

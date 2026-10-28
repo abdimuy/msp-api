@@ -192,7 +192,7 @@ func (r *GarantiaRepo) ObtenerDetalle(
 	var garantia *domain.Garantia
 	var eventos []*domain.Evento
 
-	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
+	err := firebird.RunInSnapshotTx(ctx, r.pool.DB, func(ctx context.Context) error {
 		q := firebird.GetQuerier(ctx, r.pool.DB)
 
 		var err error

@@ -62,6 +62,7 @@ func (f *fakeHTTPBandejaRepo) Listar(
 
 type fakeHTTPGarantiaRepo struct {
 	garantia *domain.Garantia
+	eventos  []*domain.Evento
 	err      error
 	calls    int
 	ultimoID uuid.UUID
@@ -96,6 +97,16 @@ func (f *fakeHTTPGarantiaRepo) Obtener(
 	f.ultimoID = id
 
 	return f.garantia, f.err
+}
+
+func (f *fakeHTTPGarantiaRepo) ObtenerDetalle(
+	_ context.Context,
+	id uuid.UUID,
+) (*domain.Garantia, []*domain.Evento, error) {
+	f.calls++
+	f.ultimoID = id
+
+	return f.garantia, f.eventos, f.err
 }
 
 func (f *fakeHTTPGarantiaRepo) ObtenerPorFolio(
@@ -135,6 +146,15 @@ func buildHTTPRouter(
 	bandeja outbound.BandejaRepo,
 	eventos outbound.EventoRepo,
 ) http.Handler {
+	if garantiaFake, ok := garantias.(*fakeHTTPGarantiaRepo); ok {
+		if eventoFake, ok := eventos.(*fakeHTTPEventoRepo); ok {
+			garantiaFake.eventos = eventoFake.eventos
+			if garantiaFake.err == nil && eventoFake.err != nil {
+				garantiaFake.err = eventoFake.err
+			}
+		}
+	}
+
 	consultas := app.NewConsultas(app.ConsultasDeps{
 		Garantias: garantias,
 		Bandeja:   bandeja,

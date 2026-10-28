@@ -131,6 +131,16 @@ func (f *fakeGarantiaRepo) Obtener(ctx context.Context, id uuid.UUID) (*domain.G
 	return nil, domain.ErrGarantiaNoEncontrada
 }
 
+// ObtenerDetalle exists only to satisfy the port: the command tests never
+// read the timeline. The query tests use fakeConsultaGarantiaRepo.
+func (f *fakeGarantiaRepo) ObtenerDetalle(
+	ctx context.Context,
+	id uuid.UUID,
+) (*domain.Garantia, []*domain.Evento, error) {
+	g, err := f.Obtener(ctx, id)
+	return g, nil, err
+}
+
 func (f *fakeGarantiaRepo) ObtenerPorFolio(ctx context.Context, folio domain.Folio) (*domain.Garantia, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

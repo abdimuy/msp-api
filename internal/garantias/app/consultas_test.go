@@ -181,7 +181,7 @@ func TestConsultas_Detalle_SinUsuarioNoTocaRepos(t *testing.T) {
 
 	require.ErrorIs(t, err, domain.ErrUsuarioNoAutenticado)
 	require.Zero(t, identity.permisoCalls)
-	require.Zero(t, garantias.obtenerCalls)
+	require.Zero(t, garantias.detalleCalls)
 	require.Zero(t, eventos.calls)
 }
 
@@ -204,7 +204,7 @@ func TestConsultas_Detalle_SinPermisoNoTocaRepos(t *testing.T) {
 	_, err := consultas.Detalle(context.Background(), uuid.New())
 
 	require.ErrorIs(t, err, domain.ErrPermisoDenegado)
-	require.Zero(t, garantias.obtenerCalls)
+	require.Zero(t, garantias.detalleCalls)
 	require.Zero(t, eventos.calls)
 }
 
@@ -222,6 +222,7 @@ func TestConsultas_Detalle_CaminoFeliz(t *testing.T) {
 	}
 	garantias := &fakeConsultaGarantiaRepo{
 		garantia: garantia,
+		eventos:  []*domain.Evento{eventoUno, eventoDos},
 	}
 	eventos := &fakeConsultaEventoRepo{
 		eventos: []*domain.Evento{eventoUno, eventoDos},
@@ -238,10 +239,9 @@ func TestConsultas_Detalle_CaminoFeliz(t *testing.T) {
 	require.NoError(t, err)
 	require.Same(t, garantia, detalle.Garantia)
 	require.Equal(t, []*domain.Evento{eventoUno, eventoDos}, detalle.Eventos)
-	require.Equal(t, 1, garantias.obtenerCalls)
+	require.Equal(t, 1, garantias.detalleCalls)
 	require.Equal(t, id, garantias.ultimoID)
-	require.Equal(t, 1, eventos.calls)
-	require.Equal(t, id, eventos.ultimoID)
+	require.Zero(t, eventos.calls)
 	require.Equal(t, domain.PermisoLeer, identity.ultimoPermiso)
 }
 
@@ -254,7 +254,7 @@ func TestConsultas_Detalle_GarantiaNoEncontrada(t *testing.T) {
 		permitido: true,
 	}
 	garantias := &fakeConsultaGarantiaRepo{
-		obtenerErr: domain.ErrGarantiaNoEncontrada,
+		detalleErr: domain.ErrGarantiaNoEncontrada,
 	}
 	eventos := &fakeConsultaEventoRepo{}
 
@@ -267,11 +267,11 @@ func TestConsultas_Detalle_GarantiaNoEncontrada(t *testing.T) {
 	_, err := consultas.Detalle(context.Background(), id)
 
 	require.ErrorIs(t, err, domain.ErrGarantiaNoEncontrada)
-	require.Equal(t, 1, garantias.obtenerCalls)
+	require.Equal(t, 1, garantias.detalleCalls)
 	require.Zero(t, eventos.calls)
 }
 
-func TestConsultas_Detalle_ErrorEventoSePropaga(t *testing.T) {
+func TestConsultas_Detalle_ErrorLecturaSePropaga(t *testing.T) {
 	t.Parallel()
 
 	id := uuid.New()
@@ -282,7 +282,8 @@ func TestConsultas_Detalle_ErrorEventoSePropaga(t *testing.T) {
 		permitido: true,
 	}
 	garantias := &fakeConsultaGarantiaRepo{
-		garantia: &domain.Garantia{},
+		garantia:   &domain.Garantia{},
+		detalleErr: errEventos,
 	}
 	eventos := &fakeConsultaEventoRepo{
 		err: errEventos,
@@ -297,6 +298,46 @@ func TestConsultas_Detalle_ErrorEventoSePropaga(t *testing.T) {
 	_, err := consultas.Detalle(context.Background(), id)
 
 	require.ErrorIs(t, err, errEventos)
-	require.Equal(t, 1, garantias.obtenerCalls)
-	require.Equal(t, 1, eventos.calls)
+	require.Equal(t, 1, garantias.detalleCalls)
+	require.Zero(t, eventos.calls)
+}
+
+func TestConsultas_ValidarAutenticacion(t *testing.T) {
+	t.Parallel()
+
+	t.Run("sin_usuario", func(t *testing.T) {
+		t.Parallel()
+
+		identity := &fakeConsultaIdentity{
+			usuarioErr: domain.ErrUsuarioNoAutenticado,
+		}
+
+		consultas := app.NewConsultas(app.ConsultasDeps{
+			Identity: identity,
+		})
+
+		err := consultas.ValidarAutenticacion(context.Background())
+
+		require.ErrorIs(t, err, domain.ErrUsuarioNoAutenticado)
+		require.Equal(t, 1, identity.usuarioCalls)
+		require.Zero(t, identity.permisoCalls)
+	})
+
+	t.Run("con_usuario", func(t *testing.T) {
+		t.Parallel()
+
+		identity := &fakeConsultaIdentity{
+			usuario: outbound.Usuario{ID: "1", Nombre: "Ruben"},
+		}
+
+		consultas := app.NewConsultas(app.ConsultasDeps{
+			Identity: identity,
+		})
+
+		err := consultas.ValidarAutenticacion(context.Background())
+
+		require.NoError(t, err)
+		require.Equal(t, 1, identity.usuarioCalls)
+		require.Zero(t, identity.permisoCalls)
+	})
 }

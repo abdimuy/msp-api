@@ -249,6 +249,8 @@ func TestBandejaRepo_Listar_FiltroEstado(t *testing.T) {
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		base := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+		desde := base.Add(-time.Second)
+		hasta := base.Add(2 * time.Hour)
 
 		esperada := crearGarantiaParaBandeja(
 			t,
@@ -274,6 +276,8 @@ func TestBandejaRepo_Listar_FiltroEstado(t *testing.T) {
 			ctx,
 			outbound.ListarGarantiasFiltros{
 				Estado: &estado,
+				Desde:  &desde,
+				Hasta:  &hasta,
 			},
 			outbound.Paginacion{
 				Limite: 20,
@@ -297,6 +301,8 @@ func TestBandejaRepo_Listar_FiltroOrigen(t *testing.T) {
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		base := time.Date(2026, 10, 8, 13, 0, 0, 0, time.UTC)
+		desde := base.Add(-time.Second)
+		hasta := base.Add(2 * time.Hour)
 
 		esperada := crearGarantiaClienteParaBandeja(
 			t,
@@ -322,6 +328,8 @@ func TestBandejaRepo_Listar_FiltroOrigen(t *testing.T) {
 			ctx,
 			outbound.ListarGarantiasFiltros{
 				Origen: &origen,
+				Desde:  &desde,
+				Hasta:  &hasta,
 			},
 			outbound.Paginacion{
 				Limite: 20,
@@ -397,6 +405,8 @@ func TestBandejaRepo_Listar_FiltroEtapa(t *testing.T) {
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		base := time.Date(2026, 10, 8, 15, 0, 0, 0, time.UTC)
+		desde := base.Add(-time.Second)
+		hasta := base.Add(2 * time.Hour)
 
 		// Folio de piso (R1): registrado sale a en_revision, no a recolección.
 		etapaBuscada := domain.EtapaEnRevision
@@ -423,6 +433,8 @@ func TestBandejaRepo_Listar_FiltroEtapa(t *testing.T) {
 			ctx,
 			outbound.ListarGarantiasFiltros{
 				Etapa: &etapaBuscada,
+				Desde: &desde,
+				Hasta: &hasta,
 			},
 			outbound.Paginacion{
 				Limite: 20,
@@ -506,6 +518,7 @@ func TestBandejaRepo_Listar_FiltroDesde(t *testing.T) {
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		desde := time.Date(2026, 10, 8, 18, 0, 0, 0, time.UTC)
+		hasta := desde.Add(time.Minute)
 
 		_ = crearGarantiaParaBandeja(
 			t,
@@ -529,6 +542,7 @@ func TestBandejaRepo_Listar_FiltroDesde(t *testing.T) {
 			ctx,
 			outbound.ListarGarantiasFiltros{
 				Desde: &desde,
+				Hasta: &hasta,
 			},
 			outbound.Paginacion{
 				Limite: 20,
@@ -745,8 +759,7 @@ func TestBandejaRepo_Listar_PaginacionConCreatedAtIgual(t *testing.T) {
 
 		creadas := make([]*domain.Garantia, 0, 4)
 
-		//nolint:intrange // El índice se usa para construir los datos de prueba.
-		for i := 0; i < 4; i++ {
+		for range 4 {
 			g := crearGarantiaParaBandeja(
 				t,
 				ctx,
@@ -816,6 +829,8 @@ func TestBandejaRepo_Listar_NoDuplicaGarantiaConDosArticulos(t *testing.T) {
 
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		now := time.Date(2026, 10, 8, 23, 30, 0, 0, time.UTC)
+		desde := now.Add(-time.Second)
+		hasta := now.Add(time.Second)
 
 		numero, err := folios.Siguiente(ctx)
 		require.NoError(t, err)
@@ -865,6 +880,8 @@ func TestBandejaRepo_Listar_NoDuplicaGarantiaConDosArticulos(t *testing.T) {
 			ctx,
 			outbound.ListarGarantiasFiltros{
 				Etapa: &etapa,
+				Desde: &desde,
+				Hasta: &hasta,
 			},
 			outbound.Paginacion{
 				Limite: 20,
@@ -913,7 +930,7 @@ func TestBandejaRepo_ListarYObtener_ArticulosOrdenados(t *testing.T) {
 		}{
 			{
 				id: uuid.MustParse(
-					"00000000-0000-0000-0000-000000000003",
+					"00000000-0000-0000-0000-000000000002",
 				),
 				clave:      "ORD-01",
 				fecha:      base.Add(10 * time.Minute),
@@ -921,7 +938,7 @@ func TestBandejaRepo_ListarYObtener_ArticulosOrdenados(t *testing.T) {
 			},
 			{
 				id: uuid.MustParse(
-					"00000000-0000-0000-0000-000000000002",
+					"00000000-0000-0000-0000-000000000003",
 				),
 				clave:      "ORD-02",
 				fecha:      base.Add(20 * time.Minute),
@@ -1165,5 +1182,116 @@ func TestBandejaRepo_Listar_CursorDecodificadoInvalido(t *testing.T) {
 				)
 			})
 		}
+	})
+}
+
+func TestBandejaRepo_Listar_IgnoraFilasAjenasFueraDeLaVentana(t *testing.T) {
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	garantiaRepo := garfb.NewGarantiaRepo(pool)
+	bandejaRepo := garfb.NewBandejaRepo(pool)
+	folios := garfb.NewFolioGenerator(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		base := time.Date(2099, 3, 1, 12, 0, 0, 0, time.UTC)
+		desde := base.Add(-time.Second)
+		hasta := base.Add(time.Minute)
+
+		esperada := crearGarantiaParaBandeja(
+			t,
+			ctx,
+			garantiaRepo,
+			folios,
+			base,
+			true,
+		)
+
+		fechaAjena := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+
+		for i := range 4 {
+			_ = crearGarantiaParaBandeja(
+				t,
+				ctx,
+				garantiaRepo,
+				folios,
+				fechaAjena.Add(time.Duration(i)*time.Minute),
+				true,
+			)
+		}
+
+		estado := domain.EstadoFolioEnProceso
+
+		pagina, err := bandejaRepo.Listar(
+			ctx,
+			outbound.ListarGarantiasFiltros{
+				Estado: &estado,
+				Desde:  &desde,
+				Hasta:  &hasta,
+			},
+			outbound.Paginacion{
+				Limite: 20,
+			},
+		)
+		require.NoError(t, err)
+
+		require.Len(t, pagina.Items, 1)
+		require.Equal(t, esperada.ID(), pagina.Items[0].ID())
+	})
+}
+
+func TestBandejaRepo_Listar_FiltroEtapaYUbicacionMismoArticulo(t *testing.T) {
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	garantiaRepo := garfb.NewGarantiaRepo(pool)
+	bandejaRepo := garfb.NewBandejaRepo(pool)
+	folios := garfb.NewFolioGenerator(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		base := time.Date(2099, 3, 2, 12, 0, 0, 0, time.UTC)
+		desde := base.Add(-time.Second)
+		hasta := base.Add(2 * time.Hour)
+
+		esperada := crearGarantiaClienteParaBandeja(
+			t,
+			ctx,
+			garantiaRepo,
+			folios,
+			base,
+			880001,
+		)
+
+		_ = crearGarantiaParaBandeja(
+			t,
+			ctx,
+			garantiaRepo,
+			folios,
+			base.Add(time.Hour),
+			false,
+		)
+
+		etapa := domain.EtapaRegistrado
+		ubicacion := domain.UbicacionDomicilioCliente
+
+		pagina, err := bandejaRepo.Listar(
+			ctx,
+			outbound.ListarGarantiasFiltros{
+				Etapa:     &etapa,
+				Ubicacion: &ubicacion,
+				Desde:     &desde,
+				Hasta:     &hasta,
+			},
+			outbound.Paginacion{
+				Limite: 20,
+			},
+		)
+		require.NoError(t, err)
+
+		require.Len(t, pagina.Items, 1)
+		require.Equal(t, esperada.ID(), pagina.Items[0].ID())
+
+		articulos := pagina.Items[0].ArticulosForRepo()
+		require.Len(t, articulos, 1)
+		require.Equal(t, etapa, articulos[0].Etapa())
+		require.Equal(t, ubicacion, articulos[0].Ubicacion())
 	})
 }

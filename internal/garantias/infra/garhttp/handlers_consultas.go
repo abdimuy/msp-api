@@ -28,6 +28,10 @@ func (h *Handlers) ListarGarantias(
 	ctx context.Context,
 	in *ListarGarantiasRequest,
 ) (*ListarGarantiasResponse, error) {
+	if err := h.consultas.ValidarAutenticacion(ctx); err != nil {
+		return nil, mapAppError(ctx, err)
+	}
+
 	query, err := buildBandejaQuery(in)
 	if err != nil {
 		return nil, mapAppError(ctx, err)
@@ -56,6 +60,10 @@ func (h *Handlers) ObtenerGarantia(
 	ctx context.Context,
 	in *ObtenerGarantiaRequest,
 ) (*ObtenerGarantiaResponse, error) {
+	if err := h.consultas.ValidarAutenticacion(ctx); err != nil {
+		return nil, mapAppError(ctx, err)
+	}
+
 	id, err := uuid.Parse(in.ID)
 	if err != nil {
 		return nil, mapAppError(ctx, errorValidacion(
