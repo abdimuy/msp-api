@@ -2,7 +2,7 @@
 
 > **Rama:** `feat/garantias-t10`, que creas tú desde `feat/garantias-integracion` (`git fetch && git switch -c feat/garantias-t10 origin/feat/garantias-integracion`). Los PR van contra `feat/garantias-integracion`, no contra `main`.
 > **Spec:** [`2026-07-27-garantias-design.md`](../specs/2026-07-27-garantias-design.md), actualizado el 26 de octubre: §2.1, §2.2, **§3.3 y §3.4** (columnas nuevas), §4.1, §5, **§6 completo**, §7, §8 y §10.
-> **Plazo:** tres entregas, **miércoles 28 de octubre, 12pm**, **jueves 29, 12pm** y **viernes 30, 4pm**. La tercera es junto con Kevin. No hay holgura.
+> **Plazo:** tres entregas, **jueves 29 de octubre, 12pm**, **viernes 30, 12pm** y **lunes 2 de noviembre, 4pm**. La tercera es junto con Kevin. No hay holgura.
 > **En paralelo:** Kevin hace la tarea 9. Los archivos de cada uno están listados abajo y **no se cruzan**.
 
 ## Qué construyes
@@ -11,13 +11,17 @@ Al terminar, el módulo de garantías **está encendido** en el API: montado, co
 
 | Entrega | Contenido | Cuándo |
 |---|---|---|
-| **1** | Migración `000071`, toda la persistencia nueva en `garfb` y el helper de blobs | **Miércoles 28, 12pm** |
-| **2** | Subida de evidencia, descarga de imagen, catálogos y detalle con imágenes | **Jueves 29, 12pm** |
-| **3** | `module.go`, cableado en `cmd/api`, permisos, prueba de arranque, barrido de seguridad final y targets del `Makefile`, **con Kevin** | **Viernes 30, 4pm** |
+| **1** | Migración `000071`, toda la persistencia nueva en `garfb` y el helper de blobs | **Jueves 29, 12pm** |
+| **2** | Subida de evidencia, descarga de imagen, catálogos y detalle con imágenes | **Viernes 30, 12pm** |
+| **3** | `module.go`, cableado en `cmd/api`, permisos, prueba de arranque, barrido de seguridad final y targets del `Makefile`, **con Kevin** | **Lunes 2 de noviembre, 4pm** |
 
-### Antes que nada: el PR #29
+### Antes que nada: lo que queda del #28 y el #29
 
-Las correcciones que ya te comenté en el #29 se terminan **en paralelo** a esta tarea, en la rama del #29. Cuando estén, esa rama se fusiona **hacia adelante** a `feat/garantias-integracion` (merge, no rebase) y tú traes la integración a tu rama.
+El #28 y el #29 se cerraron el miércoles 28 y su contenido ya está en `feat/garantias-integracion`. **Empieza tu rama desde ahí** (`git pull` primero).
+
+Dos pendientes entran en tu **entrega 1** (el detalle está en el último comentario de cada PR):
+1. `FiltroEtapaYUbicacionMismoArticulo`: siembra un folio con dos artículos, uno con la etapa pedida en otra ubicación y otro en la ubicación pedida con otra etapa, y verifica que **no** aparezca.
+2. `ObtenerDetalle` en `TestLecturasPublicas_NoDejanTransaccionesAbiertas`, y un comentario en `garantia_repo.go` junto a `RunInSnapshotTx` diciendo que el nivel de aislamiento no tiene prueba.
 
 Ojo, que ya te toca: al juntar el #29 con el #30 en la rama de integración, dos de tus pruebas dejaron de pasar contra Firebird y se arreglaron en el merge. Léelo en el mensaje del commit `chore(garantias): integra feat/garantias-consultas-http (PR #29)…`: `insertarEventoSQL` ganó las dos columnas de ubicación, y con las reglas R1 y R4 del #30 un folio de piso no pasa por recolección y un folio abierto no avanza artículos.
 
@@ -27,7 +31,7 @@ Ojo, que ya te toca: al juntar el #29 con el #30 en la rama de integración, dos
 
 1. El spec, **§3.3, §3.4, §4.1 y §6** como quedaron el 26 de octubre.
 2. **El commit de contrato** de `feat/garantias-integracion` (`feat(garantias): contrato compartido de las tareas 9 y 10`). De ahí sale lo que persistes: `Imagen.Tipo()`, `Imagen.Huella()`, el `ID` opcional de `NewImagenParams`, `Evento.Huella()`, `DistanciaEntregaM()`, `AuditoriaGPS()`, `Garantia.ImagenesPendientesForRepo()`, los dos métodos nuevos de `ImagenRepo` y los centinelas al final de `domain/errors.go`. **Sus firmas no se cambian**: si una no te sirve, dímelo y la cambiamos en los dos briefs a la vez.
-3. `migrations-firebird/000050_*`, `000057_*` y `000070_*`, up y down. Tu migración sigue su forma. **La `000070` tiene un defecto** (abajo, "Errores que no se repiten", punto 4) que Kevin corrige en el #30 el lunes; no lo copies.
+3. `migrations-firebird/000050_*`, `000057_*` y `000070_*`, up y down. Tu migración sigue su forma. **La `000070` tiene un defecto** (abajo, "Errores que no se repiten", punto 4) que ya quedó corregido en la integración; no copies la versión vieja.
 4. `docs/module-standards/HUMA_WIRING.md`, en especial "Multipart upload" y "Validation note".
 5. `internal/ventas/infra/venthttp/handlers_imagenes.go` y sus pruebas: subida y descarga de imágenes en este repo.
 6. `internal/canal/module.go`: el `module.go` de otro módulo sellado. Y en `cmd/api/`, `desempeno_wiring.go`, el bloque de desempeño en `server.go` y `fx_graph_test.go`.
@@ -63,12 +67,12 @@ ALTER TABLE MSP_GA_EVENTO ADD AUDITORIA_GPS VARCHAR(20) CHARACTER SET ASCII;
 - `ImagenRepo.ListarPorEventos(ids)`: **una** consulta con `WHERE EVENTO_ID IN (…)`, ordenada `EVENTO_ID, CREATED_AT, ID`; con la lista vacía, slice vacío **sin** tocar la base; en lotes de 1,000 si llegan más (el límite del `IN` de Firebird).
 - La lectura de imágenes: `TIPO` nulo → `TipoImagenEvidencia`; un valor que no es del catálogo → error de hidratación (como los demás enums).
 - `insertarEvento`, `scanEvento` y los mappers con `HUELLA`, `DISTANCIA_ENTREGA_M` y `AUDITORIA_GPS`.
-- **`Guardar` inserta `ImagenesPendientesForRepo()`** en la misma transacción, **después** de los eventos (la llave foránea lo exige). Hoy la única es la firma de `Entregar`; Kevin la agrega en su entrega 1 (miércoles 12pm).
+- **`Guardar` inserta `ImagenesPendientesForRepo()`** en la misma transacción, **después** de los eventos (la llave foránea lo exige). Hoy la única es la firma de `Entregar`; Kevin la agrega en su entrega 1 (jueves 12pm).
 - Borra `infra/garfb/contrato_pendiente_test.go` cuando implementes `Obtener` y `ListarPorEventos`.
 
 ### D3. El helper de blobs — `app/blob.go`, en la entrega 1
 
-Lo usan tu subida de evidencia y la firma de Kevin, así que su firma es exactamente ésta y va el **miércoles 12pm**:
+Lo usan tu subida de evidencia y la firma de Kevin, así que su firma es exactamente ésta y va el **jueves 29 a las 12pm**:
 
 ```go
 // guardarBlob valida (no vacío, JPEG o PNG por contenido, máximo maxBytes) y
@@ -87,7 +91,7 @@ func (s *Service) descartarBlobSiNoQuedo(ctx context.Context, imagenID uuid.UUID
 ### D4. Subida de evidencia — `AdjuntarImagen`
 
 - `app/adjuntar_imagen.go` (tuyo): `func (s *Service) AdjuntarImagen(ctx, cmd AdjuntarImagenCmd) (*domain.Imagen, error)`, con `AdjuntarImagenCmd{GarantiaID, EventoID uuid.UUID; Description string; Contenido []byte; ClaveIdempotencia string}`.
-- Orden: usuario → permiso **`actualizar`** → clave normalizada → huella con **`huellaDe(cmd)`** de Kevin (`app/huella.go`, entrega 1 del miércoles; incluye los bytes) → `guardarBlob` (máximo **10 MB**) → transacción: el evento existe **y** es de esa garantía (si no, `ErrImagenEventoAjeno`), ¿ya hay imagen con `ID` = clave? (misma huella → devuelve la existente sin escribir; otra huella o sin huella → `ErrClaveIdempotenciaMismatch`), `NewImagen` con `ID` = clave, `Tipo: TipoImagenEvidencia`, `SubidaPor` del usuario, `Huella`; `Registrar` → al final, **siempre**, `descartarBlobSiNoQuedo`.
+- Orden: usuario → permiso **`actualizar`** → clave normalizada → huella con **`huellaDe(cmd)`** de Kevin (`app/huella.go`, entrega 1 del jueves; incluye los bytes) → `guardarBlob` (máximo **10 MB**) → transacción: el evento existe **y** es de esa garantía (si no, `ErrImagenEventoAjeno`), ¿ya hay imagen con `ID` = clave? (misma huella → devuelve la existente sin escribir; otra huella o sin huella → `ErrClaveIdempotenciaMismatch`), `NewImagen` con `ID` = clave, `Tipo: TipoImagenEvidencia`, `SubidaPor` del usuario, `Huella`; `Registrar` → al final, **siempre**, `descartarBlobSiNoQuedo`.
 - Un `ErrImagenDuplicada` de `Registrar` (dos subidas simultáneas con la misma clave) se resuelve como en `resolverDuplicada`: se relee y se compara la huella.
 - **Nunca** crea firmas: el formulario no tiene campo de tipo.
 - Ruta: `POST /garantias/{id}/eventos/{eid}/imagenes` (`adjuntar-imagen`), multipart con `archivo` y `descripcion`, embebiendo `EncabezadoIdempotencia`. Responde **200** con la imagen (`id`, `tipo`, `descripcion`, `subida_por`, `created_at`, `url`).
@@ -120,7 +124,7 @@ En `garhttp/security_test.go` (tuyo): table-driven sobre **todas** las operacion
 
 ---
 
-## Entrega 1 — miércoles 28, 12pm
+## Entrega 1 — jueves 29, 12pm
 
 D1, D2 y D3.
 
@@ -150,7 +154,7 @@ Los corres tú y los reportas, cada uno como **parche `diff`** con la salida roj
 
 ---
 
-## Entrega 2 — jueves 29, 12pm
+## Entrega 2 — viernes 30, 12pm
 
 D2 (`Guardar` con las imágenes pendientes, ya con el dominio de Kevin), D4 y D5.
 
@@ -175,7 +179,7 @@ D2 (`Guardar` con las imágenes pendientes, ya con el dominio de Kevin), D4 y D5
 
 ---
 
-## Entrega 3 — viernes 30, 4pm, con Kevin
+## Entrega 3 — lunes 2 de noviembre, 4pm, con Kevin
 
 D6 y D7, sobre `feat/garantias-integracion` con las entregas 2 de los dos ya fusionadas.
 
@@ -222,7 +226,7 @@ Cada uno ya pasó en este módulo. Una entrega que repita uno rebota.
 2. **Pruebas que no fallan al revertir el arreglo.** Cada regla nueva tiene una prueba que se pone **roja** al quitarla. En el reporte va el parche del mutante, la salida roja y la verde. Una prueba que sigue verde con el mutante no prueba la regla.
 3. **Evidencia que no sale del SHA commiteado.** Cada número del reporte (cobertura, consultas contadas, mutantes, salidas) cita el **SHA** y el **comando** exacto con que se obtuvo, corrido sobre ese SHA con el árbol limpio y `go clean -testcache`. Un número del árbol de trabajo no cuenta.
 4. **Renombrar sin cambiar el contenido.** La `000070` cambió de nombre de archivo y adentro siguió diciendo `VALUES (65, '000065_…')`. Medido el 26 de octubre en una base desechable: `make fb-migrate-up` truena con `PK_MSP_MIGRATIONS ("ID" = 65)` y deja las columnas creadas sin registro. En la tuya, el ID interno es **71** y el nombre es el del archivo, y lo compruebas con `git grep -n "VALUES (71, '000071_add_firma_y_auditoria_a_msp_ga'" migrations-firebird/` y `git grep -n "ID = 71" migrations-firebird/000071_*`, con la salida en el reporte.
-5. **Pruebas que dependen de una tabla vacía o de datos previos.** Las de la bandeja hacen `require.Len(t, pagina.Items, 1)` sobre todo lo que cumple el filtro (`bandeja_repo_test.go`, nueve lugares; revisa cada uno): pasan en una base vacía y truenan en la de desarrollo en cuanto alguien guardó un folio en esa etapa. Corrígelas en el #29, y en todo lo nuevo compara **sólo los IDs que sembraste** en esa prueba, sembrando también el caso que **no** debe aparecer.
+5. **Pruebas que dependen de una tabla vacía o de datos previos.** Las de la bandeja hacen `require.Len(t, pagina.Items, 1)` sobre todo lo que cumple el filtro (`bandeja_repo_test.go`, nueve lugares; revisa cada uno): pasan en una base vacía y truenan en la de desarrollo en cuanto alguien guardó un folio en esa etapa. Eso ya se corrigió en el #28; en todo lo nuevo compara **sólo los IDs que sembraste** en esa prueba, sembrando también el caso que **no** debe aparecer.
 
 ---
 
@@ -261,12 +265,12 @@ Lo que hayas hecho distinto al brief, declarado con el porqué.
 
 | Cuándo | Qué tiene que estar empujado |
 |---|---|
-| **Martes 27, al cierre** | La `000071` con su ciclo y la persistencia de D2 con las pruebas 1 a 4 |
-| **Miércoles 28, 12pm** | **Entrega 1**: D2 completa, `app/blob.go`, R1–R7 y PR contra `feat/garantias-integracion` |
-| **Miércoles 28, al cierre** | `AdjuntarImagen` con sus pruebas |
-| **Jueves 29, 12pm** | **Entrega 2**: las tres rutas, el detalle con imágenes, `Guardar` con la firma, R8–R13 y PR |
-| **Jueves 29, al cierre** | `module.go`, el cableado y los permisos |
-| **Viernes 30, 4pm** | **Entrega 3**, con Kevin: barrido de seguridad final, prueba de arranque, `Makefile`, R14–R16 y PR |
+| **Miércoles 28, hasta la 1pm** | Leer el brief, el spec y el commit de contrato; rama creada desde `feat/garantias-integracion` |
+| **Jueves 29, 12pm** | **Entrega 1**: la `000071` con su ciclo, D2 completa, `app/blob.go`, R1–R7, los dos pendientes del #28 y el #29, y PR contra `feat/garantias-integracion` |
+| **Jueves 29, al cierre** | `AdjuntarImagen` con sus pruebas |
+| **Viernes 30, 12pm** | **Entrega 2**: las tres rutas, el detalle con imágenes, `Guardar` con la firma, R8–R13 y PR |
+| **Viernes 30, al cierre** | `module.go`, el cableado y los permisos |
+| **Lunes 2 de noviembre, 4pm** | **Entrega 3**, con Kevin: barrido de seguridad final, prueba de arranque, `Makefile`, R14–R16 y PR |
 
 Los avances diarios los reviso. Si en algún momento ves que no llegas, avísame ese mismo día.
 
