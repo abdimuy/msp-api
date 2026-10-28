@@ -145,6 +145,24 @@ func TestHydrateGarantia_RoundTrip(t *testing.T) {
 	require.Equal(t, "ruben", g.AbiertoPor())
 }
 
+// TestHydrateGarantia_CerradoConFecha keeps the pair guard from rejecting the
+// legitimate case: a cerrado folio always carries its timestamp.
+func TestHydrateGarantia_CerradoConFecha(t *testing.T) {
+	t.Parallel()
+
+	raw := garantiaValida()
+	raw.estado = string(domain.EstadoFolioCerrado)
+	raw.cerrado = time.Date(2026, 10, 28, 9, 30, 0, 0, time.UTC)
+
+	row, err := scanGarantia(&filaFalsa{valores: raw.valores()})
+	require.NoError(t, err)
+
+	g, err := hydrateGarantia(row, nil)
+	require.NoError(t, err)
+	require.Equal(t, domain.EstadoFolioCerrado, g.Estado())
+	require.NotNil(t, g.CerradoEn())
+}
+
 func TestHydrateGarantia_ValoresInvalidos(t *testing.T) {
 	t.Parallel()
 
@@ -159,6 +177,12 @@ func TestHydrateGarantia_ValoresInvalidos(t *testing.T) {
 			g.estadoCuenta = sql.NullString{String: "inventado", Valid: true}
 		}},
 		{"estado", func(g *filaGarantia) { g.estado = "inventado" }},
+		{"cerrado_sin_fecha", func(g *filaGarantia) {
+			g.estado = string(domain.EstadoFolioCerrado)
+		}},
+		{"fecha_sin_cerrado", func(g *filaGarantia) {
+			g.cerrado = time.Now()
+		}},
 		{"cerrado", func(g *filaGarantia) { g.cerrado = 42 }},
 		{"created", func(g *filaGarantia) { g.created = 42 }},
 		{"updated", func(g *filaGarantia) { g.updated = 42 }},

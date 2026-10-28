@@ -293,14 +293,15 @@ var (
 	)
 
 	// ErrClaveIdempotenciaMismatch is returned when the idempotency key
-	// belongs to THIS folio and THIS command, but the stored event does not
-	// describe the same operation the retry is asking for: the key is a
-	// repeat, its content is not. Treating it as a plain repetition would
-	// answer "already done" and silently drop the second operation (review
-	// of the B, 20-oct: the same key with "ROPERO" and later with "COMEDOR"
-	// answered success and never stored the comedor). It is a conflict, not
-	// a validation error: the key itself is well formed, it is the reuse
-	// that is wrong.
+	// already has an event on THIS folio, but that event does not describe
+	// the operation this call is asking for. The reuse may come from the
+	// same command with other content or from a different command on the
+	// same folio: either way the key is a repeat, its content is not.
+	// Treating it as a plain repetition would answer "already done" and
+	// silently drop the second operation (review of the B, 20-oct: the same
+	// key with "ROPERO" and later with "COMEDOR" answered success and never
+	// stored the comedor). It is a conflict, not a validation error: the key
+	// itself is well formed, it is the reuse that is wrong.
 	ErrClaveIdempotenciaMismatch = apperror.NewConflict(
 		"warranty_idempotency_key_mismatch",
 		"la clave de idempotencia ya se usó con otro contenido",

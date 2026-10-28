@@ -121,7 +121,15 @@ var espacioDeEventos = uuid.MustParse("6f6b0a7c-1f2e-5a3d-9b4c-7d8e9f0a1b2c")
 // instead of writing the delivery twice. The caller keeps the original key for
 // the event its command is named after, which is the one the app's replay
 // lookup reads (revisarClave compares TIPO against it).
+//
+// Both pieces are normalized NFC, like every other string in the domain. The
+// app already hands in a canonical UUID and the discriminators are built from
+// canonical UUIDs, so for real callers this is defense in depth: two spellings
+// of the same key must never mint two different derived keys.
 func claveDerivada(clave, discriminator string) string {
+	clave = normalizarNFC(clave)
+	discriminator = normalizarNFC(discriminator)
+
 	return uuid.NewSHA1(espacioDeEventos, []byte(clave+"\x00"+discriminator)).String()
 }
 
