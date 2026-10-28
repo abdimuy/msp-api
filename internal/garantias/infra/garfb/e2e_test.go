@@ -92,6 +92,66 @@ func llevaEtapas(tipo domain.TipoEvento) bool {
 	}
 }
 
+// eventoEsperado es una fila de la línea de tiempo esperada. Las cadenas vacías
+// significan "nulo en la base": un evento de folio no lleva artículo ni etapa,
+// y un avance que no cambia de ubicación no guarda el par de ubicaciones.
+// articulo nombra el artículo ("original", "reemplazo"); cada historia da el
+// UUID de cada nombre.
+type eventoEsperado struct {
+	tipo       domain.TipoEvento
+	articulo   string
+	etapaDesde domain.Etapa
+	etapaHasta domain.Etapa
+	ubicDesde  domain.Ubicacion
+	ubicHasta  domain.Ubicacion
+}
+
+// valor devuelve "" para un puntero nulo y el valor en otro caso, para
+// comparar contra eventoEsperado.
+func valor[T ~string](p *T) T {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+// verificarValores compara, evento por evento y en orden, el tipo, el
+// artículo y los valores exactos de etapa y ubicación desde/hasta. Que sólo
+// sean no nulos no basta: un ETAPA_DESDE = entregado en la entrega pasa una
+// revisión de nulos y cuenta una historia falsa.
+func verificarValores(
+	t *testing.T,
+	evs []*domain.Evento,
+	articulos map[string]uuid.UUID,
+	esperados []eventoEsperado,
+) {
+	t.Helper()
+
+	nombres := make(map[uuid.UUID]string, len(articulos))
+	for nombre, id := range articulos {
+		nombres[id] = nombre
+	}
+
+	got := make([]eventoEsperado, 0, len(evs))
+	for _, e := range evs {
+		fila := eventoEsperado{
+			tipo:       e.Tipo(),
+			etapaDesde: valor(e.EtapaDesde()),
+			etapaHasta: valor(e.EtapaHasta()),
+			ubicDesde:  valor(e.UbicacionDesde()),
+			ubicHasta:  valor(e.UbicacionHasta()),
+		}
+		if ref := e.ArticuloRef(); ref != nil {
+			nombre, ok := nombres[*ref]
+			require.True(t, ok, "evento %s con artículo sin nombre: %s", e.Tipo(), *ref)
+			fila.articulo = nombre
+		}
+		got = append(got, fila)
+	}
+
+	require.Equal(t, esperados, got, "línea de tiempo: valores exactos por evento, en orden")
+}
+
 // verificarLineaDeTiempo comprueba las invariantes que el §8 pide en las tres
 // historias de punta a punta, sobre la línea de tiempo leída de la base:
 //
@@ -100,6 +160,8 @@ func llevaEtapas(tipo domain.TipoEvento) bool {
 //   - cada evento que cambia de etapa lleva su par desde/hasta, y ninguno de
 //     los demás lo lleva (un folio_abierto con hasta sería una etapa inventada);
 //   - al menos un evento guardó el par de ubicaciones desde/hasta (R3/C5);
+//   - cada evento, en orden, tiene exactamente el tipo, el artículo y los
+//     valores de etapa y ubicación desde/hasta que la historia espera;
 //   - cero artículos sin su evento: cada artículo del folio aparece al menos
 //     una vez como ArticuloRef, y ningún ArticuloRef apunta a un artículo que
 //     no sea del folio.
@@ -111,11 +173,14 @@ func verificarLineaDeTiempo(
 	t *testing.T,
 	eventos *garfb.EventoRepo,
 	final *domain.Garantia,
+	articulos map[string]uuid.UUID,
+	esperados []eventoEsperado,
 ) []*domain.Evento {
 	t.Helper()
 
 	evs := lineaDeTiempo(ctx, t, eventos, final.ID())
 	require.NotEmpty(t, evs)
+	verificarValores(t, evs, articulos, esperados)
 
 	for _, e := range evs {
 		require.NotEmpty(t, e.ClaveIdempotencia(), "evento sin clave: %s", e.Tipo())
@@ -149,9 +214,9 @@ func verificarLineaDeTiempo(
 
 	// Cero artículos sin su evento: cada artículo del folio tiene al menos un
 	// evento que lo referencia, y ningún evento referencia un artículo ajeno.
-	articulos := final.ArticulosForRepo()
-	delFolio := make(map[uuid.UUID]bool, len(articulos))
-	for _, a := range articulos {
+	delFolioArts := final.ArticulosForRepo()
+	delFolio := make(map[uuid.UUID]bool, len(delFolioArts))
+	for _, a := range delFolioArts {
 		delFolio[a.ID()] = false
 	}
 
@@ -166,7 +231,7 @@ func verificarLineaDeTiempo(
 		delFolio[*ref] = true
 	}
 
-	for _, a := range articulos {
+	for _, a := range delFolioArts {
 		require.True(t, delFolio[a.ID()],
 			"el artículo %s quedó sin ningún evento en la línea de tiempo", a.ID())
 	}
@@ -329,7 +394,41 @@ func TestE2E_PisoDeLaRecepcionAlCierre(t *testing.T) {
 		// Comprobación final del §8: la línea de tiempo leída de la base cuenta
 		// la historia completa, en orden, con desde/hasta de etapa y ubicación,
 		// y sin artículos huérfanos de evento.
-		verificarLineaDeTiempo(ctx, t, erepo, cargada)
+		const o = "original"
+		verificarLineaDeTiempo(ctx, t, erepo, cargada,
+			map[string]uuid.UUID{o: articulo.ID()},
+			[]eventoEsperado{
+				{tipo: domain.TipoEventoFolioAbierto},
+				{tipo: domain.TipoEventoArticuloAgregado, articulo: o},
+				{tipo: domain.TipoEventoFolioEnProceso},
+				// Piso nace en almacen_revision: entrar a revisión no lo mueve.
+				{
+					tipo: domain.TipoEventoEtapaAvanzada, articulo: o,
+					etapaDesde: domain.EtapaRegistrado, etapaHasta: domain.EtapaEnRevision,
+				},
+				{
+					tipo: domain.TipoEventoDiagnosticoRegistrado, articulo: o,
+					etapaDesde: domain.EtapaEnRevision, etapaHasta: domain.EtapaEnTaller,
+					ubicDesde: domain.UbicacionAlmacenRevision, ubicHasta: domain.UbicacionTaller,
+				},
+				{
+					tipo: domain.TipoEventoEtapaAvanzada, articulo: o,
+					etapaDesde: domain.EtapaEnTaller, etapaHasta: domain.EtapaReparadoTaller,
+				},
+				{
+					tipo: domain.TipoEventoEtapaAvanzada, articulo: o,
+					etapaDesde: domain.EtapaReparadoTaller, etapaHasta: domain.EtapaListoEntrega,
+				},
+				{
+					tipo: domain.TipoEventoEtapaAvanzada, articulo: o,
+					etapaDesde: domain.EtapaListoEntrega, etapaHasta: domain.EtapaReingresadoInventario,
+					ubicDesde: domain.UbicacionTaller, ubicHasta: domain.UbicacionAlmacenRevision,
+				},
+				{tipo: domain.TipoEventoFolioListoEntrega},
+				// La entrega de piso no mueve artículos: sólo el hecho del folio.
+				{tipo: domain.TipoEventoFolioEntregado},
+				{tipo: domain.TipoEventoFolioCerrado},
+			})
 	})
 }
 
@@ -513,7 +612,61 @@ func TestE2E_ClientePorProveedor(t *testing.T) {
 		require.NotNil(t, fin.Desenlace())
 		require.Equal(t, domain.DesenlaceReparado, *fin.Desenlace())
 
-		evs := verificarLineaDeTiempo(ctx, t, erepo, final)
+		const o = "original"
+		evs := verificarLineaDeTiempo(ctx, t, erepo, final,
+			map[string]uuid.UUID{o: articulo.ID()},
+			[]eventoEsperado{
+				{tipo: domain.TipoEventoFolioAbierto},
+				{tipo: domain.TipoEventoArticuloAgregado, articulo: o},
+				{tipo: domain.TipoEventoFolioEnProceso},
+				{
+					tipo: domain.TipoEventoEtapaAvanzada, articulo: o,
+					etapaDesde: domain.EtapaRegistrado, etapaHasta: domain.EtapaPendienteRecoleccion,
+				},
+				{
+					tipo: domain.TipoEventoEtapaAvanzada, articulo: o,
+					etapaDesde: domain.EtapaPendienteRecoleccion, etapaHasta: domain.EtapaRecolectado,
+					ubicDesde: domain.UbicacionDomicilioCliente, ubicHasta: domain.UbicacionEnTransito,
+				},
+				{
+					tipo: domain.TipoEventoEtapaAvanzada, articulo: o,
+					etapaDesde: domain.EtapaRecolectado, etapaHasta: domain.EtapaEnRevision,
+					ubicDesde: domain.UbicacionEnTransito, ubicHasta: domain.UbicacionAlmacenRevision,
+				},
+				{
+					tipo: domain.TipoEventoDiagnosticoRegistrado, articulo: o,
+					etapaDesde: domain.EtapaEnRevision, etapaHasta: domain.EtapaOrdenGenerada,
+				},
+				{
+					tipo: domain.TipoEventoEtapaAvanzada, articulo: o,
+					etapaDesde: domain.EtapaOrdenGenerada, etapaHasta: domain.EtapaEnviadoProveedor,
+					ubicDesde: domain.UbicacionAlmacenRevision, ubicHasta: domain.UbicacionProveedor,
+				},
+				{
+					tipo: domain.TipoEventoEtapaAvanzada, articulo: o,
+					etapaDesde: domain.EtapaEnviadoProveedor, etapaHasta: domain.EtapaDictamenRecibido,
+				},
+				{
+					tipo: domain.TipoEventoDictamenRegistrado, articulo: o,
+					etapaDesde: domain.EtapaDictamenRecibido, etapaHasta: domain.EtapaReparadoProveedor,
+				},
+				{
+					tipo: domain.TipoEventoArticuloMovido, articulo: o,
+					ubicDesde: domain.UbicacionProveedor, ubicHasta: domain.UbicacionAlmacenRevision,
+				},
+				{
+					tipo: domain.TipoEventoEtapaAvanzada, articulo: o,
+					etapaDesde: domain.EtapaReparadoProveedor, etapaHasta: domain.EtapaListoEntrega,
+				},
+				{tipo: domain.TipoEventoFolioListoEntrega},
+				{
+					tipo: domain.TipoEventoEtapaAvanzada, articulo: o,
+					etapaDesde: domain.EtapaListoEntrega, etapaHasta: domain.EtapaEntregado,
+					ubicDesde: domain.UbicacionAlmacenRevision, ubicHasta: domain.UbicacionEntregado,
+				},
+				{tipo: domain.TipoEventoFolioEntregado},
+				{tipo: domain.TipoEventoFolioCerrado},
+			})
 		require.Equal(t, domain.TipoEventoFolioCerrado, evs[len(evs)-1].Tipo())
 
 		// El evento del folio entregado guarda el GPS de la entrega.
@@ -731,7 +884,57 @@ func TestE2E_ClientePorTallerConCambioFisico(t *testing.T) {
 
 		// La línea de tiempo completa: el cierre va antes del desenlace del
 		// original, porque el folio se cerró con el mueble todavía dentro.
-		evs := verificarLineaDeTiempo(ctx, t, erepo, final)
+		const o, r = "original", "reemplazo"
+		evs := verificarLineaDeTiempo(ctx, t, erepo, final,
+			map[string]uuid.UUID{o: original.ID(), r: reemplazo.ID()},
+			[]eventoEsperado{
+				{tipo: domain.TipoEventoFolioAbierto},
+				{tipo: domain.TipoEventoArticuloAgregado, articulo: o},
+				{tipo: domain.TipoEventoFolioEnProceso},
+				{
+					tipo: domain.TipoEventoEtapaAvanzada, articulo: o,
+					etapaDesde: domain.EtapaRegistrado, etapaHasta: domain.EtapaPendienteRecoleccion,
+				},
+				{
+					tipo: domain.TipoEventoEtapaAvanzada, articulo: o,
+					etapaDesde: domain.EtapaPendienteRecoleccion, etapaHasta: domain.EtapaRecolectado,
+					ubicDesde: domain.UbicacionDomicilioCliente, ubicHasta: domain.UbicacionEnTransito,
+				},
+				{
+					tipo: domain.TipoEventoEtapaAvanzada, articulo: o,
+					etapaDesde: domain.EtapaRecolectado, etapaHasta: domain.EtapaEnRevision,
+					ubicDesde: domain.UbicacionEnTransito, ubicHasta: domain.UbicacionAlmacenRevision,
+				},
+				{
+					tipo: domain.TipoEventoDiagnosticoRegistrado, articulo: o,
+					etapaDesde: domain.EtapaEnRevision, etapaHasta: domain.EtapaEnTaller,
+					ubicDesde: domain.UbicacionAlmacenRevision, ubicHasta: domain.UbicacionTaller,
+				},
+				// El cambio físico son dos saltos del original y el alta del
+				// reemplazo, cada uno con su evento.
+				{
+					tipo: domain.TipoEventoCambioAutorizado, articulo: o,
+					etapaDesde: domain.EtapaEnTaller, etapaHasta: domain.EtapaCambioAutorizado,
+				},
+				{
+					tipo: domain.TipoEventoCambioAutorizado, articulo: o,
+					etapaDesde: domain.EtapaCambioAutorizado, etapaHasta: domain.EtapaStandby,
+				},
+				{tipo: domain.TipoEventoArticuloAgregado, articulo: r},
+				{tipo: domain.TipoEventoFolioListoEntrega},
+				{
+					tipo: domain.TipoEventoEtapaAvanzada, articulo: r,
+					etapaDesde: domain.EtapaListoEntrega, etapaHasta: domain.EtapaEntregado,
+					ubicDesde: domain.UbicacionAlmacenRevision, ubicHasta: domain.UbicacionEntregado,
+				},
+				{tipo: domain.TipoEventoFolioEntregado},
+				{tipo: domain.TipoEventoFolioCerrado},
+				{
+					tipo: domain.TipoEventoDesenlaceRegistrado, articulo: o,
+					etapaDesde: domain.EtapaStandby, etapaHasta: domain.EtapaSegundaMano,
+					ubicDesde: domain.UbicacionTaller, ubicHasta: domain.UbicacionAlmacenSegundaMano,
+				},
+			})
 		require.Equal(t, domain.TipoEventoDesenlaceRegistrado, evs[len(evs)-1].Tipo())
 	})
 }
