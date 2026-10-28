@@ -2,7 +2,7 @@
 
 > **Rama:** `feat/garantias-t9`, que creas tú desde `feat/garantias-integracion` (`git fetch && git switch -c feat/garantias-t9 origin/feat/garantias-integracion`). El PR va contra `feat/garantias-integracion`, no contra `main`.
 > **Spec:** [`2026-07-27-garantias-design.md`](../specs/2026-07-27-garantias-design.md), actualizado el 26 de octubre: §3.3, §3.4, **§4.1 completo**, §6 (idempotencia y rutas), §7, §8 y §10.
-> **Plazo:** dos entregas, **miércoles 28 de octubre, 12pm** y **viernes 30 de octubre, 12pm**. El viernes en la tarde se integra con Ruben (tarea 10). No hay holgura.
+> **Plazo:** dos entregas, **jueves 29 de octubre, 12pm** y **viernes 30 de octubre, 12pm**. El lunes 2 de noviembre se integra con Ruben (tarea 10). No hay holgura.
 > **En paralelo:** Ruben hace la tarea 10. Los archivos de cada uno están listados abajo y **no se cruzan**.
 
 ## Qué construyes
@@ -11,14 +11,16 @@ Al terminar, el folio se maneja **completo por HTTP**: las catorce rutas `POST` 
 
 | Entrega | Contenido | Cuándo |
 |---|---|---|
-| **1** | Reglas de dominio (firma y auditoría GPS), la huella completa en `app` y las rutas JSON | **Miércoles 28, 12pm** |
+| **1** | Reglas de dominio (firma y auditoría GPS), la huella completa en `app` y las rutas JSON | **Jueves 29, 12pm** |
 | **2** | `entregar` multipart con la firma, `cerrar` con justificación, los tres e2e por HTTP, mutantes y cobertura | **Viernes 30, 12pm** |
 
-### Antes que nada: el PR #30
+### Antes que nada: lo que queda del #30
 
-El PR #26 **se cierra**: el #30 es la única fuente de comandos, y tus pruebas del #26 que valgan se portan al #30. Las correcciones que ya te comenté en el #30 se terminan **en paralelo** a esta tarea, en la rama del #30. Cuando estén, esa rama se fusiona **hacia adelante** a `feat/garantias-integracion` (merge, no rebase) y tú traes la integración a tu rama.
+El #30 se cerró el miércoles 28 y su contenido ya está en `feat/garantias-integracion`, con la `000070` corregida. La regla 1 de piso se corrige en la misma rama hoy en la tarde. **Empieza tu rama desde ahí** (`git pull` primero). El #26 también está cerrado.
 
-Una más, que no estaba en la revisión y **bloquea a Ruben**: la `000070` dice adentro `VALUES (65, '000065_add_ubicacion_a_msp_ga_evento', …)` (línea 46 del up) y su down borra `ID = 65`. Medido el 26 de octubre en una base desechable restaurada de `msp-test-db.fbk.gz`: `make fb-migrate-up` falla en la `000070` con `violation of PRIMARY or UNIQUE KEY constraint "PK_MSP_MIGRATIONS" … ("ID" = 65)`, porque la 65 ya es `000065_idx_pagos_recibidos_y_visitas`. Y como isql confirma cada `ALTER` por separado, las columnas quedan creadas sin registro. Corrígelo en el #30 **el lunes 26**: ID interno 70, nombre `000070_add_ubicacion_a_msp_ga_evento`, y el comentario de cabecera también.
+Dos pendientes del #30 entran en tu **entrega 1** (el detalle está en el último comentario del #30):
+1. Pruebas que hoy no pueden fallar: los getters `Dictamen()`, `Ruta()` y `Desenlace()` (`*a.Dictamen() = rechazada` no cambia el agregado); `UpdatedAt` del folio con una hora distinta por paso en los diez comandos, y en `marcarNoDevuelto` y `moverA` a nivel artículo; el usuario de Identity con un nombre que no aparezca en ningún otro fake.
+2. Las pruebas de la huella del #26 (`ClaveMismoComandoOtroArticulo`, `…OtraEtapa`, `CarreraConClaveDeOtroComando` y las demás) se portan junto con D1: son las que guardan la huella completa.
 
 ---
 
@@ -95,7 +97,7 @@ Todas en `garhttp/routes_comandos.go`, registradas desde `registrarComandos` (qu
 
 ### D5. Lo que tomas de Ruben
 
-Ruben entrega el **miércoles 28 a las 12pm**, en `app/blob.go`:
+Ruben entrega el **jueves 29 a las 12pm**, en `app/blob.go`:
 
 ```go
 // guardarBlob valida (no vacío, JPEG o PNG por contenido, máximo maxBytes) y
@@ -107,7 +109,7 @@ func (s *Service) guardarBlob(ctx context.Context, prefijo string, contenido []b
 func (s *Service) descartarBlobSiNoQuedo(ctx context.Context, imagenID uuid.UUID, ruta string)
 ```
 
-Hasta que llegue, en tus pruebas de `Entregar` usa los fakes de almacenamiento con tu prefijo (abajo). Si el miércoles no está, avísame ese mismo día.
+Hasta que llegue, en tus pruebas de `Entregar` usa los fakes de almacenamiento con tu prefijo (abajo). Si el jueves no está, avísame ese mismo día.
 
 ### D6. Cómo convivir en el mismo paquete
 
@@ -117,7 +119,7 @@ Los dos escriben en `app` y en `garhttp`. Para que la fusión compile:
 
 ---
 
-## Entrega 1 — miércoles 28, 12pm
+## Entrega 1 — jueves 29, 12pm
 
 - **Dominio:** D2 (firma en `Entregar`) y D3 (auditoría en `Cerrar`).
 - **`app`:** D1 completa (`huella.go` + `revisarClave`/`resolverDuplicada` + `AbrirGarantia`), `Cerrar` con D3, `Entregar` con la firma usando fakes.
@@ -244,12 +246,11 @@ Lo que hayas hecho distinto al brief, declarado con el porqué.
 
 | Cuándo | Qué tiene que estar empujado |
 |---|---|
-| **Lunes 26, al cierre** | La `000070` corregida en el #30 |
-| **Martes 27, al cierre** | D1 completa con las pruebas 1 a 3; D2 y D3 en el dominio |
-| **Miércoles 28, 12pm** | **Entrega 1**: las trece rutas JSON, `ejemplosComandos()`, K1–K11 y PR contra `feat/garantias-integracion` |
+| **Miércoles 28, hasta la 1pm** | Leer el brief, el spec y el commit de contrato; rama creada desde `feat/garantias-integracion` |
+| **Jueves 29, 12pm** | **Entrega 1**: D1 completa, D2 y D3 en el dominio, las trece rutas JSON, `ejemplosComandos()`, K1–K11, los pendientes del #30 y PR contra `feat/garantias-integracion` |
 | **Jueves 29, al cierre** | `entregar-garantia` multipart con sus pruebas |
 | **Viernes 30, 12pm** | **Entrega 2**: los tres e2e por HTTP, K12–K15, cobertura y PR |
-| **Viernes 30, 12pm a 4pm** | Integración con Ruben y barrido de seguridad final sobre las diecinueve operaciones |
+| **Lunes 2 de noviembre, 12pm a 4pm** | Integración con Ruben y barrido de seguridad final sobre las diecinueve operaciones |
 
 Los avances diarios los reviso. Si en algún momento ves que no llegas, avísame ese mismo día.
 
