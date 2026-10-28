@@ -2,23 +2,23 @@
 
 > **Rama:** `feat/garantias-t9`, que creas tú desde `feat/garantias-integracion` (`git fetch && git switch -c feat/garantias-t9 origin/feat/garantias-integracion`). El PR va contra `feat/garantias-integracion`, no contra `main`.
 > **Spec:** [`2026-07-27-garantias-design.md`](../specs/2026-07-27-garantias-design.md), actualizado el 26 de octubre: §3.3, §3.4, **§4.1 completo**, §6 (idempotencia y rutas), §7, §8 y §10.
-> **Plazo:** dos entregas, **jueves 29 de octubre, 12pm** y **viernes 30 de octubre, 12pm**. El lunes 2 de noviembre se integra con Ruben (tarea 10). No hay holgura.
+> **Plazo:** **una sola entrega, viernes 30 de octubre, 4pm**, con la tarea completa e integrada con Ruben (tarea 10). No hay entregas parciales ni revisiones intermedias: empujas a tu rama al cierre de cada día y avanzas lo más que puedas. No hay holgura.
 > **En paralelo:** Ruben hace la tarea 10. Los archivos de cada uno están listados abajo y **no se cruzan**.
 
 ## Qué construyes
 
 Al terminar, el folio se maneja **completo por HTTP**: las catorce rutas `POST` de comandos responden, cada una con su permiso, su validación y su idempotencia; `Entregar` exige la firma del cliente y `Cerrar` audita el GPS de la entrega contra el de la recolección.
 
-| Entrega | Contenido | Cuándo |
+| Parte | Contenido | Orden sugerido |
 |---|---|---|
-| **1** | Reglas de dominio (firma y auditoría GPS), la huella completa en `app` y las rutas JSON | **Jueves 29, 12pm** |
-| **2** | `entregar` multipart con la firma, `cerrar` con justificación, los tres e2e por HTTP, mutantes y cobertura | **Viernes 30, 12pm** |
+| **1** | Reglas de dominio (firma y auditoría GPS), la huella completa en `app` y las rutas JSON | Primero |
+| **2** | `entregar` multipart con la firma, `cerrar` con justificación, los tres e2e por HTTP, mutantes y cobertura | Después |
 
 ### Antes que nada: lo que queda del #30
 
-El #30 se cerró el miércoles 28 y su contenido ya está en `feat/garantias-integracion`, con la `000070` corregida. La regla 1 de piso se corrige en la misma rama hoy en la tarde. **Empieza tu rama desde ahí** (`git pull` primero). El #26 también está cerrado.
+El #30 se cerró el miércoles 28 y su contenido ya está en `feat/garantias-integracion`, con la `000070` corregida y la regla 1 de piso ya arreglada. **Empieza tu rama desde ahí** (`git pull` primero). El #26 también está cerrado.
 
-Dos pendientes del #30 entran en tu **entrega 1** (el detalle está en el último comentario del #30):
+Dos pendientes del #30 entran en esta tarea (el detalle está en el último comentario del #30):
 1. Pruebas que hoy no pueden fallar: los getters `Dictamen()`, `Ruta()` y `Desenlace()` (`*a.Dictamen() = rechazada` no cambia el agregado); `UpdatedAt` del folio con una hora distinta por paso en los diez comandos, y en `marcarNoDevuelto` y `moverA` a nivel artículo; el usuario de Identity con un nombre que no aparezca en ningún otro fake.
 2. Las pruebas de la huella del #26 (`ClaveMismoComandoOtroArticulo`, `…OtraEtapa`, `CarreraConClaveDeOtroComando` y las demás) se portan junto con D1: son las que guardan la huella completa.
 
@@ -28,7 +28,7 @@ Dos pendientes del #30 entran en tu **entrega 1** (el detalle está en el últim
 
 1. El spec, **§4.1 y §6** como quedaron el 26 de octubre. Son las reglas de esta tarea.
 2. **El commit de contrato** de `feat/garantias-integracion` (`feat(garantias): contrato compartido de las tareas 9 y 10`): `domain/tipo_imagen.go`, `auditoria_gps.go`, `huella.go`, los campos nuevos de `Imagen` y `Evento`, `ActorParams.Huella`, `ImagenesPendientesForRepo`, los centinelas nuevos al final de `errors.go`, `garhttp/idempotencia.go` y `garhttp/routes_comandos.go`. **Sus firmas no se cambian**: si una no te sirve, dímelo y la cambiamos en los dos briefs a la vez.
-3. Tu `app/service.go`: `ejecutarFolio`, `revisarClave` y `coincideHuella`. Es lo que vas a cambiar en la entrega 1.
+3. Tu `app/service.go`: `ejecutarFolio`, `revisarClave` y `coincideHuella`. Es lo que vas a cambiar en la parte 1.
 4. `docs/module-standards/HUMA_WIRING.md`, completo. En especial "Validation note" (el orden de las validaciones) y "Multipart upload".
 5. De Ruben, sólo para leer: `infra/garhttp/routes.go`, `dto.go`, `dto_mapper.go`, `errores.go` y `handlers_test.go`. Tus respuestas usan su `GarantiaDTO` y su `mapAppError`; no los copies.
 6. `internal/ventas/infra/venthttp/handlers_imagenes.go` y sus pruebas: la referencia de un multipart en este repo.
@@ -44,7 +44,7 @@ Si alguna te parece equivocada, dilo **antes** de escribir las pruebas.
 Hoy `huellaEvento` compara `tipo`, `articuloRef` y `etapaHasta`. No basta: con la misma clave, `MoverArticulo` a **otra** ubicación responde "ya lo hice" y la segunda operación se pierde (leído: `app/mover_articulo.go`, la huella es tipo + artículo; `app/service.go`, `coincideHuella`). Lo mismo `Cancelar` con otro motivo.
 
 - `app/huella.go` (tuyo): `func huellaDe(cmd any) string`. Devuelve el SHA-256 en hex minúsculas de: el **nombre del tipo** del comando (`reflect.TypeOf(cmd).Name()`), un separador, y el JSON del comando con el campo `ClaveIdempotencia` puesto en vacío. Todos los demás campos cuentan, incluidos `GarantiaID` y `ArticuloID` (que vienen de la ruta), `DeviceCreatedAt` y el GPS.
-- Ruben usa **la misma función** para `AdjuntarImagenCmd`, que lleva los bytes de la imagen. Por eso la firma es exactamente ésa y va en la entrega 1.
+- Ruben usa **la misma función** para `AdjuntarImagenCmd`, que lleva los bytes de la imagen. Por eso la firma es exactamente ésa, y la subes a tu rama el **jueves 29 temprano** y le avisas a Ruben.
 - Cada comando la calcula **una vez**, la pone en `ActorParams.Huella` y el dominio la copia a cada evento.
 - `revisarClave` y `resolverDuplicada` comparan **la huella guardada contra la de la petición**. Huella igual → repetición, 200 sin escribir. Huella distinta → `ErrClaveIdempotenciaMismatch` (409 `warranty_idempotency_key_mismatch`). Un evento **sin** huella nunca es repetición. La clave en otro folio sigue siendo `ErrClaveIdempotenciaDeOtroFolio`.
 - `AbrirGarantia` sigue la misma regla.
@@ -97,7 +97,7 @@ Todas en `garhttp/routes_comandos.go`, registradas desde `registrarComandos` (qu
 
 ### D5. Lo que tomas de Ruben
 
-Ruben entrega el **jueves 29 a las 12pm**, en `app/blob.go`:
+Ruben lo sube a su rama el **jueves 29 temprano**, en `app/blob.go`; lo traes con un merge de su rama:
 
 ```go
 // guardarBlob valida (no vacío, JPEG o PNG por contenido, máximo maxBytes) y
@@ -109,23 +109,23 @@ func (s *Service) guardarBlob(ctx context.Context, prefijo string, contenido []b
 func (s *Service) descartarBlobSiNoQuedo(ctx context.Context, imagenID uuid.UUID, ruta string)
 ```
 
-Hasta que llegue, en tus pruebas de `Entregar` usa los fakes de almacenamiento con tu prefijo (abajo). Si el jueves no está, avísame ese mismo día.
+Hasta que llegue, en tus pruebas de `Entregar` usa los fakes de almacenamiento con tu prefijo (abajo). Si el jueves a mediodía no está, avísame ese mismo día.
 
 ### D6. Cómo convivir en el mismo paquete
 
 Los dos escriben en `app` y en `garhttp`. Para que la fusión compile:
 - Tus fakes y helpers de prueba nuevos llevan el prefijo **`fakeFirma…`** / **`firma…`**. Los de Ruben llevan `fakeAdjunto…` / `adjunto…`.
-- En `garhttp/ejemplos_comandos_test.go` (tuyo, **en la entrega 1**) defines `type ejemploOperacion struct { OperationID, Method, Path, ContentType string; Body []byte }` y `func ejemplosComandos() []ejemploOperacion`, con una petición **válida** por cada una de tus operaciones: las trece JSON en la entrega 1 y `entregar-garantia` en la 2. Ruben la usa en el barrido de seguridad final; tú la usas en tus pruebas de 401/403.
+- En `garhttp/ejemplos_comandos_test.go` (tuyo, **el jueves 29**) defines `type ejemploOperacion struct { OperationID, Method, Path, ContentType string; Body []byte }` y `func ejemplosComandos() []ejemploOperacion`, con una petición **válida** por cada una de tus operaciones: las trece JSON y `entregar-garantia`. Ruben la usa en el barrido de seguridad final; tú la usas en tus pruebas de 401/403.
 
 ---
 
-## Entrega 1 — jueves 29, 12pm
+## Parte 1
 
 - **Dominio:** D2 (firma en `Entregar`) y D3 (auditoría en `Cerrar`).
 - **`app`:** D1 completa (`huella.go` + `revisarClave`/`resolverDuplicada` + `AbrirGarantia`), `Cerrar` con D3, `Entregar` con la firma usando fakes.
 - **`garhttp`:** las trece rutas JSON de D4 (todas menos `entregar-garantia`) y `ejemplosComandos()` con esas trece.
 
-### Pruebas de la entrega 1
+### Pruebas de la parte 1
 
 1. **La huella, por reflexión, sobre cada `*Cmd`.** Una prueba table-driven que recorre **cada** comando exportado de `app` y, para **cada campo** salvo `ClaveIdempotencia`, cambia ese campo a otro valor válido y comprueba que la huella cambia. Y que cambiar sólo `ClaveIdempotencia` **no** la cambia. La lista de comandos no se escribe a mano: se saca con `go/parser` de los `type …Cmd struct` exportados de `app/*.go` (sin `_test.go`) y la prueba falla si alguno no está en la tabla. Así, un comando o un campo nuevo sin huella se pone rojo solo.
 2. **Dos comandos con la misma forma** (`IniciarProcesoCmd` y `MarcarListoEntregaCmd`, por ejemplo) y los mismos valores dan huellas **distintas**.
@@ -134,7 +134,7 @@ Los dos escriben en `app` y en `garhttp`. Para que la fusión compile:
 5. **Auditoría GPS, con distancias que puedes comprobar a mano:** un minuto de arco de latitud sobre un meridiano mide `6,371,000 × π / 10,800 ≈ 1,853.25 m`; úsalo para probar el cálculo. Para el umbral, puntos sobre el mismo meridiano a **299.9 m** y a **300.1 m** (Δlat = metros / 111,194.93). Más: varias recolecciones, gana la mayor; sin recolección → `no_aplica`; recolección sin GPS → `no_aplica`; desvío sin justificación → error sin cambios; desvío con justificación → `con_desvio` con la justificación en el evento.
 6. **HTTP, con `httptest`**, por cada una de las trece rutas: camino feliz con el JSON **completo** de la respuesta; sin `Idempotency-Key` → 422; clave que no es UUID → 422; UUID inválido en la ruta → 422; un enum inválido → 422; error del dominio → su status; y **que la clave del encabezado es la que llega al comando** (no una generada).
 
-### Mutantes de la entrega 1
+### Mutantes de la parte 1
 
 Los corres tú y los reportas, cada uno como **parche `diff`** con la salida roja de la prueba que lo mata y la verde al revertirlo.
 
@@ -154,7 +154,7 @@ Los corres tú y los reportas, cada uno como **parche `diff`** con la salida roj
 
 ---
 
-## Entrega 2 — viernes 30, 12pm
+## Parte 2
 
 - `entregar-garantia` multipart (D2), con `gps_lat`, `gps_lon`, `device_created_at` y el archivo `firma`, usando el helper de Ruben.
 - Los **tres e2e por HTTP** del §8 (piso; cliente por proveedor; cliente por taller con cambio físico), de `httptest` a `app` a `garfb` real, dentro de `WithTestTransaction`, en `garhttp/e2e_comandos_test.go`. Además de lo que ya piden en la tarea 8:
@@ -163,12 +163,12 @@ Los corres tú y los reportas, cada uno como **parche `diff`** con la salida roj
   - en uno de ellos, el **mismo** `POST` se manda dos veces con la misma clave (200 las dos, una sola fila) y una tercera con la misma clave y otro cuerpo (409, nada escrito).
 - Tus e2e de `infra/garfb/e2e_test.go` al día con la firma y la auditoría.
 
-### Pruebas de la entrega 2
+### Pruebas de la parte 2
 
 - `entregar-garantia`: sin firma → 422 `warranty_signature_required`; firma de 0 bytes, de más de 1 MB o que no es JPEG/PNG → 422; reintento con la misma firma → 200 y **ningún blob huérfano**; reintento con otra firma → 409 y el blob del reintento borrado; error de base → el blob borrado; éxito → el blob **sigue ahí**.
 - 401 y 403 en las catorce, con las peticiones válidas de `ejemplosComandos()`.
 
-### Mutantes de la entrega 2
+### Mutantes de la parte 2
 
 | # | Mutante |
 |---|---|
@@ -202,7 +202,7 @@ Nada más. En particular: **nada** en `routes.go`, `dto.go`, `dto_mapper.go`, `e
 
 ## Errores que no se repiten
 
-Cada uno ya pasó en este módulo. Una entrega que repita uno rebota.
+Cada uno ya pasó en este módulo. Si la entrega repite uno, rebota.
 
 1. **Huella incompleta.** Una huella que deja fuera un campo convierte un reintento con otro contenido en "ya lo hice", y la operación se pierde sin error. Por eso la prueba 1 es por reflexión y su lista sale del código, no de memoria.
 2. **Pruebas que no fallan al revertir el arreglo.** Cada regla nueva tiene una prueba que se pone **roja** al quitarla. En el reporte va el parche del mutante, la salida roja y la verde. Una prueba que sigue verde con el mutante no prueba la regla.
@@ -212,7 +212,7 @@ Cada uno ya pasó en este módulo. Una entrega que repita uno rebota.
 
 ---
 
-## Verification, en cada entrega
+## Verification, antes de entregar
 
 ```sh
 gofmt -l internal/garantias
@@ -231,8 +231,8 @@ Con la base arriba, y una vez sin `FB_DATABASE`: lo de Firebird se salta y nada 
 
 ## Reporte
 
-`docs/superpowers/plans/garantias-task-9-report.md`, uno solo que crece con las dos entregas. Lleva:
-- el SHA de cada entrega y la salida **literal** de los comandos de arriba sobre ese SHA;
+`docs/superpowers/plans/garantias-task-9-report.md`, uno solo. Lleva:
+- el SHA que entregas y la salida **literal** de los comandos de arriba sobre ese SHA;
 - la tabla de mutantes K1–K15, cada uno con su parche y su salida roja/verde;
 - la lista de comandos que encontró la prueba de la huella, con sus campos;
 - un ejemplo real de petición y respuesta de cada ruta;
@@ -246,11 +246,11 @@ Lo que hayas hecho distinto al brief, declarado con el porqué.
 
 | Cuándo | Qué tiene que estar empujado |
 |---|---|
-| **Miércoles 28, hasta la 1pm** | Leer el brief, el spec y el commit de contrato; rama creada desde `feat/garantias-integracion` |
-| **Jueves 29, 12pm** | **Entrega 1**: D1 completa, D2 y D3 en el dominio, las trece rutas JSON, `ejemplosComandos()`, K1–K11, los pendientes del #30 y PR contra `feat/garantias-integracion` |
-| **Jueves 29, al cierre** | `entregar-garantia` multipart con sus pruebas |
-| **Viernes 30, 12pm** | **Entrega 2**: los tres e2e por HTTP, K12–K15, cobertura y PR |
-| **Lunes 2 de noviembre, 12pm a 4pm** | Integración con Ruben y barrido de seguridad final sobre las diecinueve operaciones |
+| **Miércoles 28, hasta la 1pm** | Leer el brief, el spec y el commit de contrato; rama creada desde `feat/garantias-integracion` y empezar D1 |
+| **Jueves 29, temprano** | `app/huella.go` empujado a tu rama y avisado a Ruben |
+| **Jueves 29, al cierre** | Empujado lo que lleves (orden sugerido: D1, D2 y D3, las trece rutas JSON, los pendientes del #30, `entregar-garantia`) |
+| **Viernes 30, 12pm** | Tu parte terminada: los tres e2e por HTTP, K1–K15 y cobertura |
+| **Viernes 30, 12pm a 4pm** | **Entrega única**, con Ruben: integración, barrido de seguridad final sobre las diecinueve operaciones, reporte y PR contra `feat/garantias-integracion` |
 
 Los avances diarios los reviso. Si en algún momento ves que no llegas, avísame ese mismo día.
 
