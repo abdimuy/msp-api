@@ -74,12 +74,31 @@ func lineaDeTiempo(
 	return evs
 }
 
+// llevaEtapas reports whether an event type records a stage transition and so
+// must carry its desde/hasta pair. It is the inverse of the folio-level, manual
+// and attachment facts: those never move an article's stage.
+func llevaEtapas(tipo domain.TipoEvento) bool {
+	//nolint:exhaustive // the listed types are exactly the stage-bearing ones; the rest are the explicit negative.
+	switch tipo {
+	case domain.TipoEventoEtapaAvanzada,
+		domain.TipoEventoDiagnosticoRegistrado,
+		domain.TipoEventoDictamenRegistrado,
+		domain.TipoEventoCambioAutorizado,
+		domain.TipoEventoDesenlaceRegistrado,
+		domain.TipoEventoDevolucionFallida:
+		return true
+	default:
+		return false
+	}
+}
+
 // verificarLineaDeTiempo comprueba las invariantes que el §8 pide en las tres
 // historias de punta a punta, sobre la línea de tiempo leída de la base:
 //
 //   - está completa, en orden, y arranca con la apertura del folio;
 //   - ningún evento queda sin su clave de idempotencia;
-//   - ninguna etapa avanzada queda sin su par desde/hasta;
+//   - cada evento que cambia de etapa lleva su par desde/hasta, y ninguno de
+//     los demás lo lleva (un folio_abierto con hasta sería una etapa inventada);
 //   - al menos un evento guardó el par de ubicaciones desde/hasta (R3/C5);
 //   - cero artículos sin su evento: cada artículo del folio aparece al menos
 //     una vez como ArticuloRef, y ningún ArticuloRef apunta a un artículo que
@@ -104,12 +123,16 @@ func verificarLineaDeTiempo(
 
 	require.Equal(t, domain.TipoEventoFolioAbierto, evs[0].Tipo())
 
-	// Ninguna etapa avanzada puede quedar sin su desde/hasta.
+	// El par desde/hasta es obligatorio en los eventos que mueven etapa y
+	// prohibido en los que no: las dos mitades del contrato.
 	for _, e := range evs {
-		if e.Tipo() == domain.TipoEventoEtapaAvanzada {
-			require.NotNil(t, e.EtapaDesde(), "etapa_avanzada sin desde")
-			require.NotNil(t, e.EtapaHasta(), "etapa_avanzada sin hasta")
+		if llevaEtapas(e.Tipo()) {
+			require.NotNil(t, e.EtapaDesde(), "%s sin desde", e.Tipo())
+			require.NotNil(t, e.EtapaHasta(), "%s sin hasta", e.Tipo())
+			continue
 		}
+		require.Nil(t, e.EtapaDesde(), "%s no debe llevar desde", e.Tipo())
+		require.Nil(t, e.EtapaHasta(), "%s no debe llevar hasta", e.Tipo())
 	}
 
 	// R3: la ubicación viaja con el mueble. Al menos un evento tiene que haber
@@ -273,8 +296,30 @@ func TestE2E_PisoDeLaRecepcionAlCierre(t *testing.T) {
 		})
 		require.NoError(t, err)
 
+		// Cerrado solo se alcanza pasando por entregado: el folio de piso se
+		// entrega en mostrador (con GPS) y hasta entonces cierra. La entrega no
+		// mueve al artículo —entregado es etapa de cliente (R1)—, así que el
+		// mueble sigue reingresado_inventario en el almacén.
+		lat, lon := 19.4326, -99.1332
+		_, err = svc.Entregar(ctx, app.EntregarCmd{
+			GarantiaID:        id,
+			ClaveIdempotencia: clave(),
+			DeviceCreatedAt:   clk.Now(),
+			GPSLat:            &lat,
+			GPSLon:            &lon,
+		})
+		require.NoError(t, err)
+
+		_, err = svc.Cerrar(ctx, app.CerrarCmd{
+			GarantiaID:        id,
+			ClaveIdempotencia: clave(),
+			DeviceCreatedAt:   clk.Now(),
+		})
+		require.NoError(t, err)
+
 		cargada, err := grepo.Obtener(ctx, id)
 		require.NoError(t, err)
+		require.Equal(t, domain.EstadoFolioCerrado, cargada.Estado())
 		a := cargada.ArticulosForRepo()[0]
 		require.Equal(t, domain.EtapaReingresadoInventario, a.Etapa())
 		require.Equal(t, domain.UbicacionAlmacenRevision, a.Ubicacion())

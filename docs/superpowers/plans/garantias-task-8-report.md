@@ -1007,3 +1007,90 @@ disponible.
 La idempotencia "misma clave, contenido distinto" sigue aplazada a la tarea 9
 (huella SHA-256 completa). El candado `primerPaso` y el registro de
 `usuarioEventos` no se tocaron en esta vuelta.
+
+## 15. Tercera vuelta: los diez puntos pendientes
+
+1. **`piso_no_mueve_articulos` probaba el caso equivocado.** El folio se
+   hidrataba con el artículo en `listo_entrega`, una etapa que en un folio de
+   piso ya no existe; ahora el artículo está en `reingresado_inventario`
+   (terminal) y la prueba afirma que `Entregar` no lo mueve y que sólo encola
+   `folio_entregado`.
+
+2. **`RegistrarDictamen` exige `dictamen_recibido`.** La máquina sola no
+   bastaba: sus aristas `reparado_proveedor → listo_entrega` y
+   `espera_respuesta_cliente → listo_entrega` dejaban aplicar un segundo
+   dictamen. `articulo.registrarDictamen` compara la etapa y devuelve
+   `ErrTransicionEtapaNoPermitida`; las negativas
+   `rechazada_desde_reparado_proveedor` y `rechazada_desde_espera_respuesta`
+   cubren los dos lados.
+
+3. **El cambio físico desde `en_taller` deja de saltarse `cambio_autorizado`.**
+   `articulo.swapPath()` resuelve los saltos contra la máquina
+   (`en_taller → cambio_autorizado → standby`, o `espera_respuesta_cliente →
+   standby`), y el agregado emite un `cambio_autorizado` por salto. El
+   carve-out del reemplazo nacido en `listo_entrega` sigue vivo y sigue siendo
+   la desviación declarada.
+
+4. **El reemplazo nace con su evento.** `AutorizarCambioFisico` emite un
+   `articulo_agregado` para el artículo nuevo, con clave derivada, para que
+   ningún artículo quede sin entrada en la línea de tiempo. La prueba de dominio
+   comprueba los tres eventos con claves distintas y que el primer salto
+   conserva la clave del comando (la fila que busca el reintento).
+
+5. **`TestArticulo_MutacionesActualizanUpdatedAt` usa un instante por mutador**
+   (`tAvanzar`, `tDiagnostico`, `tSwap`, `tDesenlace`). Con el mismo instante en
+   todos, borrar un `MarkUpdatedAt` intermedio pasaba inadvertido.
+
+6. **El original en `listo_entrega` no se cambia.** Nuevo caso
+   `original_en_listo_entrega`: el carve-out `listo_entrega → standby` es sólo
+   del reemplazo, así que el original recibe
+   `ErrTransicionEtapaNoPermitida` sin mutación ni evento.
+
+7. **Candado y usuario de Identity, ahora con pruebas.** 
+   `TestComandos_CandadoAntesDeLaClave` usa `primerPaso` para fijar que
+   `obtener_para_actualizar` ocurre antes de `buscar_clave`; 
+   `TestComandos_UsuarioSaleDeIdentity` usa `usuarioEventos` para afirmar que el
+   `USUARIO` de los eventos es el que devuelve Identity (`"Juan"`) y no lo que
+   traiga el comando.
+
+8. **El E2E de piso llega a `cerrado`.** `cerrado` sólo se alcanza desde
+   `entregado`, así que tras `MarcarListoEntrega` la historia hace `Entregar`
+   (con GPS) y `Cerrar`, relee el folio y afirma `EstadoFolioCerrado` con el
+   artículo todavía en `reingresado_inventario`/`almacen_revision`.
+
+9. **`verificarLineaDeTiempo` comprueba las dos mitades del contrato de etapas.**
+   El helper `llevaEtapas(tipo)` marca los tipos que cambian etapa
+   (`etapa_avanzada`, `diagnostico_registrado`, `dictamen_registrado`,
+   `cambio_autorizado`, `desenlace_registrado`, `devolucion_fallida`): ésos
+   deben traer desde/hasta, y todos los demás deben traerlos en `nil`.
+
+10. **El desempate de la línea de tiempo es el orden de inserción, no el UUID.**
+    `ListarPorGarantia` ordena por `DEVICE_CREATED_AT, CREATED_AT, RDB$DB_KEY`:
+    el `ID` es un UUID aleatorio y desparramaba los eventos de un mismo
+    instante. `RDB$DB_KEY` apunta a la ranura física donde se escribió la fila,
+    que en esta tabla sólo-agrega es el orden en que el comando la escribió. La
+    prueba `TestEventoRepo_ListarDesempataPorInsercion` inserta tres eventos por
+    SQL directo (mismo `DEVICE_CREATED_AT` y `CREATED_AT`, IDs `ffff…`, `8888…`,
+    `0000…`) y exige que vuelvan en el orden de inserción; con el desempate
+    viejo por `ID` volverían al revés.
+
+    **Advertencia:** `RDB$DB_KEY` es una dirección física, no una secuencia
+    lógica; un `gbak -r` o un barrido pueden renumerarla. Sirve para desempatar
+    eventos del mismo folio, pero la solución durable es una columna de
+    secuencia causal, que exige esquema (migración nueva) y quedó fuera de esta
+    entrega. No se pudo ejecutar contra Firebird en esta vuelta (Docker abajo),
+    así que el `ORDER BY` con `RDB$DB_KEY` y la prueba quedan **pendientes de
+    verificación en base real**.
+
+### 15.1 Verificación de esta vuelta
+
+```
+gofmt -l internal/garantias                                   (sin salida)
+go build ./...                                                (sin salida)
+go test ./internal/garantias/... -count=1                      ok (6 paquetes)
+golangci-lint run ./internal/garantias/...                     0 issues
+```
+
+La suite `infra/garfb` se volvió a saltar por falta de base (Docker apagado);
+los cambios 8, 9 y 10 viven ahí y se validarán cuando el contenedor esté
+disponible.

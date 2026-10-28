@@ -373,3 +373,72 @@ func TestComandos_RepetidaPorClave(t *testing.T) {
 		})
 	}
 }
+
+// TestComandos_CandadoAntesDeLaClave pins the order inside the transaction: the
+// folio is locked (ObtenerParaActualizar) before the idempotency key is looked
+// up (ObtenerPorClaveIdempotencia). The other way around, two simultaneous
+// retries would both read "clave libre" and the second would race into Guardar
+// instead of answering as the replay it is.
+func TestComandos_CandadoAntesDeLaClave(t *testing.T) {
+	t.Parallel()
+	for _, c := range comandosCompartidos() {
+		t.Run(c.nombre, func(t *testing.T) {
+			t.Parallel()
+			svc, grepo, _, _, _, _, clk, ord := setupService()
+			s := sembrar(t, grepo, domain.EstadoFolioEnProceso, piso(), domain.EtapaEnRevision)
+
+			if _, err := c.invocar(svc, s.g, s.primero(), clave(), clk.Now()); err != nil {
+				// El resultado no importa: ambos pasos corren antes de que el
+				// comando pueda rechazar nada por su cuenta.
+				t.Logf("%s rechazó: %v", c.nombre, err)
+			}
+			candado := primerPaso(ord, "obtener_para_actualizar")
+			busqueda := primerPaso(ord, "buscar_clave")
+			if candado < 0 || busqueda < 0 {
+				t.Fatalf("faltan pasos: %v", ord.pasos())
+			}
+			if candado > busqueda {
+				t.Errorf("la clave se buscó antes del candado: %v", ord.pasos())
+			}
+		})
+	}
+}
+
+// TestComandos_UsuarioSaleDeIdentity proves the actor name is the one Identity
+// returns ("Juan"), never something the command brought: the pending events are
+// the only witness, and they are checked on the raw aggregate Guardar received.
+func TestComandos_UsuarioSaleDeIdentity(t *testing.T) {
+	t.Parallel()
+	t.Run("AvanzarArticulo", func(t *testing.T) {
+		t.Parallel()
+		svc, grepo, _, _, _, _, clk, _ := setupService()
+		s := sembrar(t, grepo, domain.EstadoFolioEnProceso, piso(), domain.EtapaRegistrado)
+
+		if _, err := svc.AvanzarArticulo(context.Background(), app.AvanzarArticuloCmd{
+			GarantiaID:        s.g.ID(),
+			ArticuloID:        s.primero(),
+			EtapaDestino:      domain.EtapaEnRevision,
+			ClaveIdempotencia: clave(),
+			DeviceCreatedAt:   clk.Now(),
+		}); err != nil {
+			t.Fatalf("AvanzarArticulo: %v", err)
+		}
+		usuarioEventos(t, grepo.lastSaved, "Juan")
+	})
+	t.Run("AgregarArticulo", func(t *testing.T) {
+		t.Parallel()
+		svc, grepo, _, _, _, _, clk, _ := setupService()
+		s := sembrar(t, grepo, domain.EstadoFolioEnProceso, piso(), domain.EtapaEnRevision)
+
+		if _, err := svc.AgregarArticulo(context.Background(), app.AgregarArticuloCmd{
+			GarantiaID:        s.g.ID(),
+			Clave:             "B",
+			Description:       "articulo B",
+			ClaveIdempotencia: clave(),
+			DeviceCreatedAt:   clk.Now(),
+		}); err != nil {
+			t.Fatalf("AgregarArticulo: %v", err)
+		}
+		usuarioEventos(t, grepo.lastSaved, "Juan")
+	})
+}

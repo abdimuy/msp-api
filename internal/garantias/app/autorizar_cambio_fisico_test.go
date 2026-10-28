@@ -46,7 +46,14 @@ func TestAutorizarCambioFisico_CaminoFeliz(t *testing.T) {
 		t.Errorf("tx = %d, saved = %d; want 1 y 1", tx.calls, len(grepo.saved))
 	}
 
-	ev := eventoEscrito(t, grepo)
+	// El cambio desde espera_respuesta_cliente es un solo salto, así que deja
+	// un evento cambio_autorizado con la clave del comando, más el evento
+	// propio del reemplazo.
+	eventos := eventosEscritos(t, grepo)
+	if len(eventos) != 2 {
+		t.Fatalf("el comando dejo %d eventos, want 2 (cambio y reemplazo)", len(eventos))
+	}
+	ev := eventos[0]
 	if ev.Tipo() != domain.TipoEventoCambioAutorizado {
 		t.Errorf("evento = %s, want cambio_autorizado", ev.Tipo())
 	}
@@ -58,6 +65,13 @@ func TestAutorizarCambioFisico_CaminoFeliz(t *testing.T) {
 	}
 	if ev.RolDecisor() == nil || *ev.RolDecisor() != domain.RolDecisorOficina {
 		t.Errorf("rol del evento = %v, want oficina", ev.RolDecisor())
+	}
+	if ev.ClaveIdempotencia() == "" || ev.ClaveIdempotencia() == eventos[1].ClaveIdempotencia() {
+		t.Errorf("claves derivadas: %q y %q deben ser distintas", ev.ClaveIdempotencia(), eventos[1].ClaveIdempotencia())
+	}
+	if eventos[1].Tipo() != domain.TipoEventoArticuloAgregado ||
+		eventos[1].ArticuloRef() == nil || *eventos[1].ArticuloRef() != reemplazo.ID() {
+		t.Errorf("segundo evento = %s/%v, want articulo_agregado del reemplazo", eventos[1].Tipo(), eventos[1].ArticuloRef())
 	}
 }
 

@@ -413,9 +413,13 @@ func (g *Garantia) RegistrarDictamen(articuloID uuid.UUID, dictamen Dictamen, ac
 // built before the original moves, so a NOT NULL violation (an empty
 // description on a hydrated row, for instance) fails with the aggregate
 // untouched. The swap is only reachable from en_taller or
-// espera_respuesta_cliente (en_taller walking the composed machine path
-// en_taller -> cambio_autorizado -> standby); a single cambio_autorizado
-// event is emitted carrying the swap from/to.
+// espera_respuesta_cliente; the workshop path walks
+// en_taller -> cambio_autorizado -> standby and leaves one cambio_autorizado
+// event per hop, while the customer path is a single hop. The replacement gets
+// an articulo_agregado event of its own, so no article is born without a
+// timeline entry. Both extra events carry keys derived from the command's,
+// because CLAVE_IDEMPOTENCIA is UNIQUE and the command key belongs to the
+// first hop (the row a replay looks up).
 func (g *Garantia) AutorizarCambioFisico(articuloID uuid.UUID, actor ActorParams, now time.Time) error {
 	articulo, err := g.findArticulo(articuloID)
 	if err != nil {
@@ -424,11 +428,24 @@ func (g *Garantia) AutorizarCambioFisico(articuloID uuid.UUID, actor ActorParams
 	if err := g.exigirOperacion(opAutorizarCambioFisico, articulo.Etapa()); err != nil {
 		return err
 	}
-	desde := articulo.Etapa()
-	hasta := EtapaStandby
-	e, err := g.buildEvent(actor, now, TipoEventoCambioAutorizado, &articuloID, "", &desde, &hasta, nil, nil)
+	path, err := articulo.swapPath()
 	if err != nil {
 		return err
+	}
+	eventos := make([]*Evento, 0, len(path)+1)
+	desde := articulo.Etapa()
+	for i, hop := range path {
+		actorHop := actor
+		if i > 0 {
+			actorHop.ClaveIdempotencia = claveDerivada(actor.ClaveIdempotencia, articuloID.String()+"/"+hop.String())
+		}
+		desdeHop, hastaHop := desde, hop
+		e, err := g.buildEvent(actorHop, now, TipoEventoCambioAutorizado, &articuloID, "", &desdeHop, &hastaHop, nil, nil)
+		if err != nil {
+			return err
+		}
+		eventos = append(eventos, e)
+		desde = hop
 	}
 	if actor.RolDecisor == nil {
 		return ErrRolDecisorObligatorio
@@ -446,11 +463,18 @@ func (g *Garantia) AutorizarCambioFisico(articuloID uuid.UUID, actor ActorParams
 	if err != nil {
 		return err
 	}
+	actorReemplazo := actor
+	actorReemplazo.ClaveIdempotencia = claveDerivada(actor.ClaveIdempotencia, articuloID.String()+"/reemplazo")
+	eReemplazo, err := g.buildEvent(actorReemplazo, now, TipoEventoArticuloAgregado, &reemplazo.id, "", nil, nil, nil, nil)
+	if err != nil {
+		return err
+	}
 	if err := articulo.autorizarCambioFisico(now); err != nil {
 		return err
 	}
 	g.articulos = append(g.articulos, reemplazo)
-	g.eventosPendientes = append(g.eventosPendientes, e)
+	g.eventosPendientes = append(g.eventosPendientes, eventos...)
+	g.eventosPendientes = append(g.eventosPendientes, eReemplazo)
 	g.audit.MarkUpdatedAt(now)
 	return nil
 }

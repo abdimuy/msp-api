@@ -52,19 +52,21 @@ func TestEntregar(t *testing.T) {
 	t.Run("piso_no_mueve_articulos", func(t *testing.T) {
 		t.Parallel()
 		// entregado only exists for cliente items (R1): a piso folio records the
-		// folio fact and moves no article.
+		// folio fact and moves no article. The article reaches listo_entrega
+		// only through reingresado_inventario (R1 of the piso path), which is
+		// why this folio can stand there at all.
 		g, a := hidratarFolio(t, hidratarParams{
 			origen:    domain.OrigenFolioPiso,
 			estado:    domain.EstadoFolioListoEntrega,
-			etapa:     domain.EtapaListoEntrega,
+			etapa:     domain.EtapaReingresadoInventario,
 			ubicacion: domain.UbicacionAlmacenRevision,
 		})
 		pendientes := g.EventosPendientesCount()
 		if err := g.Entregar(actorEntrega("juan"), fixed); err != nil {
 			t.Fatalf("Entregar: %v", err)
 		}
-		if a.Etapa() != domain.EtapaListoEntrega {
-			t.Fatalf("el artículo de piso se movió: %q", a.Etapa())
+		if a.Etapa() != domain.EtapaReingresadoInventario || a.Ubicacion() != domain.UbicacionAlmacenRevision {
+			t.Fatalf("el artículo de piso se movió: %q/%q", a.Etapa(), a.Ubicacion())
 		}
 		if got := g.EventosPendientesCount() - pendientes; got != 1 {
 			t.Fatalf("eventos encolados = %d, want 1 (folio_entregado)", got)

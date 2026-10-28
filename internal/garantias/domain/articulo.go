@@ -249,10 +249,15 @@ func dictamenTarget(d Dictamen) Etapa {
 // advances toward the branch target (aceptada -> reparado_proveedor,
 // rechazada -> listo_entrega, sin_falla -> espera_respuesta_cliente). It is
 // only legal for the supplier route (cross-validation #1) and only from
-// dictamen_recibido.
+// dictamen_recibido: the machine alone is not enough, because its
+// reparado_proveedor -> listo_entrega and espera_respuesta_cliente ->
+// listo_entrega edges would otherwise let a second verdict be applied.
 func (a *Articulo) registrarDictamen(d Dictamen, now time.Time) error {
 	if a.ruta == nil || !a.ruta.EsProveedor() {
 		return ErrArticuloDictamenSoloProveedor
+	}
+	if a.etapa != EtapaDictamenRecibido {
+		return ErrTransicionEtapaNoPermitida
 	}
 	hasta := dictamenTarget(d)
 	if !a.etapa.CanTransitionTo(hasta) {
@@ -266,33 +271,44 @@ func (a *Articulo) registrarDictamen(d Dictamen, now time.Time) error {
 	return nil
 }
 
-// autorizarCambioFisico moves the article into standby, opening the parallel
-// replacement flow. A replacement born in listo_entrega can be swapped too
-// (decision 9 carve-out), since the machine gives listo_entrega no other
-// exit; that carve-out is the deliberate deviation the task report calls
-// out.
+// autorizarCambioFisico moves the article along the swap path resolved by
+// swapPath, ending in standby and opening the parallel replacement flow.
 func (a *Articulo) autorizarCambioFisico(now time.Time) error {
-	if a.rol.EsReemplazo() && a.etapa == EtapaListoEntrega {
-		a.etapa = EtapaStandby
-		a.aplicarUbicacion(EtapaStandby)
-		a.tocar(now)
-		return nil
+	path, err := a.swapPath()
+	if err != nil {
+		return err
 	}
-	// The applied edges are validated against the stage machine: for espera
-	// the direct espera -> standby edge, for en_taller its composed path
-	// en_taller -> cambio_autorizado -> standby, whose meaningful guard is the
-	// cambio_autorizado -> standby edge (the first hop is machine-guaranteed).
-	from := a.etapa
-	if from == EtapaEnTaller {
-		from = EtapaCambioAutorizado
-	}
-	if !from.CanTransitionTo(EtapaStandby) {
-		return ErrTransicionEtapaNoPermitida
-	}
-	a.etapa = EtapaStandby
-	a.aplicarUbicacion(EtapaStandby)
+	a.etapa = path[len(path)-1]
+	a.aplicarUbicacion(a.etapa)
 	a.tocar(now)
 	return nil
+}
+
+// swapPath resolves the stage hops a physical swap walks from the current
+// stage, validating every edge against the machine. The workshop path passes
+// through cambio_autorizado, so authorizing the swap stays a fact of its own in
+// the timeline instead of jumping straight from en_taller to standby; the
+// customer path (espera_respuesta_cliente -> standby) is a single hop. A
+// replacement born in listo_entrega is swapped too (decision 9 carve-out),
+// since the machine gives listo_entrega no other exit; that carve-out is the
+// deliberate deviation the task report calls out.
+func (a *Articulo) swapPath() ([]Etapa, error) {
+	if a.rol.EsReemplazo() && a.etapa == EtapaListoEntrega {
+		return []Etapa{EtapaStandby}, nil
+	}
+	if a.etapa == EtapaEnTaller {
+		if !a.etapa.CanTransitionTo(EtapaCambioAutorizado) {
+			return nil, ErrTransicionEtapaNoPermitida
+		}
+		if !EtapaCambioAutorizado.CanTransitionTo(EtapaStandby) {
+			return nil, ErrTransicionEtapaNoPermitida
+		}
+		return []Etapa{EtapaCambioAutorizado, EtapaStandby}, nil
+	}
+	if !a.etapa.CanTransitionTo(EtapaStandby) {
+		return nil, ErrTransicionEtapaNoPermitida
+	}
+	return []Etapa{EtapaStandby}, nil
 }
 
 // desenlaceTarget returns the terminal stage a parallel outcome lands the
