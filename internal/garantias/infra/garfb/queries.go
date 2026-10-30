@@ -178,6 +178,8 @@ INSERT INTO MSP_GA_EVENTO (
 	DESCRIPCION,
 	ETAPA_DESDE,
 	ETAPA_HASTA,
+	UBICACION_DESDE,
+	UBICACION_HASTA,
 	USUARIO,
 	ROL_DECISOR,
 	GPS_LAT,
@@ -186,9 +188,17 @@ INSERT INTO MSP_GA_EVENTO (
 	DEVICE_CREATED_AT,
 	CLAVE_IDEMPOTENCIA
 ) VALUES (
-	?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+	?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )`
 
+// listarEventosPorGarantiaSQL returns the folio timeline in the order the port
+// promises: device time, then creation time, then insertion order. The ID is a
+// random UUID, so using it as the last key would scatter events that share both
+// timestamps in an arbitrary order. RDB$DB_KEY points at the physical slot the
+// row was written to, which on this append-only table is the order the command
+// wrote them in. It is a physical address, not a logical sequence: a rebuilt
+// table or a sweep could renumber it, so a causal sequence column would be the
+// durable fix; until then it is the only ordering key the schema offers.
 const listarEventosPorGarantiaSQL = `
 SELECT
 	ID,
@@ -198,6 +208,8 @@ SELECT
 	DESCRIPCION,
 	ETAPA_DESDE,
 	ETAPA_HASTA,
+	UBICACION_DESDE,
+	UBICACION_HASTA,
 	USUARIO,
 	ROL_DECISOR,
 	GPS_LAT,
@@ -207,7 +219,7 @@ SELECT
 	CLAVE_IDEMPOTENCIA
 FROM MSP_GA_EVENTO
 WHERE GARANTIA_ID = ?
-ORDER BY DEVICE_CREATED_AT, CREATED_AT, ID`
+ORDER BY DEVICE_CREATED_AT, CREATED_AT, RDB$DB_KEY`
 
 const obtenerEventoPorClaveIdempotenciaSQL = `
 SELECT
@@ -218,6 +230,8 @@ SELECT
 	DESCRIPCION,
 	ETAPA_DESDE,
 	ETAPA_HASTA,
+	UBICACION_DESDE,
+	UBICACION_HASTA,
 	USUARIO,
 	ROL_DECISOR,
 	GPS_LAT,
@@ -227,3 +241,71 @@ SELECT
 	CLAVE_IDEMPOTENCIA
 FROM MSP_GA_EVENTO
 WHERE CLAVE_IDEMPOTENCIA = ?`
+
+const listarGarantiasBaseSQL = `
+SELECT
+	g.ID,
+	g.FOLIO,
+	g.ORIGEN,
+	g.CLIENTE_ID,
+	g.VENTA_ID,
+	g.ESTADO_CUENTA,
+	g.ESTADO,
+	g.DESCRIPCION,
+	g.VIGENCIA_HASTA,
+	g.CALLE,
+	g.NUMERO_EXTERIOR,
+	g.COLONIA,
+	g.LOCALIDAD,
+	g.CIUDAD,
+	g.CODIGO_POSTAL,
+	g.GPS_LAT,
+	g.GPS_LON,
+	g.ABIERTO_POR,
+	g.CERRADO_EN,
+	g.CREATED_AT,
+	g.UPDATED_AT
+FROM MSP_GA_GARANTIA g`
+
+const listarArticulosPorGarantiasBaseSQL = `
+SELECT
+	ID,
+	GARANTIA_ID,
+	ROL,
+	ARTICULO_ID,
+	CLAVE,
+	DESCRIPCION,
+	RUTA,
+	ETAPA,
+	UBICACION,
+	DICTAMEN,
+	DESENLACE,
+	CERRADO_EN,
+	CREATED_AT,
+	UPDATED_AT,
+	REEMPLAZA_A
+FROM MSP_GA_ARTICULO`
+
+const insertarImagenSQL = `
+INSERT INTO MSP_GA_IMAGEN (
+	ID,
+	EVENTO_ID,
+	RUTA,
+	DESCRIPCION,
+	SUBIDA_POR,
+	CREATED_AT
+) VALUES (
+	?, ?, ?, ?, ?, ?
+)`
+
+const listarImagenesPorEventoSQL = `
+SELECT
+	ID,
+	EVENTO_ID,
+	RUTA,
+	DESCRIPCION,
+	SUBIDA_POR,
+	CREATED_AT
+FROM MSP_GA_IMAGEN
+WHERE EVENTO_ID = ?
+ORDER BY CREATED_AT, ID`

@@ -43,8 +43,9 @@ type Garantia struct {
 	cerradoEn      *time.Time
 	audit          audit.Timestamped
 
-	articulos         []*Articulo
-	eventosPendientes []*Evento
+	articulos          []*Articulo
+	eventosPendientes  []*Evento
+	imagenesPendientes []*Imagen
 }
 
 // ActorParams carries the event provenance every mutating method requires
@@ -56,12 +57,16 @@ type Garantia struct {
 // is stored when present. GPSLat/GPSLon are always optional but come as a
 // pair, each in range (spec §3.3): the column pair records where the agent
 // was, and half a position is not a position.
+//
+// Huella is the fingerprint of the request content (computed in app, opaque
+// here) and is copied to every event the command emits.
 type ActorParams struct {
 	Usuario           string
 	ClaveIdempotencia string
 	DeviceCreatedAt   time.Time
 	RolDecisor        *RolDecisor
 	GPSLat, GPSLon    *float64
+	Huella            string
 }
 
 // AbrirGarantiaParams carries the inputs to AbrirGarantia.
@@ -178,14 +183,14 @@ func AbrirGarantia(p AbrirGarantiaParams) (*Garantia, error) {
 	if !p.Origen.IsValid() {
 		return nil, ErrOrigenFolioInvalido
 	}
-	abiertoPor := strings.TrimSpace(p.AbiertoPor)
+	abiertoPor := normalizarNFC(strings.TrimSpace(p.AbiertoPor))
 	if abiertoPor == "" {
 		return nil, ErrAbiertoPorObligatorio
 	}
 	if utf8.RuneCountInString(abiertoPor) > 64 {
 		return nil, ErrAbiertoPorMuyLargo
 	}
-	description := strings.TrimSpace(p.Description)
+	description := normalizarNFC(strings.TrimSpace(p.Description))
 	if description == "" {
 		return nil, ErrDescriptionObligatoria
 	}
@@ -197,6 +202,9 @@ func AbrirGarantia(p AbrirGarantiaParams) (*Garantia, error) {
 	}
 	if err := validarDomicilioLargo(p); err != nil {
 		return nil, err
+	}
+	if !gpsValido(p.GPSLat, p.GPSLon) {
+		return nil, ErrDomicilioGPSInvalido
 	}
 	if p.EstadoCuenta != nil && !p.EstadoCuenta.IsValid() {
 		return nil, ErrEstadoCuentaInvalido
@@ -211,18 +219,18 @@ func AbrirGarantia(p AbrirGarantiaParams) (*Garantia, error) {
 		estado:         EstadoFolioAbierto,
 		description:    description,
 		vigenciaHasta:  p.VigenciaHasta,
-		calle:          p.Calle,
-		numeroExterior: p.NumeroExterior,
-		colonia:        p.Colonia,
-		localidad:      p.Localidad,
-		ciudad:         p.Ciudad,
-		codigoPostal:   p.CodigoPostal,
+		calle:          normalizarNFC(p.Calle),
+		numeroExterior: normalizarNFC(p.NumeroExterior),
+		colonia:        normalizarNFC(p.Colonia),
+		localidad:      normalizarNFC(p.Localidad),
+		ciudad:         normalizarNFC(p.Ciudad),
+		codigoPostal:   normalizarNFC(p.CodigoPostal),
 		gpsLat:         p.GPSLat,
 		gpsLon:         p.GPSLon,
 		abiertoPor:     abiertoPor,
 		audit:          audit.NewTimestamped(p.Now),
 	}
-	e, err := g.buildEvent(p.Actor, p.Now, TipoEventoFolioAbierto, nil, "", nil, nil)
+	e, err := g.buildEvent(p.Actor, p.Now, TipoEventoFolioAbierto, nil, "", nil, nil, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +241,7 @@ func AbrirGarantia(p AbrirGarantiaParams) (*Garantia, error) {
 // buildEvent builds a validated timeline event WITHOUT appending it. Callers
 // build the event first — so a NOT NULL violation can fail before any state
 // is touched — then mutate state and buffer the event with append.
-func (g *Garantia) buildEvent(actor ActorParams, now time.Time, tipo TipoEvento, articuloRef *uuid.UUID, description string, desde, hasta *Etapa) (*Evento, error) {
+func (g *Garantia) buildEvent(actor ActorParams, now time.Time, tipo TipoEvento, articuloRef *uuid.UUID, description string, desde, hasta *Etapa, ubicDesde, ubicHasta *Ubicacion) (*Evento, error) {
 	return newEvento(EventoParams{
 		GarantiaID:        g.id,
 		ArticuloRef:       articuloRef,
@@ -241,6 +249,8 @@ func (g *Garantia) buildEvent(actor ActorParams, now time.Time, tipo TipoEvento,
 		Description:       description,
 		EtapaDesde:        desde,
 		EtapaHasta:        hasta,
+		UbicacionDesde:    ubicDesde,
+		UbicacionHasta:    ubicHasta,
 		Usuario:           actor.Usuario,
 		RolDecisor:        actor.RolDecisor,
 		GPSLat:            actor.GPSLat,
@@ -248,7 +258,18 @@ func (g *Garantia) buildEvent(actor ActorParams, now time.Time, tipo TipoEvento,
 		CreatedAt:         now,
 		DeviceCreatedAt:   actor.DeviceCreatedAt,
 		ClaveIdempotencia: actor.ClaveIdempotencia,
+		Huella:            actor.Huella,
 	})
+}
+
+// exigirOperacion applies the single R4 rule to one operation and maps a
+// refusal to its sentinel. Every article mutator calls it before touching
+// anything, so the estado × operación table is the only place the rule lives.
+func (g *Garantia) exigirOperacion(op operacionArticulo, etapa Etapa) error {
+	if !folioAdmiteOperacion(g.estado, op, etapa) {
+		return ErrFolioNoAdmiteOperacion
+	}
+	return nil
 }
 
 func (g *Garantia) findArticulo(id uuid.UUID) (*Articulo, error) {
@@ -274,7 +295,7 @@ type AgregarArticuloParams struct {
 // cliente, almacen_revision for piso). Only abierto and en_proceso folios
 // admit new articles.
 func (g *Garantia) AgregarArticulo(p AgregarArticuloParams, actor ActorParams, now time.Time) error {
-	if g.estado != EstadoFolioAbierto && g.estado != EstadoFolioEnProceso {
+	if !folioAdmiteOperacion(g.estado, opAgregarArticulo, "") {
 		return ErrFolioNoAdmiteArticulos
 	}
 	ubicacion := UbicacionAlmacenRevision
@@ -295,7 +316,7 @@ func (g *Garantia) AgregarArticulo(p AgregarArticuloParams, actor ActorParams, n
 	if err != nil {
 		return err
 	}
-	e, err := g.buildEvent(actor, now, TipoEventoArticuloAgregado, &articulo.id, "", nil, nil)
+	e, err := g.buildEvent(actor, now, TipoEventoArticuloAgregado, &articulo.id, "", nil, nil, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -306,18 +327,26 @@ func (g *Garantia) AgregarArticulo(p AgregarArticuloParams, actor ActorParams, n
 }
 
 // AvanzarArticulo moves one article forward to the requested stage. The move
-// is validated against the stage machine before anything changes.
+// is validated against the stage machine filtered by the folio origin (R1) and
+// bounded by AvanzarArticulo's reach (R2): decision-only destinations and the
+// exits of dictamen_recibido and standby are rejected here and belong to their
+// own commands. Anything rejected leaves both the stage and the pending-event
+// buffer untouched.
 func (g *Garantia) AvanzarArticulo(articuloID uuid.UUID, hasta Etapa, actor ActorParams, now time.Time) error {
 	articulo, err := g.findArticulo(articuloID)
 	if err != nil {
 		return err
 	}
+	if err := g.exigirOperacion(opAvanzar, articulo.Etapa()); err != nil {
+		return err
+	}
 	desde := articulo.Etapa()
-	e, err := g.buildEvent(actor, now, TipoEventoEtapaAvanzada, &articuloID, "", &desde, &hasta)
+	ubicDesde, ubicHasta := cambioUbicacionPorEtapa(articulo.Ubicacion(), hasta)
+	e, err := g.buildEvent(actor, now, TipoEventoEtapaAvanzada, &articuloID, "", &desde, &hasta, ubicDesde, ubicHasta)
 	if err != nil {
 		return err
 	}
-	if err := articulo.avanzar(hasta, now); err != nil {
+	if err := articulo.avanzar(hasta, g.origen, now); err != nil {
 		return err
 	}
 	g.eventosPendientes = append(g.eventosPendientes, e)
@@ -332,12 +361,16 @@ func (g *Garantia) RegistrarDiagnostico(articuloID uuid.UUID, ruta RutaReparacio
 	if err != nil {
 		return err
 	}
+	if err := g.exigirOperacion(opRegistrarDiagnostico, articulo.Etapa()); err != nil {
+		return err
+	}
 	if !ruta.IsValid() {
 		return ErrRutaReparacionInvalida
 	}
 	hasta := diagnosticoTarget(ruta)
 	desde := articulo.Etapa()
-	e, err := g.buildEvent(actor, now, TipoEventoDiagnosticoRegistrado, &articuloID, "", &desde, &hasta)
+	ubicDesde, ubicHasta := cambioUbicacionPorEtapa(articulo.Ubicacion(), hasta)
+	e, err := g.buildEvent(actor, now, TipoEventoDiagnosticoRegistrado, &articuloID, "", &desde, &hasta, ubicDesde, ubicHasta)
 	if err != nil {
 		return err
 	}
@@ -360,12 +393,16 @@ func (g *Garantia) RegistrarDictamen(articuloID uuid.UUID, dictamen Dictamen, ac
 	if err != nil {
 		return err
 	}
+	if err := g.exigirOperacion(opRegistrarDictamen, articulo.Etapa()); err != nil {
+		return err
+	}
 	if !dictamen.IsValid() {
 		return ErrDictamenInvalido
 	}
 	hasta := dictamenTarget(dictamen)
 	desde := articulo.Etapa()
-	e, err := g.buildEvent(actor, now, TipoEventoDictamenRegistrado, &articuloID, "", &desde, &hasta)
+	ubicDesde, ubicHasta := cambioUbicacionPorEtapa(articulo.Ubicacion(), hasta)
+	e, err := g.buildEvent(actor, now, TipoEventoDictamenRegistrado, &articuloID, "", &desde, &hasta, ubicDesde, ubicHasta)
 	if err != nil {
 		return err
 	}
@@ -382,19 +419,39 @@ func (g *Garantia) RegistrarDictamen(articuloID uuid.UUID, dictamen Dictamen, ac
 // built before the original moves, so a NOT NULL violation (an empty
 // description on a hydrated row, for instance) fails with the aggregate
 // untouched. The swap is only reachable from en_taller or
-// espera_respuesta_cliente (en_taller walking the composed machine path
-// en_taller -> cambio_autorizado -> standby); a single cambio_autorizado
-// event is emitted carrying the swap from/to.
+// espera_respuesta_cliente; the workshop path walks
+// en_taller -> cambio_autorizado -> standby and leaves one cambio_autorizado
+// event per hop, while the customer path is a single hop. The replacement gets
+// an articulo_agregado event of its own, so no article is born without a
+// timeline entry. Both extra events carry keys derived from the command's,
+// because CLAVE_IDEMPOTENCIA is UNIQUE and the command key belongs to the
+// first hop (the row a replay looks up).
 func (g *Garantia) AutorizarCambioFisico(articuloID uuid.UUID, actor ActorParams, now time.Time) error {
 	articulo, err := g.findArticulo(articuloID)
 	if err != nil {
 		return err
 	}
-	desde := articulo.Etapa()
-	hasta := EtapaStandby
-	e, err := g.buildEvent(actor, now, TipoEventoCambioAutorizado, &articuloID, "", &desde, &hasta)
+	if err := g.exigirOperacion(opAutorizarCambioFisico, articulo.Etapa()); err != nil {
+		return err
+	}
+	path, err := articulo.swapPath()
 	if err != nil {
 		return err
+	}
+	eventos := make([]*Evento, 0, len(path)+1)
+	desde := articulo.Etapa()
+	for i, hop := range path {
+		actorHop := actor
+		if i > 0 {
+			actorHop.ClaveIdempotencia = claveDerivada(actor.ClaveIdempotencia, articuloID.String()+"/"+hop.String())
+		}
+		desdeHop, hastaHop := desde, hop
+		e, err := g.buildEvent(actorHop, now, TipoEventoCambioAutorizado, &articuloID, "", &desdeHop, &hastaHop, nil, nil)
+		if err != nil {
+			return err
+		}
+		eventos = append(eventos, e)
+		desde = hop
 	}
 	if actor.RolDecisor == nil {
 		return ErrRolDecisorObligatorio
@@ -412,11 +469,18 @@ func (g *Garantia) AutorizarCambioFisico(articuloID uuid.UUID, actor ActorParams
 	if err != nil {
 		return err
 	}
+	actorReemplazo := actor
+	actorReemplazo.ClaveIdempotencia = claveDerivada(actor.ClaveIdempotencia, articuloID.String()+"/reemplazo")
+	eReemplazo, err := g.buildEvent(actorReemplazo, now, TipoEventoArticuloAgregado, &reemplazo.id, "", nil, nil, nil, nil)
+	if err != nil {
+		return err
+	}
 	if err := articulo.autorizarCambioFisico(now); err != nil {
 		return err
 	}
 	g.articulos = append(g.articulos, reemplazo)
-	g.eventosPendientes = append(g.eventosPendientes, e)
+	g.eventosPendientes = append(g.eventosPendientes, eventos...)
+	g.eventosPendientes = append(g.eventosPendientes, eReemplazo)
 	g.audit.MarkUpdatedAt(now)
 	return nil
 }
@@ -428,12 +492,16 @@ func (g *Garantia) RegistrarDesenlace(articuloID uuid.UUID, desenlace Desenlace,
 	if err != nil {
 		return err
 	}
+	if err := g.exigirOperacion(opRegistrarDesenlace, articulo.Etapa()); err != nil {
+		return err
+	}
 	hasta, err := desenlaceTarget(desenlace)
 	if err != nil {
 		return err
 	}
 	desde := articulo.Etapa()
-	e, err := g.buildEvent(actor, now, TipoEventoDesenlaceRegistrado, &articuloID, "", &desde, &hasta)
+	ubicDesde, ubicHasta := cambioUbicacionPorEtapa(articulo.Ubicacion(), hasta)
+	e, err := g.buildEvent(actor, now, TipoEventoDesenlaceRegistrado, &articuloID, "", &desde, &hasta, ubicDesde, ubicHasta)
 	if err != nil {
 		return err
 	}
@@ -448,8 +516,64 @@ func (g *Garantia) RegistrarDesenlace(articuloID uuid.UUID, desenlace Desenlace,
 	return nil
 }
 
+// MarcarNoDevuelto moves an article from espera_respuesta_cliente to standby
+// without creating a replacement (R8): the client never answered or refused a
+// working item. It is a decision, so it requires a decider role, and it emits
+// the devolucion_fallida event.
+func (g *Garantia) MarcarNoDevuelto(articuloID uuid.UUID, actor ActorParams, now time.Time) error {
+	articulo, err := g.findArticulo(articuloID)
+	if err != nil {
+		return err
+	}
+	if err := g.exigirOperacion(opMarcarNoDevuelto, articulo.Etapa()); err != nil {
+		return err
+	}
+	desde := articulo.Etapa()
+	hasta := EtapaStandby
+	e, err := g.buildEvent(actor, now, TipoEventoDevolucionFallida, &articuloID, "", &desde, &hasta, nil, nil)
+	if err != nil {
+		return err
+	}
+	if actor.RolDecisor == nil {
+		return ErrRolDecisorObligatorio
+	}
+	if err := articulo.marcarNoDevuelto(now); err != nil {
+		return err
+	}
+	g.eventosPendientes = append(g.eventosPendientes, e)
+	g.audit.MarkUpdatedAt(now)
+	return nil
+}
+
+// MoverArticulo records a manual location change (R3). It may set only the
+// working locations — never entregado or baja, which only a stage sets — the
+// target must differ from where the article already is, and a terminal article
+// cannot move. It emits its own articulo_movido event carrying the from/to
+// location pair.
+func (g *Garantia) MoverArticulo(articuloID uuid.UUID, hasta Ubicacion, actor ActorParams, now time.Time) error {
+	articulo, err := g.findArticulo(articuloID)
+	if err != nil {
+		return err
+	}
+	if err := g.exigirOperacion(opMoverArticulo, articulo.Etapa()); err != nil {
+		return err
+	}
+	desde := articulo.Ubicacion()
+	e, err := g.buildEvent(actor, now, TipoEventoArticuloMovido, &articuloID, "", nil, nil, &desde, &hasta)
+	if err != nil {
+		return err
+	}
+	if err := articulo.moverA(hasta, now); err != nil {
+		return err
+	}
+	g.eventosPendientes = append(g.eventosPendientes, e)
+	g.audit.MarkUpdatedAt(now)
+	return nil
+}
+
 // IniciarProceso moves the folio from abierto to en_proceso. It requires at
-// least one article; a folio without articles cannot start the process.
+// least one article; a folio without articles cannot start the process. It
+// emits the folio_en_proceso event (R7), not the stage event.
 func (g *Garantia) IniciarProceso(actor ActorParams, now time.Time) error {
 	if !g.estado.CanTransitionTo(EstadoFolioEnProceso) {
 		return ErrTransicionEstadoNoPermitida
@@ -457,7 +581,7 @@ func (g *Garantia) IniciarProceso(actor ActorParams, now time.Time) error {
 	if len(g.articulos) == 0 {
 		return ErrGarantiaSinArticulos
 	}
-	e, err := g.buildEvent(actor, now, TipoEventoEtapaAvanzada, nil, "", nil, nil)
+	e, err := g.buildEvent(actor, now, TipoEventoFolioEnProceso, nil, "", nil, nil, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -468,17 +592,20 @@ func (g *Garantia) IniciarProceso(actor ActorParams, now time.Time) error {
 }
 
 // MarcarListoEntrega moves the folio to listo_entrega once every article is
-// in listo_entrega, standby or a terminal stage (decision 4).
+// ready (regla 1). standby and the terminal stages count for both origins;
+// listo_entrega counts only for cliente. A floor item is reinstated with
+// AvanzarArticulo(→ reingresado_inventario) before the folio is marked ready,
+// so a piso folio with an article still in another stage is refused with
+// ErrArticuloPisoSinReingresar, and a cliente one with
+// ErrArticulosNoListosParaEntrega.
 func (g *Garantia) MarcarListoEntrega(actor ActorParams, now time.Time) error {
 	if !g.estado.CanTransitionTo(EstadoFolioListoEntrega) {
 		return ErrTransicionEstadoNoPermitida
 	}
-	for _, a := range g.articulos {
-		if !stageListoParaEntrega(a.Etapa()) {
-			return ErrArticulosNoListosParaEntrega
-		}
+	if err := g.verificarListosParaEntrega(); err != nil {
+		return err
 	}
-	e, err := g.buildEvent(actor, now, TipoEventoEtapaAvanzada, nil, "", nil, nil)
+	e, err := g.buildEvent(actor, now, TipoEventoFolioListoEntrega, nil, "", nil, nil, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -488,22 +615,92 @@ func (g *Garantia) MarcarListoEntrega(actor ActorParams, now time.Time) error {
 	return nil
 }
 
-// stageListoParaEntrega reports whether an article blocks the delivery
-// readiness check.
-func stageListoParaEntrega(e Etapa) bool {
-	return e == EtapaListoEntrega || e == EtapaStandby || e.EsTerminal()
+// verificarListosParaEntrega walks the articles with listoParaEntrega and
+// returns the sentinel of the folio origin on the first one that is not ready.
+func (g *Garantia) verificarListosParaEntrega() error {
+	for _, a := range g.articulos {
+		if listoParaEntrega(a.etapa, g.origen) {
+			continue
+		}
+		if g.origen.EsPiso() {
+			return ErrArticuloPisoSinReingresar
+		}
+		return ErrArticulosNoListosParaEntrega
+	}
+	return nil
 }
 
-// Entregar marks the folio as delivered to the client. Only the folio state
-// moves; the article rows keep whatever MarcarListoEntrega validated:
-// listo_entrega, standby or a terminal outcome.
+// listoParaEntrega reports whether an article in stage e lets a folio of the
+// given origin be marked ready or delivered (regla 1). standby and the
+// terminal stages count for both origins; listo_entrega counts only for
+// cliente, because a floor item's destination is reingresado_inventario
+// (spec §4.2) and R4 would strand it once the folio is delivered.
+func listoParaEntrega(e Etapa, origen OrigenFolio) bool {
+	if e == EtapaStandby || e.EsTerminal() {
+		return true
+	}
+	return e == EtapaListoEntrega && origen.EsCliente()
+}
+
+// Entregar hands the folio to the client and closes the client path. The agent
+// GPS is mandatory — the delivery audit of §4.1 — so a delivery with no
+// coordinates is refused. On a cliente folio every article in listo_entrega
+// becomes entregado, with its location and its R6 outcome, and leaves one event
+// of its own, plus the folio_entregado. Articles in standby are not touched:
+// the folio may close with one still there (§3.2). A piso folio moves no
+// articles — entregado exists only for cliente items (R1) — and simply records
+// the folio fact; it also re-checks regla 1 as a defence, so a hydrated
+// inconsistent floor folio with an article still in listo_entrega is refused
+// with ErrArticuloPisoSinReingresar instead of freezing that article without
+// an outcome.
+//
+// Every event is built before the first mutation, so an invalid actor leaves
+// the aggregate untouched. The per-article events go first (they validate the
+// actor when there is something to deliver); the folio event closes the batch.
 func (g *Garantia) Entregar(actor ActorParams, now time.Time) error {
 	if !g.estado.CanTransitionTo(EstadoFolioEntregado) {
 		return ErrTransicionEstadoNoPermitida
 	}
-	e, err := g.buildEvent(actor, now, TipoEventoFolioEntregado, nil, "", nil, nil)
+	if actor.GPSLat == nil || actor.GPSLon == nil {
+		return ErrEntregaGPSRequerido
+	}
+	if err := g.verificarListosParaEntrega(); err != nil {
+		return err
+	}
+	type entregaPendiente struct {
+		articulo *Articulo
+		evento   *Evento
+	}
+	var entregas []entregaPendiente
+	if g.origen.EsCliente() {
+		for _, a := range g.articulos {
+			if a.etapa != EtapaListoEntrega {
+				continue
+			}
+			desde := EtapaListoEntrega
+			hasta := EtapaEntregado
+			ubicDesde, ubicHasta := cambioUbicacionPorEtapa(a.ubicacion, hasta)
+			// Each delivered article gets its own key derived from the
+			// command's: CLAVE_IDEMPOTENCIA is UNIQUE, so reusing the
+			// command's key for every article would violate the index on
+			// the second one. The folio event keeps the original key; it
+			// is the row the replay lookup finds by TIPO.
+			actorArticulo := actor
+			actorArticulo.ClaveIdempotencia = claveDerivada(actor.ClaveIdempotencia, a.id.String())
+			ev, err := g.buildEvent(actorArticulo, now, TipoEventoEtapaAvanzada, &a.id, "", &desde, &hasta, ubicDesde, ubicHasta)
+			if err != nil {
+				return err
+			}
+			entregas = append(entregas, entregaPendiente{articulo: a, evento: ev})
+		}
+	}
+	e, err := g.buildEvent(actor, now, TipoEventoFolioEntregado, nil, "", nil, nil, nil, nil)
 	if err != nil {
 		return err
+	}
+	for _, entrega := range entregas {
+		entrega.articulo.entregar(now)
+		g.eventosPendientes = append(g.eventosPendientes, entrega.evento)
 	}
 	g.estado = EstadoFolioEntregado
 	g.eventosPendientes = append(g.eventosPendientes, e)
@@ -516,7 +713,7 @@ func (g *Garantia) Cerrar(actor ActorParams, now time.Time) error {
 	if !g.estado.CanTransitionTo(EstadoFolioCerrado) {
 		return ErrTransicionEstadoNoPermitida
 	}
-	e, err := g.buildEvent(actor, now, TipoEventoFolioCerrado, nil, "", nil, nil)
+	e, err := g.buildEvent(actor, now, TipoEventoFolioCerrado, nil, "", nil, nil, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -538,7 +735,12 @@ func (g *Garantia) Cancelar(motivo string, actor ActorParams, now time.Time) err
 	if motivo == "" {
 		return ErrMotivoCancelacionObligatorio
 	}
-	e, err := g.buildEvent(actor, now, TipoEventoFolioCancelado, nil, motivo, nil, nil)
+	for _, a := range g.articulos {
+		if ubicacionFueraDelTaller(a.Ubicacion()) {
+			return ErrFolioConArticuloFuera
+		}
+	}
+	e, err := g.buildEvent(actor, now, TipoEventoFolioCancelado, nil, motivo, nil, nil, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -683,6 +885,33 @@ func (g *Garantia) ArticulosCount() int { return len(g.articulos) }
 // ArticulosForRepo returns a copy of the articles slice for the repository.
 func (g *Garantia) ArticulosForRepo() []*Articulo { return slices.Clone(g.articulos) }
 
+// ArticulosNuevosForRepo returns the articles created in this session and not
+// yet persisted, so Guardar knows which rows to INSERT (R10). The slice is a new
+// one — the caller may reorder it freely — and the articles are the live ones,
+// as the repository needs them to write.
+func (g *Garantia) ArticulosNuevosForRepo() []*Articulo {
+	return articulosQueCumplen(g.articulos, (*Articulo).EsNuevo)
+}
+
+// ArticulosModificadosForRepo returns the hydrated articles changed in this
+// session, so Guardar knows which rows to UPDATE (R10). New articles are left
+// out: they are an INSERT, never an UPDATE.
+func (g *Garantia) ArticulosModificadosForRepo() []*Articulo {
+	return articulosQueCumplen(g.articulos, (*Articulo).EstaModificado)
+}
+
+// articulosQueCumplen filters the aggregate's articles by a predicate into a new
+// slice, the shape both R10 accessors share.
+func articulosQueCumplen(articulos []*Articulo, cumple func(*Articulo) bool) []*Articulo {
+	out := make([]*Articulo, 0, len(articulos))
+	for _, a := range articulos {
+		if cumple(a) {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
 // EventosPendientes returns an iterator over the timeline events the current
 // session has produced but has not persisted yet. The historical timeline is
 // not loaded by the aggregate (brief decision 7); the repository only writes
@@ -703,3 +932,11 @@ func (g *Garantia) EventosPendientesCount() int { return len(g.eventosPendientes
 // EventosPendientesForRepo returns a copy of the pending events slice for the
 // repository.
 func (g *Garantia) EventosPendientesForRepo() []*Evento { return slices.Clone(g.eventosPendientes) }
+
+// ImagenesPendientesForRepo returns a copy of the images the aggregate created
+// in this session and that GarantiaRepo.Guardar must insert in the same
+// transaction, after the events they hang from. Today the only one is the
+// delivery signature Entregar attaches to its folio_entregado event (spec
+// §4.1); evidence uploaded through AdjuntarImagen does not travel here, it is
+// registered by ImagenRepo directly.
+func (g *Garantia) ImagenesPendientesForRepo() []*Imagen { return slices.Clone(g.imagenesPendientes) }

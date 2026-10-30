@@ -3,6 +3,7 @@ package garfb
 
 import (
 	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -11,6 +12,12 @@ import (
 	"github.com/abdimuy/msp-api/internal/platform/apperror"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 )
+
+// errCerradoEnInconsistente marks a persisted folio whose ESTADO and CERRADO_EN
+// disagree. Only Cerrar sets the timestamp, and it always moves the folio to
+// cerrado in the same call, so a cerrado folio without CERRADO_EN (or a
+// timestamp on any other estado) is a corrupt row, not something to hydrate.
+var errCerradoEnInconsistente = errors.New("estado y cerrado_en no concuerdan")
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -334,6 +341,9 @@ func hydrateGarantia(
 	if err != nil {
 		return nil, hydrationError("garantia", r.id, err)
 	}
+	if (estado == domain.EstadoFolioCerrado) != cerrado.Valid {
+		return nil, hydrationError("garantia", r.id, errCerradoEnInconsistente)
+	}
 
 	createdAt, err := firebird.ScanUTCTime(r.createdRaw)
 	if err != nil {
@@ -396,6 +406,8 @@ type eventoRow struct {
 	description       []byte
 	etapaDesde        sql.NullString
 	etapaHasta        sql.NullString
+	ubicacionDesde    sql.NullString
+	ubicacionHasta    sql.NullString
 	usuario           string
 	rolDecisor        sql.NullString
 	gpsLat            sql.NullFloat64
@@ -416,6 +428,8 @@ func scanEvento(row rowScanner) (*eventoRow, error) {
 		&r.description,
 		&r.etapaDesde,
 		&r.etapaHasta,
+		&r.ubicacionDesde,
+		&r.ubicacionHasta,
 		&r.usuario,
 		&r.rolDecisor,
 		&r.gpsLat,
@@ -442,6 +456,19 @@ func parseEtapaPtr(v sql.NullString) (*domain.Etapa, error) {
 	}
 
 	return &etapa, nil
+}
+
+func parseUbicacionPtr(v sql.NullString) (*domain.Ubicacion, error) {
+	if !v.Valid {
+		return nil, nil
+	}
+
+	ubicacion, err := domain.ParseUbicacion(v.String)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ubicacion, nil
 }
 
 func parseRolDecisorPtr(v sql.NullString) (*domain.RolDecisor, error) {
@@ -488,6 +515,16 @@ func hydrateEvento(r *eventoRow) (*domain.Evento, error) {
 		return nil, hydrationError("evento", r.id, err)
 	}
 
+	ubicacionDesde, err := parseUbicacionPtr(r.ubicacionDesde)
+	if err != nil {
+		return nil, hydrationError("evento", r.id, err)
+	}
+
+	ubicacionHasta, err := parseUbicacionPtr(r.ubicacionHasta)
+	if err != nil {
+		return nil, hydrationError("evento", r.id, err)
+	}
+
 	rolDecisor, err := parseRolDecisorPtr(r.rolDecisor)
 	if err != nil {
 		return nil, hydrationError("evento", r.id, err)
@@ -511,6 +548,8 @@ func hydrateEvento(r *eventoRow) (*domain.Evento, error) {
 		Description:       string(r.description),
 		EtapaDesde:        etapaDesde,
 		EtapaHasta:        etapaHasta,
+		UbicacionDesde:    ubicacionDesde,
+		UbicacionHasta:    ubicacionHasta,
 		Usuario:           r.usuario,
 		RolDecisor:        rolDecisor,
 		GPSLat:            floatPtr(r.gpsLat),
@@ -518,5 +557,62 @@ func hydrateEvento(r *eventoRow) (*domain.Evento, error) {
 		CreatedAt:         createdAt,
 		DeviceCreatedAt:   deviceCreatedAt,
 		ClaveIdempotencia: r.claveIdempotencia,
+	}), nil
+}
+
+type imagenRow struct {
+	id          string
+	eventoID    string
+	ruta        string
+	description sql.NullString
+	subidaPor   string
+	createdRaw  any
+}
+
+func scanImagen(row rowScanner) (*imagenRow, error) {
+	var r imagenRow
+
+	err := row.Scan(
+		&r.id,
+		&r.eventoID,
+		&r.ruta,
+		&r.description,
+		&r.subidaPor,
+		&r.createdRaw,
+	)
+	if err != nil {
+		return nil, firebird.MapError(err)
+	}
+
+	return &r, nil
+}
+
+func hydrateImagen(r *imagenRow) (*domain.Imagen, error) {
+	id, err := uuid.Parse(r.id)
+	if err != nil {
+		return nil, hydrationError("imagen", r.id, err)
+	}
+
+	eventoID, err := uuid.Parse(r.eventoID)
+	if err != nil {
+		return nil, hydrationError("imagen", r.id, err)
+	}
+
+	createdAt, err := firebird.ScanUTCTime(r.createdRaw)
+	if err != nil {
+		return nil, hydrationError("imagen", r.id, err)
+	}
+
+	return domain.HydrateImagen(domain.HydrateImagenParams{
+		ID:       id,
+		EventoID: eventoID,
+		// Contrato de las tareas 9 y 10: hasta que la migración 000071
+		// agregue MSP_GA_IMAGEN.TIPO (tarea 10), toda fila es evidencia,
+		// que es exactamente como se leerá una fila vieja con TIPO NULL.
+		Tipo:        domain.TipoImagenEvidencia,
+		Ruta:        r.ruta,
+		Description: r.description.String,
+		SubidaPor:   r.subidaPor,
+		CreatedAt:   createdAt,
 	}), nil
 }

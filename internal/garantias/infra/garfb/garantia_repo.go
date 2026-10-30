@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/nakagami/firebirdsql"
 
 	"github.com/abdimuy/msp-api/internal/garantias/domain"
 	"github.com/abdimuy/msp-api/internal/garantias/ports/outbound"
@@ -109,7 +110,17 @@ func (r *GarantiaRepo) Guardar(ctx context.Context, g *domain.Garantia) error {
 		return domain.ErrGarantiaNoEncontrada
 	}
 
-	for _, a := range g.ArticulosForRepo() {
+	// R10: el agregado dice qué cambió. Los nuevos se insertan, los
+	// modificados se actualizan, y el resto no se toca. Un UPDATE sobre un
+	// artículo modificado que afecta 0 filas es un error, no un INSERT
+	// silencioso: significa que la fila desapareció por debajo del agregado.
+	for _, a := range g.ArticulosNuevosForRepo() {
+		if err := insertarArticulo(ctx, tx, a); err != nil {
+			return err
+		}
+	}
+
+	for _, a := range g.ArticulosModificadosForRepo() {
 		result, err := tx.ExecContext(
 			ctx,
 			actualizarArticuloSQL,
@@ -133,9 +144,7 @@ func (r *GarantiaRepo) Guardar(ctx context.Context, g *domain.Garantia) error {
 		}
 
 		if afectadas == 0 {
-			if err := insertarArticulo(ctx, tx, a); err != nil {
-				return err
-			}
+			return domain.ErrArticuloNoEncontrado
 		}
 	}
 
@@ -173,6 +182,38 @@ func (r *GarantiaRepo) Obtener(
 	}
 
 	return garantia, nil
+}
+
+// ObtenerDetalle returns a warranty and its events from one read transaction.
+func (r *GarantiaRepo) ObtenerDetalle(
+	ctx context.Context,
+	id uuid.UUID,
+) (*domain.Garantia, []*domain.Evento, error) {
+	var garantia *domain.Garantia
+	var eventos []*domain.Evento
+
+	err := firebird.RunInSnapshotTx(ctx, r.pool.DB, func(ctx context.Context) error {
+		q := firebird.GetQuerier(ctx, r.pool.DB)
+
+		var err error
+		garantia, err = obtenerGarantia(
+			ctx,
+			q,
+			obtenerGarantiaSQL,
+			id.String(),
+		)
+		if err != nil {
+			return err
+		}
+
+		eventos, err = listarEventosPorGarantia(ctx, q, id)
+		return err
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return garantia, eventos, nil
 }
 
 // ObtenerPorFolio returns a warranty by folio.
@@ -332,6 +373,8 @@ func insertarEvento(
 		nullableString(e.Description()),
 		enumPtrArg(e.EtapaDesde()),
 		enumPtrArg(e.EtapaHasta()),
+		enumPtrArg(e.UbicacionDesde()),
+		enumPtrArg(e.UbicacionHasta()),
 		e.Usuario(),
 		enumPtrArg(e.RolDecisor()),
 		e.GPSLat(),
@@ -341,7 +384,7 @@ func insertarEvento(
 		e.ClaveIdempotencia(),
 	)
 	if err != nil {
-		if strings.Contains(err.Error(), "UQ_MSP_GA_EVENTO_CLAVE") {
+		if esClaveDuplicada(err) {
 			return domain.ErrClaveIdempotenciaDuplicada
 		}
 
@@ -349,6 +392,33 @@ func insertarEvento(
 	}
 
 	return nil
+}
+
+func esClaveDuplicada(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var fbErr *firebirdsql.FbError
+	if !errors.As(err, &fbErr) {
+		return false
+	}
+
+	// Firebird usa el GDS code 335544665 para violaciones de clave.
+	// Además comprobamos el nombre de la restricción incluido en FbError.Message
+	// para distinguir la clave de idempotencia de otras PK o UNIQUE.
+	const duplicateKeyCode = 335544665
+
+	tieneCodigoDuplicado := false
+	for _, code := range fbErr.GDSCodes {
+		if code == duplicateKeyCode {
+			tieneCodigoDuplicado = true
+			break
+		}
+	}
+
+	return tieneCodigoDuplicado &&
+		strings.Contains(fbErr.Message, "UQ_MSP_GA_EVENTO_CLAVE")
 }
 
 func nullableString(v string) any {

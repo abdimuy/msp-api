@@ -98,6 +98,16 @@ func TestGarantiaRepo_GuardarAvanceYEvento(t *testing.T) {
 			articulos[0].Etapa(),
 		)
 
+		// The folio must leave abierto before any article moves (R4).
+		require.NoError(t, cargada.IniciarProceso(
+			domain.ActorParams{
+				Usuario:           "ruben",
+				ClaveIdempotencia: uuid.NewString(),
+				DeviceCreatedAt:   now.Add(time.Minute),
+			},
+			now.Add(time.Minute),
+		))
+
 		// Client warranty transition:
 		// registrado -> pendiente_recoleccion.
 		err = cargada.AvanzarArticulo(
@@ -130,12 +140,13 @@ func TestGarantiaRepo_GuardarAvanceYEvento(t *testing.T) {
 		// Expected events:
 		// 1. folio_abierto
 		// 2. articulo_agregado
-		// 3. etapa_avanzada
+		// 3. folio_en_proceso
+		// 4. etapa_avanzada
 		eventos, err := eventoRepo.ListarPorGarantia(ctx, g.ID())
 		require.NoError(t, err)
-		require.Len(t, eventos, 3)
+		require.Len(t, eventos, 4)
 
-		ultimo := eventos[2]
+		ultimo := eventos[3]
 
 		require.Equal(
 			t,
@@ -235,6 +246,17 @@ func TestGarantiaRepo_GuardarArticuloNuevoYReemplazo(t *testing.T) {
 		require.Len(t, articulos, 1)
 
 		originalID := articulos[0].ID()
+
+		// The folio must leave abierto (R4): until IniciarProceso runs the
+		// only article operation an open folio admits is adding one.
+		require.NoError(t, cargada.IniciarProceso(
+			domain.ActorParams{
+				Usuario:           "ruben",
+				ClaveIdempotencia: uuid.NewString(),
+				DeviceCreatedAt:   now.Add(time.Minute),
+			},
+			now.Add(time.Minute),
+		))
 
 		// registrado -> pendiente_recoleccion
 		err = cargada.AvanzarArticulo(
@@ -435,6 +457,16 @@ func TestGarantiaRepo_GuardarEsAtomicoSiFallaEvento(t *testing.T) {
 		articulos := cargada.ArticulosForRepo()
 		require.Len(t, articulos, 1)
 
+		// The folio must leave abierto before any article moves (R4).
+		require.NoError(t, cargada.IniciarProceso(
+			domain.ActorParams{
+				Usuario:           "ruben",
+				ClaveIdempotencia: uuid.NewString(),
+				DeviceCreatedAt:   now.Add(time.Minute),
+			},
+			now.Add(time.Minute),
+		))
+
 		err = cargada.AvanzarArticulo(
 			articulos[0].ID(),
 			domain.EtapaPendienteRecoleccion,
@@ -572,6 +604,16 @@ func TestGarantiaRepo_PersisteRutaDictamenYDatosDeEvento(t *testing.T) {
 		require.Len(t, articulos, 1)
 
 		id := articulos[0].ID()
+
+		// The folio must leave abierto first (R4).
+		require.NoError(t, cargada.IniciarProceso(
+			domain.ActorParams{
+				Usuario:           "ruben",
+				ClaveIdempotencia: uuid.NewString(),
+				DeviceCreatedAt:   now.Add(time.Minute),
+			},
+			now.Add(time.Minute),
+		))
 
 		// registrado -> pendiente_recoleccion
 		require.NoError(t, cargada.AvanzarArticulo(
@@ -739,6 +781,9 @@ func TestGarantiaRepo_PersisteDesenlaceYCierre(t *testing.T) {
 
 		now := time.Date(2026, 10, 3, 3, 0, 0, 0, time.UTC)
 
+		lat := 19.0414
+		lon := -98.2063
+
 		clienteID := 997001
 		ventaID := 997002
 		articuloMicrosipID := 997003
@@ -789,6 +834,16 @@ func TestGarantiaRepo_PersisteDesenlaceYCierre(t *testing.T) {
 		require.Len(t, articulos, 1)
 
 		originalID := articulos[0].ID()
+
+		// The folio must leave abierto before any article moves (R4).
+		require.NoError(t, cargada.IniciarProceso(
+			domain.ActorParams{
+				Usuario:           "ruben",
+				ClaveIdempotencia: uuid.NewString(),
+				DeviceCreatedAt:   now.Add(time.Minute),
+			},
+			now.Add(time.Minute),
+		))
 
 		require.NoError(t, cargada.AvanzarArticulo(
 			originalID,
@@ -863,15 +918,6 @@ func TestGarantiaRepo_PersisteDesenlaceYCierre(t *testing.T) {
 		))
 
 		// Close the folio as well to persist CERRADO_EN.
-		require.NoError(t, cargada.IniciarProceso(
-			domain.ActorParams{
-				Usuario:           "ruben",
-				ClaveIdempotencia: uuid.NewString(),
-				DeviceCreatedAt:   now.Add(8 * time.Minute),
-			},
-			now.Add(8*time.Minute),
-		))
-
 		require.NoError(t, cargada.MarcarListoEntrega(
 			domain.ActorParams{
 				Usuario:           "ruben",
@@ -886,6 +932,8 @@ func TestGarantiaRepo_PersisteDesenlaceYCierre(t *testing.T) {
 				Usuario:           "ruben",
 				ClaveIdempotencia: uuid.NewString(),
 				DeviceCreatedAt:   now.Add(10 * time.Minute),
+				GPSLat:            &lat,
+				GPSLon:            &lon,
 			},
 			now.Add(10*time.Minute),
 		))

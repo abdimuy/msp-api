@@ -62,6 +62,11 @@ type GarantiaRepo interface {
 	ObtenerParaActualizar(ctx context.Context, id uuid.UUID) (*domain.Garantia, error)
 	// Obtener loads the folio with its articles, without locking.
 	Obtener(ctx context.Context, id uuid.UUID) (*domain.Garantia, error)
+	// ObtenerDetalle loads the folio and its timeline from one consistent read.
+	ObtenerDetalle(
+		ctx context.Context,
+		id uuid.UUID,
+	) (*domain.Garantia, []*domain.Evento, error)
 	// ObtenerPorFolio is Obtener by the human-readable folio.
 	ObtenerPorFolio(ctx context.Context, folio domain.Folio) (*domain.Garantia, error)
 }
@@ -82,7 +87,11 @@ type BandejaRepo interface {
 // writes next.
 type EventoRepo interface {
 	// ListarPorGarantia returns the folio's timeline ordered by
-	// DEVICE_CREATED_AT, then CREATED_AT, then ID.
+	// DEVICE_CREATED_AT, then CREATED_AT, then insertion order. Two events can
+	// share both timestamps (a command that emits several events at the same
+	// instant), and the stored ID is a random UUID, so it cannot settle that
+	// tie: the physical write order does, and any implementation must preserve
+	// it.
 	ListarPorGarantia(ctx context.Context, garantiaID uuid.UUID) ([]*domain.Evento, error)
 	// ObtenerPorClaveIdempotencia returns the event carrying that key, or
 	// (nil, nil) when none does. A repeated key is a repetition, not an
@@ -93,8 +102,21 @@ type EventoRepo interface {
 // ImagenRepo persists evidence metadata. The blob itself goes through
 // StorageProvider.
 type ImagenRepo interface {
+	// Registrar inserts one image row. Must run inside a transaction. An ID
+	// already registered surfaces as domain.ErrImagenDuplicada.
 	Registrar(ctx context.Context, img *domain.Imagen) error
+	// Obtener returns one image by its primary key, or
+	// domain.ErrImagenNoEncontrada.
+	Obtener(ctx context.Context, id uuid.UUID) (*domain.Imagen, error)
+	// ListarPorEvento returns the images of one event ordered by
+	// CREATED_AT, then ID.
 	ListarPorEvento(ctx context.Context, eventoID uuid.UUID) ([]*domain.Imagen, error)
+	// ListarPorEventos returns the images of every event in eventoIDs in ONE
+	// query, ordered by EVENTO_ID, CREATED_AT, ID. An empty eventoIDs
+	// returns an empty slice without touching the database. It exists so the
+	// folio detail costs a fixed number of queries whatever the length of its
+	// timeline.
+	ListarPorEventos(ctx context.Context, eventoIDs []uuid.UUID) ([]*domain.Imagen, error)
 }
 
 // FolioGenerator hands out the next folio number from GEN_MSP_GA_FOLIO.
