@@ -376,3 +376,143 @@ func TestEsClaveDuplicada_RequiereCodigoYRestriccion(t *testing.T) {
 		require.False(t, esClaveDuplicada(err))
 	})
 }
+
+func TestImagenRepo_ListarPorEventos_VacioNoTocaDB(t *testing.T) {
+	repo := &ImagenRepo{}
+
+	got, err := repo.ListarPorEventos(context.Background(), nil)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Empty(t, got)
+}
+
+func TestImagenRepo_ListarPorEventos_HastaMilUsaUnaConsulta(t *testing.T) {
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := NewImagenRepo(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		counter := &countingQuerier{}
+
+		repo.decorateQuerier = func(q firebird.Querier) firebird.Querier {
+			counter.base = q
+			return counter
+		}
+
+		ids := make([]uuid.UUID, 1000)
+		for i := range ids {
+			ids[i] = uuid.New()
+		}
+
+		got, err := repo.ListarPorEventos(ctx, ids)
+		require.NoError(t, err)
+		require.Empty(t, got)
+		require.Equal(t, 1, counter.queries)
+	})
+}
+
+func TestImagenRepo_ListarPorEventos_MasDeMilUsaLotes(t *testing.T) {
+	pool := fbtestutil.NewTestFirebirdPool(t)
+	repo := NewImagenRepo(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		counter := &countingQuerier{}
+
+		repo.decorateQuerier = func(q firebird.Querier) firebird.Querier {
+			counter.base = q
+			return counter
+		}
+
+		ids := make([]uuid.UUID, 1001)
+		for i := range ids {
+			ids[i] = uuid.New()
+		}
+
+		got, err := repo.ListarPorEventos(ctx, ids)
+		require.NoError(t, err)
+		require.Empty(t, got)
+		require.Equal(t, 2, counter.queries)
+	})
+}
+
+func TestEventoRepo_RoundTripHuellaDistanciaYAuditoriaGPS(t *testing.T) {
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	garantiaRepo := NewGarantiaRepo(pool)
+	eventoRepo := NewEventoRepo(pool)
+	folios := NewFolioGenerator(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		now := time.Date(2026, 10, 30, 14, 30, 0, 0, time.UTC)
+
+		numero, err := folios.Siguiente(ctx)
+		require.NoError(t, err)
+
+		folio, err := domain.NewFolio(numero)
+		require.NoError(t, err)
+
+		origen, err := domain.ParseOrigenFolio("piso")
+		require.NoError(t, err)
+
+		g, err := domain.AbrirGarantia(domain.AbrirGarantiaParams{
+			Folio:       folio,
+			Origen:      origen,
+			Description: "Garantía para round-trip de auditoría",
+			AbiertoPor:  "ruben",
+			Now:         now,
+			Actor: domain.ActorParams{
+				Usuario:           "ruben",
+				ClaveIdempotencia: uuid.NewString(),
+				DeviceCreatedAt:   now,
+			},
+		})
+		require.NoError(t, err)
+		require.NoError(t, garantiaRepo.Crear(ctx, g))
+
+		// El evento inicial no lleva los campos nuevos: deben volver como NULL.
+		inicial := g.EventosPendientesForRepo()[0]
+
+		gotNull, err := eventoRepo.ObtenerPorClaveIdempotencia(
+			ctx,
+			inicial.ClaveIdempotencia(),
+		)
+		require.NoError(t, err)
+		require.NotNil(t, gotNull)
+		require.Empty(t, gotNull.Huella())
+		require.Nil(t, gotNull.DistanciaEntregaM())
+		require.Nil(t, gotNull.AuditoriaGPS())
+
+		const huella = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+		distancia := 412.5
+		auditoria := domain.AuditoriaGPSConDesvio
+		clave := uuid.NewString()
+
+		evento := domain.HydrateEvento(domain.HydrateEventoParams{
+			ID:                uuid.New(),
+			GarantiaID:        g.ID(),
+			Tipo:              domain.TipoEventoFolioCerrado,
+			Description:       "Cierre con auditoría GPS",
+			Usuario:           "ruben",
+			CreatedAt:         now.Add(time.Hour),
+			DeviceCreatedAt:   now.Add(time.Hour),
+			ClaveIdempotencia: clave,
+			Huella:            huella,
+			DistanciaEntregaM: &distancia,
+			AuditoriaGPS:      &auditoria,
+		})
+
+		tx, err := firebird.RequireTx(ctx)
+		require.NoError(t, err)
+
+		require.NoError(t, insertarEvento(ctx, tx, evento))
+
+		got, err := eventoRepo.ObtenerPorClaveIdempotencia(ctx, clave)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+
+		require.Equal(t, huella, got.Huella())
+		require.NotNil(t, got.DistanciaEntregaM())
+		require.InDelta(t, distancia, *got.DistanciaEntregaM(), 1e-9)
+		require.NotNil(t, got.AuditoriaGPS())
+		require.Equal(t, auditoria, *got.AuditoriaGPS())
+	})
+}

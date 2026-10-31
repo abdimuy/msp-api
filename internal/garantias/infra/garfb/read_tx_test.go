@@ -59,6 +59,9 @@ func ejecutarLecturasPublicas(
 		_, err = garantias.Obtener(ctx, id)
 		require.ErrorIs(t, err, domain.ErrGarantiaNoEncontrada)
 
+		_, _, err = garantias.ObtenerDetalle(ctx, id)
+		require.ErrorIs(t, err, domain.ErrGarantiaNoEncontrada)
+
 		_, err = garantias.ObtenerPorFolio(ctx, folio)
 		require.ErrorIs(t, err, domain.ErrGarantiaNoEncontrada)
 
@@ -106,7 +109,7 @@ func TestLecturasPublicas_NoDejanTransaccionesAbiertas(t *testing.T) {
 	antes, err := contarTransaccionesDelProceso(ctx, pool)
 	require.NoError(t, err)
 
-	// 21 lecturas públicas sin una transacción creada por el caller.
+	// 24 lecturas públicas sin una transacción creada por el caller.
 	ejecutarLecturasPublicas(
 		ctx,
 		t,
@@ -124,7 +127,7 @@ func TestLecturasPublicas_NoDejanTransaccionesAbiertas(t *testing.T) {
 
 	require.Equal(t, antes, despues)
 
-	// Control: las mismas 21 lecturas dentro de RunInReadTx.
+	// Control: las mismas 24 lecturas dentro de RunInReadTx.
 	err = firebird.RunInReadTx(
 		ctx,
 		pool.DB,

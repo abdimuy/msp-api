@@ -415,6 +415,9 @@ type eventoRow struct {
 	createdRaw        any
 	deviceCreatedRaw  any
 	claveIdempotencia string
+	huella            sql.NullString
+	distanciaEntregaM sql.NullFloat64
+	auditoriaGPS      sql.NullString
 }
 
 func scanEvento(row rowScanner) (*eventoRow, error) {
@@ -437,6 +440,9 @@ func scanEvento(row rowScanner) (*eventoRow, error) {
 		&r.createdRaw,
 		&r.deviceCreatedRaw,
 		&r.claveIdempotencia,
+		&r.huella,
+		&r.distanciaEntregaM,
+		&r.auditoriaGPS,
 	)
 	if err != nil {
 		return nil, firebird.MapError(err)
@@ -482,6 +488,19 @@ func parseRolDecisorPtr(v sql.NullString) (*domain.RolDecisor, error) {
 	}
 
 	return &rol, nil
+}
+
+func parseAuditoriaGPSPtr(v sql.NullString) (*domain.AuditoriaGPS, error) {
+	if !v.Valid {
+		return nil, nil
+	}
+
+	auditoria, err := domain.ParseAuditoriaGPS(v.String)
+	if err != nil {
+		return nil, err
+	}
+
+	return &auditoria, nil
 }
 
 func hydrateEvento(r *eventoRow) (*domain.Evento, error) {
@@ -530,6 +549,11 @@ func hydrateEvento(r *eventoRow) (*domain.Evento, error) {
 		return nil, hydrationError("evento", r.id, err)
 	}
 
+	auditoriaGPS, err := parseAuditoriaGPSPtr(r.auditoriaGPS)
+	if err != nil {
+		return nil, hydrationError("evento", r.id, err)
+	}
+
 	createdAt, err := firebird.ScanUTCTime(r.createdRaw)
 	if err != nil {
 		return nil, hydrationError("evento", r.id, err)
@@ -557,15 +581,20 @@ func hydrateEvento(r *eventoRow) (*domain.Evento, error) {
 		CreatedAt:         createdAt,
 		DeviceCreatedAt:   deviceCreatedAt,
 		ClaveIdempotencia: r.claveIdempotencia,
+		Huella:            r.huella.String,
+		DistanciaEntregaM: floatPtr(r.distanciaEntregaM),
+		AuditoriaGPS:      auditoriaGPS,
 	}), nil
 }
 
 type imagenRow struct {
 	id          string
 	eventoID    string
+	tipo        sql.NullString
 	ruta        string
 	description sql.NullString
 	subidaPor   string
+	huella      sql.NullString
 	createdRaw  any
 }
 
@@ -575,9 +604,11 @@ func scanImagen(row rowScanner) (*imagenRow, error) {
 	err := row.Scan(
 		&r.id,
 		&r.eventoID,
+		&r.tipo,
 		&r.ruta,
 		&r.description,
 		&r.subidaPor,
+		&r.huella,
 		&r.createdRaw,
 	)
 	if err != nil {
@@ -598,21 +629,27 @@ func hydrateImagen(r *imagenRow) (*domain.Imagen, error) {
 		return nil, hydrationError("imagen", r.id, err)
 	}
 
+	tipo := domain.TipoImagenEvidencia
+	if r.tipo.Valid {
+		tipo, err = domain.ParseTipoImagen(r.tipo.String)
+		if err != nil {
+			return nil, hydrationError("imagen", r.id, err)
+		}
+	}
+
 	createdAt, err := firebird.ScanUTCTime(r.createdRaw)
 	if err != nil {
 		return nil, hydrationError("imagen", r.id, err)
 	}
 
 	return domain.HydrateImagen(domain.HydrateImagenParams{
-		ID:       id,
-		EventoID: eventoID,
-		// Contrato de las tareas 9 y 10: hasta que la migración 000071
-		// agregue MSP_GA_IMAGEN.TIPO (tarea 10), toda fila es evidencia,
-		// que es exactamente como se leerá una fila vieja con TIPO NULL.
-		Tipo:        domain.TipoImagenEvidencia,
+		ID:          id,
+		EventoID:    eventoID,
+		Tipo:        tipo,
 		Ruta:        r.ruta,
 		Description: r.description.String,
 		SubidaPor:   r.subidaPor,
+		Huella:      r.huella.String,
 		CreatedAt:   createdAt,
 	}), nil
 }

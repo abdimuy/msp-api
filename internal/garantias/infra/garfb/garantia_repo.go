@@ -154,6 +154,12 @@ func (r *GarantiaRepo) Guardar(ctx context.Context, g *domain.Garantia) error {
 		}
 	}
 
+	for _, img := range g.ImagenesPendientesForRepo() {
+		if err := insertarImagen(ctx, tx, img); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -192,6 +198,9 @@ func (r *GarantiaRepo) ObtenerDetalle(
 	var garantia *domain.Garantia
 	var eventos []*domain.Evento
 
+	// El nivel snapshot no tiene una prueba directa: bajo WithTestTransaction
+	// esta transacción queda anidada y conserva el aislamiento read committed
+	// de la transacción externa.
 	err := firebird.RunInSnapshotTx(ctx, r.pool.DB, func(ctx context.Context) error {
 		q := firebird.GetQuerier(ctx, r.pool.DB)
 
@@ -382,6 +391,9 @@ func insertarEvento(
 		firebird.ToWallClock(e.CreatedAt()),
 		firebird.ToWallClock(e.DeviceCreatedAt()),
 		e.ClaveIdempotencia(),
+		nullableString(e.Huella()),
+		e.DistanciaEntregaM(),
+		enumPtrArg(e.AuditoriaGPS()),
 	)
 	if err != nil {
 		if esClaveDuplicada(err) {

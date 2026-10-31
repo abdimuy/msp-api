@@ -15,6 +15,7 @@ import (
 	"github.com/abdimuy/msp-api/internal/garantias/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/apperror"
 	"github.com/abdimuy/msp-api/internal/platform/fbtestutil"
+	"github.com/abdimuy/msp-api/internal/platform/firebird"
 	"github.com/abdimuy/msp-api/internal/platform/pagination"
 )
 
@@ -1249,27 +1250,95 @@ func TestBandejaRepo_Listar_FiltroEtapaYUbicacionMismoArticulo(t *testing.T) {
 	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
 		base := time.Date(2099, 3, 2, 12, 0, 0, 0, time.UTC)
 		desde := base.Add(-time.Second)
-		hasta := base.Add(2 * time.Hour)
+		hasta := base.Add(time.Hour)
 
-		esperada := crearGarantiaClienteParaBandeja(
-			t,
+		numero, err := folios.Siguiente(ctx)
+		require.NoError(t, err)
+
+		folio, err := domain.NewFolio(numero)
+		require.NoError(t, err)
+
+		origen, err := domain.ParseOrigenFolio("cliente")
+		require.NoError(t, err)
+
+		estadoCuenta, err := domain.ParseEstadoCuenta("liquidada")
+		require.NoError(t, err)
+
+		clienteID := 880001
+		ventaID := 880002
+
+		g, err := domain.AbrirGarantia(domain.AbrirGarantiaParams{
+			Folio:          folio,
+			Origen:         origen,
+			ClienteID:      &clienteID,
+			VentaID:        &ventaID,
+			EstadoCuenta:   &estadoCuenta,
+			Description:    "Garantía para filtro combinado",
+			Calle:          "Avenida Juárez",
+			NumeroExterior: "100",
+			Colonia:        "Centro",
+			Localidad:      "Puebla",
+			Ciudad:         "Puebla",
+			CodigoPostal:   "72000",
+			AbiertoPor:     "ruben",
+			Now:            base,
+			Actor: domain.ActorParams{
+				Usuario:           "ruben",
+				ClaveIdempotencia: uuid.NewString(),
+				DeviceCreatedAt:   base,
+			},
+		})
+		require.NoError(t, err)
+
+		for i, articuloID := range []int{880101, 880102} {
+			err = g.AgregarArticulo(
+				domain.AgregarArticuloParams{
+					ArticuloID:  &articuloID,
+					Clave:       []string{"MISMO-001", "MISMO-002"}[i],
+					Description: []string{"Artículo etapa", "Artículo ubicación"}[i],
+				},
+				domain.ActorParams{
+					Usuario:           "ruben",
+					ClaveIdempotencia: uuid.NewString(),
+					DeviceCreatedAt:   base.Add(time.Duration(i+1) * time.Minute),
+				},
+				base.Add(time.Duration(i+1)*time.Minute),
+			)
+			require.NoError(t, err)
+		}
+
+		require.NoError(t, garantiaRepo.Crear(ctx, g))
+
+		articulos := g.ArticulosForRepo()
+		require.Len(t, articulos, 2)
+
+		q := firebird.GetQuerier(ctx, pool.DB)
+
+		// Artículo 1: cumple únicamente la etapa buscada.
+		_, err = q.ExecContext(
 			ctx,
-			garantiaRepo,
-			folios,
-			base,
-			880001,
+			`UPDATE MSP_GA_ARTICULO
+SET ETAPA = ?, UBICACION = ?
+WHERE ID = ?`,
+			string(domain.EtapaEnRevision),
+			string(domain.UbicacionAlmacenRevision),
+			articulos[0].ID().String(),
 		)
+		require.NoError(t, err)
 
-		_ = crearGarantiaParaBandeja(
-			t,
+		// Artículo 2: cumple únicamente la ubicación buscada.
+		_, err = q.ExecContext(
 			ctx,
-			garantiaRepo,
-			folios,
-			base.Add(time.Hour),
-			false,
+			`UPDATE MSP_GA_ARTICULO
+SET ETAPA = ?, UBICACION = ?
+WHERE ID = ?`,
+			string(domain.EtapaRegistrado),
+			string(domain.UbicacionDomicilioCliente),
+			articulos[1].ID().String(),
 		)
+		require.NoError(t, err)
 
-		etapa := domain.EtapaRegistrado
+		etapa := domain.EtapaEnRevision
 		ubicacion := domain.UbicacionDomicilioCliente
 
 		pagina, err := bandejaRepo.Listar(
@@ -1286,12 +1355,8 @@ func TestBandejaRepo_Listar_FiltroEtapaYUbicacionMismoArticulo(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		require.Len(t, pagina.Items, 1)
-		require.Equal(t, esperada.ID(), pagina.Items[0].ID())
-
-		articulos := pagina.Items[0].ArticulosForRepo()
-		require.Len(t, articulos, 1)
-		require.Equal(t, etapa, articulos[0].Etapa())
-		require.Equal(t, ubicacion, articulos[0].Ubicacion())
+		// Los filtros deben coincidir sobre EL MISMO artículo.
+		// Un artículo cumple etapa y otro ubicación, así que el folio no entra.
+		require.Empty(t, pagina.Items)
 	})
 }

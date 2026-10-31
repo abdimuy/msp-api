@@ -332,6 +332,9 @@ type filaEvento struct {
 	created        any
 	deviceCreated  any
 	clave          string
+	huella         sql.NullString
+	distancia      sql.NullFloat64
+	auditoriaGPS   sql.NullString
 }
 
 func (e filaEvento) valores() []any {
@@ -352,6 +355,9 @@ func (e filaEvento) valores() []any {
 		e.created,
 		e.deviceCreated,
 		e.clave,
+		e.huella,
+		e.distancia,
+		e.auditoriaGPS,
 	}
 }
 
@@ -462,4 +468,110 @@ func TestHydrateEvento_PunterosYGPSCargados(t *testing.T) {
 	require.Equal(t, domain.UbicacionEnTransito, *e.UbicacionDesde())
 	require.NotNil(t, e.UbicacionHasta())
 	require.Equal(t, domain.UbicacionAlmacenRevision, *e.UbicacionHasta())
+}
+
+func TestHydrateEvento_CamposAuditoriaGPS(t *testing.T) {
+	t.Parallel()
+
+	const huella = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+
+	raw := eventoValido()
+	raw.huella = sql.NullString{String: huella, Valid: true}
+	raw.distancia = sql.NullFloat64{Float64: 412.5, Valid: true}
+	raw.auditoriaGPS = sql.NullString{
+		String: string(domain.AuditoriaGPSConDesvio),
+		Valid:  true,
+	}
+
+	row, err := scanEvento(&filaFalsa{valores: raw.valores()})
+	require.NoError(t, err)
+
+	e, err := hydrateEvento(row)
+	require.NoError(t, err)
+	require.Equal(t, huella, e.Huella())
+	require.NotNil(t, e.DistanciaEntregaM())
+	require.InDelta(t, 412.5, *e.DistanciaEntregaM(), 1e-9)
+	require.NotNil(t, e.AuditoriaGPS())
+	require.Equal(t, domain.AuditoriaGPSConDesvio, *e.AuditoriaGPS())
+}
+
+func TestHydrateEvento_AuditoriaGPSInvalida(t *testing.T) {
+	t.Parallel()
+
+	raw := eventoValido()
+	raw.auditoriaGPS = sql.NullString{String: "inventada", Valid: true}
+
+	row, err := scanEvento(&filaFalsa{valores: raw.valores()})
+	require.NoError(t, err)
+
+	_, err = hydrateEvento(row)
+	require.Error(t, err)
+}
+
+func TestHydrateImagen_TipoNullEsEvidencia(t *testing.T) {
+	t.Parallel()
+
+	raw := []any{
+		uuid.NewString(),
+		uuid.NewString(),
+		sql.NullString{},
+		"garantias/foto.jpg",
+		sql.NullString{String: "evidencia anterior", Valid: true},
+		"ruben",
+		sql.NullString{},
+		time.Now(),
+	}
+
+	row, err := scanImagen(&filaFalsa{valores: raw})
+	require.NoError(t, err)
+
+	img, err := hydrateImagen(row)
+	require.NoError(t, err)
+	require.Equal(t, domain.TipoImagenEvidencia, img.Tipo())
+}
+
+func TestHydrateImagen_TipoYHuella(t *testing.T) {
+	t.Parallel()
+
+	const huella = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+
+	raw := []any{
+		uuid.NewString(),
+		uuid.NewString(),
+		sql.NullString{String: string(domain.TipoImagenFirma), Valid: true},
+		"garantias/firma.png",
+		sql.NullString{},
+		"ruben",
+		sql.NullString{String: huella, Valid: true},
+		time.Now(),
+	}
+
+	row, err := scanImagen(&filaFalsa{valores: raw})
+	require.NoError(t, err)
+
+	img, err := hydrateImagen(row)
+	require.NoError(t, err)
+	require.Equal(t, domain.TipoImagenFirma, img.Tipo())
+	require.Equal(t, huella, img.Huella())
+}
+
+func TestHydrateImagen_TipoInvalido(t *testing.T) {
+	t.Parallel()
+
+	raw := []any{
+		uuid.NewString(),
+		uuid.NewString(),
+		sql.NullString{String: "inventado", Valid: true},
+		"garantias/foto.jpg",
+		sql.NullString{},
+		"ruben",
+		sql.NullString{},
+		time.Now(),
+	}
+
+	row, err := scanImagen(&filaFalsa{valores: raw})
+	require.NoError(t, err)
+
+	_, err = hydrateImagen(row)
+	require.Error(t, err)
 }
