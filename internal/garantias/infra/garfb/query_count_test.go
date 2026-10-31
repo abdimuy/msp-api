@@ -322,6 +322,9 @@ func TestEsClaveDuplicada_DistingueRestriccionReal(t *testing.T) {
 			firebird.ToWallClock(evento.CreatedAt()),
 			firebird.ToWallClock(evento.DeviceCreatedAt()),
 			evento.ClaveIdempotencia(),
+			nullableString(evento.Huella()),
+			evento.DistanciaEntregaM(),
+			enumPtrArg(evento.AuditoriaGPS()),
 		)
 		require.Error(t, err)
 		require.True(t, esClaveDuplicada(err))
