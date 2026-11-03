@@ -512,3 +512,182 @@ func TestDescartarBlob_ErrorDeleteNoPropaga(t *testing.T) {
 		)
 	}
 }
+
+func TestDescartarBlobSiNoQuedo_MismaRutaConservaBlob(t *testing.T) {
+	t.Parallel()
+
+	imagenID := uuid.New()
+	ruta := "garantias/test/evidencia.jpg"
+
+	storage := &blobStorageStub{}
+	imagenes := &blobImagenRepoStub{
+		imagen: nuevaImagenBlob(imagenID, ruta),
+	}
+
+	s := NewService(Deps{
+		ImagenRepo: imagenes,
+		Storage:    storage,
+	})
+
+	s.descartarBlobSiNoQuedo(
+		context.Background(),
+		imagenID,
+		ruta,
+	)
+
+	if len(storage.deletedKeys) != 0 {
+		t.Fatalf(
+			"Delete fue llamado %d veces; se esperaba 0",
+			len(storage.deletedKeys),
+		)
+	}
+}
+
+func TestDescartarBlobSiNoQuedo_RutaDistintaEliminaBlobNuevo(t *testing.T) {
+	t.Parallel()
+
+	imagenID := uuid.New()
+	rutaNueva := "garantias/test/nueva.jpg"
+	rutaPersistida := "garantias/test/existente.jpg"
+
+	storage := &blobStorageStub{}
+	imagenes := &blobImagenRepoStub{
+		imagen: nuevaImagenBlob(imagenID, rutaPersistida),
+	}
+
+	s := NewService(Deps{
+		ImagenRepo: imagenes,
+		Storage:    storage,
+	})
+
+	s.descartarBlobSiNoQuedo(
+		context.Background(),
+		imagenID,
+		rutaNueva,
+	)
+
+	if len(storage.deletedKeys) != 1 {
+		t.Fatalf(
+			"Delete fue llamado %d veces; se esperaba 1",
+			len(storage.deletedKeys),
+		)
+	}
+
+	if storage.deletedKeys[0] != rutaNueva {
+		t.Fatalf(
+			"Delete key = %q; se esperaba %q",
+			storage.deletedKeys[0],
+			rutaNueva,
+		)
+	}
+}
+
+func TestDescartarBlobSiNoQuedo_ImagenNoEncontradaEliminaBlob(t *testing.T) {
+	t.Parallel()
+
+	imagenID := uuid.New()
+	ruta := "garantias/test/no-persistida.jpg"
+
+	storage := &blobStorageStub{}
+	imagenes := &blobImagenRepoStub{
+		obtenerErr: domain.ErrImagenNoEncontrada,
+	}
+
+	s := NewService(Deps{
+		ImagenRepo: imagenes,
+		Storage:    storage,
+	})
+
+	s.descartarBlobSiNoQuedo(
+		context.Background(),
+		imagenID,
+		ruta,
+	)
+
+	if len(storage.deletedKeys) != 1 {
+		t.Fatalf(
+			"Delete fue llamado %d veces; se esperaba 1",
+			len(storage.deletedKeys),
+		)
+	}
+
+	if storage.deletedKeys[0] != ruta {
+		t.Fatalf(
+			"Delete key = %q; se esperaba %q",
+			storage.deletedKeys[0],
+			ruta,
+		)
+	}
+}
+
+func TestDescartarBlobSiNoQuedo_ErrorRepositorioNoElimina(t *testing.T) {
+	t.Parallel()
+
+	imagenID := uuid.New()
+	ruta := "garantias/test/evidencia.jpg"
+	errRepo := errors.New("fallo inesperado de repositorio")
+
+	storage := &blobStorageStub{}
+	imagenes := &blobImagenRepoStub{
+		obtenerErr: errRepo,
+	}
+
+	s := NewService(Deps{
+		ImagenRepo: imagenes,
+		Storage:    storage,
+	})
+
+	s.descartarBlobSiNoQuedo(
+		context.Background(),
+		imagenID,
+		ruta,
+	)
+
+	if len(storage.deletedKeys) != 0 {
+		t.Fatalf(
+			"Delete fue llamado %d veces; se esperaba 0",
+			len(storage.deletedKeys),
+		)
+	}
+}
+
+func TestDescartarBlobSiNoQuedo_ErrorDeleteNoPropaga(t *testing.T) {
+	t.Parallel()
+
+	imagenID := uuid.New()
+	ruta := "garantias/test/evidencia.jpg"
+	errDelete := errors.New("fallo al borrar")
+
+	storage := &blobStorageStub{
+		deleteErr: errDelete,
+	}
+	imagenes := &blobImagenRepoStub{
+		obtenerErr: domain.ErrImagenNoEncontrada,
+	}
+
+	s := NewService(Deps{
+		ImagenRepo: imagenes,
+		Storage:    storage,
+	})
+
+	s.descartarBlobSiNoQuedo(
+		context.Background(),
+		imagenID,
+		ruta,
+	)
+
+	if len(storage.deletedKeys) != 1 {
+		t.Fatalf(
+			"Delete fue llamado %d veces; se esperaba 1",
+			len(storage.deletedKeys),
+		)
+	}
+
+	if storage.deletedKeys[0] != ruta {
+		t.Fatalf(
+			"Delete key = %q; se esperaba %q",
+			storage.deletedKeys[0],
+			ruta,
+		)
+	}
+}

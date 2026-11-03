@@ -66,11 +66,11 @@ func (s *Service) descartarBlobSiNoQuedo(
 ) {
 	img, err := s.imagenes.Obtener(ctx, imagenID)
 
-	switch {
-	case err == nil && img != nil && img.Ruta() == ruta:
+	if err == nil && img != nil && img.Ruta() == ruta {
 		return
+	}
 
-	case err != nil && !errors.Is(err, domain.ErrImagenNoEncontrada):
+	if err != nil && !errors.Is(err, domain.ErrImagenNoEncontrada) {
 		slog.WarnContext(
 			ctx,
 			"garantias.blob_lookup_failed",
