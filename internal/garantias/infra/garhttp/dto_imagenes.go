@@ -5,7 +5,7 @@ package garhttp
 type ImagenDTO struct {
 	ID          string `json:"id" format:"uuid"`
 	Tipo        string `json:"tipo"`
-	Description string `json:"descripcion"`
+	Description string `json:"descripcion"` //nolint:misspell // nombre JSON definido por el contrato en español.
 	SubidaPor   string `json:"subida_por"`
 	CreatedAt   string `json:"created_at" format:"date-time"`
 	URL         string `json:"url"`

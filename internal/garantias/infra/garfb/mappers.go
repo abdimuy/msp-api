@@ -503,6 +503,7 @@ func parseAuditoriaGPSPtr(v sql.NullString) (*domain.AuditoriaGPS, error) {
 	return &auditoria, nil
 }
 
+//nolint:funlen // hidratación explícita de todos los campos persistidos del evento.
 func hydrateEvento(r *eventoRow) (*domain.Evento, error) {
 	id, err := uuid.Parse(r.id)
 	if err != nil {

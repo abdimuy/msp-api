@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/fx"
 
+	"github.com/abdimuy/msp-api/internal/garantias"
 	"github.com/abdimuy/msp-api/internal/platform/config"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 	"github.com/abdimuy/msp-api/internal/platform/healthcheck"
@@ -90,6 +91,8 @@ func appOptions() []fx.Option {
 			provideUserDeactivatedHandler,
 			provideAuthOutboxEnqueuer,
 			provideAuthService,
+			provideGarantiasUsuarioFn,
+			provideGarantiasPermisoFn,
 			provideIdempotencyStore,
 			provideIdempotencyStoreConcrete,
 			provideIdempotencyJanitor,
@@ -240,6 +243,7 @@ func appOptions() []fx.Option {
 			provideRootHandler,
 			provideHTTPServer,
 		),
+		garantias.Module(),
 		fx.Invoke(
 			registerFirebirdLifecycle,
 			registerFirebirdPoolWatchdogLifecycle,
