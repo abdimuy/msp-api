@@ -25,13 +25,10 @@ type AvanzarArticuloCmd struct {
 // collection trunk: registrado -> pendiente_recoleccion -> recolectado ->
 // en_revision, and every other edge the stage machine allows.
 func (s *Service) AvanzarArticulo(ctx context.Context, cmd AvanzarArticuloCmd) (*domain.Garantia, error) {
+	huella := huellaDe(cmd)
 	return s.ejecutarFolio(ctx, cmd.GarantiaID, domain.PermisoActualizar,
-		actorDe(cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon),
-		huellaEvento{
-			tipo:        domain.TipoEventoEtapaAvanzada,
-			articuloRef: &cmd.ArticuloID,
-			etapaHasta:  &cmd.EtapaDestino,
-		},
+		actorDe(cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon, huella),
+		huella,
 		func(_ context.Context, g *domain.Garantia, actor domain.ActorParams) error {
 			return g.AvanzarArticulo(cmd.ArticuloID, cmd.EtapaDestino, actor, s.clock.Now())
 		})

@@ -14,224 +14,266 @@ import (
 )
 
 // comandoCompartido is one mutating command as the shared cases see it: the
-// permission it must ask for, the event type it must record, the idempotency
-// huella it declares, and how to run it.
+// permission it must ask for, the event type it must record, and how to build
+// and run it.
 //
 // The state a command needs is not part of this table: every shared case
 // resolves before the mutation (identity, permission or idempotency key), so a
 // plain folio is enough. Each command's own state lives in its own test file.
+//
+// preparar exists because the idempotency fingerprint now hashes the whole
+// command. A test that wants to replay a command must store the exact huella
+// that command carries, and the only honest way to get it is to build the same
+// command and hand it to huellaDe. Building it twice is fine as long as both
+// copies are identical; the mismatch case builds a second one on purpose.
 type comandoCompartido struct {
-	nombre  string
-	permiso domain.Permiso
-	tipo    domain.TipoEvento
-	// huella builds the event the command expects to meet behind its key on a
-	// retry. It mirrors the huella the command hands ejecutarFolio: tipo alone
-	// for folio commands, plus articuloRef — and etapaHasta for AvanzarArticulo
-	// — for the ones that name them. The shared test seeds exactly this so a
-	// command that declares a different huella than the one it writes fails
-	// instead of replaying (mutant C6).
-	huella  func(garantiaID uuid.UUID, clave string, artID uuid.UUID, now time.Time) *domain.Evento
-	invocar func(svc *app.Service, g *domain.Garantia, artID uuid.UUID, clave string, now time.Time) (*domain.Garantia, error)
+	nombre   string
+	permiso  domain.Permiso
+	tipo     domain.TipoEvento
+	preparar func(g *domain.Garantia, artID uuid.UUID, clave string, now time.Time) any
+	invocar  func(svc *app.Service, cmd any) (*domain.Garantia, error)
+}
+
+// ejecutar prepares and runs the command in one step, for the cases that do not
+// need the intermediate command value.
+func (c comandoCompartido) ejecutar(
+	svc *app.Service,
+	g *domain.Garantia,
+	artID uuid.UUID,
+	clave string,
+	now time.Time,
+) (*domain.Garantia, error) {
+	return c.invocar(svc, c.preparar(g, artID, clave, now))
+}
+
+// huellaDe builds the command and asks app for its fingerprint. Tests use it to
+// store the event a real first execution would have left behind.
+func (c comandoCompartido) huellaDe(g *domain.Garantia, artID uuid.UUID, clave string, now time.Time) string {
+	return app.HuellaDeParaPruebas(c.preparar(g, artID, clave, now))
 }
 
 // comandosCompartidos lists every mutating command except AbrirGarantia, which
 // builds the folio itself and already carries its own identity and permission
 // tests in abrir_garantia_test.go.
-//
-// The tipo of each entry is the event the command's own test must find in the
-// store: it is the value ejecutarFolio compares against when a resend arrives,
-// so a command that passes a different one can never be replayed (mutant C6).
 func comandosCompartidos() []comandoCompartido {
 	return []comandoCompartido{
 		{
 			nombre:  "AgregarArticulo",
 			permiso: domain.PermisoCrear,
 			tipo:    domain.TipoEventoArticuloAgregado,
-			huella:  huellaDeFolio(domain.TipoEventoArticuloAgregado),
-			invocar: func(svc *app.Service, g *domain.Garantia, _ uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
-				return svc.AgregarArticulo(context.Background(), app.AgregarArticuloCmd{
+			preparar: func(g *domain.Garantia, _ uuid.UUID, clave string, now time.Time) any {
+				return app.AgregarArticuloCmd{
 					GarantiaID:        g.ID(),
 					Clave:             "B",
 					Description:       "articulo B",
 					ClaveIdempotencia: clave,
 					DeviceCreatedAt:   now,
-				})
+				}
+			},
+			invocar: func(svc *app.Service, cmd any) (*domain.Garantia, error) {
+				return svc.AgregarArticulo(context.Background(), cmd.(app.AgregarArticuloCmd))
 			},
 		},
 		{
 			nombre:  "AvanzarArticulo",
 			permiso: domain.PermisoActualizar,
 			tipo:    domain.TipoEventoEtapaAvanzada,
-			huella:  huellaDeEtapa(domain.TipoEventoEtapaAvanzada, domain.EtapaEnRevision),
-			invocar: func(svc *app.Service, g *domain.Garantia, artID uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
-				return svc.AvanzarArticulo(context.Background(), app.AvanzarArticuloCmd{
+			preparar: func(g *domain.Garantia, artID uuid.UUID, clave string, now time.Time) any {
+				return app.AvanzarArticuloCmd{
 					GarantiaID:        g.ID(),
 					ArticuloID:        artID,
 					EtapaDestino:      domain.EtapaEnRevision,
 					ClaveIdempotencia: clave,
 					DeviceCreatedAt:   now,
-				})
+				}
+			},
+			invocar: func(svc *app.Service, cmd any) (*domain.Garantia, error) {
+				return svc.AvanzarArticulo(context.Background(), cmd.(app.AvanzarArticuloCmd))
 			},
 		},
 		{
 			nombre:  "IniciarProceso",
 			permiso: domain.PermisoActualizar,
 			tipo:    domain.TipoEventoFolioEnProceso,
-			huella:  huellaDeFolio(domain.TipoEventoFolioEnProceso),
-			invocar: func(svc *app.Service, g *domain.Garantia, _ uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
-				return svc.IniciarProceso(context.Background(), app.IniciarProcesoCmd{
+			preparar: func(g *domain.Garantia, _ uuid.UUID, clave string, now time.Time) any {
+				return app.IniciarProcesoCmd{
 					GarantiaID:        g.ID(),
 					ClaveIdempotencia: clave,
 					DeviceCreatedAt:   now,
-				})
+				}
+			},
+			invocar: func(svc *app.Service, cmd any) (*domain.Garantia, error) {
+				return svc.IniciarProceso(context.Background(), cmd.(app.IniciarProcesoCmd))
 			},
 		},
 		{
 			nombre:  "RegistrarDiagnostico",
 			permiso: domain.PermisoActualizar,
 			tipo:    domain.TipoEventoDiagnosticoRegistrado,
-			huella:  huellaDeArticulo(domain.TipoEventoDiagnosticoRegistrado),
-			invocar: func(svc *app.Service, g *domain.Garantia, artID uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
-				return svc.RegistrarDiagnostico(context.Background(), app.RegistrarDiagnosticoCmd{
+			preparar: func(g *domain.Garantia, artID uuid.UUID, clave string, now time.Time) any {
+				return app.RegistrarDiagnosticoCmd{
 					GarantiaID:        g.ID(),
 					ArticuloID:        artID,
 					Ruta:              string(domain.RutaReparacionProveedor),
 					RolDecisor:        rolDecisorPrueba(),
 					ClaveIdempotencia: clave,
 					DeviceCreatedAt:   now,
-				})
+				}
+			},
+			invocar: func(svc *app.Service, cmd any) (*domain.Garantia, error) {
+				return svc.RegistrarDiagnostico(context.Background(), cmd.(app.RegistrarDiagnosticoCmd))
 			},
 		},
 		{
 			nombre:  "RegistrarDictamen",
 			permiso: domain.PermisoActualizar,
 			tipo:    domain.TipoEventoDictamenRegistrado,
-			huella:  huellaDeArticulo(domain.TipoEventoDictamenRegistrado),
-			invocar: func(svc *app.Service, g *domain.Garantia, artID uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
-				return svc.RegistrarDictamen(context.Background(), app.RegistrarDictamenCmd{
+			preparar: func(g *domain.Garantia, artID uuid.UUID, clave string, now time.Time) any {
+				return app.RegistrarDictamenCmd{
 					GarantiaID:        g.ID(),
 					ArticuloID:        artID,
 					Dictamen:          string(domain.DictamenSinFalla),
 					ClaveIdempotencia: clave,
 					DeviceCreatedAt:   now,
-				})
+				}
+			},
+			invocar: func(svc *app.Service, cmd any) (*domain.Garantia, error) {
+				return svc.RegistrarDictamen(context.Background(), cmd.(app.RegistrarDictamenCmd))
 			},
 		},
 		{
 			nombre:  "AutorizarCambioFisico",
 			permiso: domain.PermisoAutorizar,
 			tipo:    domain.TipoEventoCambioAutorizado,
-			huella:  huellaDeArticulo(domain.TipoEventoCambioAutorizado),
-			invocar: func(svc *app.Service, g *domain.Garantia, artID uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
-				return svc.AutorizarCambioFisico(context.Background(), app.AutorizarCambioFisicoCmd{
+			preparar: func(g *domain.Garantia, artID uuid.UUID, clave string, now time.Time) any {
+				return app.AutorizarCambioFisicoCmd{
 					GarantiaID:        g.ID(),
 					ArticuloID:        artID,
 					RolDecisor:        rolDecisorPrueba(),
 					ClaveIdempotencia: clave,
 					DeviceCreatedAt:   now,
-				})
+				}
+			},
+			invocar: func(svc *app.Service, cmd any) (*domain.Garantia, error) {
+				return svc.AutorizarCambioFisico(context.Background(), cmd.(app.AutorizarCambioFisicoCmd))
 			},
 		},
 		{
 			nombre:  "MarcarNoDevuelto",
 			permiso: domain.PermisoAutorizar,
 			tipo:    domain.TipoEventoDevolucionFallida,
-			huella:  huellaDeArticulo(domain.TipoEventoDevolucionFallida),
-			invocar: func(svc *app.Service, g *domain.Garantia, artID uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
-				return svc.MarcarNoDevuelto(context.Background(), app.MarcarNoDevueltoCmd{
+			preparar: func(g *domain.Garantia, artID uuid.UUID, clave string, now time.Time) any {
+				return app.MarcarNoDevueltoCmd{
 					GarantiaID:        g.ID(),
 					ArticuloID:        artID,
 					RolDecisor:        rolDecisorPrueba(),
 					ClaveIdempotencia: clave,
 					DeviceCreatedAt:   now,
-				})
+				}
+			},
+			invocar: func(svc *app.Service, cmd any) (*domain.Garantia, error) {
+				return svc.MarcarNoDevuelto(context.Background(), cmd.(app.MarcarNoDevueltoCmd))
 			},
 		},
 		{
 			nombre:  "RegistrarDesenlace",
 			permiso: domain.PermisoAutorizar,
 			tipo:    domain.TipoEventoDesenlaceRegistrado,
-			huella:  huellaDeArticulo(domain.TipoEventoDesenlaceRegistrado),
-			invocar: func(svc *app.Service, g *domain.Garantia, artID uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
-				return svc.RegistrarDesenlace(context.Background(), app.RegistrarDesenlaceCmd{
+			preparar: func(g *domain.Garantia, artID uuid.UUID, clave string, now time.Time) any {
+				return app.RegistrarDesenlaceCmd{
 					GarantiaID:        g.ID(),
 					ArticuloID:        artID,
 					Desenlace:         string(domain.DesenlaceSegundaMano),
 					RolDecisor:        rolDecisorPrueba(),
 					ClaveIdempotencia: clave,
 					DeviceCreatedAt:   now,
-				})
+				}
+			},
+			invocar: func(svc *app.Service, cmd any) (*domain.Garantia, error) {
+				return svc.RegistrarDesenlace(context.Background(), cmd.(app.RegistrarDesenlaceCmd))
 			},
 		},
 		{
 			nombre:  "MoverArticulo",
 			permiso: domain.PermisoActualizar,
 			tipo:    domain.TipoEventoArticuloMovido,
-			huella:  huellaDeArticulo(domain.TipoEventoArticuloMovido),
-			invocar: func(svc *app.Service, g *domain.Garantia, artID uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
-				return svc.MoverArticulo(context.Background(), app.MoverArticuloCmd{
+			preparar: func(g *domain.Garantia, artID uuid.UUID, clave string, now time.Time) any {
+				return app.MoverArticuloCmd{
 					GarantiaID:        g.ID(),
 					ArticuloID:        artID,
 					Ubicacion:         string(domain.UbicacionTaller),
 					ClaveIdempotencia: clave,
 					DeviceCreatedAt:   now,
-				})
+				}
+			},
+			invocar: func(svc *app.Service, cmd any) (*domain.Garantia, error) {
+				return svc.MoverArticulo(context.Background(), cmd.(app.MoverArticuloCmd))
 			},
 		},
 		{
 			nombre:  "MarcarListoEntrega",
 			permiso: domain.PermisoActualizar,
 			tipo:    domain.TipoEventoFolioListoEntrega,
-			huella:  huellaDeFolio(domain.TipoEventoFolioListoEntrega),
-			invocar: func(svc *app.Service, g *domain.Garantia, _ uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
-				return svc.MarcarListoEntrega(context.Background(), app.MarcarListoEntregaCmd{
+			preparar: func(g *domain.Garantia, _ uuid.UUID, clave string, now time.Time) any {
+				return app.MarcarListoEntregaCmd{
 					GarantiaID:        g.ID(),
 					ClaveIdempotencia: clave,
 					DeviceCreatedAt:   now,
-				})
+				}
+			},
+			invocar: func(svc *app.Service, cmd any) (*domain.Garantia, error) {
+				return svc.MarcarListoEntrega(context.Background(), cmd.(app.MarcarListoEntregaCmd))
 			},
 		},
 		{
 			nombre:  "Entregar",
 			permiso: domain.PermisoCerrar,
 			tipo:    domain.TipoEventoFolioEntregado,
-			huella:  huellaDeFolio(domain.TipoEventoFolioEntregado),
-			invocar: func(svc *app.Service, g *domain.Garantia, _ uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
+			preparar: func(g *domain.Garantia, _ uuid.UUID, clave string, now time.Time) any {
 				lat, lon := gpsPrueba()
-				return svc.Entregar(context.Background(), app.EntregarCmd{
+				return app.EntregarCmd{
 					GarantiaID:        g.ID(),
+					Firma:             firmaPNGPrueba(),
+					FirmaContentType:  "image/png",
 					ClaveIdempotencia: clave,
 					DeviceCreatedAt:   now,
 					GPSLat:            lat,
 					GPSLon:            lon,
-				})
+				}
+			},
+			invocar: func(svc *app.Service, cmd any) (*domain.Garantia, error) {
+				return svc.Entregar(context.Background(), cmd.(app.EntregarCmd))
 			},
 		},
 		{
 			nombre:  "Cerrar",
 			permiso: domain.PermisoCerrar,
 			tipo:    domain.TipoEventoFolioCerrado,
-			huella:  huellaDeFolio(domain.TipoEventoFolioCerrado),
-			invocar: func(svc *app.Service, g *domain.Garantia, _ uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
-				return svc.Cerrar(context.Background(), app.CerrarCmd{
+			preparar: func(g *domain.Garantia, _ uuid.UUID, clave string, now time.Time) any {
+				return app.CerrarCmd{
 					GarantiaID:        g.ID(),
 					ClaveIdempotencia: clave,
 					DeviceCreatedAt:   now,
-				})
+				}
+			},
+			invocar: func(svc *app.Service, cmd any) (*domain.Garantia, error) {
+				return svc.Cerrar(context.Background(), cmd.(app.CerrarCmd))
 			},
 		},
 		{
 			nombre:  "Cancelar",
 			permiso: domain.PermisoCerrar,
 			tipo:    domain.TipoEventoFolioCancelado,
-			huella:  huellaDeFolio(domain.TipoEventoFolioCancelado),
-			invocar: func(svc *app.Service, g *domain.Garantia, _ uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
-				return svc.Cancelar(context.Background(), app.CancelarCmd{
+			preparar: func(g *domain.Garantia, _ uuid.UUID, clave string, now time.Time) any {
+				return app.CancelarCmd{
 					GarantiaID:        g.ID(),
 					Motivo:            "cliente no aparece",
 					ClaveIdempotencia: clave,
 					DeviceCreatedAt:   now,
-				})
+				}
+			},
+			invocar: func(svc *app.Service, cmd any) (*domain.Garantia, error) {
+				return svc.Cancelar(context.Background(), cmd.(app.CancelarCmd))
 			},
 		},
 	}
@@ -249,7 +291,7 @@ func TestComandos_SinUsuario(t *testing.T) {
 			id.errUser = domain.ErrUsuarioNoAutenticado
 			s := sembrar(t, grepo, domain.EstadoFolioEnProceso, piso(), domain.EtapaEnRevision)
 
-			_, err := c.invocar(svc, s.g, s.primero(), clave(), clk.Now())
+			_, err := c.ejecutar(svc, s.g, s.primero(), clave(), clk.Now())
 			if !errors.Is(err, domain.ErrUsuarioNoAutenticado) {
 				t.Fatalf("want ErrUsuarioNoAutenticado, got %v", err)
 			}
@@ -273,7 +315,7 @@ func TestComandos_SinPermiso(t *testing.T) {
 			id.denegar = &denegado
 			s := sembrar(t, grepo, domain.EstadoFolioEnProceso, piso(), domain.EtapaEnRevision)
 
-			_, err := c.invocar(svc, s.g, s.primero(), clave(), clk.Now())
+			_, err := c.ejecutar(svc, s.g, s.primero(), clave(), clk.Now())
 			if !errors.Is(err, domain.ErrPermisoDenegado) {
 				t.Fatalf("want ErrPermisoDenegado, got %v", err)
 			}
@@ -298,7 +340,7 @@ func TestComandos_ClaveDeOtroFolio(t *testing.T) {
 			k := clave()
 			erepo.addEvento(hydrateEvento(uuid.New(), k, c.tipo, clk.Now()))
 
-			_, err := c.invocar(svc, s.g, s.primero(), k, clk.Now())
+			_, err := c.ejecutar(svc, s.g, s.primero(), k, clk.Now())
 			if !errors.Is(err, domain.ErrClaveIdempotenciaDeOtroFolio) {
 				t.Fatalf("want ErrClaveIdempotenciaDeOtroFolio, got %v", err)
 			}
@@ -309,10 +351,10 @@ func TestComandos_ClaveDeOtroFolio(t *testing.T) {
 	}
 }
 
-// TestComandos_ClaveDeOtroTipo is the other face of the rule, now under the
-// content semantics of the 20-oct review: the key may belong to this same folio
-// but to a different operation. The folio is right and what the key describes
-// is not, so the answer is the mismatch conflict — not "other folio".
+// TestComandos_ClaveDeOtroTipo is the other face of the rule: the key may
+// belong to this same folio but to a different operation. The folio is right
+// and what the key describes is not, so the answer is the mismatch conflict —
+// not "other folio".
 func TestComandos_ClaveDeOtroTipo(t *testing.T) {
 	t.Parallel()
 	otroTipo := domain.TipoEventoNota
@@ -327,7 +369,32 @@ func TestComandos_ClaveDeOtroTipo(t *testing.T) {
 			k := clave()
 			erepo.addEvento(hydrateEvento(s.g.ID(), k, otroTipo, clk.Now()))
 
-			_, err := c.invocar(svc, s.g, s.primero(), k, clk.Now())
+			_, err := c.ejecutar(svc, s.g, s.primero(), k, clk.Now())
+			if !errors.Is(err, domain.ErrClaveIdempotenciaMismatch) {
+				t.Fatalf("want ErrClaveIdempotenciaMismatch, got %v", err)
+			}
+			if !sinFilas(grepo) {
+				t.Errorf("no debe escribir: saved=%d created=%d", len(grepo.saved), len(grepo.created))
+			}
+		})
+	}
+}
+
+// TestComandos_ClaveSinHuella is the fail-closed rule for rows written before
+// the full fingerprint existed: a key whose event has no huella can never be
+// answered "already done", because there is no content to compare it with. It
+// is a mismatch, not a replay.
+func TestComandos_ClaveSinHuella(t *testing.T) {
+	t.Parallel()
+	for _, c := range comandosCompartidos() {
+		t.Run(c.nombre, func(t *testing.T) {
+			t.Parallel()
+			svc, grepo, erepo, _, _, _, clk, _ := setupService()
+			s := sembrar(t, grepo, domain.EstadoFolioEnProceso, piso(), domain.EtapaEnRevision)
+			k := clave()
+			erepo.addEvento(hydrateEvento(s.g.ID(), k, c.tipo, clk.Now()))
+
+			_, err := c.ejecutar(svc, s.g, s.primero(), k, clk.Now())
 			if !errors.Is(err, domain.ErrClaveIdempotenciaMismatch) {
 				t.Fatalf("want ErrClaveIdempotenciaMismatch, got %v", err)
 			}
@@ -341,12 +408,11 @@ func TestComandos_ClaveDeOtroTipo(t *testing.T) {
 // TestComandos_RepetidaPorClave is the replay of each command under its own
 // key: it succeeds, returns the folio and writes nothing at all.
 //
-// The stored event is the one the command's own huella describes — its tipo,
-// the articuloRef when it names an article, and the arrival stage for
-// AvanzarArticulo — so a command that hands ejecutarFolio a different huella
-// than the one it writes can never replay. That is what IniciarProceso did
-// before this entrega (mutant C6): the domain wrote folio_en_proceso while the
-// command asked the store for etapa_avanzada.
+// The stored event carries the exact fingerprint the command computes, so a
+// command that hashed something different than the request it later compares
+// (or that forgot to set ActorParams.Huella) can no longer replay. That is the
+// defect this test was rebuilt for: the fingerprint is the whole request now,
+// not just its event type.
 func TestComandos_RepetidaPorClave(t *testing.T) {
 	t.Parallel()
 	for _, c := range comandosCompartidos() {
@@ -355,9 +421,10 @@ func TestComandos_RepetidaPorClave(t *testing.T) {
 			svc, grepo, erepo, _, tx, _, clk, _ := setupService()
 			s := sembrar(t, grepo, domain.EstadoFolioEnProceso, piso(), domain.EtapaEnRevision)
 			k := clave()
-			erepo.addEvento(c.huella(s.g.ID(), k, s.primero(), clk.Now()))
+			h := c.huellaDe(s.g, s.primero(), k, clk.Now())
+			erepo.addEvento(hydrateEventoConHuella(s.g.ID(), k, c.tipo, h, clk.Now()))
 
-			res, err := c.invocar(svc, s.g, s.primero(), k, clk.Now())
+			res, err := c.ejecutar(svc, s.g, s.primero(), k, clk.Now())
 			if err != nil {
 				t.Fatalf("la repeticion por clave debe tener exito: %v", err)
 			}
@@ -369,6 +436,36 @@ func TestComandos_RepetidaPorClave(t *testing.T) {
 			}
 			if tx.calls != 1 {
 				t.Errorf("tx = %d, want 1: se abre, se mira la clave y se cierra sin mutar", tx.calls)
+			}
+		})
+	}
+}
+
+// TestComandos_ClaveRepetidaConOtroContenido pins the content half of the rule:
+// the same key on the right folio is only a replay when the request is the
+// same. A second request with the same key and different content is a conflict,
+// so the operation it asks for is not silently dropped.
+func TestComandos_ClaveRepetidaConOtroContenido(t *testing.T) {
+	t.Parallel()
+	for _, c := range comandosCompartidos() {
+		t.Run(c.nombre, func(t *testing.T) {
+			t.Parallel()
+			svc, grepo, erepo, _, _, _, clk, _ := setupService()
+			s := sembrar(t, grepo, domain.EstadoFolioEnProceso, piso(), domain.EtapaEnRevision)
+			k := clave()
+			original := c.preparar(s.g, s.primero(), k, clk.Now())
+			// Same key and folio, one minute apart: the body differs, so the
+			// fingerprint does too.
+			otra := c.preparar(s.g, s.primero(), k, clk.Now().Add(time.Minute))
+			erepo.addEvento(hydrateEventoConHuella(
+				s.g.ID(), k, c.tipo, app.HuellaDeParaPruebas(otra), clk.Now()))
+
+			_, err := c.invocar(svc, original)
+			if !errors.Is(err, domain.ErrClaveIdempotenciaMismatch) {
+				t.Fatalf("want ErrClaveIdempotenciaMismatch, got %v", err)
+			}
+			if !sinFilas(grepo) {
+				t.Errorf("no debe escribir: saved=%d created=%d", len(grepo.saved), len(grepo.created))
 			}
 		})
 	}
@@ -387,7 +484,7 @@ func TestComandos_CandadoAntesDeLaClave(t *testing.T) {
 			svc, grepo, _, _, _, _, clk, ord := setupService()
 			s := sembrar(t, grepo, domain.EstadoFolioEnProceso, piso(), domain.EtapaEnRevision)
 
-			if _, err := c.invocar(svc, s.g, s.primero(), clave(), clk.Now()); err != nil {
+			if _, err := c.ejecutar(svc, s.g, s.primero(), clave(), clk.Now()); err != nil {
 				// El resultado no importa: ambos pasos corren antes de que el
 				// comando pueda rechazar nada por su cuenta.
 				t.Logf("%s rechazó: %v", c.nombre, err)

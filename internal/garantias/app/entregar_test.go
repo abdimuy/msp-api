@@ -4,6 +4,7 @@ package app_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/abdimuy/msp-api/internal/garantias/app"
@@ -26,6 +27,8 @@ func TestEntregar_CaminoFeliz(t *testing.T) {
 
 	res, err := svc.Entregar(context.Background(), app.EntregarCmd{
 		GarantiaID:        s.g.ID(),
+		Firma:             firmaPNGPrueba(),
+		FirmaContentType:  "image/png",
 		ClaveIdempotencia: clave(),
 		DeviceCreatedAt:   clk.Now(),
 		GPSLat:            lat,
@@ -88,6 +91,8 @@ func TestEntregar_SinGps(t *testing.T) {
 
 	_, err := svc.Entregar(context.Background(), app.EntregarCmd{
 		GarantiaID:        s.g.ID(),
+		Firma:             firmaPNGPrueba(),
+		FirmaContentType:  "image/png",
 		ClaveIdempotencia: clave(),
 		DeviceCreatedAt:   clk.Now(),
 	})
@@ -108,6 +113,8 @@ func TestEntregar_EstadoNoCorresponde(t *testing.T) {
 
 	_, err := svc.Entregar(context.Background(), app.EntregarCmd{
 		GarantiaID:        s.g.ID(),
+		Firma:             firmaPNGPrueba(),
+		FirmaContentType:  "image/png",
 		ClaveIdempotencia: clave(),
 		DeviceCreatedAt:   clk.Now(),
 		GPSLat:            lat,
@@ -131,6 +138,8 @@ func TestEntregar_FolioDePiso(t *testing.T) {
 
 	res, err := svc.Entregar(context.Background(), app.EntregarCmd{
 		GarantiaID:        s.g.ID(),
+		Firma:             firmaPNGPrueba(),
+		FirmaContentType:  "image/png",
 		ClaveIdempotencia: clave(),
 		DeviceCreatedAt:   clk.Now(),
 		GPSLat:            lat,
@@ -158,6 +167,8 @@ func TestEntregar_FolioDePisoConListoEntrega(t *testing.T) {
 
 	_, err := svc.Entregar(context.Background(), app.EntregarCmd{
 		GarantiaID:        s.g.ID(),
+		Firma:             firmaPNGPrueba(),
+		FirmaContentType:  "image/png",
 		ClaveIdempotencia: clave(),
 		DeviceCreatedAt:   clk.Now(),
 		GPSLat:            lat,
@@ -168,5 +179,210 @@ func TestEntregar_FolioDePisoConListoEntrega(t *testing.T) {
 	}
 	if !sinFilas(grepo) {
 		t.Errorf("no debe escribir: saved=%d created=%d", len(grepo.saved), len(grepo.created))
+	}
+}
+
+// TestEntregar_SinFirma refuses before the transaction: the client's signature
+// is the proof of conformity §4.1 requires, so a delivery without it never
+// locks the folio and never writes a blob.
+func TestEntregar_SinFirma(t *testing.T) {
+	t.Parallel()
+	svc, grepo, _, _, tx, _, clk, _ := setupService()
+	s := sembrar(t, grepo, domain.EstadoFolioListoEntrega, cliente(), domain.EtapaListoEntrega)
+	lat, lon := gpsPrueba()
+
+	_, err := svc.Entregar(context.Background(), app.EntregarCmd{
+		GarantiaID:        s.g.ID(),
+		ClaveIdempotencia: clave(),
+		DeviceCreatedAt:   clk.Now(),
+		GPSLat:            lat,
+		GPSLon:            lon,
+	})
+	if !errors.Is(err, domain.ErrFirmaRequerida) {
+		t.Fatalf("want ErrFirmaRequerida, got %v", err)
+	}
+	if !sinEscrituras(tx, grepo) {
+		t.Errorf("no debe abrir transaccion: tx=%d", tx.calls)
+	}
+	if n := grepo.storage.total(); n != 0 {
+		t.Errorf("no debe guardar blob: %d", n)
+	}
+}
+
+// TestEntregar_FirmaFormatoInvalido rejects a payload that is not PNG or JPEG
+// before the transaction. The blob is never stored, so a bad upload leaves no
+// orphan behind.
+func TestEntregar_FirmaFormatoInvalido(t *testing.T) {
+	t.Parallel()
+	svc, grepo, _, _, tx, _, clk, _ := setupService()
+	s := sembrar(t, grepo, domain.EstadoFolioListoEntrega, cliente(), domain.EtapaListoEntrega)
+	lat, lon := gpsPrueba()
+
+	_, err := svc.Entregar(context.Background(), app.EntregarCmd{
+		GarantiaID:        s.g.ID(),
+		Firma:             []byte("no soy una imagen"),
+		FirmaContentType:  "text/plain",
+		ClaveIdempotencia: clave(),
+		DeviceCreatedAt:   clk.Now(),
+		GPSLat:            lat,
+		GPSLon:            lon,
+	})
+	if !errors.Is(err, domain.ErrImagenFormatoInvalido) {
+		t.Fatalf("want ErrImagenFormatoInvalido, got %v", err)
+	}
+	if !sinEscrituras(tx, grepo) {
+		t.Errorf("no debe abrir transaccion: tx=%d", tx.calls)
+	}
+	if n := grepo.storage.total(); n != 0 {
+		t.Errorf("no debe guardar blob: %d", n)
+	}
+}
+
+// TestEntregar_FirmaMuyGrande rejects a signature over the 1 MiB cap.
+func TestEntregar_FirmaMuyGrande(t *testing.T) {
+	t.Parallel()
+	svc, grepo, _, _, tx, _, clk, _ := setupService()
+	s := sembrar(t, grepo, domain.EstadoFolioListoEntrega, cliente(), domain.EtapaListoEntrega)
+	lat, lon := gpsPrueba()
+	grande := append(firmaPNGPrueba(), make([]byte, 1<<20)...)
+
+	_, err := svc.Entregar(context.Background(), app.EntregarCmd{
+		GarantiaID:        s.g.ID(),
+		Firma:             grande,
+		FirmaContentType:  "image/png",
+		ClaveIdempotencia: clave(),
+		DeviceCreatedAt:   clk.Now(),
+		GPSLat:            lat,
+		GPSLon:            lon,
+	})
+	if !errors.Is(err, domain.ErrImagenMuyGrande) {
+		t.Fatalf("want ErrImagenMuyGrande, got %v", err)
+	}
+	if !sinEscrituras(tx, grepo) {
+		t.Errorf("no debe abrir transaccion: tx=%d", tx.calls)
+	}
+}
+
+// TestEntregar_GuardaLaFirma walks the signature all the way to its row: the
+// delivery writes one firma image, keyed by the canonical idempotency key — so
+// a retry lands on the same primary key — hanging from the folio_entregado
+// event, uploaded by the Identity user and backed by a real blob.
+func TestEntregar_GuardaLaFirma(t *testing.T) {
+	t.Parallel()
+	svc, grepo, _, _, _, _, clk, _ := setupService()
+	s := sembrar(t, grepo, domain.EstadoFolioListoEntrega, cliente(), domain.EtapaListoEntrega)
+	lat, lon := gpsPrueba()
+	k := clave()
+
+	if _, err := svc.Entregar(context.Background(), app.EntregarCmd{
+		GarantiaID:        s.g.ID(),
+		Firma:             firmaPNGPrueba(),
+		FirmaContentType:  "image/png",
+		ClaveIdempotencia: k,
+		DeviceCreatedAt:   clk.Now(),
+		GPSLat:            lat,
+		GPSLon:            lon,
+	}); err != nil {
+		t.Fatalf("Entregar: %v", err)
+	}
+
+	firmas := grepo.imagenes.porTipo(domain.TipoImagenFirma)
+	if len(firmas) != 1 {
+		t.Fatalf("imagenes de firma = %d, want 1", len(firmas))
+	}
+	img := firmas[0]
+	if img.ID() != domain.FirmaImagenID(k) {
+		t.Errorf("id de la firma = %s, want el derivado de la clave %s", img.ID(), domain.FirmaImagenID(k))
+	}
+	if img.SubidaPor() != "Juan" {
+		t.Errorf("subidaPor = %q, want el usuario de Identity", img.SubidaPor())
+	}
+	if !strings.HasPrefix(img.Ruta(), "garantias/firmas/") {
+		t.Errorf("ruta = %q, want bajo garantias/firmas/", img.Ruta())
+	}
+	var entrega *domain.Evento
+	for _, ev := range eventosEscritos(t, grepo) {
+		if ev.Tipo() == domain.TipoEventoFolioEntregado {
+			entrega = ev
+		}
+	}
+	if entrega == nil {
+		t.Fatal("falta el evento folio_entregado")
+	}
+	if img.EventoID() != entrega.ID() {
+		t.Errorf("evento de la firma = %s, want el folio_entregado %s", img.EventoID(), entrega.ID())
+	}
+	if img.Huella() != entrega.Huella() || img.Huella() == "" {
+		t.Errorf("la firma debe llevar la huella de la entrega, got %q y %q", img.Huella(), entrega.Huella())
+	}
+	if _, ok := grepo.storage.blobs[img.Ruta()]; !ok {
+		t.Errorf("el blob de la firma no quedo en storage: %v", grepo.storage.claves())
+	}
+}
+
+// TestEntregar_ErrorDescartaElBlob: the blob is written before the transaction,
+// so a command that fails after it must delete its file. Otherwise every
+// refused delivery would leave an orphan on the disk.
+func TestEntregar_ErrorDescartaElBlob(t *testing.T) {
+	t.Parallel()
+	svc, grepo, _, _, _, _, clk, _ := setupService()
+	s := sembrar(t, grepo, domain.EstadoFolioEnProceso, cliente(), domain.EtapaEnRevision)
+	lat, lon := gpsPrueba()
+
+	_, err := svc.Entregar(context.Background(), app.EntregarCmd{
+		GarantiaID:        s.g.ID(),
+		Firma:             firmaPNGPrueba(),
+		FirmaContentType:  "image/png",
+		ClaveIdempotencia: clave(),
+		DeviceCreatedAt:   clk.Now(),
+		GPSLat:            lat,
+		GPSLon:            lon,
+	})
+	if !errors.Is(err, domain.ErrTransicionEstadoNoPermitida) {
+		t.Fatalf("want ErrTransicionEstadoNoPermitida, got %v", err)
+	}
+	if n := grepo.storage.total(); n != 0 {
+		t.Errorf("el blob rechazado debe borrarse: quedan %d (%v)", n, grepo.storage.claves())
+	}
+	if grepo.storage.storeCalls != 1 || grepo.storage.deleteCalls != 1 {
+		t.Errorf("store/delete = %d/%d, want 1/1", grepo.storage.storeCalls, grepo.storage.deleteCalls)
+	}
+}
+
+// TestEntregar_ReintentoDescartaSuBlob: a replay answers with the original
+// folio and writes no image row; the blob it just stored is deleted, so only
+// the first attempt's file survives.
+func TestEntregar_ReintentoDescartaSuBlob(t *testing.T) {
+	t.Parallel()
+	svc, grepo, erepo, _, _, _, clk, _ := setupService()
+	s := sembrar(t, grepo, domain.EstadoFolioListoEntrega, cliente(), domain.EtapaListoEntrega)
+	lat, lon := gpsPrueba()
+	k := clave()
+	cmd := app.EntregarCmd{
+		GarantiaID:        s.g.ID(),
+		Firma:             firmaPNGPrueba(),
+		FirmaContentType:  "image/png",
+		ClaveIdempotencia: k,
+		DeviceCreatedAt:   clk.Now(),
+		GPSLat:            lat,
+		GPSLon:            lon,
+	}
+	if _, err := svc.Entregar(context.Background(), cmd); err != nil {
+		t.Fatalf("primera entrega: %v", err)
+	}
+	blobsTrasLaPrimera := grepo.storage.total()
+	// Register the event as the store would have it and replay the same body.
+	erepo.addEvento(hydrateEventoConHuella(
+		s.g.ID(), k, domain.TipoEventoFolioEntregado,
+		app.HuellaDeParaPruebas(cmd), clk.Now()))
+
+	if _, err := svc.Entregar(context.Background(), cmd); err != nil {
+		t.Fatalf("la repeticion debe tener exito: %v", err)
+	}
+	if got := grepo.storage.total(); got != blobsTrasLaPrimera {
+		t.Errorf("blobs = %d, want %d: el reintento no deja su archivo", got, blobsTrasLaPrimera)
+	}
+	if got := len(grepo.imagenes.porTipo(domain.TipoImagenFirma)); got != 1 {
+		t.Errorf("imagenes de firma = %d, want 1: el reintento no inserta otra", got)
 	}
 }

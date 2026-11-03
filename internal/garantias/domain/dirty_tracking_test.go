@@ -178,7 +178,7 @@ func TestR10_MutadorMarcaModificado(t *testing.T) {
 				origen: domain.OrigenFolioCliente, estado: domain.EstadoFolioListoEntrega,
 				etapa: domain.EtapaListoEntrega, ubicacion: domain.UbicacionAlmacenRevision,
 			})
-			if err := g.Entregar(actorEntrega("juan"), fixed); err != nil {
+			if err := g.Entregar(firmaPrueba, actorEntrega("juan"), fixed); err != nil {
 				t.Fatalf("Entregar: %v", err)
 			}
 			return g, a

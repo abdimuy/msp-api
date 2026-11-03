@@ -26,22 +26,25 @@ func TestResolverDuplicada_GanaElGemelo(t *testing.T) {
 	svc, grepo, erepo, _, tx, _, clk, _ := setupService()
 	s := sembrar(t, grepo, domain.EstadoFolioEnProceso, piso(), domain.EtapaEnRevision)
 	k := clave()
-	grepo.saveErr = domain.ErrClaveIdempotenciaDuplicada
-	grepo.onSave = func() {
-		// The twin's event, registered while nothing owns the key yet. It ran
-		// the same command, so it carries the same articuloRef the huella
-		// compares; its folio is the one this command must answer with.
-		erepo.addEvento(eventoDeArticulo(s.g.ID(), k, domain.TipoEventoDiagnosticoRegistrado, s.primero(), clk.Now()))
-	}
-
-	res, err := svc.RegistrarDiagnostico(context.Background(), app.RegistrarDiagnosticoCmd{
+	cmd := app.RegistrarDiagnosticoCmd{
 		GarantiaID:        s.g.ID(),
 		ArticuloID:        s.primero(),
 		Ruta:              string(domain.RutaReparacionProveedor),
 		RolDecisor:        rolDecisorPrueba(),
 		ClaveIdempotencia: k,
 		DeviceCreatedAt:   clk.Now(),
-	})
+	}
+	grepo.saveErr = domain.ErrClaveIdempotenciaDuplicada
+	grepo.onSave = func() {
+		// The twin's event, registered while nothing owns the key yet. It ran
+		// the same command, so it carries the same full fingerprint the retry
+		// compares; its folio is the one this command must answer with.
+		erepo.addEvento(hydrateEventoConHuella(
+			s.g.ID(), k, domain.TipoEventoDiagnosticoRegistrado,
+			app.HuellaDeParaPruebas(cmd), clk.Now()))
+	}
+
+	res, err := svc.RegistrarDiagnostico(context.Background(), cmd)
 	if err != nil {
 		t.Fatalf("la carrera debe resolverse como exito: %v", err)
 	}

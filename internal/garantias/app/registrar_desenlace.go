@@ -25,6 +25,7 @@ type RegistrarDesenlaceCmd struct {
 // advancing it to the matching terminal stage in the same call. It is a
 // decision, so it asks for the autorizar permission and demands a decider role.
 func (s *Service) RegistrarDesenlace(ctx context.Context, cmd RegistrarDesenlaceCmd) (*domain.Garantia, error) {
+	huella := huellaDe(cmd)
 	desenlace, err := domain.ParseDesenlace(cmd.Desenlace)
 	if err != nil {
 		return nil, err
@@ -41,6 +42,6 @@ func (s *Service) RegistrarDesenlace(ctx context.Context, cmd RegistrarDesenlace
 		nuevoDecisionCmd(cmd.GarantiaID, cmd.ArticuloID, cmd.RolDecisor,
 			cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon),
 		domain.PermisoAutorizar,
-		domain.TipoEventoDesenlaceRegistrado,
+		huella,
 		mutar)
 }

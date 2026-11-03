@@ -928,6 +928,7 @@ func TestGarantiaRepo_PersisteDesenlaceYCierre(t *testing.T) {
 		))
 
 		require.NoError(t, cargada.Entregar(
+			rutaFirmaPrueba,
 			domain.ActorParams{
 				Usuario:           "ruben",
 				ClaveIdempotencia: uuid.NewString(),
@@ -941,6 +942,9 @@ func TestGarantiaRepo_PersisteDesenlaceYCierre(t *testing.T) {
 		horaCierre := now.Add(11 * time.Minute)
 
 		require.NoError(t, cargada.Cerrar(
+			nil,
+			nil,
+			"",
 			domain.ActorParams{
 				Usuario:           "ruben",
 				ClaveIdempotencia: uuid.NewString(),

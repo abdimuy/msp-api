@@ -45,11 +45,11 @@ type AbrirGarantiaCmd struct {
 // lock yet. It still runs the whole write inside one transaction — folio
 // number, aggregate and pending events land together or not at all (§4.4) —
 // and it treats a repeated key as the success it is (§3.3), returning the folio
-// that key opened. A key counts as a replay only when the event it belongs to
-// is folio_abierto; anything else means the key is being reused against the
-// command, which is ErrClaveIdempotenciaDeOtroFolio.
+// that key opened. A key counts as a replay only when the fingerprint stored
+// behind it matches this request; anything else is a mismatch.
 func (s *Service) AbrirGarantia(ctx context.Context, cmd AbrirGarantiaCmd) (*domain.Garantia, error) {
-	actor, err := s.actorDeApertura(ctx, cmd)
+	huella := huellaDe(cmd)
+	actor, err := s.actorDeApertura(ctx, cmd, huella)
 	if err != nil {
 		return nil, err
 	}
@@ -68,10 +68,13 @@ func (s *Service) AbrirGarantia(ctx context.Context, cmd AbrirGarantiaCmd) (*dom
 		if err != nil {
 			return err
 		}
-		if vista != nil {
-			if !coincideHuella(vista, huellaApertura()) {
-				return domain.ErrClaveIdempotenciaMismatch
-			}
+		// There is no folio to compare against yet, so uuid.Nil skips the
+		// ownership check: the fingerprint alone decides replay or mismatch.
+		repite, err := revisarClave(vista, uuid.Nil, huella)
+		if err != nil {
+			return err
+		}
+		if repite {
 			return nil // replay: its folio is re-read below, not rebuilt
 		}
 
@@ -122,9 +125,9 @@ func (s *Service) AbrirGarantia(ctx context.Context, cmd AbrirGarantiaCmd) (*dom
 	}
 	if creada == nil {
 		// The write rolled back; whoever owns the key now wins. AbrirGarantia has
-		// no folio to compare against — it was about to create one — so the key
-		// is a replay only when the event behind it is folio_abierto.
-		return s.resolverDuplicada(ctx, actor.ClaveIdempotencia, uuid.Nil, huellaApertura())
+		// no folio to compare against — it was about to create one — so the
+		// fingerprint alone decides between a replay and a mismatch.
+		return s.resolverDuplicada(ctx, actor.ClaveIdempotencia, uuid.Nil, huella)
 	}
 	// Answer with the re-read folio, like every other command: an aggregate
 	// still in memory and one read back from the store can differ in timestamp
@@ -135,8 +138,8 @@ func (s *Service) AbrirGarantia(ctx context.Context, cmd AbrirGarantiaCmd) (*dom
 
 // actorDeApertura resolves the user from Identity and checks the permiso. The
 // user's name never comes from the command.
-func (s *Service) actorDeApertura(ctx context.Context, cmd AbrirGarantiaCmd) (domain.ActorParams, error) {
-	actor := actorDe(cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon)
+func (s *Service) actorDeApertura(ctx context.Context, cmd AbrirGarantiaCmd, huella string) (domain.ActorParams, error) {
+	actor := actorDe(cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon, huella)
 	usuario, err := s.usuario(ctx)
 	if err != nil {
 		return domain.ActorParams{}, err

@@ -86,17 +86,20 @@ func TestAbrirGarantia_GanaElGemelo(t *testing.T) {
 	svc, grepo, erepo, _, tx, _, clk, _ := setupService()
 	k := clave()
 	gemelo := sembrar(t, grepo, domain.EstadoFolioAbierto, piso(), domain.EtapaRegistrado)
-	grepo.createErr = domain.ErrClaveIdempotenciaDuplicada
-	grepo.onCreate = func() {
-		erepo.addEvento(hydrateEvento(gemelo.g.ID(), k, domain.TipoEventoFolioAbierto, clk.Now()))
-	}
-
-	res, err := svc.AbrirGarantia(context.Background(), app.AbrirGarantiaCmd{
+	cmd := app.AbrirGarantiaCmd{
 		Origen:            domain.OrigenFolioPiso,
 		Description:       "mueble roto",
 		ClaveIdempotencia: k,
 		DeviceCreatedAt:   clk.Now(),
-	})
+	}
+	grepo.createErr = domain.ErrClaveIdempotenciaDuplicada
+	grepo.onCreate = func() {
+		erepo.addEvento(hydrateEventoConHuella(
+			gemelo.g.ID(), k, domain.TipoEventoFolioAbierto,
+			app.HuellaDeParaPruebas(cmd), clk.Now()))
+	}
+
+	res, err := svc.AbrirGarantia(context.Background(), cmd)
 	if err != nil {
 		t.Fatalf("la carrera debe resolverse como exito: %v", err)
 	}
@@ -142,14 +145,17 @@ func TestAbrirGarantia_RepetidaPorClave(t *testing.T) {
 	svc, grepo, erepo, fgen, _, _, clk, _ := setupService()
 	k := clave()
 	original := sembrar(t, grepo, domain.EstadoFolioAbierto, piso(), domain.EtapaRegistrado)
-	erepo.addEvento(hydrateEvento(original.g.ID(), k, domain.TipoEventoFolioAbierto, clk.Now()))
-
-	res, err := svc.AbrirGarantia(context.Background(), app.AbrirGarantiaCmd{
+	cmd := app.AbrirGarantiaCmd{
 		Origen:            domain.OrigenFolioPiso,
 		Description:       "mueble roto",
 		ClaveIdempotencia: k,
 		DeviceCreatedAt:   clk.Now(),
-	})
+	}
+	erepo.addEvento(hydrateEventoConHuella(
+		original.g.ID(), k, domain.TipoEventoFolioAbierto,
+		app.HuellaDeParaPruebas(cmd), clk.Now()))
+
+	res, err := svc.AbrirGarantia(context.Background(), cmd)
 	if err != nil {
 		t.Fatalf("la repeticion debe tener exito: %v", err)
 	}
@@ -158,6 +164,67 @@ func TestAbrirGarantia_RepetidaPorClave(t *testing.T) {
 	}
 	if fgen.calls != 0 {
 		t.Errorf("folio calls = %d, want 0: no se pide folio nuevo", fgen.calls)
+	}
+	if len(grepo.created) != 0 {
+		t.Errorf("created = %d, want 0", len(grepo.created))
+	}
+}
+
+// TestAbrirGarantia_ClaveRepetidaConOtroContenido is the content half of the
+// replay rule for the one command that has no folio to compare. The stored
+// event is folio_abierto — the same type AbrirGarantia writes — but it carries
+// the fingerprint of a different request. Answering that as a replay would drop
+// the folio being opened, so it must be a mismatch; an implementation that
+// compared only the event type would call it a success.
+func TestAbrirGarantia_ClaveRepetidaConOtroContenido(t *testing.T) {
+	t.Parallel()
+	svc, grepo, erepo, fgen, _, _, clk, _ := setupService()
+	k := clave()
+	original := sembrar(t, grepo, domain.EstadoFolioAbierto, piso(), domain.EtapaRegistrado)
+	otra := app.AbrirGarantiaCmd{
+		Origen:            domain.OrigenFolioPiso,
+		Description:       "otra averia distinta",
+		ClaveIdempotencia: k,
+		DeviceCreatedAt:   clk.Now(),
+	}
+	erepo.addEvento(hydrateEventoConHuella(
+		original.g.ID(), k, domain.TipoEventoFolioAbierto,
+		app.HuellaDeParaPruebas(otra), clk.Now()))
+
+	_, err := svc.AbrirGarantia(context.Background(), app.AbrirGarantiaCmd{
+		Origen:            domain.OrigenFolioPiso,
+		Description:       "mueble roto",
+		ClaveIdempotencia: k,
+		DeviceCreatedAt:   clk.Now(),
+	})
+	if !errors.Is(err, domain.ErrClaveIdempotenciaMismatch) {
+		t.Fatalf("want ErrClaveIdempotenciaMismatch, got %v", err)
+	}
+	if fgen.calls != 0 {
+		t.Errorf("folio calls = %d, want 0", fgen.calls)
+	}
+	if len(grepo.created) != 0 {
+		t.Errorf("created = %d, want 0", len(grepo.created))
+	}
+}
+
+// TestAbrirGarantia_ClaveSinHuella: a key whose event predates the fingerprint
+// has no content to compare, so it can never be answered "already done".
+func TestAbrirGarantia_ClaveSinHuella(t *testing.T) {
+	t.Parallel()
+	svc, grepo, erepo, _, _, _, clk, _ := setupService()
+	k := clave()
+	original := sembrar(t, grepo, domain.EstadoFolioAbierto, piso(), domain.EtapaRegistrado)
+	erepo.addEvento(hydrateEvento(original.g.ID(), k, domain.TipoEventoFolioAbierto, clk.Now()))
+
+	_, err := svc.AbrirGarantia(context.Background(), app.AbrirGarantiaCmd{
+		Origen:            domain.OrigenFolioPiso,
+		Description:       "mueble roto",
+		ClaveIdempotencia: k,
+		DeviceCreatedAt:   clk.Now(),
+	})
+	if !errors.Is(err, domain.ErrClaveIdempotenciaMismatch) {
+		t.Fatalf("want ErrClaveIdempotenciaMismatch, got %v", err)
 	}
 	if len(grepo.created) != 0 {
 		t.Errorf("created = %d, want 0", len(grepo.created))

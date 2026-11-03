@@ -240,61 +240,34 @@ func eventoComoElPrimero(t *testing.T, g *domain.Garantia) *domain.Evento {
 	return unicoEventoPendiente(t, g)
 }
 
-// eventoDeArticulo builds a persisted-shape event of an article-scoped command,
-// with the articuloRef the content check compares. It is what a twin that ran
-// the same command would have left behind.
-func eventoDeArticulo(
+// hydrateEventoConHuella builds a persisted-shape event that carries the
+// fingerprint of the request behind it. It is what a first execution of a
+// command leaves in the store, and what a retry must meet to replay.
+func hydrateEventoConHuella(
 	garantiaID uuid.UUID,
 	clave string,
 	tipo domain.TipoEvento,
-	articuloRef uuid.UUID,
+	huella string,
 	now time.Time,
 ) *domain.Evento {
 	return domain.HydrateEvento(domain.HydrateEventoParams{
 		ID:                uuid.New(),
 		GarantiaID:        garantiaID,
-		ArticuloRef:       &articuloRef,
 		Tipo:              tipo,
 		Usuario:           "Juan",
 		CreatedAt:         now,
 		DeviceCreatedAt:   now,
 		ClaveIdempotencia: clave,
+		Huella:            huella,
 	})
 }
 
-// huellaDeFolio builds the store event of a command whose huella is the type
-// alone: folio-wide commands and the ones that generate their article id
-// internally, like AgregarArticulo.
-func huellaDeFolio(tipo domain.TipoEvento) func(uuid.UUID, string, uuid.UUID, time.Time) *domain.Evento {
-	return func(garantiaID uuid.UUID, clave string, _ uuid.UUID, now time.Time) *domain.Evento {
-		return hydrateEvento(garantiaID, clave, tipo, now)
-	}
-}
-
-// huellaDeArticulo builds the store event of a command whose huella names the
-// article and no stage, matching what that command writes.
-func huellaDeArticulo(tipo domain.TipoEvento) func(uuid.UUID, string, uuid.UUID, time.Time) *domain.Evento {
-	return func(garantiaID uuid.UUID, clave string, artID uuid.UUID, now time.Time) *domain.Evento {
-		return eventoDeArticulo(garantiaID, clave, tipo, artID, now)
-	}
-}
-
-// huellaDeEtapa builds the store event of AvanzarArticulo, whose huella names
-// both the article and the arrival stage.
-func huellaDeEtapa(tipo domain.TipoEvento, etapa domain.Etapa) func(uuid.UUID, string, uuid.UUID, time.Time) *domain.Evento {
-	return func(garantiaID uuid.UUID, clave string, artID uuid.UUID, now time.Time) *domain.Evento {
-		return domain.HydrateEvento(domain.HydrateEventoParams{
-			ID:                uuid.New(),
-			GarantiaID:        garantiaID,
-			ArticuloRef:       &artID,
-			EtapaHasta:        &etapa,
-			Tipo:              tipo,
-			Usuario:           "Juan",
-			CreatedAt:         now,
-			DeviceCreatedAt:   now,
-			ClaveIdempotencia: clave,
-		})
-	}
+// firmaPNGPrueba returns the bytes of a minimal PNG, enough for the content
+// sniff app uses to accept the delivery signature. A copy per call keeps a test
+// that mutates it from leaking into the next one.
+func firmaPNGPrueba() []byte {
+	png := []byte("\x89PNG\r\n\x1a\n")
+	return append(png, []byte("firma de conformidad")...)
 }
 
 // unicoEventoPendiente returns the single pending event of the raw aggregate a

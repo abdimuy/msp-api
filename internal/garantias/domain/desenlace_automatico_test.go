@@ -72,7 +72,7 @@ func TestDesenlaceAutomatico(t *testing.T) {
 				ruta:      tc.ruta,
 				dictamen:  tc.dictamen,
 			})
-			if err := g.Entregar(actorEntrega("juan"), fixed); err != nil {
+			if err := g.Entregar(firmaPrueba, actorEntrega("juan"), fixed); err != nil {
 				t.Fatalf("Entregar: %v", err)
 			}
 			quiereDesenlace(t, a, tc.quiero)

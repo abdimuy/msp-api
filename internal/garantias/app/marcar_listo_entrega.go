@@ -23,9 +23,10 @@ type MarcarListoEntregaCmd struct {
 // ready. Since R7 it emits its own folio_listo_entrega event instead of the
 // stage event it used to share with IniciarProceso.
 func (s *Service) MarcarListoEntrega(ctx context.Context, cmd MarcarListoEntregaCmd) (*domain.Garantia, error) {
+	huella := huellaDe(cmd)
 	return s.ejecutarFolio(ctx, cmd.GarantiaID, domain.PermisoActualizar,
-		actorDe(cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon),
-		huellaEvento{tipo: domain.TipoEventoFolioListoEntrega},
+		actorDe(cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon, huella),
+		huella,
 		func(_ context.Context, g *domain.Garantia, actor domain.ActorParams) error {
 			return g.MarcarListoEntrega(actor, s.clock.Now())
 		})

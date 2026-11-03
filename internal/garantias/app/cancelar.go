@@ -26,9 +26,10 @@ type CancelarCmd struct {
 // still has out (proveedor or en_transito) is refused with
 // ErrFolioConArticuloFuera.
 func (s *Service) Cancelar(ctx context.Context, cmd CancelarCmd) (*domain.Garantia, error) {
+	huella := huellaDe(cmd)
 	return s.ejecutarFolio(ctx, cmd.GarantiaID, domain.PermisoCerrar,
-		actorDe(cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon),
-		huellaEvento{tipo: domain.TipoEventoFolioCancelado},
+		actorDe(cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon, huella),
+		huella,
 		func(_ context.Context, g *domain.Garantia, actor domain.ActorParams) error {
 			return g.Cancelar(cmd.Motivo, actor, s.clock.Now())
 		})

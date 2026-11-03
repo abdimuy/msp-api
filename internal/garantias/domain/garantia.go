@@ -1,3 +1,4 @@
+//nolint:misspell // vocabulario español (justificación) por convención del proyecto.
 package domain
 
 import (
@@ -259,6 +260,28 @@ func (g *Garantia) buildEvent(actor ActorParams, now time.Time, tipo TipoEvento,
 		DeviceCreatedAt:   actor.DeviceCreatedAt,
 		ClaveIdempotencia: actor.ClaveIdempotencia,
 		Huella:            actor.Huella,
+	})
+}
+
+// buildEventConAuditoria builds the folio_cerrado event with the delivery audit
+// of §4.1. The justification travels in the description, and the distance and
+// outcome go to their own columns.
+func (g *Garantia) buildEventConAuditoria(actor ActorParams, now time.Time, auditoria AuditoriaEntrega) (*Evento, error) {
+	resultado := auditoria.Resultado
+	return newEvento(EventoParams{
+		GarantiaID:        g.id,
+		Tipo:              TipoEventoFolioCerrado,
+		Description:       auditoria.Justificacion,
+		Usuario:           actor.Usuario,
+		RolDecisor:        actor.RolDecisor,
+		GPSLat:            actor.GPSLat,
+		GPSLon:            actor.GPSLon,
+		CreatedAt:         now,
+		DeviceCreatedAt:   actor.DeviceCreatedAt,
+		ClaveIdempotencia: actor.ClaveIdempotencia,
+		Huella:            actor.Huella,
+		DistanciaEntregaM: auditoria.DistanciaM,
+		AuditoriaGPS:      &resultado,
 	})
 }
 
@@ -644,7 +667,12 @@ func listoParaEntrega(e Etapa, origen OrigenFolio) bool {
 
 // Entregar hands the folio to the client and closes the client path. The agent
 // GPS is mandatory — the delivery audit of §4.1 — so a delivery with no
-// coordinates is refused. On a cliente folio every article in listo_entrega
+// coordinates is refused. The client's conformity signature is mandatory too:
+// firma is the relative blob path app already stored, and without one the call
+// fails with ErrFirmaRequerida before any state changes. The signature image
+// hangs from the folio_entregado event of this call, not from the last article
+// event, and its id is derived from the command key so a retry is idempotent.
+// On a cliente folio every article in listo_entrega
 // becomes entregado, with its location and its R6 outcome, and leaves one event
 // of its own, plus the folio_entregado. Articles in standby are not touched:
 // the folio may close with one still there (§3.2). A piso folio moves no
@@ -654,15 +682,20 @@ func listoParaEntrega(e Etapa, origen OrigenFolio) bool {
 // with ErrArticuloPisoSinReingresar instead of freezing that article without
 // an outcome.
 //
-// Every event is built before the first mutation, so an invalid actor leaves
-// the aggregate untouched. The per-article events go first (they validate the
-// actor when there is something to deliver); the folio event closes the batch.
-func (g *Garantia) Entregar(actor ActorParams, now time.Time) error {
+// Every event and the signature are built before the first mutation, so an
+// invalid actor, path or missing signature leaves the aggregate untouched. The
+// per-article events go first (they validate the actor when there is something
+// to deliver); the folio event closes the batch.
+func (g *Garantia) Entregar(firma string, actor ActorParams, now time.Time) error {
 	if !g.estado.CanTransitionTo(EstadoFolioEntregado) {
 		return ErrTransicionEstadoNoPermitida
 	}
 	if actor.GPSLat == nil || actor.GPSLon == nil {
 		return ErrEntregaGPSRequerido
+	}
+	firma = normalizarNFC(strings.TrimSpace(firma))
+	if firma == "" {
+		return ErrFirmaRequerida
 	}
 	if err := g.verificarListosParaEntrega(); err != nil {
 		return err
@@ -698,22 +731,43 @@ func (g *Garantia) Entregar(actor ActorParams, now time.Time) error {
 	if err != nil {
 		return err
 	}
+	imagenID := FirmaImagenID(actor.ClaveIdempotencia)
+	imagen, err := NewImagen(NewImagenParams{
+		ID:        &imagenID,
+		EventoID:  e.ID(),
+		Tipo:      TipoImagenFirma,
+		Ruta:      firma,
+		SubidaPor: actor.Usuario,
+		Huella:    actor.Huella,
+		CreatedAt: now,
+	})
+	if err != nil {
+		return err
+	}
 	for _, entrega := range entregas {
 		entrega.articulo.entregar(now)
 		g.eventosPendientes = append(g.eventosPendientes, entrega.evento)
 	}
 	g.estado = EstadoFolioEntregado
 	g.eventosPendientes = append(g.eventosPendientes, e)
+	g.imagenesPendientes = append(g.imagenesPendientes, imagen)
 	g.audit.MarkUpdatedAt(now)
 	return nil
 }
 
-// Cerrar seals a delivered folio as cerrado.
-func (g *Garantia) Cerrar(actor ActorParams, now time.Time) error {
+// Cerrar seals a delivered folio as cerrado. The delivery audit of §4.1
+// compares the delivery point with every pickup point and stores the result on
+// the folio_cerrado event; a deviation above the threshold demands a
+// justification, and the error leaves the folio untouched.
+func (g *Garantia) Cerrar(entrega *PuntoGPS, recolecciones []PuntoGPS, justificacion string, actor ActorParams, now time.Time) error {
 	if !g.estado.CanTransitionTo(EstadoFolioCerrado) {
 		return ErrTransicionEstadoNoPermitida
 	}
-	e, err := g.buildEvent(actor, now, TipoEventoFolioCerrado, nil, "", nil, nil, nil, nil)
+	auditoria, err := AuditarEntrega(entrega, recolecciones, justificacion)
+	if err != nil {
+		return err
+	}
+	e, err := g.buildEventConAuditoria(actor, now, auditoria)
 	if err != nil {
 		return err
 	}

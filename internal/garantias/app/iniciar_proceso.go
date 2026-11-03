@@ -26,9 +26,10 @@ type IniciarProcesoCmd struct {
 // would make the replay lookup miss (revisarClave compares the stored event's
 // type against this one), so a resend would fail as a foreign key.
 func (s *Service) IniciarProceso(ctx context.Context, cmd IniciarProcesoCmd) (*domain.Garantia, error) {
+	huella := huellaDe(cmd)
 	return s.ejecutarFolio(ctx, cmd.GarantiaID, domain.PermisoActualizar,
-		actorDe(cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon),
-		huellaEvento{tipo: domain.TipoEventoFolioEnProceso},
+		actorDe(cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon, huella),
+		huella,
 		func(_ context.Context, g *domain.Garantia, actor domain.ActorParams) error {
 			return g.IniciarProceso(actor, s.clock.Now())
 		})

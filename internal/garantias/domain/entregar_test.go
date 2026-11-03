@@ -24,7 +24,7 @@ func TestEntregar(t *testing.T) {
 		listo, standby := arts[0], arts[1]
 
 		pendientes := g.EventosPendientesCount()
-		if err := g.Entregar(actorEntrega("juan"), fixed); err != nil {
+		if err := g.Entregar(firmaPrueba, actorEntrega("juan"), fixed); err != nil {
 			t.Fatalf("Entregar: %v", err)
 		}
 
@@ -61,7 +61,7 @@ func TestEntregar(t *testing.T) {
 			ubicacion: domain.UbicacionAlmacenRevision,
 		})
 		pendientes := g.EventosPendientesCount()
-		err := g.Entregar(actorEntrega("juan"), fixed)
+		err := g.Entregar(firmaPrueba, actorEntrega("juan"), fixed)
 		if !errors.Is(err, domain.ErrArticuloPisoSinReingresar) {
 			t.Fatalf("want ErrArticuloPisoSinReingresar, got %v", err)
 		}
@@ -87,7 +87,7 @@ func TestEntregar(t *testing.T) {
 			ubicacion: domain.UbicacionAlmacenRevision,
 		})
 		pendientes := g.EventosPendientesCount()
-		if err := g.Entregar(actorEntrega("juan"), fixed); err != nil {
+		if err := g.Entregar(firmaPrueba, actorEntrega("juan"), fixed); err != nil {
 			t.Fatalf("Entregar: %v", err)
 		}
 		if a.Etapa() != domain.EtapaReingresadoInventario || a.Ubicacion() != domain.UbicacionAlmacenRevision {
@@ -108,7 +108,7 @@ func TestEntregar(t *testing.T) {
 			etapa: domain.EtapaListoEntrega,
 		})
 		pendientes := g.EventosPendientesCount()
-		err := g.Entregar(actor("juan"), fixed)
+		err := g.Entregar(firmaPrueba, actor("juan"), fixed)
 		if !errors.Is(err, domain.ErrEntregaGPSRequerido) {
 			t.Fatalf("want ErrEntregaGPSRequerido, got %v", err)
 		}
@@ -125,7 +125,7 @@ func TestEntregar(t *testing.T) {
 		})
 		lat := 19.4
 		actor := domain.ActorParams{Usuario: "juan", ClaveIdempotencia: claveValida, DeviceCreatedAt: fixed, GPSLat: &lat}
-		if err := g.Entregar(actor, fixed); !errors.Is(err, domain.ErrEntregaGPSRequerido) {
+		if err := g.Entregar(firmaPrueba, actor, fixed); !errors.Is(err, domain.ErrEntregaGPSRequerido) {
 			t.Fatalf("want ErrEntregaGPSRequerido, got %v", err)
 		}
 	})
@@ -136,7 +136,7 @@ func TestEntregar(t *testing.T) {
 			origen: domain.OrigenFolioCliente, estado: domain.EstadoFolioEnProceso, etapa: domain.EtapaListoEntrega,
 		})
 		pendientes := g.EventosPendientesCount()
-		err := g.Entregar(actorEntrega("juan"), fixed)
+		err := g.Entregar(firmaPrueba, actorEntrega("juan"), fixed)
 		if !errors.Is(err, domain.ErrTransicionEstadoNoPermitida) {
 			t.Fatalf("want ErrTransicionEstadoNoPermitida, got %v", err)
 		}
@@ -155,7 +155,7 @@ func TestEntregar(t *testing.T) {
 		})
 		pendientes := g.EventosPendientesCount()
 		malo := actorEntrega("")
-		err := g.Entregar(malo, fixed)
+		err := g.Entregar(firmaPrueba, malo, fixed)
 		if !errors.Is(err, domain.ErrEventoUsuarioObligatorio) {
 			t.Fatalf("want ErrEventoUsuarioObligatorio, got %v", err)
 		}
@@ -173,7 +173,7 @@ func TestEntregar(t *testing.T) {
 			etapa: domain.EtapaReingresadoInventario,
 		})
 		pendientes := g.EventosPendientesCount()
-		err := g.Entregar(actorEntrega(""), fixed)
+		err := g.Entregar(firmaPrueba, actorEntrega(""), fixed)
 		if !errors.Is(err, domain.ErrEventoUsuarioObligatorio) {
 			t.Fatalf("want ErrEventoUsuarioObligatorio, got %v", err)
 		}

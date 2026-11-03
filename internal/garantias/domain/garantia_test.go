@@ -14,6 +14,10 @@ import (
 
 var fixed = time.Date(2026, 8, 15, 10, 0, 0, 0, time.UTC)
 
+// firmaPrueba is the relative blob path app stores before calling Entregar;
+// the domain only validates its shape.
+const firmaPrueba = "garantias/firmas/firma.png"
+
 // claveValida is a real UUID, the shape the phone generates and the domain
 // now enforces (CHAR(36) column, spec §3.3.3).
 var claveValida = uuid.New().String()
@@ -1420,7 +1424,7 @@ func TestMutaciones_RechazanActorInvalido(t *testing.T) {
 		// subtest still asserts the actor-rejection path, not the GPS one.
 		lat, lon := 19.427, -99.17
 		maloEnt := domain.ActorParams{Usuario: "", ClaveIdempotencia: "k", DeviceCreatedAt: fixed, GPSLat: &lat, GPSLon: &lon}
-		err := g.Entregar(maloEnt, fixed)
+		err := g.Entregar(firmaPrueba, maloEnt, fixed)
 		if !errors.Is(err, domain.ErrEventoUsuarioObligatorio) {
 			t.Fatalf("want ErrEventoUsuarioObligatorio, got %v", err)
 		}
@@ -1443,11 +1447,11 @@ func TestMutaciones_RechazanActorInvalido(t *testing.T) {
 		if err := g.MarcarListoEntrega(actor("juan"), fixed); err != nil {
 			t.Fatalf("setup: %v", err)
 		}
-		if err := g.Entregar(actorEntrega("juan"), fixed); err != nil {
+		if err := g.Entregar(firmaPrueba, actorEntrega("juan"), fixed); err != nil {
 			t.Fatalf("setup: %v", err)
 		}
 		pendientes := countPending(g)
-		err := g.Cerrar(malo, fixed)
+		err := g.Cerrar(nil, nil, "", malo, fixed)
 		if !errors.Is(err, domain.ErrEventoUsuarioObligatorio) {
 			t.Fatalf("want ErrEventoUsuarioObligatorio, got %v", err)
 		}
@@ -1711,10 +1715,10 @@ func TestMarcarListoEntrega_Guardia(t *testing.T) {
 		if err := g.MarcarListoEntrega(actor("juan"), fixed); err != nil {
 			t.Fatalf("MarcarListoEntrega: %v", err)
 		}
-		if err := g.Entregar(actorEntrega("juan"), fixed); err != nil {
+		if err := g.Entregar(firmaPrueba, actorEntrega("juan"), fixed); err != nil {
 			t.Fatalf("Entregar: %v", err)
 		}
-		if err := g.Cerrar(actor("juan"), fixed); err != nil {
+		if err := g.Cerrar(nil, nil, "", actor("juan"), fixed); err != nil {
 			t.Fatalf("Cerrar: %v", err)
 		}
 		if g.Estado() != domain.EstadoFolioCerrado {
@@ -1811,7 +1815,7 @@ func TestFolio_EntregaYCierra(t *testing.T) {
 	}
 
 	// entregar
-	err := g.Entregar(actorEntrega("juan"), fixed)
+	err := g.Entregar(firmaPrueba, actorEntrega("juan"), fixed)
 	if err != nil {
 		t.Fatalf("Entregar: %v", err)
 	}
@@ -1824,7 +1828,7 @@ func TestFolio_EntregaYCierra(t *testing.T) {
 
 	// entregar de nuevo no procede
 	pendientes := countPending(g)
-	if err := g.Entregar(actorEntrega("juan"), fixed); !errors.Is(err, domain.ErrTransicionEstadoNoPermitida) {
+	if err := g.Entregar(firmaPrueba, actorEntrega("juan"), fixed); !errors.Is(err, domain.ErrTransicionEstadoNoPermitida) {
 		t.Fatalf("double Entregar: want ErrTransicionEstadoNoPermitida, got %v", err)
 	}
 	if g.Estado() != domain.EstadoFolioEntregado || countPending(g) != pendientes {
@@ -1832,7 +1836,7 @@ func TestFolio_EntregaYCierra(t *testing.T) {
 	}
 
 	// cerrar
-	if err := g.Cerrar(actor("juan"), fixed); err != nil {
+	if err := g.Cerrar(nil, nil, "", actor("juan"), fixed); err != nil {
 		t.Fatalf("Cerrar: %v", err)
 	}
 	if g.Estado() != domain.EstadoFolioCerrado {
@@ -1850,7 +1854,7 @@ func TestCerrar_DesdeAbierto(t *testing.T) {
 	t.Parallel()
 	g := openPiso(t)
 	pendientes := countPending(g)
-	err := g.Cerrar(actor("juan"), fixed)
+	err := g.Cerrar(nil, nil, "", actor("juan"), fixed)
 	if !errors.Is(err, domain.ErrTransicionEstadoNoPermitida) {
 		t.Fatalf("want ErrTransicionEstadoNoPermitida, got %v", err)
 	}

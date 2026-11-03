@@ -37,10 +37,12 @@ func setupService() (*app.Service, *fakeGarantiaRepo, *fakeEventoRepo, *fakeFoli
 	svc := app.NewService(app.Deps{
 		GarantiaRepo:   grepo,
 		EventoRepo:     erepo,
+		ImagenRepo:     grepo.imagenes,
 		FolioGenerator: fgen,
 		TxRunner:       tx,
 		Identity:       id,
 		Clock:          clk,
+		Storage:        grepo.storage,
 	})
 	return svc, grepo, erepo, fgen, tx, id, clk, ord
 }

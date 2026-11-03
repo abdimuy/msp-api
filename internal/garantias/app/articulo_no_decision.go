@@ -25,6 +25,7 @@ type MoverArticuloCmd struct {
 // only sets the working locations: entregado and baja are the stage's business,
 // so the domain rejects them with ErrUbicacionManualNoPermitida.
 func (s *Service) MoverArticulo(ctx context.Context, cmd MoverArticuloCmd) (*domain.Garantia, error) {
+	huella := huellaDe(cmd)
 	ubicacion, err := domain.ParseUbicacion(cmd.Ubicacion)
 	if err != nil {
 		return nil, err
@@ -39,7 +40,7 @@ func (s *Service) MoverArticulo(ctx context.Context, cmd MoverArticuloCmd) (*dom
 			GPSLon:            cmd.GPSLon,
 		},
 		domain.PermisoActualizar,
-		domain.TipoEventoArticuloMovido,
+		huella,
 		func(g *domain.Garantia, actor domain.ActorParams, ahora time.Time) error {
 			return g.MoverArticulo(cmd.ArticuloID, ubicacion, actor, ahora)
 		})
@@ -60,6 +61,7 @@ type RegistrarDictamenCmd struct {
 // the same call. It is not a folio-level decision, so it carries no decider
 // role: the domain only admits it from dictamen_recibido on a supplier route.
 func (s *Service) RegistrarDictamen(ctx context.Context, cmd RegistrarDictamenCmd) (*domain.Garantia, error) {
+	huella := huellaDe(cmd)
 	dictamen, err := domain.ParseDictamen(cmd.Dictamen)
 	if err != nil {
 		return nil, err
@@ -74,7 +76,7 @@ func (s *Service) RegistrarDictamen(ctx context.Context, cmd RegistrarDictamenCm
 			GPSLon:            cmd.GPSLon,
 		},
 		domain.PermisoActualizar,
-		domain.TipoEventoDictamenRegistrado,
+		huella,
 		func(g *domain.Garantia, actor domain.ActorParams, ahora time.Time) error {
 			return g.RegistrarDictamen(cmd.ArticuloID, dictamen, actor, ahora)
 		})

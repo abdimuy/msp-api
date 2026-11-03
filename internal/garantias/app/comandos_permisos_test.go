@@ -22,13 +22,16 @@ func comandosConPermiso() []comandoCompartido {
 		nombre:  "AbrirGarantia",
 		permiso: domain.PermisoCrear,
 		tipo:    domain.TipoEventoFolioAbierto,
-		invocar: func(svc *app.Service, _ *domain.Garantia, _ uuid.UUID, clave string, now time.Time) (*domain.Garantia, error) {
-			return svc.AbrirGarantia(context.Background(), app.AbrirGarantiaCmd{
+		preparar: func(_ *domain.Garantia, _ uuid.UUID, clave string, now time.Time) any {
+			return app.AbrirGarantiaCmd{
 				Origen:            domain.OrigenFolioPiso,
 				Description:       "mueble roto",
 				ClaveIdempotencia: clave,
 				DeviceCreatedAt:   now,
-			})
+			}
+		},
+		invocar: func(svc *app.Service, cmd any) (*domain.Garantia, error) {
+			return svc.AbrirGarantia(context.Background(), cmd.(app.AbrirGarantiaCmd))
 		},
 	})
 }
@@ -73,7 +76,7 @@ func TestComandos_TablaDePermisos(t *testing.T) {
 				id.denegar = &denegado
 				s := sembrar(t, grepo, domain.EstadoFolioEnProceso, piso(), domain.EtapaEnRevision)
 
-				_, err := c.invocar(svc, s.g, s.primero(), clave(), clk.Now())
+				_, err := c.ejecutar(svc, s.g, s.primero(), clave(), clk.Now())
 				denegadoErr := errors.Is(err, domain.ErrPermisoDenegado)
 
 				if p.permiso == c.permiso {

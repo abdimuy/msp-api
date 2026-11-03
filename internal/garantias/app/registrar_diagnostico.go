@@ -26,6 +26,7 @@ type RegistrarDiagnosticoCmd struct {
 // same call. It is a decision, so the decider role travels with the command and
 // a missing one is rejected by the domain with ErrRolDecisorObligatorio.
 func (s *Service) RegistrarDiagnostico(ctx context.Context, cmd RegistrarDiagnosticoCmd) (*domain.Garantia, error) {
+	huella := huellaDe(cmd)
 	ruta, err := domain.ParseRutaReparacion(cmd.Ruta)
 	if err != nil {
 		return nil, err
@@ -34,7 +35,7 @@ func (s *Service) RegistrarDiagnostico(ctx context.Context, cmd RegistrarDiagnos
 		nuevoDecisionCmd(cmd.GarantiaID, cmd.ArticuloID, cmd.RolDecisor,
 			cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon),
 		domain.PermisoActualizar,
-		domain.TipoEventoDiagnosticoRegistrado,
+		huella,
 		func(g *domain.Garantia, actor domain.ActorParams, ahora time.Time) error {
 			return g.RegistrarDiagnostico(cmd.ArticuloID, ruta, actor, ahora)
 		})

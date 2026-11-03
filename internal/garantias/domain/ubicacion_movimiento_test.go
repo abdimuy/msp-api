@@ -212,7 +212,7 @@ func TestUbicacionAutomatica_Entregado(t *testing.T) {
 		etapa:     domain.EtapaListoEntrega,
 		ubicacion: domain.UbicacionTaller,
 	})
-	if err := g.Entregar(actorEntrega("juan"), fixed); err != nil {
+	if err := g.Entregar(firmaPrueba, actorEntrega("juan"), fixed); err != nil {
 		t.Fatalf("Entregar: %v", err)
 	}
 	if a.Ubicacion() != domain.UbicacionEntregado {

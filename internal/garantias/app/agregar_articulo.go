@@ -24,9 +24,10 @@ type AgregarArticuloCmd struct {
 
 // AgregarArticulo adds an article to an existing warranty folio.
 func (s *Service) AgregarArticulo(ctx context.Context, cmd AgregarArticuloCmd) (*domain.Garantia, error) {
+	huella := huellaDe(cmd)
 	return s.ejecutarFolio(ctx, cmd.GarantiaID, domain.PermisoCrear,
-		actorDe(cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon),
-		huellaEvento{tipo: domain.TipoEventoArticuloAgregado},
+		actorDe(cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon, huella),
+		huella,
 		func(_ context.Context, g *domain.Garantia, actor domain.ActorParams) error {
 			return g.AgregarArticulo(domain.AgregarArticuloParams{
 				ArticuloID:  cmd.ArticuloID,

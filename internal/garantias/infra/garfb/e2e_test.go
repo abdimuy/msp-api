@@ -3,6 +3,7 @@ package garfb_test
 
 import (
 	"context"
+	"io"
 	"testing"
 	"time"
 
@@ -56,6 +57,66 @@ type relojPrueba struct {
 func (r *relojPrueba) Now() time.Time {
 	r.ahora = r.ahora.Add(time.Minute)
 	return r.ahora
+}
+
+// firmaJPEGPrueba is a minimal JPEG: just enough for the content sniff of
+// app.Entregar, which accepts only PNG and JPEG.
+var firmaJPEGPrueba = []byte{
+	0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10,
+	0x4A, 0x46, 0x49, 0x46, 0x00, 0x01,
+	0x01, 0x00, 0x00, 0x01, 0x00, 0x01,
+	0x00, 0x00, 0xFF, 0xD9,
+}
+
+// rutaFirmaPrueba is a stand-in for the relative path of a stored signature,
+// used by the repository round-trip tests that call the aggregate directly.
+const rutaFirmaPrueba = "garantias/firmas/prueba.jpg"
+
+// storagePrueba keeps the signature blobs in memory: the end-to-end stories
+// are about the database rows, not the file system (tarea 10 owns the real
+// adapter).
+type storagePrueba struct {
+	blobs map[string][]byte
+}
+
+func nuevoStoragePrueba() *storagePrueba {
+	return &storagePrueba{blobs: make(map[string][]byte)}
+}
+
+func (s *storagePrueba) Store(_ context.Context, key, _ string, _ int64, body io.Reader) error {
+	datos, err := io.ReadAll(body)
+	if err != nil {
+		return err
+	}
+	s.blobs[key] = datos
+	return nil
+}
+
+func (s *storagePrueba) Get(_ context.Context, key string) (outbound.StorageObject, error) {
+	return outbound.StorageObject{}, nil
+}
+
+func (s *storagePrueba) Delete(_ context.Context, key string) error {
+	delete(s.blobs, key)
+	return nil
+}
+
+// imagenRepoPrueba reports every signature as absent, so app.Entregar always
+// discards the blob of an attempt the test does not inspect.
+type imagenRepoPrueba struct{}
+
+func (imagenRepoPrueba) Registrar(_ context.Context, _ *domain.Imagen) error { return nil }
+
+func (imagenRepoPrueba) Obtener(_ context.Context, _ uuid.UUID) (*domain.Imagen, error) {
+	return nil, domain.ErrImagenNoEncontrada
+}
+
+func (imagenRepoPrueba) ListarPorEvento(_ context.Context, _ uuid.UUID) ([]*domain.Imagen, error) {
+	return nil, nil
+}
+
+func (imagenRepoPrueba) ListarPorEventos(_ context.Context, _ []uuid.UUID) ([]*domain.Imagen, error) {
+	return nil, nil
 }
 
 // lineaDeTiempo lee los eventos del folio desde la base, en el orden que el
@@ -286,10 +347,12 @@ func TestE2E_PisoDeLaRecepcionAlCierre(t *testing.T) {
 		svc := app.NewService(app.Deps{
 			GarantiaRepo:   grepo,
 			EventoRepo:     erepo,
+			ImagenRepo:     imagenRepoPrueba{},
 			FolioGenerator: fgen,
 			TxRunner:       txRunnerPrueba{db: pool},
 			Identity:       identidadPrueba{usuario: "ruben"},
 			Clock:          clk,
+			Storage:        nuevoStoragePrueba(),
 		})
 
 		g := abrirPiso(ctx, t, svc, clk)
@@ -368,6 +431,8 @@ func TestE2E_PisoDeLaRecepcionAlCierre(t *testing.T) {
 		lat, lon := 19.4326, -99.1332
 		_, err = svc.Entregar(ctx, app.EntregarCmd{
 			GarantiaID:        id,
+			Firma:             firmaJPEGPrueba,
+			FirmaContentType:  "image/jpeg",
 			ClaveIdempotencia: clave(),
 			DeviceCreatedAt:   clk.Now(),
 			GPSLat:            &lat,
@@ -448,10 +513,12 @@ func TestE2E_ClientePorProveedor(t *testing.T) {
 		svc := app.NewService(app.Deps{
 			GarantiaRepo:   grepo,
 			EventoRepo:     erepo,
+			ImagenRepo:     imagenRepoPrueba{},
 			FolioGenerator: fgen,
 			TxRunner:       txRunnerPrueba{db: pool},
 			Identity:       identidadPrueba{usuario: "ruben"},
 			Clock:          clk,
+			Storage:        nuevoStoragePrueba(),
 		})
 
 		clave := func() string { return uuid.NewString() }
@@ -588,6 +655,8 @@ func TestE2E_ClientePorProveedor(t *testing.T) {
 		lat, lon := 19.0414, -98.2063
 		_, err = svc.Entregar(ctx, app.EntregarCmd{
 			GarantiaID:        id,
+			Firma:             firmaJPEGPrueba,
+			FirmaContentType:  "image/jpeg",
 			ClaveIdempotencia: clave(),
 			DeviceCreatedAt:   clk.Now(),
 			GPSLat:            &lat,
@@ -712,10 +781,12 @@ func TestE2E_ClientePorTallerConCambioFisico(t *testing.T) {
 		svc := app.NewService(app.Deps{
 			GarantiaRepo:   grepo,
 			EventoRepo:     erepo,
+			ImagenRepo:     imagenRepoPrueba{},
 			FolioGenerator: fgen,
 			TxRunner:       txRunnerPrueba{db: pool},
 			Identity:       identidadPrueba{usuario: "ruben"},
 			Clock:          clk,
+			Storage:        nuevoStoragePrueba(),
 		})
 
 		clave := func() string { return uuid.NewString() }
@@ -818,6 +889,8 @@ func TestE2E_ClientePorTallerConCambioFisico(t *testing.T) {
 		lat, lon := 19.0414, -98.2063
 		_, err = svc.Entregar(ctx, app.EntregarCmd{
 			GarantiaID:        id,
+			Firma:             firmaJPEGPrueba,
+			FirmaContentType:  "image/jpeg",
 			ClaveIdempotencia: clave(),
 			DeviceCreatedAt:   clk.Now(),
 			GPSLat:            &lat,
