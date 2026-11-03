@@ -183,7 +183,8 @@ func TestObtenerGarantia_CaminoFeliz_JSONCompleto(t *testing.T) {
 				"gps_lon": -99.1332,
 				"created_at": "2026-10-13T15:30:00Z",
 				"device_created_at": "2026-10-13T15:30:00Z",
-				"clave_idempotencia": "44444444-4444-4444-4444-444444444444"
+				"clave_idempotencia": "44444444-4444-4444-4444-444444444444",
+				"imagenes": []
 			}
 		]
 	}`
@@ -601,8 +602,10 @@ func TestOpenAPI_PathsRegistered(t *testing.T) {
 	for _, esperado := range []string{
 		`"/garantias"`,
 		`"/garantias/{id}"`,
+		`"/garantias/{id}/eventos/{eid}/imagenes/{iid}"`,
 		`"operationId":"listar-garantias"`,
 		`"operationId":"obtener-garantia"`,
+		`"operationId":"obtener-imagen"`,
 		`"bearerAuth"`,
 		`"format":"uuid"`,
 		`"format":"date-time"`,

@@ -79,7 +79,10 @@ func (h *Handlers) ObtenerGarantia(
 
 	eventos := make([]EventoDTO, 0, len(detalle.Eventos))
 	for _, evento := range detalle.Eventos {
-		eventos = append(eventos, eventoDTO(evento))
+		eventos = append(
+			eventos,
+			eventoDTO(evento, detalle.ImagenesPorEvento[evento.ID()]),
+		)
 	}
 
 	out := &ObtenerGarantiaResponse{}

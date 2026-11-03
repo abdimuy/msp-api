@@ -130,4 +130,21 @@ func registerOperations(api huma.API, handlers *Handlers) {
 			http.StatusUnprocessableEntity,
 		},
 	}, handlers.ObtenerGarantia)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "obtener-imagen",
+		Method:        http.MethodGet,
+		Path:          "/garantias/{id}/eventos/{eid}/imagenes/{iid}",
+		Summary:       "Obtener imagen de garantía",
+		Description:   "Devuelve el contenido binario de una imagen asociada a un evento.",
+		Tags:          []string{"garantias"},
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+		Errors: []int{
+			http.StatusUnauthorized,
+			http.StatusForbidden,
+			http.StatusNotFound,
+			http.StatusUnprocessableEntity,
+		},
+	}, handlers.ObtenerImagen)
 }

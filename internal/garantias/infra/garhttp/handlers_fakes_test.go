@@ -1,7 +1,9 @@
 package garhttp_test
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"time"
 
@@ -140,11 +142,143 @@ func (f *fakeHTTPEventoRepo) ObtenerPorClaveIdempotencia(
 	return nil, nil
 }
 
+type fakeHTTPImagenRepo struct {
+	imagenes       []*domain.Imagen
+	listarErr      error
+	listarCalls    int
+	ultimosEventos []uuid.UUID
+
+	imagen       *domain.Imagen
+	obtenerErr   error
+	obtenerCalls int
+	ultimoID     uuid.UUID
+}
+
+func (f *fakeHTTPImagenRepo) Registrar(
+	_ context.Context,
+	_ *domain.Imagen,
+) error {
+	return nil
+}
+
+func (f *fakeHTTPImagenRepo) Obtener(
+	_ context.Context,
+	id uuid.UUID,
+) (*domain.Imagen, error) {
+	f.obtenerCalls++
+	f.ultimoID = id
+
+	return f.imagen, f.obtenerErr
+}
+
+func (f *fakeHTTPImagenRepo) ListarPorEvento(
+	_ context.Context,
+	_ uuid.UUID,
+) ([]*domain.Imagen, error) {
+	return nil, nil
+}
+
+func (f *fakeHTTPImagenRepo) ListarPorEventos(
+	_ context.Context,
+	ids []uuid.UUID,
+) ([]*domain.Imagen, error) {
+	f.listarCalls++
+	f.ultimosEventos = append([]uuid.UUID(nil), ids...)
+
+	return f.imagenes, f.listarErr
+}
+
+type fakeHTTPStorage struct {
+	objetos    map[string][]byte
+	tipos      map[string]string
+	getErr     error
+	getCalls   int
+	ultimaRuta string
+}
+
+func (f *fakeHTTPStorage) Store(
+	_ context.Context,
+	key string,
+	contentType string,
+	_ int64,
+	body io.Reader,
+) error {
+	if f.objetos == nil {
+		f.objetos = map[string][]byte{}
+	}
+	if f.tipos == nil {
+		f.tipos = map[string]string{}
+	}
+
+	b, err := io.ReadAll(body)
+	if err != nil {
+		return err
+	}
+
+	f.objetos[key] = append([]byte(nil), b...)
+	f.tipos[key] = contentType
+
+	return nil
+}
+
+func (f *fakeHTTPStorage) Get(
+	_ context.Context,
+	key string,
+) (outbound.StorageObject, error) {
+	f.getCalls++
+	f.ultimaRuta = key
+
+	if f.getErr != nil {
+		return outbound.StorageObject{}, f.getErr
+	}
+
+	body := f.objetos[key]
+	contentType := f.tipos[key]
+
+	return outbound.StorageObject{
+		Body:        io.NopCloser(bytes.NewReader(body)),
+		ContentType: contentType,
+		SizeBytes:   int64(len(body)),
+	}, nil
+}
+
+func (f *fakeHTTPStorage) Delete(
+	_ context.Context,
+	key string,
+) error {
+	if f.objetos != nil {
+		delete(f.objetos, key)
+	}
+	if f.tipos != nil {
+		delete(f.tipos, key)
+	}
+
+	return nil
+}
+
 func buildHTTPRouter(
 	identity outbound.Identity,
 	garantias outbound.GarantiaRepo,
 	bandeja outbound.BandejaRepo,
 	eventos outbound.EventoRepo,
+) http.Handler {
+	return buildHTTPRouterConImagenes(
+		identity,
+		garantias,
+		bandeja,
+		eventos,
+		&fakeHTTPImagenRepo{},
+		&fakeHTTPStorage{},
+	)
+}
+
+func buildHTTPRouterConImagenes(
+	identity outbound.Identity,
+	garantias outbound.GarantiaRepo,
+	bandeja outbound.BandejaRepo,
+	eventos outbound.EventoRepo,
+	imagenes outbound.ImagenRepo,
+	storage outbound.StorageProvider,
 ) http.Handler {
 	if garantiaFake, ok := garantias.(*fakeHTTPGarantiaRepo); ok {
 		if eventoFake, ok := eventos.(*fakeHTTPEventoRepo); ok {
@@ -159,6 +293,8 @@ func buildHTTPRouter(
 		Garantias: garantias,
 		Bandeja:   bandeja,
 		Eventos:   eventos,
+		Imagenes:  imagenes,
+		Storage:   storage,
 		Identity:  identity,
 	})
 
@@ -168,6 +304,8 @@ func buildHTTPRouter(
 		Comandos: app.NewService(app.Deps{
 			GarantiaRepo: garantias,
 			EventoRepo:   eventos,
+			ImagenRepo:   imagenes,
+			Storage:      storage,
 			Identity:     identity,
 		}),
 	})

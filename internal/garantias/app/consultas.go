@@ -3,6 +3,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,10 +25,18 @@ type BandejaQuery struct {
 	Limite    int
 }
 
-// Detalle contiene la garantía y su línea de tiempo.
+// Detalle contiene la garantía, su línea de tiempo y las imágenes agrupadas
+// por evento.
 type Detalle struct {
-	Garantia *domain.Garantia
-	Eventos  []*domain.Evento
+	Garantia          *domain.Garantia
+	Eventos           []*domain.Evento
+	ImagenesPorEvento map[uuid.UUID][]*domain.Imagen
+}
+
+// ImagenDescarga contiene la metadata persistida y el blob asociado.
+type ImagenDescarga struct {
+	Imagen *domain.Imagen
+	Objeto outbound.StorageObject
 }
 
 // ConsultasDeps contiene las dependencias del lado de lectura.
@@ -35,6 +44,8 @@ type ConsultasDeps struct {
 	Garantias outbound.GarantiaRepo
 	Bandeja   outbound.BandejaRepo
 	Eventos   outbound.EventoRepo
+	Imagenes  outbound.ImagenRepo
+	Storage   outbound.StorageProvider
 	Identity  outbound.Identity
 }
 
@@ -43,6 +54,8 @@ type Consultas struct {
 	garantias outbound.GarantiaRepo
 	bandeja   outbound.BandejaRepo
 	eventos   outbound.EventoRepo
+	imagenes  outbound.ImagenRepo
+	storage   outbound.StorageProvider
 	identity  outbound.Identity
 }
 
@@ -52,6 +65,8 @@ func NewConsultas(deps ConsultasDeps) *Consultas {
 		garantias: deps.Garantias,
 		bandeja:   deps.Bandeja,
 		eventos:   deps.Eventos,
+		imagenes:  deps.Imagenes,
+		storage:   deps.Storage,
 		identity:  deps.Identity,
 	}
 }
@@ -104,9 +119,88 @@ func (c *Consultas) Detalle(
 		return Detalle{}, err
 	}
 
+	eventoIDs := make([]uuid.UUID, 0, len(eventos))
+	imagenesPorEvento := make(map[uuid.UUID][]*domain.Imagen, len(eventos))
+
+	for _, evento := range eventos {
+		eventoIDs = append(eventoIDs, evento.ID())
+		imagenesPorEvento[evento.ID()] = []*domain.Imagen{}
+	}
+
+	imagenes := make([]*domain.Imagen, 0)
+	if len(eventoIDs) > 0 {
+		imagenes, err = c.imagenes.ListarPorEventos(ctx, eventoIDs)
+		if err != nil {
+			return Detalle{}, err
+		}
+	}
+
+	for _, imagen := range imagenes {
+		imagenesPorEvento[imagen.EventoID()] = append(
+			imagenesPorEvento[imagen.EventoID()],
+			imagen,
+		)
+	}
+
 	return Detalle{
-		Garantia: garantia,
-		Eventos:  eventos,
+		Garantia:          garantia,
+		Eventos:           eventos,
+		ImagenesPorEvento: imagenesPorEvento,
+	}, nil
+}
+
+// ObtenerImagen valida que garantía, evento e imagen formen la misma ruta y
+// devuelve el blob sin revelar qué identificador fue el que no coincidió.
+func (c *Consultas) ObtenerImagen(
+	ctx context.Context,
+	garantiaID uuid.UUID,
+	eventoID uuid.UUID,
+	imagenID uuid.UUID,
+) (ImagenDescarga, error) {
+	if err := c.autorizarLectura(ctx); err != nil {
+		return ImagenDescarga{}, err
+	}
+
+	_, eventos, err := c.garantias.ObtenerDetalle(ctx, garantiaID)
+	if err != nil {
+		if errors.Is(err, domain.ErrGarantiaNoEncontrada) {
+			return ImagenDescarga{}, domain.ErrImagenNoEncontrada
+		}
+		return ImagenDescarga{}, err
+	}
+
+	eventoValido := false
+	for _, evento := range eventos {
+		if evento.ID() == eventoID && evento.GarantiaID() == garantiaID {
+			eventoValido = true
+			break
+		}
+	}
+
+	if !eventoValido {
+		return ImagenDescarga{}, domain.ErrImagenNoEncontrada
+	}
+
+	imagen, err := c.imagenes.Obtener(ctx, imagenID)
+	if err != nil {
+		if errors.Is(err, domain.ErrImagenNoEncontrada) {
+			return ImagenDescarga{}, domain.ErrImagenNoEncontrada
+		}
+		return ImagenDescarga{}, err
+	}
+
+	if imagen.EventoID() != eventoID {
+		return ImagenDescarga{}, domain.ErrImagenNoEncontrada
+	}
+
+	objeto, err := c.storage.Get(ctx, imagen.Ruta())
+	if err != nil {
+		return ImagenDescarga{}, err
+	}
+
+	return ImagenDescarga{
+		Imagen: imagen,
+		Objeto: objeto,
 	}, nil
 }
 

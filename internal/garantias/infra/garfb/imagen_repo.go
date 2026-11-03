@@ -84,6 +84,9 @@ func (r *ImagenRepo) ListarPorEvento(
 
 	err := firebird.RunInReadTx(ctx, r.pool.DB, func(ctx context.Context) error {
 		q := firebird.GetQuerier(ctx, r.pool.DB)
+		if r.decorateQuerier != nil {
+			q = r.decorateQuerier(q)
+		}
 
 		rows, err := q.QueryContext(
 			ctx,

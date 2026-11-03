@@ -67,20 +67,23 @@ type ArticuloDTO struct {
 
 // EventoDTO representa una entrada de la línea de tiempo.
 type EventoDTO struct {
-	ID                string   `json:"id" format:"uuid"`
-	GarantiaID        string   `json:"garantia_id" format:"uuid"`
-	ArticuloRef       *string  `json:"articulo_ref,omitempty" format:"uuid"`
-	Tipo              string   `json:"tipo"`
-	Description       string   `json:"description"`
-	EtapaDesde        *string  `json:"etapa_desde,omitempty"`
-	EtapaHasta        *string  `json:"etapa_hasta,omitempty"`
-	Usuario           string   `json:"usuario"`
-	RolDecisor        *string  `json:"rol_decisor,omitempty"`
-	GPSLat            *float64 `json:"gps_lat,omitempty"`
-	GPSLon            *float64 `json:"gps_lon,omitempty"`
-	CreatedAt         string   `json:"created_at" format:"date-time"`
-	DeviceCreatedAt   string   `json:"device_created_at" format:"date-time"`
-	ClaveIdempotencia string   `json:"clave_idempotencia"`
+	ID                string      `json:"id" format:"uuid"`
+	GarantiaID        string      `json:"garantia_id" format:"uuid"`
+	ArticuloRef       *string     `json:"articulo_ref,omitempty" format:"uuid"`
+	Tipo              string      `json:"tipo"`
+	Description       string      `json:"description"`
+	EtapaDesde        *string     `json:"etapa_desde,omitempty"`
+	EtapaHasta        *string     `json:"etapa_hasta,omitempty"`
+	Usuario           string      `json:"usuario"`
+	RolDecisor        *string     `json:"rol_decisor,omitempty"`
+	GPSLat            *float64    `json:"gps_lat,omitempty"`
+	GPSLon            *float64    `json:"gps_lon,omitempty"`
+	CreatedAt         string      `json:"created_at" format:"date-time"`
+	DeviceCreatedAt   string      `json:"device_created_at" format:"date-time"`
+	ClaveIdempotencia string      `json:"clave_idempotencia"`
+	DistanciaEntregaM *float64    `json:"distancia_entrega_m,omitempty"`
+	AuditoriaGPS      *string     `json:"auditoria_gps,omitempty"`
+	Imagenes          []ImagenDTO `json:"imagenes"`
 }
 
 // ListarGarantiasResponse es la respuesta paginada de la bandeja.

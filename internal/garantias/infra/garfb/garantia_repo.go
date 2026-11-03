@@ -19,7 +19,8 @@ var _ outbound.GarantiaRepo = (*GarantiaRepo)(nil)
 
 // GarantiaRepo persists and reads warranties and their articles from Firebird.
 type GarantiaRepo struct {
-	pool *firebird.Pool
+	pool            *firebird.Pool
+	decorateQuerier func(firebird.Querier) firebird.Querier
 }
 
 // NewGarantiaRepo creates a GarantiaRepo backed by the provided Firebird pool.
@@ -203,6 +204,9 @@ func (r *GarantiaRepo) ObtenerDetalle(
 	// de la transacción externa.
 	err := firebird.RunInSnapshotTx(ctx, r.pool.DB, func(ctx context.Context) error {
 		q := firebird.GetQuerier(ctx, r.pool.DB)
+		if r.decorateQuerier != nil {
+			q = r.decorateQuerier(q)
+		}
 
 		var err error
 		garantia, err = obtenerGarantia(

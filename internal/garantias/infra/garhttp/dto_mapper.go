@@ -94,7 +94,7 @@ func articuloDTO(a *domain.Articulo) ArticuloDTO {
 	return dto
 }
 
-func eventoDTO(e *domain.Evento) EventoDTO {
+func eventoDTO(e *domain.Evento, imagenes []*domain.Imagen) EventoDTO {
 	dto := EventoDTO{
 		ID:                e.ID().String(),
 		GarantiaID:        e.GarantiaID().String(),
@@ -106,6 +106,8 @@ func eventoDTO(e *domain.Evento) EventoDTO {
 		CreatedAt:         formatTime(e.CreatedAt()),
 		DeviceCreatedAt:   formatTime(e.DeviceCreatedAt()),
 		ClaveIdempotencia: e.ClaveIdempotencia(),
+		DistanciaEntregaM: e.DistanciaEntregaM(),
+		Imagenes:          make([]ImagenDTO, 0, len(imagenes)),
 	}
 
 	if articuloRef := e.ArticuloRef(); articuloRef != nil {
@@ -128,7 +130,32 @@ func eventoDTO(e *domain.Evento) EventoDTO {
 		dto.RolDecisor = &v
 	}
 
+	if auditoria := e.AuditoriaGPS(); auditoria != nil {
+		v := auditoria.String()
+		dto.AuditoriaGPS = &v
+	}
+
+	for _, imagen := range imagenes {
+		dto.Imagenes = append(
+			dto.Imagenes,
+			imagenDTO(imagen, e.GarantiaID().String()),
+		)
+	}
+
 	return dto
+}
+
+func imagenDTO(i *domain.Imagen, garantiaID string) ImagenDTO {
+	return ImagenDTO{
+		ID:          i.ID().String(),
+		Tipo:        i.Tipo().String(),
+		Description: i.Description(),
+		SubidaPor:   i.SubidaPor(),
+		CreatedAt:   formatTime(i.CreatedAt()),
+		URL: "/garantias/" + garantiaID +
+			"/eventos/" + i.EventoID().String() +
+			"/imagenes/" + i.ID().String(),
+	}
 }
 
 func formatTime(t time.Time) string {

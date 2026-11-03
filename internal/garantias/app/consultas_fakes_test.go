@@ -137,3 +137,49 @@ func (f *fakeConsultaEventoRepo) ObtenerPorClaveIdempotencia(
 ) (*domain.Evento, error) {
 	return nil, nil
 }
+
+type fakeConsultaImagenRepo struct {
+	imagenes       []*domain.Imagen
+	listarErr      error
+	listarCalls    int
+	ultimosEventos []uuid.UUID
+
+	imagen       *domain.Imagen
+	obtenerErr   error
+	obtenerCalls int
+	ultimoID     uuid.UUID
+}
+
+func (f *fakeConsultaImagenRepo) Registrar(
+	_ context.Context,
+	_ *domain.Imagen,
+) error {
+	return nil
+}
+
+func (f *fakeConsultaImagenRepo) Obtener(
+	_ context.Context,
+	id uuid.UUID,
+) (*domain.Imagen, error) {
+	f.obtenerCalls++
+	f.ultimoID = id
+
+	return f.imagen, f.obtenerErr
+}
+
+func (f *fakeConsultaImagenRepo) ListarPorEvento(
+	_ context.Context,
+	_ uuid.UUID,
+) ([]*domain.Imagen, error) {
+	return nil, nil
+}
+
+func (f *fakeConsultaImagenRepo) ListarPorEventos(
+	_ context.Context,
+	ids []uuid.UUID,
+) ([]*domain.Imagen, error) {
+	f.listarCalls++
+	f.ultimosEventos = append([]uuid.UUID(nil), ids...)
+
+	return f.imagenes, f.listarErr
+}

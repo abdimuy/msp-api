@@ -212,9 +212,32 @@ func TestConsultas_Detalle_CaminoFeliz(t *testing.T) {
 	t.Parallel()
 
 	id := uuid.New()
+	eventoUnoID := uuid.New()
+	eventoDosID := uuid.New()
+
 	garantia := &domain.Garantia{}
-	eventoUno := &domain.Evento{}
-	eventoDos := &domain.Evento{}
+
+	eventoUno := domain.HydrateEvento(domain.HydrateEventoParams{
+		ID:         eventoUnoID,
+		GarantiaID: id,
+	})
+	eventoDos := domain.HydrateEvento(domain.HydrateEventoParams{
+		ID:         eventoDosID,
+		GarantiaID: id,
+	})
+
+	imagenUno := domain.HydrateImagen(domain.HydrateImagenParams{
+		ID:       uuid.New(),
+		EventoID: eventoUnoID,
+		Tipo:     domain.TipoImagenEvidencia,
+		Ruta:     "garantias/test/uno.jpg",
+	})
+	imagenDos := domain.HydrateImagen(domain.HydrateImagenParams{
+		ID:       uuid.New(),
+		EventoID: eventoDosID,
+		Tipo:     domain.TipoImagenFirma,
+		Ruta:     "garantias/test/dos.png",
+	})
 
 	identity := &fakeConsultaIdentity{
 		usuario:   outbound.Usuario{ID: "1", Nombre: "Ruben"},
@@ -224,13 +247,13 @@ func TestConsultas_Detalle_CaminoFeliz(t *testing.T) {
 		garantia: garantia,
 		eventos:  []*domain.Evento{eventoUno, eventoDos},
 	}
-	eventos := &fakeConsultaEventoRepo{
-		eventos: []*domain.Evento{eventoUno, eventoDos},
+	imagenes := &fakeConsultaImagenRepo{
+		imagenes: []*domain.Imagen{imagenUno, imagenDos},
 	}
 
 	consultas := app.NewConsultas(app.ConsultasDeps{
 		Garantias: garantias,
-		Eventos:   eventos,
+		Imagenes:  imagenes,
 		Identity:  identity,
 	})
 
@@ -239,9 +262,28 @@ func TestConsultas_Detalle_CaminoFeliz(t *testing.T) {
 	require.NoError(t, err)
 	require.Same(t, garantia, detalle.Garantia)
 	require.Equal(t, []*domain.Evento{eventoUno, eventoDos}, detalle.Eventos)
+
+	require.Equal(
+		t,
+		[]*domain.Imagen{imagenUno},
+		detalle.ImagenesPorEvento[eventoUnoID],
+	)
+	require.Equal(
+		t,
+		[]*domain.Imagen{imagenDos},
+		detalle.ImagenesPorEvento[eventoDosID],
+	)
+
 	require.Equal(t, 1, garantias.detalleCalls)
 	require.Equal(t, id, garantias.ultimoID)
-	require.Zero(t, eventos.calls)
+
+	require.Equal(t, 1, imagenes.listarCalls)
+	require.Equal(
+		t,
+		[]uuid.UUID{eventoUnoID, eventoDosID},
+		imagenes.ultimosEventos,
+	)
+
 	require.Equal(t, domain.PermisoLeer, identity.ultimoPermiso)
 }
 
