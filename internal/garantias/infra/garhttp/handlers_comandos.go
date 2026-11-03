@@ -3,13 +3,22 @@ package garhttp
 
 import (
 	"context"
+	"io"
+	"math"
+	"strconv"
 	"strings"
 
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 
 	"github.com/abdimuy/msp-api/internal/garantias/app"
 	"github.com/abdimuy/msp-api/internal/garantias/domain"
 )
+
+// maxFirmaBytes is the read cap of the delivery signature. app owns the rule
+// (firmaMaxBytes); the handler reads one byte past it so an oversized upload
+// reaches the app sentinel instead of being silently truncated.
+const maxFirmaBytes = 1 << 20
 
 // commandHandlers traduce las peticiones HTTP de los comandos a llamadas del
 // servicio de aplicación. No decide permisos ni idempotencia: el encabezado se
@@ -113,6 +122,38 @@ func (h *commandHandlers) MarcarListoEntrega(
 		DeviceCreatedAt:   in.Body.DeviceCreatedAt,
 		GPSLat:            in.Body.GPSLat,
 		GPSLon:            in.Body.GPSLon,
+	})
+	return h.responder(ctx, garantia, err)
+}
+
+// Entregar atiende POST /garantias/{id}/entregar.
+func (h *commandHandlers) Entregar(
+	ctx context.Context,
+	in *EntregarRequest,
+) (*GarantiaRespuesta, error) {
+	id, err := parseUUIDDeRuta(in.ID, "la garantía")
+	if err != nil {
+		return nil, mapAppError(ctx, err)
+	}
+
+	lat, lon, err := parseGPSEntrega(in.RawBody.Data().GPSLat, in.RawBody.Data().GPSLon)
+	if err != nil {
+		return nil, mapAppError(ctx, err)
+	}
+
+	firma, contentType, err := leerFirma(in.RawBody.Data().Firma)
+	if err != nil {
+		return nil, mapAppError(ctx, err)
+	}
+
+	garantia, err := h.servicio.Entregar(ctx, app.EntregarCmd{
+		GarantiaID:        id,
+		Firma:             firma,
+		FirmaContentType:  contentType,
+		ClaveIdempotencia: in.IdempotencyKey,
+		DeviceCreatedAt:   in.RawBody.Data().DeviceCreatedAt,
+		GPSLat:            lat,
+		GPSLon:            lon,
 	})
 	return h.responder(ctx, garantia, err)
 }
@@ -381,6 +422,50 @@ func (h *commandHandlers) RegistrarDesenlace(
 		GPSLon:            in.Body.GPSLon,
 	})
 	return h.responder(ctx, garantia, err)
+}
+
+// parseGPSEntrega convierte los campos de texto del formulario en el par de
+// coordenadas que exige la entrega. Sin ambos campos devuelve nil, nil y deja
+// que app decida: su primer paso es rechazar la entrega sin GPS, y hacerlo
+// aquí duplicaría el centinela y el orden de las validaciones.
+func parseGPSEntrega(rawLat, rawLon string) (*float64, *float64, error) {
+	latTexto := strings.TrimSpace(rawLat)
+	lonTexto := strings.TrimSpace(rawLon)
+	if latTexto == "" || lonTexto == "" {
+		//nolint:nilnil // nil, nil significa "sin GPS"; app lo convierte en warranty_delivery_gps_required.
+		return nil, nil, nil
+	}
+
+	lat, err := strconv.ParseFloat(latTexto, 64)
+	if err != nil || math.IsNaN(lat) || math.IsInf(lat, 0) || lat < -90 || lat > 90 {
+		return nil, nil, domain.ErrEventoGPSInvalido
+	}
+
+	lon, err := strconv.ParseFloat(lonTexto, 64)
+	if err != nil || math.IsNaN(lon) || math.IsInf(lon, 0) || lon < -180 || lon > 180 {
+		return nil, nil, domain.ErrEventoGPSInvalido
+	}
+
+	return &lat, &lon, nil
+}
+
+// leerFirma lee la firma del formulario con un tope de un byte por encima del
+// límite: el exceso lo rechaza app con warranty_image_too_large, y el archivo
+// nunca se carga completo en memoria. Un formulario sin la parte de la firma
+// devuelve el centinela del dominio para que el status y el código sean los
+// mismos que cuando la firma llega vacía.
+func leerFirma(archivo huma.FormFile) ([]byte, string, error) {
+	if !archivo.IsSet {
+		return nil, "", domain.ErrFirmaRequerida
+	}
+	defer func() { _ = archivo.Close() }()
+
+	contenido, err := io.ReadAll(io.LimitReader(archivo, maxFirmaBytes+1))
+	if err != nil {
+		return nil, "", err
+	}
+
+	return contenido, archivo.ContentType, nil
 }
 
 // parseUUIDDeRuta valida un UUID que llegó por la ruta. Huma ya lo hace por el

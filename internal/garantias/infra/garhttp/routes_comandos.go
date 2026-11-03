@@ -67,6 +67,18 @@ func registrarComandos(api huma.API, servicio *app.Service) {
 	}, handlers.MarcarListoEntrega)
 
 	huma.Register(api, huma.Operation{
+		OperationID:   "entregar-garantia",
+		Method:        http.MethodPost,
+		Path:          "/garantias/{id}/entregar",
+		Summary:       "Entregar garantía",
+		Description:   "Entrega el folio al cliente con su firma de conformidad y el GPS del agente.",
+		Tags:          []string{"garantias"},
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+		Errors:        errores,
+	}, handlers.Entregar)
+
+	huma.Register(api, huma.Operation{
 		OperationID:   "cerrar-garantia",
 		Method:        http.MethodPost,
 		Path:          "/garantias/{id}/cerrar",

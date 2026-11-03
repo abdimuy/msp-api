@@ -82,13 +82,9 @@ func operadorAutenticado() *fakeComandoIdentity {
 // nuevoRouter devuelve el router y las dependencias que la prueba necesita
 // inspeccionar después de la petición.
 func nuevoRouter(op string) (http.Handler, *fakeComandoGarantiaRepo, *fakeComandoEventoRepo) {
-	repositorio := &fakeComandoGarantiaRepo{
-		paraActualizar: folioPara(op),
-		respuesta:      fixtureRespuestaComando(),
-	}
-	eventos := &fakeComandoEventoRepo{}
+	fakes := nuevoRouterCompleto(op)
 
-	return buildCommandRouter(operadorAutenticado(), repositorio, eventos), repositorio, eventos
+	return fakes.router, fakes.repositorio, fakes.eventos
 }
 
 // fixtureRespuestaComando is the folio every route answers with.
@@ -354,7 +350,7 @@ func TestComandos_ClaveDeOtroFolio_409(t *testing.T) {
 func TestComandos_401_SinUsuario(t *testing.T) {
 	t.Parallel()
 
-	for _, ejemplo := range ejemplosJSONComandos() {
+	for _, ejemplo := range ejemplosComandos() {
 		t.Run(ejemplo.OperationID, func(t *testing.T) {
 			t.Parallel()
 
@@ -376,7 +372,7 @@ func TestComandos_401_SinUsuario(t *testing.T) {
 func TestComandos_403_SinPermiso(t *testing.T) {
 	t.Parallel()
 
-	for _, ejemplo := range ejemplosJSONComandos() {
+	for _, ejemplo := range ejemplosComandos() {
 		t.Run(ejemplo.OperationID, func(t *testing.T) {
 			t.Parallel()
 

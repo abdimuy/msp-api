@@ -119,6 +119,44 @@ func (imagenRepoPrueba) ListarPorEventos(_ context.Context, _ []uuid.UUID) ([]*d
 	return nil, nil
 }
 
+// tarea10Aplicada reports whether migration 000071 (tarea 10) is applied. The
+// huella and the delivery audit are columns of that migration, so while it is
+// missing the read-back assertions about them cannot run: the row is written
+// and read without those fields. The stories still run end to end; only the
+// assertions that need tarea 10 are guarded, and the report declares the gap.
+func tarea10Aplicada(ctx context.Context, t *testing.T, pool *firebird.Pool) bool {
+	t.Helper()
+
+	var columnas int
+
+	err := firebird.GetQuerier(ctx, pool.DB).QueryRowContext(
+		ctx,
+		`SELECT COUNT(*) FROM RDB$RELATION_FIELDS
+		  WHERE RDB$RELATION_NAME = 'MSP_GA_EVENTO'
+		    AND RDB$FIELD_NAME = 'AUDITORIA_GPS'`,
+	).Scan(&columnas)
+	require.NoError(t, err)
+
+	return columnas > 0
+}
+
+// eventoDeTipo returns the single event of the requested type.
+func eventoDeTipo(t *testing.T, evs []*domain.Evento, tipo domain.TipoEvento) *domain.Evento {
+	t.Helper()
+
+	var encontrados []*domain.Evento
+
+	for _, e := range evs {
+		if e.Tipo() == tipo {
+			encontrados = append(encontrados, e)
+		}
+	}
+
+	require.Len(t, encontrados, 1, "evento %s", tipo)
+
+	return encontrados[0]
+}
+
 // lineaDeTiempo lee los eventos del folio desde la base, en el orden que el
 // repositorio garantiza.
 func lineaDeTiempo(
@@ -460,7 +498,7 @@ func TestE2E_PisoDeLaRecepcionAlCierre(t *testing.T) {
 		// la historia completa, en orden, con desde/hasta de etapa y ubicación,
 		// y sin artículos huérfanos de evento.
 		const o = "original"
-		verificarLineaDeTiempo(ctx, t, erepo, cargada,
+		evs := verificarLineaDeTiempo(ctx, t, erepo, cargada,
 			map[string]uuid.UUID{o: articulo.ID()},
 			[]eventoEsperado{
 				{tipo: domain.TipoEventoFolioAbierto},
@@ -494,6 +532,18 @@ func TestE2E_PisoDeLaRecepcionAlCierre(t *testing.T) {
 				{tipo: domain.TipoEventoFolioEntregado},
 				{tipo: domain.TipoEventoFolioCerrado},
 			})
+
+		// Piso no recolecciona: no hay punto de recolección con GPS contra el
+		// cual comparar la entrega, así que la auditoría es no_aplica y el
+		// folio cierra igual.
+		if tarea10Aplicada(ctx, t, pool) {
+			cerrado := eventoDeTipo(t, evs, domain.TipoEventoFolioCerrado)
+			require.NotNil(t, cerrado.AuditoriaGPS())
+			require.Equal(t, domain.AuditoriaGPSNoAplica, *cerrado.AuditoriaGPS())
+			require.Nil(t, cerrado.DistanciaEntregaM())
+		} else {
+			t.Log("auditoría GPS no verificada: falta la migración 000071 de la tarea 10")
+		}
 	})
 }
 
@@ -564,19 +614,28 @@ func TestE2E_ClientePorProveedor(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		// Cliente: la recolección es obligatoria.
+		// Cliente: la recolección es obligatoria. El agente captura el punto de
+		// recolección al marcar recolectado; Cerrar lo compara con el de la
+		// entrega (spec §4.1).
+		latRecoleccion, lonRecoleccion := 19.4326, -99.1332
 		for _, etapa := range []domain.Etapa{
 			domain.EtapaPendienteRecoleccion,
 			domain.EtapaRecolectado,
 			domain.EtapaEnRevision,
 		} {
-			_, err = svc.AvanzarArticulo(ctx, app.AvanzarArticuloCmd{
+			cmd := app.AvanzarArticuloCmd{
 				GarantiaID:        id,
 				ArticuloID:        articulo.ID(),
 				EtapaDestino:      etapa,
 				ClaveIdempotencia: clave(),
 				DeviceCreatedAt:   clk.Now(),
-			})
+			}
+			if etapa == domain.EtapaRecolectado {
+				cmd.GPSLat = &latRecoleccion
+				cmd.GPSLon = &lonRecoleccion
+			}
+
+			_, err = svc.AvanzarArticulo(ctx, cmd)
 			require.NoError(t, err, "avanzar a %s", etapa)
 		}
 
@@ -652,6 +711,8 @@ func TestE2E_ClientePorProveedor(t *testing.T) {
 		})
 		require.NoError(t, err)
 
+		// La entrega cae en Puebla, a más de 300 m del punto de recolección en
+		// CDMX: el cierre exige justificación y el resultado es con_desvio.
 		lat, lon := 19.0414, -98.2063
 		_, err = svc.Entregar(ctx, app.EntregarCmd{
 			GarantiaID:        id,
@@ -664,10 +725,13 @@ func TestE2E_ClientePorProveedor(t *testing.T) {
 		})
 		require.NoError(t, err)
 
+		const justificacion = "el cliente recogió en la sucursal de Puebla"
+
 		_, err = svc.Cerrar(ctx, app.CerrarCmd{
-			GarantiaID:        id,
-			ClaveIdempotencia: clave(),
-			DeviceCreatedAt:   clk.Now(),
+			GarantiaID:          id,
+			JustificacionDesvio: justificacion,
+			ClaveIdempotencia:   clave(),
+			DeviceCreatedAt:     clk.Now(),
 		})
 		require.NoError(t, err)
 
@@ -739,15 +803,35 @@ func TestE2E_ClientePorProveedor(t *testing.T) {
 		require.Equal(t, domain.TipoEventoFolioCerrado, evs[len(evs)-1].Tipo())
 
 		// El evento del folio entregado guarda el GPS de la entrega.
-		var entregado *domain.Evento
-		for _, e := range evs {
-			if e.Tipo() == domain.TipoEventoFolioEntregado {
-				entregado = e
-			}
-		}
-		require.NotNil(t, entregado)
+		entregado := eventoDeTipo(t, evs, domain.TipoEventoFolioEntregado)
 		require.NotNil(t, entregado.GPSLat())
 		require.InDelta(t, lat, *entregado.GPSLat(), 1e-9)
+
+		// La recolección también deja su punto, que es contra el que Cerrar
+		// compara la entrega.
+		var recolectado *domain.Evento
+		for _, e := range evs {
+			if e.Tipo() == domain.TipoEventoEtapaAvanzada && e.EtapaHasta() != nil &&
+				*e.EtapaHasta() == domain.EtapaRecolectado {
+				recolectado = e
+			}
+		}
+		require.NotNil(t, recolectado, "recolectado debe dejar su evento")
+		require.NotNil(t, recolectado.GPSLat())
+		require.InDelta(t, latRecoleccion, *recolectado.GPSLat(), 1e-9)
+
+		// Auditoría de la entrega: la distancia se midió y superó el umbral,
+		// así que el cierre quedó con_desvio y la justificación en el evento.
+		if tarea10Aplicada(ctx, t, pool) {
+			cerrado := eventoDeTipo(t, evs, domain.TipoEventoFolioCerrado)
+			require.NotNil(t, cerrado.AuditoriaGPS())
+			require.Equal(t, domain.AuditoriaGPSConDesvio, *cerrado.AuditoriaGPS())
+			require.Equal(t, justificacion, cerrado.Description())
+			require.NotNil(t, cerrado.DistanciaEntregaM())
+			require.Greater(t, *cerrado.DistanciaEntregaM(), domain.UmbralDesvioMetros)
+		} else {
+			t.Log("auditoría GPS no verificada: falta la migración 000071 de la tarea 10")
+		}
 
 		// R3: el MoverArticulo manual deja su propio evento con el par de
 		// ubicaciones desde/hasta, leído de la base.
@@ -832,18 +916,27 @@ func TestE2E_ClientePorTallerConCambioFisico(t *testing.T) {
 		})
 		require.NoError(t, err)
 
+		// Cliente: la recolección es obligatoria y es la que deja el punto
+		// contra el que se audita la entrega.
+		latRecoleccion, lonRecoleccion := 19.0414, -98.2063
 		for _, etapa := range []domain.Etapa{
 			domain.EtapaPendienteRecoleccion,
 			domain.EtapaRecolectado,
 			domain.EtapaEnRevision,
 		} {
-			_, err = svc.AvanzarArticulo(ctx, app.AvanzarArticuloCmd{
+			cmd := app.AvanzarArticuloCmd{
 				GarantiaID:        id,
 				ArticuloID:        original.ID(),
 				EtapaDestino:      etapa,
 				ClaveIdempotencia: clave(),
 				DeviceCreatedAt:   clk.Now(),
-			})
+			}
+			if etapa == domain.EtapaRecolectado {
+				cmd.GPSLat = &latRecoleccion
+				cmd.GPSLon = &lonRecoleccion
+			}
+
+			_, err = svc.AvanzarArticulo(ctx, cmd)
 			require.NoError(t, err, "avanzar a %s", etapa)
 		}
 
@@ -886,7 +979,9 @@ func TestE2E_ClientePorTallerConCambioFisico(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		lat, lon := 19.0414, -98.2063
+		// La entrega cae a metros del punto de recolección: sin desvío, el
+		// folio cierra sin exigir justificación.
+		lat, lon := 19.0415, -98.2064
 		_, err = svc.Entregar(ctx, app.EntregarCmd{
 			GarantiaID:        id,
 			Firma:             firmaJPEGPrueba,
@@ -1009,6 +1104,29 @@ func TestE2E_ClientePorTallerConCambioFisico(t *testing.T) {
 				},
 			})
 		require.Equal(t, domain.TipoEventoDesenlaceRegistrado, evs[len(evs)-1].Tipo())
+
+		// El punto de recolección quedó guardado y la auditoría lo comparó con
+		// la entrega: quedó sin_desvio.
+		var recolectado *domain.Evento
+		for _, e := range evs {
+			if e.Tipo() == domain.TipoEventoEtapaAvanzada && e.EtapaHasta() != nil &&
+				*e.EtapaHasta() == domain.EtapaRecolectado {
+				recolectado = e
+			}
+		}
+		require.NotNil(t, recolectado, "recolectado debe dejar su evento")
+		require.NotNil(t, recolectado.GPSLat())
+		require.InDelta(t, latRecoleccion, *recolectado.GPSLat(), 1e-9)
+
+		if tarea10Aplicada(ctx, t, pool) {
+			cerradoEv := eventoDeTipo(t, evs, domain.TipoEventoFolioCerrado)
+			require.NotNil(t, cerradoEv.AuditoriaGPS())
+			require.Equal(t, domain.AuditoriaGPSSinDesvio, *cerradoEv.AuditoriaGPS())
+			require.NotNil(t, cerradoEv.DistanciaEntregaM())
+			require.LessOrEqual(t, *cerradoEv.DistanciaEntregaM(), domain.UmbralDesvioMetros)
+		} else {
+			t.Log("auditoría GPS no verificada: falta la migración 000071 de la tarea 10")
+		}
 	})
 }
 

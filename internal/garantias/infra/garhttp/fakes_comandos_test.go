@@ -24,6 +24,8 @@ import (
 type fakeComandoGarantiaRepo struct {
 	paraActualizar    *domain.Garantia
 	respuesta         *domain.Garantia
+	imagenes          *fakeComandoImagenRepo
+	eventos           *fakeComandoEventoRepo
 	errParaActualizar error
 	errCrear          error
 	errGuardar        error
@@ -33,12 +35,40 @@ type fakeComandoGarantiaRepo struct {
 
 func (f *fakeComandoGarantiaRepo) Crear(_ context.Context, g *domain.Garantia) error {
 	f.creados = append(f.creados, g)
-	return f.errCrear
+	if f.errCrear != nil {
+		return f.errCrear
+	}
+	f.registrarPendientes(g)
+
+	return nil
 }
 
-func (f *fakeComandoGarantiaRepo) Guardar(_ context.Context, _ *domain.Garantia) error {
+func (f *fakeComandoGarantiaRepo) Guardar(_ context.Context, g *domain.Garantia) error {
 	f.guardados++
-	return f.errGuardar
+	if f.errGuardar != nil {
+		return f.errGuardar
+	}
+	f.registrarPendientes(g)
+
+	return nil
+}
+
+// registrarPendientes mimics the write side of the real repository: on a
+// successful save the aggregate's new events and images are visible to the
+// next lookup. Staging only after the error check models the rollback of a
+// failed save.
+func (f *fakeComandoGarantiaRepo) registrarPendientes(g *domain.Garantia) {
+	if f.eventos != nil {
+		f.eventos.eventos = append(f.eventos.eventos, g.EventosPendientesForRepo()...)
+	}
+
+	if f.imagenes != nil {
+		f.imagenes.registradas = append(f.imagenes.registradas, g.ImagenesPendientesForRepo()...)
+
+		for _, imagen := range g.ImagenesPendientesForRepo() {
+			f.imagenes.porID[imagen.ID()] = imagen
+		}
+	}
 }
 
 func (f *fakeComandoGarantiaRepo) ObtenerParaActualizar(
@@ -74,7 +104,9 @@ func (f *fakeComandoGarantiaRepo) ObtenerPorFolio(
 
 // fakeComandoEventoRepo records the idempotency key the handler passes to the
 // command, which is what proves the header is not regenerated. It also feeds
-// the delivery audit of Cerrar (empty by default: no_aplica).
+// the delivery audit of Cerrar (empty by default: no_aplica) and, when no
+// explicit vista is set, resolves a key against the events the fake repo
+// staged, the same way the UNIQUE index would find the twin.
 type fakeComandoEventoRepo struct {
 	eventos     []*domain.Evento
 	errListar   error
@@ -97,64 +129,143 @@ func (f *fakeComandoEventoRepo) ObtenerPorClaveIdempotencia(
 ) (*domain.Evento, error) {
 	f.ultimaClave = clave
 	f.busquedas++
-	return f.vista, f.errBuscar
+
+	if f.errBuscar != nil {
+		return nil, f.errBuscar
+	}
+
+	if f.vista != nil {
+		return f.vista, nil
+	}
+
+	for _, evento := range f.eventos {
+		if evento.ClaveIdempotencia() == clave {
+			return evento, nil
+		}
+	}
+
+	//nolint:nilnil // igual que el repositorio real: la clave no existe todavía.
+	return nil, nil
 }
 
-// fakeComandoImagenRepo satisfies the port; the JSON routes never write images.
-type fakeComandoImagenRepo struct{}
+// eventosConClave returns the events staged under one idempotency key.
+func (f *fakeComandoEventoRepo) eventosConClave(clave string) []*domain.Evento {
+	var out []*domain.Evento
 
-func (fakeComandoImagenRepo) Registrar(_ context.Context, _ *domain.Imagen) error { return nil }
+	for _, evento := range f.eventos {
+		if evento.ClaveIdempotencia() == clave {
+			out = append(out, evento)
+		}
+	}
 
-func (fakeComandoImagenRepo) Obtener(_ context.Context, _ uuid.UUID) (*domain.Imagen, error) {
+	return out
+}
+
+// fakeComandoImagenRepo keeps the signature rows staged by the fake folio repo
+// and records every lookup, so a test can prove the cleanup asked about the
+// exact image id the command derived. A configured error exercises the path
+// that keeps the blob when the lookup itself fails.
+type fakeComandoImagenRepo struct {
+	porID       map[uuid.UUID]*domain.Imagen
+	registradas []*domain.Imagen
+	errObtener  error
+}
+
+func (f *fakeComandoImagenRepo) Registrar(_ context.Context, imagen *domain.Imagen) error {
+	f.registradas = append(f.registradas, imagen)
+
+	if f.porID == nil {
+		f.porID = make(map[uuid.UUID]*domain.Imagen)
+	}
+
+	f.porID[imagen.ID()] = imagen
+
+	return nil
+}
+
+func (f *fakeComandoImagenRepo) Obtener(_ context.Context, id uuid.UUID) (*domain.Imagen, error) {
+	if f.errObtener != nil {
+		return nil, f.errObtener
+	}
+
+	if imagen, ok := f.porID[id]; ok {
+		return imagen, nil
+	}
+
 	return nil, domain.ErrImagenNoEncontrada
 }
 
-func (fakeComandoImagenRepo) ListarPorEvento(
+func (f *fakeComandoImagenRepo) ListarPorEvento(
 	_ context.Context,
 	_ uuid.UUID,
 ) ([]*domain.Imagen, error) {
 	return nil, nil
 }
 
-func (fakeComandoImagenRepo) ListarPorEventos(
+func (f *fakeComandoImagenRepo) ListarPorEventos(
 	_ context.Context,
 	_ []uuid.UUID,
 ) ([]*domain.Imagen, error) {
 	return nil, nil
 }
 
-// fakeComandoStorage satisfies the port; no JSON route stores a blob.
-type fakeComandoStorage struct{}
+// fakeComandoStorage records every blob written and deleted. The assertions of
+// the delivery tests are about exactly that: one write, and the delete only
+// when the row did not keep that route.
+type fakeComandoStorage struct {
+	guardados []string
+	borrados  []string
+	errStore  error
+	errDelete error
+}
 
-func (fakeComandoStorage) Store(
+func (f *fakeComandoStorage) Store(
 	_ context.Context,
-	_ string,
+	clave string,
 	_ string,
 	_ int64,
 	_ io.Reader,
 ) error {
+	if f.errStore != nil {
+		return f.errStore
+	}
+
+	f.guardados = append(f.guardados, clave)
+
 	return nil
 }
 
-func (fakeComandoStorage) Get(_ context.Context, _ string) (outbound.StorageObject, error) {
+func (f *fakeComandoStorage) Get(_ context.Context, _ string) (outbound.StorageObject, error) {
 	return outbound.StorageObject{}, nil
 }
 
-func (fakeComandoStorage) Delete(_ context.Context, _ string) error { return nil }
+func (f *fakeComandoStorage) Delete(_ context.Context, clave string) error {
+	if f.errDelete != nil {
+		return f.errDelete
+	}
 
-// fakeComandoIdentity is the authenticated operator of the command tests.
+	f.borrados = append(f.borrados, clave)
+
+	return nil
+}
+
+// fakeComandoIdentity is the authenticated operator of the command tests. It
+// records the permissions app asked for, because the route's permission is a
+// rule the handler must not decide and the fake must not hide.
 type fakeComandoIdentity struct {
 	usuario    outbound.Usuario
 	usuarioErr error
 	permitido  bool
 	permisoErr error
+	permisos   []domain.Permiso
 }
 
 func (f *fakeComandoIdentity) UsuarioActual(_ context.Context) (outbound.Usuario, error) {
 	return f.usuario, f.usuarioErr
 }
 
-func (f *fakeComandoIdentity) TienePermiso(_ context.Context, _ domain.Permiso) (bool, error) {
+func (f *fakeComandoIdentity) TienePermiso(_ context.Context, permiso domain.Permiso) (bool, error) {
+	f.permisos = append(f.permisos, permiso)
 	return f.permitido, f.permisoErr
 }
 
@@ -183,6 +294,25 @@ func buildCommandRouter(
 	garantias outbound.GarantiaRepo,
 	eventos outbound.EventoRepo,
 ) http.Handler {
+	return buildCommandRouterCon(
+		identity,
+		garantias,
+		eventos,
+		&fakeComandoImagenRepo{},
+		&fakeComandoStorage{},
+	)
+}
+
+// buildCommandRouterCon es la variante que recibe las dependencias de la
+// firma: las pruebas de entregar-garantia inspeccionan la imagen staged y los
+// blobs guardados/borrados después de la petición.
+func buildCommandRouterCon(
+	identity outbound.Identity,
+	garantias outbound.GarantiaRepo,
+	eventos outbound.EventoRepo,
+	imagenes outbound.ImagenRepo,
+	storage outbound.StorageProvider,
+) http.Handler {
 	consultas := app.NewConsultas(app.ConsultasDeps{
 		Garantias: garantias,
 		Eventos:   eventos,
@@ -192,12 +322,12 @@ func buildCommandRouter(
 	servicio := app.NewService(app.Deps{
 		GarantiaRepo:   garantias,
 		EventoRepo:     eventos,
-		ImagenRepo:     fakeComandoImagenRepo{},
+		ImagenRepo:     imagenes,
 		FolioGenerator: fakeComandoFolios{},
 		TxRunner:       fakeComandoTx{},
 		Identity:       identity,
 		Clock:          fakeComandoClock{},
-		Storage:        fakeComandoStorage{},
+		Storage:        storage,
 	})
 
 	r := chi.NewRouter()
@@ -207,6 +337,46 @@ func buildCommandRouter(
 	})
 
 	return r
+}
+
+// comandoFakes is the full set of ports a command test may need to inspect.
+type comandoFakes struct {
+	router      http.Handler
+	identity    *fakeComandoIdentity
+	repositorio *fakeComandoGarantiaRepo
+	eventos     *fakeComandoEventoRepo
+	imagenes    *fakeComandoImagenRepo
+	storage     *fakeComandoStorage
+}
+
+// nuevoRouterCompleto wires the fakes to each other so a successful save stages
+// its events and images where the next lookup finds them, like the real repos
+// do inside the test transaction.
+func nuevoRouterCompleto(op string) *comandoFakes {
+	return nuevoRouterCompletoCon(op, operadorAutenticado())
+}
+
+// nuevoRouterCompletoCon is the same wiring with a caller-supplied identity,
+// for the tests that need to see which permission the command asked for.
+func nuevoRouterCompletoCon(op string, identity *fakeComandoIdentity) *comandoFakes {
+	imagenes := &fakeComandoImagenRepo{porID: make(map[uuid.UUID]*domain.Imagen)}
+	storage := &fakeComandoStorage{}
+	eventos := &fakeComandoEventoRepo{}
+	repositorio := &fakeComandoGarantiaRepo{
+		paraActualizar: folioPara(op),
+		respuesta:      fixtureRespuestaComando(),
+		imagenes:       imagenes,
+		eventos:        eventos,
+	}
+
+	return &comandoFakes{
+		router:      buildCommandRouterCon(identity, repositorio, eventos, imagenes, storage),
+		identity:    identity,
+		repositorio: repositorio,
+		eventos:     eventos,
+		imagenes:    imagenes,
+		storage:     storage,
+	}
 }
 
 // folioDeComando builds the aggregate each route needs to satisfy its domain
@@ -282,6 +452,8 @@ func folioPara(operationID string) *domain.Garantia {
 		return folioDeComando(domain.EstadoFolioAbierto, domain.EtapaRegistrado, domain.UbicacionAlmacenRevision, nil)
 	case "marcar-listo-entrega":
 		return folioDeComando(domain.EstadoFolioEnProceso, domain.EtapaListoEntrega, domain.UbicacionAlmacenRevision, nil)
+	case "entregar-garantia":
+		return folioDeComando(domain.EstadoFolioListoEntrega, domain.EtapaListoEntrega, domain.UbicacionAlmacenRevision, nil)
 	case "cerrar-garantia":
 		return folioDeComando(domain.EstadoFolioEntregado, domain.EtapaEntregado, domain.UbicacionEntregado, nil)
 	case "cancelar-garantia":
@@ -310,8 +482,8 @@ func folioPara(operationID string) *domain.Garantia {
 var (
 	_ outbound.GarantiaRepo    = (*fakeComandoGarantiaRepo)(nil)
 	_ outbound.EventoRepo      = (*fakeComandoEventoRepo)(nil)
-	_ outbound.ImagenRepo      = fakeComandoImagenRepo{}
-	_ outbound.StorageProvider = fakeComandoStorage{}
+	_ outbound.ImagenRepo      = (*fakeComandoImagenRepo)(nil)
+	_ outbound.StorageProvider = (*fakeComandoStorage)(nil)
 	_ outbound.Identity        = (*fakeComandoIdentity)(nil)
 	_ outbound.TxRunner        = fakeComandoTx{}
 	_ outbound.Clock           = fakeComandoClock{}

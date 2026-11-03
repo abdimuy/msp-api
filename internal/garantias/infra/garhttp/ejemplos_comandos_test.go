@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 )
 
 // ejemploOperacion is one syntactically valid request for an operation. The
@@ -39,9 +40,9 @@ var firmaJPEGDePrueba = []byte{
 }
 
 // ejemplosComandos returns one valid request per command operation: the
-// thirteen JSON routes of this task plus the multipart delivery. The multipart
-// one belongs to Ruben's part; it lives here because the shared contract asks
-// for all fourteen in this file.
+// thirteen JSON routes plus the multipart delivery. It is the shared contract
+// of the security sweep and the 401/403 tests, so a required field or a path
+// shape can only be fixed in one place.
 func ejemplosComandos() []ejemploOperacion {
 	json := func(operationID, path, body string) ejemploOperacion {
 		return ejemploOperacion{
@@ -166,6 +167,10 @@ func ejemplosComandos() []ejemploOperacion {
 
 // ejemploEntregaMultipart builds the multipart request of entregar-garantia
 // with the signature file and the three fields the handler reads.
+//
+// The file part is written with CreatePart and an explicit Content-Type: Huma
+// reads the type from the part's headers, and CreateFormFile leaves it at
+// application/octet-stream.
 func ejemploEntregaMultipart() ejemploOperacion {
 	var cuerpo bytes.Buffer
 	writer := multipart.NewWriter(&cuerpo)
@@ -174,7 +179,10 @@ func ejemploEntregaMultipart() ejemploOperacion {
 	_ = writer.WriteField("gps_lat", "19.4326")
 	_ = writer.WriteField("gps_lon", "-99.1332")
 
-	parte, err := writer.CreateFormFile("firma", "firma.jpg")
+	parte, err := writer.CreatePart(textproto.MIMEHeader{
+		"Content-Disposition": {"form-data; name=\"firma\"; filename=\"firma.jpg\""},
+		"Content-Type":        {"image/jpeg"},
+	})
 	if err != nil {
 		panic(err)
 	}
@@ -191,8 +199,8 @@ func ejemploEntregaMultipart() ejemploOperacion {
 	}
 }
 
-// ejemplosJSONComandos are the thirteen JSON operations registered in this
-// part; the multipart delivery is registered by the next one.
+// ejemplosJSONComandos are the thirteen JSON operations; the multipart delivery
+// has its own tests because its body is not JSON.
 func ejemplosJSONComandos() []ejemploOperacion {
 	out := make([]ejemploOperacion, 0, len(ejemplosComandos()))
 	for _, ejemplo := range ejemplosComandos() {

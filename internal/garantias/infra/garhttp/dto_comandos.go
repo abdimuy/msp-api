@@ -1,7 +1,11 @@
 //nolint:misspell // vocabulario español (comando, Comandos) por convención del proyecto.
 package garhttp
 
-import "time"
+import (
+	"time"
+
+	"github.com/danielgtaylor/huma/v2"
+)
 
 // ComandoBase carries the fields every command body shares: the device clock
 // that stamps the event and the coordinates the agent captured. It is embedded
@@ -38,6 +42,21 @@ type IniciarProcesoBody struct {
 // MarcarListoEntregaBody es el cuerpo de POST /garantias/{id}/listo-entrega.
 type MarcarListoEntregaBody struct {
 	ComandoBase
+}
+
+// EntregarBody es el cuerpo multipart de POST /garantias/{id}/entregar.
+//
+// Huma no admite punteros en campos de formulario, así que las coordenadas
+// viajan como texto y el handler las parsea: un campo vacío significa "sin
+// GPS" y app lo rechaza con warranty_delivery_gps_required antes de tocar el
+// almacenamiento. La firma también es opcional para Huma, para que el handler
+// devuelva el centinela del dominio (warranty_signature_required) y no el
+// error genérico de validación del framework.
+type EntregarBody struct {
+	DeviceCreatedAt time.Time     `form:"device_created_at" doc:"Momento en que el dispositivo registró la entrega (RFC3339)"`
+	GPSLat          string        `form:"gps_lat" required:"false" doc:"Latitud del agente; obligatoria junto con gps_lon"`
+	GPSLon          string        `form:"gps_lon" required:"false" doc:"Longitud del agente; obligatoria junto con gps_lat"`
+	Firma           huma.FormFile `form:"firma"   required:"false" doc:"Firma de conformidad (JPEG o PNG, máximo 1 MB)"`
 }
 
 // CerrarBody es el cuerpo de POST /garantias/{id}/cerrar.
@@ -125,6 +144,13 @@ type MarcarListoEntregaRequest struct {
 	EncabezadoIdempotencia
 	ID   string `path:"id" format:"uuid"`
 	Body MarcarListoEntregaBody
+}
+
+// EntregarRequest es la entrada de POST /garantias/{id}/entregar.
+type EntregarRequest struct {
+	EncabezadoIdempotencia
+	ID      string `path:"id" format:"uuid"`
+	RawBody huma.MultipartFormFiles[EntregarBody]
 }
 
 // CerrarRequest es la entrada de POST /garantias/{id}/cerrar.
