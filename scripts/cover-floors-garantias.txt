@@ -1,0 +1,11 @@
+# Pisos de cobertura de internal/garantias.
+# Formato: <paquete> <piso %>, con DEFAULT para paquetes no declarados.
+
+DEFAULT                                70
+
+internal/garantias/domain              99
+internal/garantias/app                 95
+internal/garantias/infra/garfb         85
+internal/garantias/infra/garhttp       90
+internal/garantias/infra/storage       85
+internal/garantias/infra/identidad     100
