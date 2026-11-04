@@ -4,8 +4,85 @@ import (
 	"context"
 	"io"
 
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
+
+	"github.com/abdimuy/msp-api/internal/garantias/app"
+	"github.com/abdimuy/msp-api/internal/garantias/domain"
 )
+
+const maxEvidenciaHTTPBytes int64 = 10 * 1024 * 1024
+
+// imagenCommandHandlers atiende los comandos HTTP de imágenes.
+type imagenCommandHandlers struct {
+	servicio *app.Service
+}
+
+func newImagenCommandHandlers(servicio *app.Service) *imagenCommandHandlers {
+	return &imagenCommandHandlers{servicio: servicio}
+}
+
+// AdjuntarImagen atiende POST /garantias/{id}/eventos/{eid}/imagenes.
+func (h *imagenCommandHandlers) AdjuntarImagen(
+	ctx context.Context,
+	in *AdjuntarImagenRequest,
+) (*AdjuntarImagenResponse, error) {
+	garantiaID, err := parseUUIDDeRuta(in.ID, "la garantía")
+	if err != nil {
+		return nil, mapAppError(ctx, err)
+	}
+
+	eventoID, err := parseUUIDDeRuta(in.EventoID, "el evento")
+	if err != nil {
+		return nil, mapAppError(ctx, err)
+	}
+
+	contenido, err := leerEvidencia(in.RawBody.Data().Archivo)
+	if err != nil {
+		return nil, mapAppError(ctx, err)
+	}
+
+	imagen, err := h.servicio.AdjuntarImagen(ctx, app.AdjuntarImagenCmd{
+		GarantiaID:        garantiaID,
+		EventoID:          eventoID,
+		Description:       in.RawBody.Data().Description,
+		Contenido:         contenido,
+		ClaveIdempotencia: in.IdempotencyKey,
+	})
+	if err != nil {
+		return nil, mapAppError(ctx, err)
+	}
+
+	out := &AdjuntarImagenResponse{}
+	out.Body = ImagenDTO{
+		ID:          imagen.ID().String(),
+		Tipo:        imagen.Tipo().String(),
+		Description: imagen.Description(),
+		SubidaPor:   imagen.SubidaPor(),
+		CreatedAt:   formatTime(imagen.CreatedAt()),
+		URL: "/garantias/" + garantiaID.String() +
+			"/eventos/" + eventoID.String() +
+			"/imagenes/" + imagen.ID().String(),
+	}
+
+	return out, nil
+}
+
+func leerEvidencia(archivo huma.FormFile) ([]byte, error) {
+	if !archivo.IsSet {
+		return nil, domain.ErrImagenVacia
+	}
+	defer func() { _ = archivo.Close() }()
+
+	contenido, err := io.ReadAll(
+		io.LimitReader(archivo, maxEvidenciaHTTPBytes+1),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return contenido, nil
+}
 
 // ObtenerImagen devuelve el contenido binario de una imagen de la línea de tiempo.
 func (h *Handlers) ObtenerImagen(

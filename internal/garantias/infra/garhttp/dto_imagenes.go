@@ -1,5 +1,7 @@
 package garhttp
 
+import "github.com/danielgtaylor/huma/v2"
+
 // ImagenDTO es la representación pública de una imagen.
 // La huella nunca se expone por HTTP.
 type ImagenDTO struct {
@@ -22,4 +24,23 @@ type ObtenerImagenRequest struct {
 type ObtenerImagenResponse struct {
 	ContentType string `header:"Content-Type"`
 	Body        []byte
+}
+
+// AdjuntarImagenBody es el formulario multipart para subir evidencia.
+type AdjuntarImagenBody struct {
+	Archivo     huma.FormFile `form:"archivo" required:"false" doc:"Imagen JPEG o PNG, máximo 10 MB"`
+	Description string        `form:"descripcion" required:"false" maxLength:"500"`
+}
+
+// AdjuntarImagenRequest identifica el evento y contiene la evidencia.
+type AdjuntarImagenRequest struct {
+	EncabezadoIdempotencia
+	ID       string `path:"id" format:"uuid"`
+	EventoID string `path:"eid" format:"uuid"`
+	RawBody  huma.MultipartFormFiles[AdjuntarImagenBody]
+}
+
+// AdjuntarImagenResponse devuelve la metadata pública de la evidencia.
+type AdjuntarImagenResponse struct {
+	Body ImagenDTO
 }

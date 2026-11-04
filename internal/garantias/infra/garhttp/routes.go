@@ -88,9 +88,35 @@ func MountRouter(r chi.Router, d Deps) huma.API {
 	})
 
 	registerOperations(api, handlers)
+	registrarImagenes(api, d.Comandos)
 	registrarComandos(api, d.Comandos)
 
 	return api
+}
+
+func registrarImagenes(api huma.API, servicio *app.Service) {
+	handlers := newImagenCommandHandlers(servicio)
+	security := []map[string][]string{
+		{securitySchemeName: {}},
+	}
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "adjuntar-imagen",
+		Method:        http.MethodPost,
+		Path:          "/garantias/{id}/eventos/{eid}/imagenes",
+		Summary:       "Adjuntar imagen de garantía",
+		Description:   "Adjunta evidencia JPEG o PNG a un evento de la garantía.",
+		Tags:          []string{"garantias"},
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+		Errors: []int{
+			http.StatusUnauthorized,
+			http.StatusForbidden,
+			http.StatusNotFound,
+			http.StatusConflict,
+			http.StatusUnprocessableEntity,
+		},
+	}, handlers.AdjuntarImagen)
 }
 
 func registerOperations(api huma.API, handlers *Handlers) {
