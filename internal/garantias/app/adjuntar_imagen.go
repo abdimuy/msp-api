@@ -86,9 +86,7 @@ func (s *Service) AdjuntarImagen(
 		existente, err := s.imagenes.Obtener(txCtx, imagenID)
 		switch {
 		case err == nil:
-			if existente == nil ||
-				huella == "" ||
-				existente.Huella() != huella {
+			if !imagenCoincideReintento(existente, cmd.EventoID, huella) {
 				return domain.ErrClaveIdempotenciaMismatch
 			}
 
@@ -134,9 +132,7 @@ func (s *Service) AdjuntarImagen(
 			return nil, lookupErr
 		}
 
-		if existente == nil ||
-			huella == "" ||
-			existente.Huella() != huella {
+		if !imagenCoincideReintento(existente, cmd.EventoID, huella) {
 			return nil, domain.ErrClaveIdempotenciaMismatch
 		}
 
@@ -144,4 +140,16 @@ func (s *Service) AdjuntarImagen(
 	}
 
 	return resultado, nil
+}
+
+func imagenCoincideReintento(
+	imagen *domain.Imagen,
+	eventoID uuid.UUID,
+	huella string,
+) bool {
+	return imagen != nil &&
+		imagen.Tipo() == domain.TipoImagenEvidencia &&
+		imagen.EventoID() == eventoID &&
+		huella != "" &&
+		imagen.Huella() == huella
 }
