@@ -63,30 +63,43 @@ func (s *Service) AdjuntarImagen(
 		ruta,
 	)
 
+	return s.registrarImagenAdjunta(
+		ctx,
+		cmd,
+		imagenID,
+		huella,
+		ruta,
+		usuario,
+	)
+}
+
+func (s *Service) registrarImagenAdjunta(
+	ctx context.Context,
+	cmd AdjuntarImagenCmd,
+	imagenID uuid.UUID,
+	huella string,
+	ruta string,
+	usuario string,
+) (*domain.Imagen, error) {
 	var resultado *domain.Imagen
 
-	err = s.tx.RunInTx(ctx, func(txCtx context.Context) error {
-		eventos, err := s.eventos.ListarPorGarantia(txCtx, cmd.GarantiaID)
-		if err != nil {
+	err := s.tx.RunInTx(ctx, func(txCtx context.Context) error {
+		if err := s.validarEventoAdjunto(
+			txCtx,
+			cmd.GarantiaID,
+			cmd.EventoID,
+		); err != nil {
 			return err
-		}
-
-		eventoExiste := false
-		for _, evento := range eventos {
-			if evento != nil && evento.ID() == cmd.EventoID {
-				eventoExiste = true
-				break
-			}
-		}
-
-		if !eventoExiste {
-			return domain.ErrImagenEventoAjeno
 		}
 
 		existente, err := s.imagenes.Obtener(txCtx, imagenID)
 		switch {
 		case err == nil:
-			if !imagenCoincideReintento(existente, cmd.EventoID, huella) {
+			if !imagenCoincideReintento(
+				existente,
+				cmd.EventoID,
+				huella,
+			) {
 				return domain.ErrClaveIdempotenciaMismatch
 			}
 
@@ -121,25 +134,57 @@ func (s *Service) AdjuntarImagen(
 		resultado = nueva
 		return nil
 	})
-	if err != nil {
-		if !errors.Is(err, domain.ErrImagenDuplicada) {
-			return nil, err
-		}
-
-		// Otra petición concurrente pudo ganar con la misma clave.
-		existente, lookupErr := s.imagenes.Obtener(ctx, imagenID)
-		if lookupErr != nil {
-			return nil, lookupErr
-		}
-
-		if !imagenCoincideReintento(existente, cmd.EventoID, huella) {
-			return nil, domain.ErrClaveIdempotenciaMismatch
-		}
-
-		return existente, nil
+	if err == nil {
+		return resultado, nil
 	}
 
-	return resultado, nil
+	if !errors.Is(err, domain.ErrImagenDuplicada) {
+		return nil, err
+	}
+
+	return s.resolverImagenDuplicada(
+		ctx,
+		imagenID,
+		cmd.EventoID,
+		huella,
+	)
+}
+
+func (s *Service) validarEventoAdjunto(
+	ctx context.Context,
+	garantiaID uuid.UUID,
+	eventoID uuid.UUID,
+) error {
+	eventos, err := s.eventos.ListarPorGarantia(ctx, garantiaID)
+	if err != nil {
+		return err
+	}
+
+	for _, evento := range eventos {
+		if evento != nil && evento.ID() == eventoID {
+			return nil
+		}
+	}
+
+	return domain.ErrImagenEventoAjeno
+}
+
+func (s *Service) resolverImagenDuplicada(
+	ctx context.Context,
+	imagenID uuid.UUID,
+	eventoID uuid.UUID,
+	huella string,
+) (*domain.Imagen, error) {
+	existente, err := s.imagenes.Obtener(ctx, imagenID)
+	if err != nil {
+		return nil, err
+	}
+
+	if !imagenCoincideReintento(existente, eventoID, huella) {
+		return nil, domain.ErrClaveIdempotenciaMismatch
+	}
+
+	return existente, nil
 }
 
 func imagenCoincideReintento(

@@ -1,3 +1,4 @@
+//nolint:misspell // vocabulario español del módulo.
 package garhttp
 
 import (

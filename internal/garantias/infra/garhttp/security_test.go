@@ -58,6 +58,18 @@ var permisosSeguridad = []domain.Permiso{
 	domain.PermisoCerrar,
 }
 
+func permisosSeguridadCon(permitido domain.Permiso) map[domain.Permiso]bool {
+	permisos := map[domain.Permiso]bool{
+		domain.PermisoLeer:       false,
+		domain.PermisoCrear:      false,
+		domain.PermisoActualizar: false,
+		domain.PermisoAutorizar:  false,
+		domain.PermisoCerrar:     false,
+	}
+	permisos[permitido] = true
+	return permisos
+}
+
 func tablaSeguridad(t *testing.T) []seguridadOperacion {
 	t.Helper()
 
@@ -306,7 +318,7 @@ func TestSeguridad_TablaCoincideConOpenAPI(t *testing.T) {
 			}
 
 			var op struct {
-				OperationID string `json:"operationId"`
+				OperationID string `json:"operationId"` //nolint:tagliatelle // nombre definido por OpenAPI
 			}
 			require.NoError(t, json.Unmarshal(raw, &op))
 
@@ -377,8 +389,7 @@ func TestSeguridad_TodasLasOperacionesSinUsuario_401(t *testing.T) {
 				permitidos: map[domain.Permiso]bool{},
 			}
 
-			router, garantias, imagenes, storage :=
-				nuevoRouterSeguridad(identity)
+			router, garantias, imagenes, storage := nuevoRouterSeguridad(identity)
 
 			rec := enviarSeguridad(router, fila.ejemplo)
 
@@ -432,9 +443,7 @@ func TestSeguridad_PermisosIncorrectos_403(t *testing.T) {
 						permiso.String(),
 						"garantias:",
 					),
-					permitidos: map[domain.Permiso]bool{
-						permiso: true,
-					},
+					permitidos: permisosSeguridadCon(permiso),
 				})
 			}
 
@@ -448,8 +457,7 @@ func TestSeguridad_PermisosIncorrectos_403(t *testing.T) {
 						permitidos: caso.permitidos,
 					}
 
-					router, garantias, imagenes, storage :=
-						nuevoRouterSeguridad(identity)
+					router, garantias, imagenes, storage := nuevoRouterSeguridad(identity)
 
 					rec := enviarSeguridad(
 						router,

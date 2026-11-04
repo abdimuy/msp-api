@@ -29,7 +29,7 @@ type ObtenerImagenResponse struct {
 // AdjuntarImagenBody es el formulario multipart para subir evidencia.
 type AdjuntarImagenBody struct {
 	Archivo     huma.FormFile `form:"archivo" required:"false" doc:"Imagen JPEG o PNG, máximo 10 MB"`
-	Description string        `form:"descripcion" required:"false" maxLength:"500"`
+	Description string        `form:"descripcion" required:"false" maxLength:"500"` //nolint:misspell // contrato HTTP en español
 }
 
 // AdjuntarImagenRequest identifica el evento y contiene la evidencia.
