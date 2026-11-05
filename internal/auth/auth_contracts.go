@@ -141,6 +141,17 @@ const (
 	// PermReactivacionAdministrar — see domain.PermReactivacionAdministrar.
 	PermReactivacionAdministrar = domain.PermReactivacionAdministrar
 
+	// PermGarantiasLeer — see domain.PermGarantiasLeer.
+	PermGarantiasLeer = domain.PermGarantiasLeer
+	// PermGarantiasCrear — see domain.PermGarantiasCrear.
+	PermGarantiasCrear = domain.PermGarantiasCrear
+	// PermGarantiasActualizar — see domain.PermGarantiasActualizar.
+	PermGarantiasActualizar = domain.PermGarantiasActualizar
+	// PermGarantiasAutorizar — see domain.PermGarantiasAutorizar.
+	PermGarantiasAutorizar = domain.PermGarantiasAutorizar
+	// PermGarantiasCerrar — see domain.PermGarantiasCerrar.
+	PermGarantiasCerrar = domain.PermGarantiasCerrar
+
 	// PermDesempenoVer — see domain.PermDesempenoVer.
 	PermDesempenoVer = domain.PermDesempenoVer
 )
