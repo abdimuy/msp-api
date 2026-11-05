@@ -40,7 +40,7 @@ Los números son correlativos y **nunca se reutilizan ni se renumeran**. Lo
 refutado **no se borra**: cambia de estado a REFUTADA y se queda, con la fecha y
 con la condición que lo volvería cierto.
 
-**Siguiente identificador libre: `E-COB-019`.**
+**Siguiente identificador libre: `E-COB-020`.**
 
 ---
 
@@ -596,3 +596,18 @@ entre 25 y 40 m.
   constante y por eso no podía fallar.
 - **Caduca si:** cambia la generación de teléfonos de la flota, o el GPS pasa a
   guardarse con otra precisión
+
+### E-COB-019
+- **Qué se afirmó:** "un reintento de un pago con imagen borra el archivo original".
+- **Nivel:** MEDIDO en dev.
+  - Fecha: 2026-11-05
+  - Comando: `go run ./scripts/medicion/fotos-pagos-faltantes/main.go`
+  - Salida:
+    ```
+    Total de filas: 0
+    Con archivo: 0
+    Sin archivo: 0
+    ```
+- **Qué falta:** el conteo de producción, que lo corre el dueño.
+
+
