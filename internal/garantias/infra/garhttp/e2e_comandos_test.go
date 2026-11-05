@@ -535,8 +535,7 @@ func TestE2EHTTP_ClientePorProveedorConDesvio(t *testing.T) {
 		ent.avanzar(ctx, t, id, articuloID, domain.EtapaDictamenRecibido, clave(), nil, nil)
 
 		ent.jsonOK(ctx, t, "/garantias/"+id+"/articulos/"+articuloID+"/dictamen", clave(), ent.cuerpo(map[string]any{
-			"dictamen":    "aceptada",
-			"rol_decisor": "tecnica",
+			"dictamen": "aceptada",
 		}))
 
 		ent.jsonOK(ctx, t, "/garantias/"+id+"/articulos/"+articuloID+"/mover", clave(), ent.cuerpo(map[string]any{

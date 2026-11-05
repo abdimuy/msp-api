@@ -28,6 +28,7 @@ import (
 func comandosDePrueba() map[string]any {
 	return map[string]any{
 		"AbrirGarantiaCmd":         app.AbrirGarantiaCmd{},
+		"AdjuntarImagenCmd":        app.AdjuntarImagenCmd{},
 		"AgregarArticuloCmd":       app.AgregarArticuloCmd{},
 		"AutorizarCambioFisicoCmd": app.AutorizarCambioFisicoCmd{},
 		"AvanzarArticuloCmd":       app.AvanzarArticuloCmd{},

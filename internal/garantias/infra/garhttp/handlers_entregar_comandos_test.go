@@ -135,7 +135,7 @@ func TestEntregar_FirmaInvalida_422(t *testing.T) {
 	}{
 		"vacia": {
 			// app treats zero bytes as no signature: the bytes never reach
-			// firmaGuardarBlob, so the sentinel is the same as an absent part.
+			// guardarBlob, so the sentinel is the same as an absent part.
 			peticion: entregaMultipart{firma: []byte{}},
 			code:     domain.ErrFirmaRequerida.Code,
 		},

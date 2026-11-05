@@ -2,12 +2,7 @@
 package app
 
 import (
-	"bytes"
 	"context"
-	"errors"
-	"log/slog"
-	"net/http"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -58,11 +53,11 @@ func (s *Service) Entregar(ctx context.Context, cmd EntregarCmd) (*domain.Garant
 	// written and then discarded after ejecutarFolio fails with the key
 	// sentinel, so identity and permission keep deciding the error first.
 	imagenID := firmaIDDe(cmd.ClaveIdempotencia)
-	ruta, err := s.firmaGuardarBlob(ctx, prefijoFirmas, cmd.Firma, firmaMaxBytes)
+	ruta, err := s.guardarBlob(ctx, prefijoFirmas, cmd.Firma, firmaMaxBytes)
 	if err != nil {
 		return nil, err
 	}
-	defer s.firmaDescartarBlobSiNoQuedo(context.WithoutCancel(ctx), imagenID, ruta)
+	defer s.descartarBlobSiNoQuedo(context.WithoutCancel(ctx), imagenID, ruta)
 
 	return s.ejecutarFolio(ctx, cmd.GarantiaID, domain.PermisoCerrar,
 		actorDe(cmd.ClaveIdempotencia, cmd.DeviceCreatedAt, cmd.GPSLat, cmd.GPSLon, huella),
@@ -81,58 +76,4 @@ func firmaIDDe(clave string) uuid.UUID {
 		return uuid.Nil
 	}
 	return domain.FirmaImagenID(canonica)
-}
-
-// firmaGuardarBlob validates the signature (non-empty, JPEG or PNG sniffed
-// from the content, at most maxBytes) and stores it under prefijo with a unique
-// path per attempt. It returns the relative path for the image row.
-//
-// It is the temporary stand-in for the shared helper of tarea 10
-// (app/blob.go), which owns the same rules for every upload; the firma prefix
-// keeps both names from colliding when the branches merge.
-func (s *Service) firmaGuardarBlob(ctx context.Context, prefijo string, contenido []byte, maxBytes int64) (string, error) {
-	if len(contenido) == 0 {
-		return "", domain.ErrImagenVacia
-	}
-	if int64(len(contenido)) > maxBytes {
-		return "", domain.ErrImagenMuyGrande
-	}
-	contentType := http.DetectContentType(contenido)
-	var extension string
-	switch contentType {
-	case "image/png":
-		extension = "png"
-	case "image/jpeg":
-		extension = "jpg"
-	default:
-		return "", domain.ErrImagenFormatoInvalido
-	}
-	ruta := strings.TrimSuffix(prefijo, "/") + "/" + uuid.NewString() + "." + extension
-	if err := s.storage.Store(ctx, ruta, contentType, int64(len(contenido)), bytes.NewReader(contenido)); err != nil {
-		return "", err
-	}
-	return ruta, nil
-}
-
-// firmaDescartarBlobSiNoQuedo deletes ruta unless the image imagenID exists and
-// points at exactly that route. A retry, an error or a lost write leaves no
-// orphan; the attempt that won keeps its blob. When the lookup itself fails for
-// an unexpected reason the blob is kept and the failure logged: deleting on an
-// unknown state could remove the winner's file.
-func (s *Service) firmaDescartarBlobSiNoQuedo(ctx context.Context, imagenID uuid.UUID, ruta string) {
-	imagen, err := s.imagenes.Obtener(ctx, imagenID)
-	switch {
-	case err == nil && imagen.Ruta() == ruta:
-		return
-	case err == nil, errors.Is(err, domain.ErrImagenNoEncontrada):
-		// Either another attempt registered the id, or the row never landed:
-		// this route is garbage in both cases.
-	case err != nil:
-		slog.WarnContext(ctx, "garantias.firma_blob_lookup_failed",
-			"imagen_id", imagenID, "ruta", ruta, "error", err)
-		return
-	}
-	if err := s.storage.Delete(ctx, ruta); err != nil {
-		slog.WarnContext(ctx, "garantias.firma_blob_delete_failed", "ruta", ruta, "error", err)
-	}
 }
