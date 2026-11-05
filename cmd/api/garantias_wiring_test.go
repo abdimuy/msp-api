@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -113,4 +115,44 @@ func TestGarantiasWiring_PermisosCoincidenConCatalogoAuth(t *testing.T) {
 		require.Equal(t, esperado.Description, actual.Description)
 		require.Equal(t, "garantias", actual.Categoria)
 	}
+}
+
+func TestGarantiasWiring_NoUsaIdempotencyMiddleware(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile("server.go")
+	require.NoError(t, err)
+
+	fuente := string(data)
+
+	inicio := strings.Index(
+		fuente,
+		"// Garantías — autenticación común y autorización dentro de app.",
+	)
+	require.NotEqual(t, -1, inicio, "no se encontró el bloque de garantías")
+
+	resto := fuente[inicio:]
+	fin := strings.Index(resto, "// Desempeño de cobradores")
+	require.NotEqual(t, -1, fin, "no se encontró el final del bloque de garantías")
+
+	bloque := resto[:fin]
+
+	var middlewareLine string
+	for _, linea := range strings.Split(bloque, "\n") {
+		linea = strings.TrimSpace(linea)
+		if strings.HasPrefix(linea, "r.Use(") {
+			middlewareLine = linea
+			break
+		}
+	}
+
+	require.NotEmpty(t, middlewareLine)
+	require.Contains(t, middlewareLine, "skipAuthForPublicDocs(authn.Handler)")
+	require.NotContains(
+		t,
+		middlewareLine,
+		"idem",
+		"garantías implementa idempotencia en dominio y no debe usar el middleware HTTP",
+	)
+	require.Contains(t, bloque, "garhttp.MountRouter(r, garantiasHTTP)")
 }
