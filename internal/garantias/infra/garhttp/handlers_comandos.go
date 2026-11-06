@@ -64,22 +64,24 @@ func (h *commandHandlers) AbrirGarantia(
 	}
 
 	garantia, err := h.servicio.AbrirGarantia(ctx, app.AbrirGarantiaCmd{
-		Origen:            origen,
-		ClienteID:         in.Body.ClienteID,
-		VentaID:           in.Body.VentaID,
-		EstadoCuenta:      estadoCuenta,
-		Description:       in.Body.Description,
-		VigenciaHasta:     in.Body.VigenciaHasta,
-		Calle:             in.Body.Calle,
-		NumeroExterior:    in.Body.NumeroExterior,
-		Colonia:           in.Body.Colonia,
-		Localidad:         in.Body.Localidad,
-		Ciudad:            in.Body.Ciudad,
-		CodigoPostal:      in.Body.CodigoPostal,
+		Origen:         origen,
+		ClienteID:      in.Body.ClienteID,
+		VentaID:        in.Body.VentaID,
+		EstadoCuenta:   estadoCuenta,
+		Description:    in.Body.Description,
+		VigenciaHasta:  in.Body.VigenciaHasta,
+		Calle:          in.Body.Calle,
+		NumeroExterior: in.Body.NumeroExterior,
+		Colonia:        in.Body.Colonia,
+		Localidad:      in.Body.Localidad,
+		Ciudad:         in.Body.Ciudad,
+		CodigoPostal:   in.Body.CodigoPostal,
+		// gps_lat/gps_lon is where the agent stood (it goes to the folio_abierto
+		// event); the body carries no home GPS, so DomicilioGPS stays nil. Copying
+		// the agent's fix there turned every piso folio with GPS into a 422 and
+		// stamped the agent's spot as a cliente folio's address.
 		GPSLat:            in.Body.GPSLat,
 		GPSLon:            in.Body.GPSLon,
-		DomicilioGPSLat:   in.Body.GPSLat,
-		DomicilioGPSLon:   in.Body.GPSLon,
 		ClaveIdempotencia: in.IdempotencyKey,
 		DeviceCreatedAt:   in.Body.DeviceCreatedAt,
 	})
