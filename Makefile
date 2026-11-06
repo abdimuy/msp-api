@@ -1,4 +1,4 @@
-.PHONY: help setup build build-winback run dev test test-unit test-mutation test-mutation-domain test-mutation-app test-mutation-ventas test-mutation-ventas-domain test-mutation-ventas-app test-mutation-cobranza test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-cobranza-eventbus test-mutation-visitas test-mutation-visitas-domain test-mutation-visitas-app test-mutation-httpdispatch lint lint-fix check-sealed fmt generate clean test-firebird test-firebird-all test-firebird-ventas coverage-auth coverage-auth-full coverage-ventas coverage-ventas-full coverage-canal coverage-visitas precommit-strict test-makefile fb-migrate-up fb-migrate-down fb-migrate-status fb-seed-admin fb-snapshot fb-snapshot-list fb-restore fb-snapshot-delete fb-emu-up fb-emu-down fb-emu-logs meilisearch-up meilisearch-down test-meilisearch
+.PHONY: help setup build build-winback run dev test test-unit test-mutation test-mutation-domain test-mutation-app test-mutation-ventas test-mutation-ventas-domain test-mutation-ventas-app test-mutation-cobranza test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-cobranza-eventbus test-mutation-visitas test-mutation-visitas-domain test-mutation-visitas-app test-mutation-httpdispatch lint lint-fix check-sealed fmt generate clean test-firebird test-firebird-all test-firebird-ventas coverage-auth coverage-auth-full coverage-ventas coverage-ventas-full coverage-canal coverage-visitas precommit-strict test-makefile fb-migrate-up fb-migrate-down fb-migrate-status fb-seed-admin fb-snapshot fb-snapshot-list fb-restore fb-snapshot-delete fb-emu-up fb-emu-down fb-emu-logs meilisearch-up meilisearch-down test-meilisearch coverage-garantias test-mutation-garantias test-mutation-garantias-domain test-mutation-garantias-app
 
 # ── Config ───────────────────────────────────────────────────────────
 APP_NAME      := msp-api
@@ -374,6 +374,7 @@ test-firebird-all: ## Run ALL Firebird-backed tests: platform, module repos (aut
 	          ./internal/ventas/infra/failedintents/... \
 	          ./internal/cobranza/infra/ventfb/... ./internal/cobranza/infra/cobranzahttp/... \
 	          ./internal/visitas/infra/visitasfb/... ./internal/visitas/infra/visitashttp/... \
+	          ./internal/garantias/infra/... \
 	          ./internal/clientes/infra/clientesfb/... ./internal/config/infra/configfb/... \
 	          ./internal/rutas/infra/rutasfb/... ./internal/microsip/infra/microsipfb/... \
 	          ./internal/desempeno/infra/desempenofb/... ./internal/desempeno/infra/desempenohttp/... \
@@ -421,6 +422,9 @@ coverage-ventas-full: ## Generate ventas coverage INCLUDING Firebird integration
 coverage-visitas: ## Cobertura de internal/visitas CON pisos que fallan (requiere FB_DATABASE)
 	./scripts/go-cover-gate.sh ./internal/visitas/... scripts/cover-floors-visitas.txt
 
+coverage-garantias: ## Cobertura de internal/garantias con pisos obligatorios
+	./scripts/go-cover-gate.sh ./internal/garantias/... scripts/cover-floors-garantias.txt
+
 coverage-canal: ## Generate per-package coverage report for the canal module (short mode)
 	$(GO) test ./internal/canal/... -count=1 -short -coverprofile=coverage-canal.out -covermode=atomic
 	$(GO) tool cover -func=coverage-canal.out | tail -20
@@ -458,7 +462,7 @@ precommit-strict: ## Full local quality gate before opening a PR — equivalent 
 # el primer refactor honesto y termina bajándose para pasar.
 GREMLINS_GATE := ./scripts/gremlins-gate.sh
 GREMLINS_TMPDIR := TMPDIR=/Volumes/M2-1TB/.go-cache/tmp
-test-mutation: test-mutation-domain test-mutation-app test-mutation-ventas-domain test-mutation-ventas-app test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-visitas-domain test-mutation-visitas-app test-mutation-httpdispatch ## Run mutation testing on critical packages
+test-mutation: test-mutation-domain test-mutation-app test-mutation-ventas-domain test-mutation-ventas-app test-mutation-cobranza-domain test-mutation-cobranza-app test-mutation-visitas-domain test-mutation-visitas-app test-mutation-httpdispatch test-mutation-garantias-domain test-mutation-garantias-app ## Run mutation testing on critical packages
 
 test-mutation-domain: ## Run mutation testing on auth/domain only (gate 75% eficacia + 80% evaluados)
 	$(GREMLINS_TMPDIR) $(GREMLINS_GATE) ./internal/auth/domain 75 80
@@ -505,6 +509,14 @@ test-mutation-visitas-domain: ## Run mutation testing on visitas/domain only (ga
 
 test-mutation-visitas-app: ## Run mutation testing on visitas/app only (gate 80% eficacia + 90% evaluados)
 	$(GREMLINS_TMPDIR) $(GREMLINS_GATE) ./internal/visitas/app 80 90
+
+test-mutation-garantias: test-mutation-garantias-domain test-mutation-garantias-app ## Run mutation testing on garantias
+
+test-mutation-garantias-domain: ## Run mutation testing on garantias/domain (80% eficacia + 90% evaluados)
+	$(GREMLINS_GATE) ./internal/garantias/domain 80 90
+
+test-mutation-garantias-app: ## Run mutation testing on garantias/app (80% eficacia + 90% evaluados)
+	$(GREMLINS_GATE) ./internal/garantias/app 80 90
 
 # NOMUTANTS y no un piso: este paquete es plomería de `context` (envuelve el
 # RouteContext de chi) y no tiene un solo operador mutable, así que gremlins

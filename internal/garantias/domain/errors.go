@@ -160,6 +160,14 @@ var (
 		"domicilio no permitido en folio de piso",
 	)
 
+	// ErrDomicilioGPSInvalido is returned by AbrirGarantia when the folio's
+	// coordinates fail the same rule as the event's (gpsValido): the pair
+	// complete or absent, both in range and finite (R12).
+	ErrDomicilioGPSInvalido = apperror.NewValidation(
+		"warranty_address_gps_invalid",
+		"coordenadas gps del domicilio inválidas",
+	)
+
 	// ErrTransicionEtapaNoPermitida is returned when an article cannot move
 	// from its current stage to the requested one. The stage machine lives
 	// in transiciones.go and is the single source of truth.
@@ -190,17 +198,22 @@ var (
 	)
 
 	// ErrArticulosNoListosParaEntrega is returned by MarcarListoEntrega when
-	// an article is neither in listo_entrega nor standby nor terminal.
+	// an article is not in a stage the folio origin admits for delivery.
 	ErrArticulosNoListosParaEntrega = apperror.NewValidation(
 		"warranty_article_not_ready",
-		"todos los artículos deben estar en listo_entrega, standby o una etapa terminal",
+		"hay artículos que todavía no están listos para entrega",
 	)
 
-	// ErrArticuloRutaRequerida is returned when leaving en_revision through
-	// a repair route without a defined route.
-	ErrArticuloRutaRequerida = apperror.NewValidation(
-		"warranty_route_required",
-		"no se puede salir de en_revision sin ruta definida",
+	// ErrArticuloPisoSinReingresar is returned by MarcarListoEntrega and
+	// Entregar when a piso article is still in a stage that does not count for
+	// a floor folio — above all listo_entrega, which counts only for cliente.
+	// A floor item must be reinstated (AvanzarArticulo → reingresado_inventario)
+	// before the folio is marked ready: R4 freezes every non-standby article
+	// once the folio is delivered, so one left in listo_entrega would be
+	// stranded with no outcome.
+	ErrArticuloPisoSinReingresar = apperror.NewValidation(
+		"warranty_floor_article_not_reinstated",
+		"en un folio de piso, todos los artículos deben estar reingresados al inventario, en standby o con su desenlace",
 	)
 
 	// ErrArticuloDictamenSoloProveedor is returned when a dictamen is
@@ -282,6 +295,21 @@ var (
 	ErrClaveIdempotenciaDeOtroFolio = apperror.NewConflict(
 		"warranty_idempotency_key_other_folio",
 		"la clave de idempotencia pertenece a otro folio",
+	)
+
+	// ErrClaveIdempotenciaMismatch is returned when the idempotency key
+	// already has an event on THIS folio, but that event does not describe
+	// the operation this call is asking for. The reuse may come from the
+	// same command with other content or from a different command on the
+	// same folio: either way the key is a repeat, its content is not.
+	// Treating it as a plain repetition would answer "already done" and
+	// silently drop the second operation (review of the B, 20-oct: the same
+	// key with "ROPERO" and later with "COMEDOR" answered success and never
+	// stored the comedor). It is a conflict, not a validation error: the key
+	// itself is well formed, it is the reuse that is wrong.
+	ErrClaveIdempotenciaMismatch = apperror.NewConflict(
+		"warranty_idempotency_key_mismatch",
+		"la clave de idempotencia ya se usó con otro contenido",
 	)
 
 	// ErrRolDecisorObligatorio is returned by the three decision methods
@@ -453,5 +481,142 @@ var (
 	ErrArticuloDescriptionMuyLarga = apperror.NewValidation(
 		"warranty_article_description_too_long",
 		"descripción del artículo demasiado larga",
+	)
+
+	// ErrFolioNoAdmiteOperacion is returned when the folio state does not allow
+	// the requested article operation (R4). The single rule lives in
+	// folioAdmiteOperacion; this sentinel is what the caller sees.
+	ErrFolioNoAdmiteOperacion = apperror.NewValidation(
+		"warranty_folio_operation_not_allowed",
+		"el folio no admite esa operación en su estado actual",
+	)
+
+	// ErrFolioConArticuloFuera is returned by Cancelar when an article is still
+	// at the supplier or in transit (R5): the item must come back before the
+	// folio is voided.
+	ErrFolioConArticuloFuera = apperror.NewValidation(
+		"warranty_folio_item_outside",
+		"no se puede cancelar el folio con un artículo fuera del taller",
+	)
+
+	// ErrUbicacionManualNoPermitida is returned by MoverArticulo when the target
+	// location is not one a manual move may set (R3): entregado and baja belong
+	// to a stage, never to a direct call.
+	ErrUbicacionManualNoPermitida = apperror.NewValidation(
+		"warranty_location_manual_not_allowed",
+		"esa ubicación no se asigna a mano",
+	)
+
+	// ErrUbicacionSinCambio is returned by MoverArticulo when the article is
+	// already in the requested location (R3); a move that moves nothing is not
+	// a fact worth recording.
+	ErrUbicacionSinCambio = apperror.NewValidation(
+		"warranty_location_unchanged",
+		"el artículo ya está en esa ubicación",
+	)
+
+	// ErrArticuloTerminalNoSeMueve is returned by MoverArticulo when the article
+	// has reached a terminal stage (R3): its path is over.
+	ErrArticuloTerminalNoSeMueve = apperror.NewValidation(
+		"warranty_article_terminal",
+		"un artículo en etapa terminal no se mueve",
+	)
+
+	// ErrEntregaGPSRequerido is returned by Entregar when the agent did not
+	// capture coordinates (R9). The delivery GPS is the audit the process asks
+	// for; without it the delivery cannot be recorded.
+	ErrEntregaGPSRequerido = apperror.NewValidation(
+		"warranty_delivery_gps_required",
+		"el gps del agente es obligatorio para entregar",
+	)
+)
+
+// Sentinels added by the contract of tareas 9 y 10 (firma de conformidad,
+// auditoría GPS, imágenes idempotentes y huella de la petición).
+var (
+	// ErrTipoImagenInvalido is returned by ParseTipoImagen and NewImagen when
+	// the type is not "evidencia" or "firma".
+	ErrTipoImagenInvalido = apperror.NewValidation(
+		"warranty_image_type_invalid",
+		"tipo de imagen inválido",
+	)
+
+	// ErrAuditoriaGPSInvalida is returned by ParseAuditoriaGPS and newEvento
+	// when the audit outcome is not one of the three known values.
+	ErrAuditoriaGPSInvalida = apperror.NewValidation(
+		"warranty_gps_audit_invalid",
+		"resultado de auditoría gps inválido",
+	)
+
+	// ErrHuellaInvalida is returned by newEvento and NewImagen when the
+	// fingerprint is not empty and not 64 lowercase hex characters.
+	ErrHuellaInvalida = apperror.NewValidation(
+		"warranty_fingerprint_invalid",
+		"huella de la petición inválida",
+	)
+
+	// ErrImagenIDInvalido is returned by NewImagen when the caller supplies
+	// an explicit ID and it is the nil UUID.
+	ErrImagenIDInvalido = apperror.NewValidation(
+		"warranty_image_id_invalid",
+		"identificador de imagen inválido",
+	)
+
+	// ErrImagenDuplicada is returned by the repository when an image ID is
+	// already registered and the replay could not be resolved as the same
+	// upload (two uploads raced on the same Idempotency-Key).
+	ErrImagenDuplicada = apperror.NewConflict(
+		"warranty_image_duplicate",
+		"la imagen ya está registrada",
+	)
+
+	// ErrImagenEventoAjeno is returned when the event named in the route does
+	// not exist or belongs to another folio. Both answer the same on purpose:
+	// the caller learns nothing about events outside the folio it named.
+	ErrImagenEventoAjeno = apperror.NewNotFound(
+		"warranty_image_event_not_in_folio",
+		"el evento no pertenece a la garantía",
+	)
+
+	// ErrImagenNoEncontrada is returned by ImagenRepo.Obtener and by the image
+	// download when the image does not exist under that folio and event.
+	ErrImagenNoEncontrada = apperror.NewNotFound(
+		"warranty_image_not_found",
+		"imagen no encontrada",
+	)
+
+	// ErrImagenVacia is returned when an upload carries no bytes.
+	ErrImagenVacia = apperror.NewValidation(
+		"warranty_image_empty",
+		"la imagen está vacía",
+	)
+
+	// ErrImagenFormatoInvalido is returned when the bytes of an upload are not
+	// a JPEG or a PNG (sniffed from the content, not from the declared type).
+	ErrImagenFormatoInvalido = apperror.NewValidation(
+		"warranty_image_format_invalid",
+		"la imagen debe ser jpeg o png",
+	)
+
+	// ErrImagenMuyGrande is returned when an upload exceeds the size limit of
+	// its type (evidence or signature).
+	ErrImagenMuyGrande = apperror.NewValidation(
+		"warranty_image_too_large",
+		"la imagen excede el tamaño permitido",
+	)
+
+	// ErrFirmaRequerida is returned by Entregar when the client's conformity
+	// signature is missing (spec §4.1).
+	ErrFirmaRequerida = apperror.NewValidation(
+		"warranty_signature_required",
+		"la firma de conformidad es obligatoria para entregar",
+	)
+
+	// ErrJustificacionDesvioRequerida is returned by Cerrar when the delivery
+	// GPS is farther from the pickup GPS than the threshold and no
+	// justification came with the request (spec §4.1).
+	ErrJustificacionDesvioRequerida = apperror.NewValidation(
+		"warranty_deviation_justification_required",
+		"la entrega se desvió del domicilio de recolección: se requiere justificación",
 	)
 )

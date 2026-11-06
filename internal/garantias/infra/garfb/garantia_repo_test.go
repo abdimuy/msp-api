@@ -550,3 +550,66 @@ func TestGarantiaRepo_PersisteUTF8(t *testing.T) {
 		require.Equal(t, descripcionEvento, evento.Description())
 	})
 }
+
+func TestGarantiaRepo_ObtenerDetalle(t *testing.T) {
+	pool := fbtestutil.NewTestFirebirdPool(t)
+
+	repo := garfb.NewGarantiaRepo(pool)
+	folios := garfb.NewFolioGenerator(pool)
+
+	fbtestutil.WithTestTransaction(t, pool, func(ctx context.Context) {
+		numero, err := folios.Siguiente(ctx)
+		require.NoError(t, err)
+
+		folio, err := domain.NewFolio(numero)
+		require.NoError(t, err)
+
+		now := time.Date(2026, 10, 21, 10, 0, 0, 0, time.UTC)
+
+		g, err := domain.AbrirGarantia(domain.AbrirGarantiaParams{
+			Folio:       folio,
+			Origen:      domain.OrigenFolioPiso,
+			Description: "Garantía para detalle",
+			AbiertoPor:  "ruben",
+			Now:         now,
+			Actor: domain.ActorParams{
+				Usuario:           "ruben",
+				ClaveIdempotencia: uuid.NewString(),
+				DeviceCreatedAt:   now,
+			},
+		})
+		require.NoError(t, err)
+
+		articuloID := 810001
+
+		err = g.AgregarArticulo(
+			domain.AgregarArticuloParams{
+				ArticuloID:  &articuloID,
+				Clave:       "DETALLE-001",
+				Description: "Artículo para prueba de detalle",
+			},
+			domain.ActorParams{
+				Usuario:           "ruben",
+				ClaveIdempotencia: uuid.NewString(),
+				DeviceCreatedAt:   now.Add(time.Minute),
+			},
+			now.Add(time.Minute),
+		)
+		require.NoError(t, err)
+
+		require.NoError(t, repo.Crear(ctx, g))
+
+		got, eventos, err := repo.ObtenerDetalle(ctx, g.ID())
+		require.NoError(t, err)
+		require.NotNil(t, got)
+
+		require.Equal(t, g.ID(), got.ID())
+		require.Equal(t, g.Folio(), got.Folio())
+		require.Equal(t, g.ArticulosCount(), got.ArticulosCount())
+
+		require.NotEmpty(t, eventos)
+		for _, evento := range eventos {
+			require.Equal(t, g.ID(), evento.GarantiaID())
+		}
+	})
+}

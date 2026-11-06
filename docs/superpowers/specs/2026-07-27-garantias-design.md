@@ -6,6 +6,7 @@
 - **Migración:** `000050_create_msp_ga_garantias`
 - **Nota:** la `000047` se reasignó a `MSP_VISITAS` (rama `feat/visitas`), que ya tiene código escrito. La `000048` la reserva asistencia y la `000049` comprobantes. **Antes de escribir la migración, correr `ls migrations-firebird/` y confirmar que la 50 sigue libre** — con varios módulos en vuelo el número es donde chocan.
 - **Prefijo de tablas:** `MSP_GA_*`
+- **Actualización 2026-10-26 (decisiones del dueño):** la firma de conformidad y la auditoría GPS entran en v1 (§4.1); la idempotencia de las rutas POST es la del dominio, no el middleware (§6); columnas nuevas en la migración `000071` (§3.3, §3.4); tareas 9 y 10 (§10).
 
 ## 1. Objetivo
 
@@ -121,12 +122,17 @@ El domicilio es un **snapshot al abrir**, no una copia perezosa: si el cliente s
 | `DESCRIPCION` | `BLOB SUB_TYPE TEXT` UTF8 | |
 | `ETAPA_DESDE` | `VARCHAR(28)` ASCII | |
 | `ETAPA_HASTA` | `VARCHAR(28)` ASCII | |
+| `UBICACION_DESDE` | `VARCHAR(28)` ASCII | Nullable. Sólo en eventos que mueven el mueble (migración `000070`) |
+| `UBICACION_HASTA` | `VARCHAR(28)` ASCII | Ídem |
 | `USUARIO` | `VARCHAR(64)` UTF8 | |
 | `ROL_DECISOR` | `VARCHAR(16)` ASCII | `carpinteria` \| `oficina` \| `tecnica`. Nullable; solo en eventos de decisión |
 | `GPS_LAT`, `GPS_LON` | `DOUBLE PRECISION` | Posición del agente al guardar |
 | `DEVICE_CREATED_AT` | `TIMESTAMP` | Reloj del teléfono (offline-first) |
 | `CREATED_AT` | `TIMESTAMP` | Reloj del servidor al recibir |
 | `CLAVE_IDEMPOTENCIA` | `CHAR(36)` ASCII | UNIQUE |
+| `HUELLA` | `CHAR(64)` ASCII | Nullable. SHA-256 en hex del contenido de la petición, sin la clave (§6). Migración `000071` |
+| `DISTANCIA_ENTREGA_M` | `DOUBLE PRECISION` | Nullable. Sólo en `folio_cerrado`: metros entre el GPS de la entrega y el de la recolección más lejana (§4.1). Migración `000071` |
+| `AUDITORIA_GPS` | `VARCHAR(20)` ASCII | Nullable. Sólo en `folio_cerrado`: `sin_desvio` \| `con_desvio` \| `no_aplica`. Migración `000071` |
 
 **Sin `UPDATED_AT`, sin `UPDATED_BY`, sin columna de borrado lógico.** Un evento de auditoría no se edita; si algo salió mal se agrega un evento de corrección. En un expediente que puede acabar en una reclamación del cliente, la línea de tiempo tiene que ser evidencia y no una opinión editable.
 
@@ -142,10 +148,14 @@ El domicilio es un **snapshot al abrir**, no una copia perezosa: si el cliente s
 |---|---|---|
 | `ID` | `CHAR(36)` ASCII | PK |
 | `EVENTO_ID` | `CHAR(36)` ASCII | FK → `MSP_GA_EVENTO`, **sin** `ON DELETE CASCADE` |
+| `TIPO` | `VARCHAR(12)` ASCII | `evidencia` \| `firma`. Go la escribe **siempre**; una fila anterior a la `000071` tiene `NULL` y se **lee** como `evidencia` |
 | `RUTA` | `VARCHAR(500)` UTF8 | Ruta relativa dentro de `STORAGE_DIR` |
 | `DESCRIPCION` | `VARCHAR(500)` UTF8 | |
 | `SUBIDA_POR` | `VARCHAR(64)` UTF8 | |
+| `HUELLA` | `CHAR(64)` ASCII | Nullable. Huella de la subida (§6). Migración `000071` |
 | `CREATED_AT` | `TIMESTAMP` | |
+
+El `ID` de la imagen puede venir de fuera: en la subida de evidencia es el `Idempotency-Key`, y en la firma lo deriva el dominio de la clave de `Entregar`. Así un reintento cae sobre la misma llave primaria en vez de crear una segunda fila.
 
 La evidencia cuelga del **evento**, no del folio. `RUTA` (no `URL`) porque es filesystem local por [ADR-0003](../../adr/0003-storage-deferred.md), y en UTF8 porque un path con acentos no debe reventar.
 
@@ -176,6 +186,22 @@ abierto → en_proceso → listo_entrega → entregado → cerrado
 ```
 
 `entregado` y `cerrado` son distintos a propósito: entre ambos ocurre la auditoría que pide el proceso — comparar el GPS de la entrega contra el de la recolección para detectar desvíos — más la firma de conformidad. Si fueran un solo estado, esa validación no tendría dónde vivir.
+
+**Decidido el 2026-10-26: las dos entran en v1.**
+
+**Firma de conformidad, en `Entregar`.**
+- `Entregar` exige la firma del cliente. Sin firma → **422 `warranty_signature_required`** (`ErrFirmaRequerida`), sin tocar el folio ni encolar eventos.
+- La firma es una imagen de `TIPO='firma'` colgada del evento `folio_entregado` que la misma llamada crea. La crea el agregado (`ImagenesPendientesForRepo`) y `GarantiaRepo.Guardar` la inserta en la **misma transacción** que el evento, después de él. No hay entrega sin firma ni firma sin entrega.
+- Llega en la misma petición que `Entregar` (multipart, §6). El blob se guarda antes de la transacción con una ruta única por intento; si al final la fila de la imagen no quedó registrada con **esa** ruta (error o reintento), el blob se borra.
+- La subida genérica de evidencia **nunca** crea firmas: siempre escribe `TIPO='evidencia'`.
+
+**Auditoría GPS, en `Cerrar`.**
+- `Cerrar` calcula la distancia haversine (radio 6,371,000 m) entre el GPS del evento `folio_entregado` (obligatorio desde R9) y el GPS de cada evento de recolección del folio (`etapa_avanzada` con `ETAPA_HASTA='recolectado'`), y se queda con la **mayor**.
+- Umbral: **300 m**, constante del dominio (`UmbralDesvioMetros`), documentada como ajustable: cambiarla es editar una constante y correr las pruebas.
+- Distancia **mayor** que el umbral → desvío. `Cerrar` exige entonces `justificacion_desvio` no vacía; sin ella → **422 `warranty_deviation_justification_required`** (`ErrJustificacionDesvioRequerida`). **No bloquea**: con justificación, el folio se cierra.
+- Si el folio no tiene recolección con GPS (origen piso, o una recolección capturada sin coordenadas), la auditoría **no aplica**: el folio se cierra y el evento lo dice.
+- El evento `folio_cerrado` guarda `DISTANCIA_ENTREGA_M` (nula cuando no aplica), `AUDITORIA_GPS` (`sin_desvio` \| `con_desvio` \| `no_aplica`) y, si la hubo, la justificación en `DESCRIPCION`.
+- El agregado no carga la línea de tiempo (decisión 7 de la tarea 4): `app` lee los eventos del folio dentro de la transacción, ya con el candado, y le pasa al dominio los puntos. El cálculo y la regla viven en el dominio.
 
 ### 4.2 Artículo — diecinueve etapas
 
@@ -266,7 +292,7 @@ Es deliberado: el catálogo de etapas proviene del documento de proceso, que des
 |---|---|
 | `GarantiaRepo` | `Guardar(agregado)` · `Obtener(id)` · `ObtenerPorFolio` · `Listar(filtros)` |
 | `EventoRepo` | `ListarPorGarantia` — **solo lectura** |
-| `ImagenRepo` | `Registrar` · `ListarPorEvento` |
+| `ImagenRepo` | `Registrar` · `Obtener(id)` · `ListarPorEvento` · `ListarPorEventos(ids)` — una sola consulta para todo el detalle |
 | `StorageProvider` | `Guardar(bytes)` · `Abrir` · `Eliminar` |
 | `FolioGenerator` | `Siguiente()` |
 | `Identity` | `UsuarioActual()` · `TienePermiso()` |
@@ -280,27 +306,43 @@ Es deliberado: el catálogo de etapas proviene del documento de proceso, que des
 ## 6. Endpoints
 
 ```
-POST   /v2/garantias                                 abrir folio (piso o cliente)
-GET    /v2/garantias                                 bandeja: filtros + paginado
-GET    /v2/garantias/{id}                            folio + artículos + timeline
-POST   /v2/garantias/{id}/cancelar
-POST   /v2/garantias/{id}/articulos                  agregar artículo al folio
-POST   .../articulos/{aid}/avanzar                   transición simple
-POST   .../articulos/{aid}/diagnostico               fija RUTA
-POST   .../articulos/{aid}/dictamen                  solo ruta proveedor
-POST   .../articulos/{aid}/cambio-fisico             crea reemplazo, original → standby
-POST   .../articulos/{aid}/desenlace                 standby → segunda_mano|desarmado|merma
-POST   /v2/garantias/{id}/entregar                   GPS + firma
-POST   /v2/garantias/{id}/cerrar                     auditoría GPS, cierre
-POST   /v2/garantias/{id}/eventos/{eid}/imagenes     multipart
-GET    /v2/garantias/catalogos                       etapas, ubicaciones, transiciones válidas
+POST   /v2/garantias                                 abrir folio (piso o cliente)              crear
+GET    /v2/garantias                                 bandeja: filtros + paginado               leer
+GET    /v2/garantias/catalogos                       etapas, ubicaciones, transiciones válidas leer
+GET    /v2/garantias/{id}                            folio + artículos + timeline + imágenes   leer
+POST   /v2/garantias/{id}/iniciar-proceso            abierto → en_proceso                      actualizar
+POST   /v2/garantias/{id}/listo-entrega              en_proceso → listo_entrega                actualizar
+POST   /v2/garantias/{id}/entregar                   GPS + firma (multipart)                   cerrar
+POST   /v2/garantias/{id}/cerrar                     auditoría GPS, cierre                     cerrar
+POST   /v2/garantias/{id}/cancelar                                                             cerrar
+POST   /v2/garantias/{id}/articulos                  agregar artículo al folio                 crear
+POST   .../articulos/{aid}/avanzar                   transición simple                         actualizar
+POST   .../articulos/{aid}/diagnostico               fija RUTA                                 actualizar
+POST   .../articulos/{aid}/dictamen                  solo ruta proveedor                       actualizar
+POST   .../articulos/{aid}/mover                     ubicación manual (R3)                     actualizar
+POST   .../articulos/{aid}/cambio-fisico             crea reemplazo, original → standby        autorizar
+POST   .../articulos/{aid}/no-devuelto               espera_respuesta_cliente → standby (R8)   autorizar
+POST   .../articulos/{aid}/desenlace                 standby → segunda_mano|desarmado|merma    autorizar
+POST   /v2/garantias/{id}/eventos/{eid}/imagenes     evidencia (multipart)                     actualizar
+GET    /v2/garantias/{id}/eventos/{eid}/imagenes/{iid}   el binario de la imagen               leer
 ```
+
+Diecinueve operaciones: quince `POST` y cuatro `GET`. `iniciar-proceso`, `listo-entrega`, `mover` y `no-devuelto` se agregaron con los comandos de la tarea 8; la descarga de la imagen, con la tarea 10.
 
 `avanzar` cubre las transiciones que no cargan datos adicionales; los cinco endpoints específicos existen porque sí los cargan.
 
 **`GET /v2/garantias/catalogos` proyecta la tabla de `transiciones.go`.** Con eso el frontend no reimplementa la máquina de estados: pregunta qué acciones son válidas para la etapa actual. Cuando el catálogo cambie tras el levantamiento de campo, el frontend se entera solo, sin despliegues coordinados.
 
-Todo endpoint que muta desde campo acepta `Idempotency-Key`, apoyado en `internal/platform/idempotency`.
+**Idempotencia (decidido el 2026-10-26): la del dominio, no el middleware.** Este párrafo decía antes que se apoyaba en `internal/platform/idempotency`; ya no.
+
+- Toda ruta `POST` exige el encabezado **`Idempotency-Key`**, UUID. Sin él, o con un valor que no es UUID → 422, antes del handler (`garhttp.EncabezadoIdempotencia`).
+- La clave viaja al comando y se guarda en el evento (`CLAVE_IDEMPOTENCIA`, `UNIQUE`), junto con la **huella**: SHA-256 del contenido **completo** del comando — todos sus campos, incluidos los de la ruta, menos la clave misma —, prefijado con el nombre del comando para que dos comandos con la misma forma no compartan huella.
+- **Misma clave y misma huella → 200** con el estado actual del folio, sin escribir nada.
+- **Misma clave y huella distinta → 409 `warranty_idempotency_key_mismatch`.** Incluye una fila sin huella: nunca se toma como repetición.
+- Misma clave en otro folio → 409 `warranty_idempotency_key_other_folio`, como hoy.
+- La subida de evidencia usa la misma regla, con la clave como `ID` de la imagen y la huella en `MSP_GA_IMAGEN.HUELLA`; la huella incluye los bytes de la imagen.
+- Las rutas de garantías **no** pasan por el middleware `platform/idempotency`. La clave y la huella viven en el evento que registra el cambio, en la misma transacción, y el reintento se resuelve con el candado del folio ya tomado; el módulo, sellado, no depende de una tabla de claves aparte.
+- Todas las rutas `POST` responden **200** con el folio, también la primera vez (abrir incluido). El teléfono trata igual el primer envío y el reintento.
 
 Wiring con Huma + chi según `docs/module-standards/HUMA_WIRING.md`. Fechas RFC3339 UTC en el contrato, por `DATETIME_HANDLING.md`. UTF-8 en todas las columnas `MSP_GA_*`, por `ENCODING_HANDLING.md`.
 
@@ -308,10 +350,10 @@ Wiring con Huma + chi según `docs/module-standards/HUMA_WIRING.md`. Fechas RFC3
 
 | Código | Cubre |
 |---|---|
-| `garantias:leer` | Bandeja y consulta |
+| `garantias:leer` | Bandeja, consulta, catálogos y descarga de imágenes |
 | `garantias:crear` | Abrir folio, agregar artículos |
-| `garantias:actualizar` | Avanzar, diagnóstico, dictamen, evidencia |
-| `garantias:autorizar` | Cambio físico y desenlace del standby |
+| `garantias:actualizar` | Iniciar proceso, avanzar, diagnóstico, dictamen, mover, listo para entrega, evidencia |
+| `garantias:autorizar` | Cambio físico, no devuelto y desenlace del standby |
 | `garantias:cerrar` | Entregar, cerrar, cancelar |
 
 `garantias:autorizar` está separado porque el cambio físico lo autoriza oficina, no campo. Un cobrador no debe poder autorizarse un reemplazo desde el teléfono: es una decisión con costo, y si el permiso no la separa, la política queda a la buena voluntad.
@@ -335,7 +377,7 @@ Adicionalmente, específico de este módulo:
 
 **Un e2e por rama:** origen piso; origen cliente por ruta proveedor; origen cliente por ruta taller. El de taller incluye cambio físico, con la fila de reemplazo entregada y el artículo original terminando en `standby` **con el folio ya cerrado** — la verificación directa de que el requisito de flujos concurrentes quedó satisfecho.
 
-**Barrido de seguridad** table-driven sobre las catorce rutas, verificando el permiso exigido en cada una.
+**Barrido de seguridad** table-driven sobre **todas** las operaciones que registra la API (diecinueve, §6), verificando el permiso exigido en cada una. La tabla se compara contra las operaciones del OpenAPI: una ruta nueva sin su fila hace fallar la prueba.
 
 **`make check-sealed`** corre en cada entrega vía `pre-push`, no al final. Es lo que impide que el módulo se cablee a `clientes` o a `ventas` y que se descubra semanas después.
 
@@ -383,6 +425,13 @@ Dos reglas gobiernan el corte: los contratos se fijan antes que nada, y **dos ta
 - `module.go` con el `fx.Option` y registro de permisos en el composition root
 - Integración Firebird con `WithTestTransaction`
 - Los tres e2e
+
+**Tareas 9 y 10 — cierre de v1, en paralelo (26 al 30 de octubre)**
+
+Arrancan de `feat/garantias-integracion`, que junta el dominio y los comandos (PR #30), las consultas y el HTTP de lectura (PR #29) y un commit de **contrato** que ninguna de las dos vuelve a tocar: tipos de imagen y de auditoría, campos nuevos de `Imagen` y `Evento`, centinelas, `ImagenRepo.Obtener` y `ListarPorEventos`, `Deps.Comandos` en `garhttp`, el encabezado de idempotencia y el archivo vacío `routes_comandos.go`. El PR #26 se cierra: #30 es la única fuente de comandos. Las correcciones pendientes de #29 y #30 se terminan en paralelo y se fusionan hacia adelante a la rama de integración.
+
+- **Tarea 9 (Kevin)** — [`garantias-task-9-brief.md`](../plans/garantias-task-9-brief.md): reglas de dominio de la firma y de la auditoría GPS, la huella completa en `app`, las catorce rutas `POST` de comandos y los tres e2e por HTTP contra `garfb`.
+- **Tarea 10 (Ruben)** — [`garantias-task-10-brief.md`](../plans/garantias-task-10-brief.md): migración `000071` y su persistencia, subida y descarga de imágenes, catálogos, detalle con imágenes, `module.go` y el cableado en `cmd/api`, los cinco permisos en `auth`, el barrido de seguridad final y los targets de cobertura y mutación.
 
 ## 11. Referencias
 

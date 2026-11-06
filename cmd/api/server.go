@@ -19,6 +19,7 @@ import (
 	authapp "github.com/abdimuy/msp-api/internal/auth/app"
 	"github.com/abdimuy/msp-api/internal/auth/infra/authhttp"
 	"github.com/abdimuy/msp-api/internal/auth/ports/outbound"
+	"github.com/abdimuy/msp-api/internal/garantias/infra/garhttp"
 	"github.com/abdimuy/msp-api/internal/platform/config"
 	failedintenthttp "github.com/abdimuy/msp-api/internal/platform/failedintent/http"
 	"github.com/abdimuy/msp-api/internal/platform/healthcheck"
@@ -186,6 +187,7 @@ func provideRootHandler(
 	reactivacionSvc *reactivacionapp.Service,
 	visitasSvc *visitasapp.Service,
 	desempenoSvc *desempenoapp.Service,
+	garantiasHTTP garhttp.Deps,
 	logger *slog.Logger,
 ) RootHandler {
 	r := chi.NewRouter()
@@ -371,6 +373,14 @@ func provideRootHandler(
 			// path they never open makes their exposure zero by construction.
 			visitashttp.MountRouter(r, visitasSvc,
 				visitashttp.WithSSE(eventBus, cfg.Visitas, logger))
+		})
+
+		// Garantías — autenticación común y autorización dentro de app.
+		// No usa el middleware idempotency del API: el módulo implementa su
+		// propia idempotencia de dominio mediante ClaveIdempotencia.
+		r.Group(func(r chi.Router) {
+			r.Use(skipAuthForPublicDocs(authn.Handler))
+			garhttp.MountRouter(r, garantiasHTTP)
 		})
 
 		// Desempeño de cobradores — solo lectura, authn únicamente (sin

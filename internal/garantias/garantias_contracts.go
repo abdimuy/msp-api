@@ -13,8 +13,6 @@
 // The contract exports:
 //   - PermisoInfo and Permisos: the five permission codes of spec §7, for the
 //     composition root to register in the auth catalog.
-//
-//nolint:misspell // Spanish vocabulary (Descripcion) per project convention.
 package garantias
 
 import "github.com/abdimuy/msp-api/internal/garantias/domain"
@@ -23,7 +21,7 @@ import "github.com/abdimuy/msp-api/internal/garantias/domain"
 // composition root to register in the auth catalog.
 type PermisoInfo struct {
 	Codigo      string
-	Descripcion string
+	Description string
 }
 
 // Permisos returns the five permission codes of spec §7, in a stable order.
@@ -36,10 +34,10 @@ type PermisoInfo struct {
 // only one of the two sides.
 func Permisos() []PermisoInfo {
 	return []PermisoInfo{
-		{Codigo: domain.PermisoLeer.String(), Descripcion: "ver la bandeja y consultar garantías"},
-		{Codigo: domain.PermisoCrear.String(), Descripcion: "abrir folios y agregar artículos"},
-		{Codigo: domain.PermisoActualizar.String(), Descripcion: "avanzar artículos, registrar diagnóstico, dictamen y evidencia"},
-		{Codigo: domain.PermisoAutorizar.String(), Descripcion: "autorizar cambio físico y desenlaces del standby"},
-		{Codigo: domain.PermisoCerrar.String(), Descripcion: "entregar, cerrar y cancelar garantías"},
+		{Codigo: domain.PermisoLeer.String(), Description: "ver la bandeja y consultar garantías"},
+		{Codigo: domain.PermisoCrear.String(), Description: "abrir folios y agregar artículos"},
+		{Codigo: domain.PermisoActualizar.String(), Description: "avanzar artículos, registrar diagnóstico, dictamen y evidencia"},
+		{Codigo: domain.PermisoAutorizar.String(), Description: "autorizar cambio físico y desenlaces del standby"},
+		{Codigo: domain.PermisoCerrar.String(), Description: "entregar, cerrar y cancelar garantías"},
 	}
 }

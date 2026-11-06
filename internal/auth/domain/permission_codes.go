@@ -132,6 +132,17 @@ const (
 	// reactivación cohorte snapshot.
 	PermReactivacionAdministrar Permission = "reactivacion:administrar"
 
+	// PermGarantiasLeer grants reading warranty lists, detail and catalogs.
+	PermGarantiasLeer Permission = "garantias:leer"
+	// PermGarantiasCrear grants opening warranty folios and adding articles.
+	PermGarantiasCrear Permission = "garantias:crear"
+	// PermGarantiasActualizar grants advancing articles and recording evidence.
+	PermGarantiasActualizar Permission = "garantias:actualizar"
+	// PermGarantiasAutorizar grants authorizing physical changes and outcomes.
+	PermGarantiasAutorizar Permission = "garantias:autorizar"
+	// PermGarantiasCerrar grants delivering, closing and cancelling warranties.
+	PermGarantiasCerrar Permission = "garantias:cerrar"
+
 	// PermDesempenoVer grants read access to the "Desempeño de cobradores"
 	// screen: tablero, jornada, actividad de la zona y cuentas de la semana.
 	PermDesempenoVer Permission = "desempeno:ver"
@@ -161,6 +172,7 @@ const (
 	categoriaClientes      = "clientes"
 	categoriaConfig        = "configuracion"
 	categoriaReactivacion  = "reactivacion"
+	categoriaGarantias     = "garantias"
 	categoriaDesempeno     = "desempeno"
 )
 
@@ -221,6 +233,12 @@ func AllPermissions() []PermissionMeta {
 
 		{PermReactivacionLeer, "ver la cohorte y atribución del piloto de reactivación", categoriaReactivacion},
 		{PermReactivacionAdministrar, "reconstruir la cohorte del piloto de reactivación", categoriaReactivacion},
+
+		{PermGarantiasLeer, "ver la bandeja y consultar garantías", categoriaGarantias},
+		{PermGarantiasCrear, "abrir folios y agregar artículos", categoriaGarantias},
+		{PermGarantiasActualizar, "avanzar artículos, registrar diagnóstico, dictamen y evidencia", categoriaGarantias},
+		{PermGarantiasAutorizar, "autorizar cambio físico y desenlaces del standby", categoriaGarantias},
+		{PermGarantiasCerrar, "entregar, cerrar y cancelar garantías", categoriaGarantias},
 
 		{PermDesempenoVer, "ver el desempeño de cobradores (tablero, jornada, actividad y cuentas)", categoriaDesempeno},
 	}

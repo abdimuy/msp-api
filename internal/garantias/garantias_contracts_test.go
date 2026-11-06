@@ -31,7 +31,7 @@ func TestPermisos_CatalogoCompleto(t *testing.T) {
 			t.Errorf("código inesperado %q", p.Codigo)
 		}
 		delete(quiere, p.Codigo)
-		if strings.TrimSpace(p.Descripcion) == "" {
+		if strings.TrimSpace(p.Description) == "" {
 			t.Errorf("%s: descripción vacía", p.Codigo)
 		}
 	}

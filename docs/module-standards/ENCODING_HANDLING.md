@@ -233,6 +233,21 @@ func trimOptionalBounded(p *string, maxLen int, errTooLong error) (*string, erro
 
 `firebird.EncodeWin1252` (la función) **NO** debe llamarse para escribir a columnas `MSP_*`. Igual reservada para el adapter Microsip.
 
+Un módulo **sealed** (ADR-0009) no puede importar el helper de otro módulo, así que
+implementa el suyo con el mismo contrato. En garantías vive en
+`internal/garantias/domain/texto.go`:
+
+```go
+// normalizarNFC devuelve s en Unicode NFC (forma compuesta canónica).
+func normalizarNFC(s string) string
+```
+
+Se aplica en el **constructor o mutador que recibe el texto libre**
+(`AbrirGarantia`, `newArticulo`, `newEvento`), no en la hidratación: esas filas
+ya salieron normalizadas de aquí, y normalizar de nuevo sería trabajo perdido.
+Sin esto, `"Juárez"` escrito con acento combinante y `"Juárez"` precompuesto son
+dos textos distintos para cualquier comparación byte-equal.
+
 ---
 
 ## Layer por layer — qué hacer

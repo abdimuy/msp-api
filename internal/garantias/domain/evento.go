@@ -22,6 +22,8 @@ type Evento struct {
 	description       string
 	etapaDesde        *Etapa
 	etapaHasta        *Etapa
+	ubicacionDesde    *Ubicacion
+	ubicacionHasta    *Ubicacion
 	usuario           string
 	rolDecisor        *RolDecisor
 	gpsLat            *float64
@@ -29,11 +31,19 @@ type Evento struct {
 	createdAt         time.Time
 	deviceCreatedAt   time.Time
 	claveIdempotencia string
+	huella            string
+	distanciaEntregaM *float64
+	auditoriaGPS      *AuditoriaGPS
 }
 
 // EventoParams carries everything newEvento needs. The caller (the
 // aggregate) supplies the actor, the idempotency key and the device
 // timestamp; the aggregate never invents them (decision 8).
+//
+// Huella is the fingerprint of the request content, computed in app and
+// carried through ActorParams. DistanciaEntregaM and AuditoriaGPS are only
+// set on folio_cerrado (the delivery audit of spec §4.1); every other event
+// leaves them nil.
 type EventoParams struct {
 	GarantiaID        uuid.UUID
 	ArticuloRef       *uuid.UUID
@@ -41,19 +51,24 @@ type EventoParams struct {
 	Description       string
 	EtapaDesde        *Etapa
 	EtapaHasta        *Etapa
+	UbicacionDesde    *Ubicacion
+	UbicacionHasta    *Ubicacion
 	Usuario           string
 	RolDecisor        *RolDecisor
 	GPSLat, GPSLon    *float64
 	CreatedAt         time.Time
 	DeviceCreatedAt   time.Time
 	ClaveIdempotencia string
+	Huella            string
+	DistanciaEntregaM *float64
+	AuditoriaGPS      *AuditoriaGPS
 }
 
 // newEvento is the package-private constructor used by the aggregate. The
 // event ID is generated here via uuid.New(). Tipo is a validated closed enum
 // fed by typed constants, so an invalid value can never reach this function.
 func newEvento(p EventoParams) (*Evento, error) {
-	usuario := strings.TrimSpace(p.Usuario)
+	usuario := normalizarNFC(strings.TrimSpace(p.Usuario))
 	if usuario == "" {
 		return nil, ErrEventoUsuarioObligatorio
 	}
@@ -83,14 +98,22 @@ func newEvento(p EventoParams) (*Evento, error) {
 	if !gpsValido(p.GPSLat, p.GPSLon) {
 		return nil, ErrEventoGPSInvalido
 	}
+	if !huellaValida(p.Huella) {
+		return nil, ErrHuellaInvalida
+	}
+	if p.AuditoriaGPS != nil && !p.AuditoriaGPS.IsValid() {
+		return nil, ErrAuditoriaGPSInvalida
+	}
 	return &Evento{
 		id:                uuid.New(),
 		garantiaID:        p.GarantiaID,
 		articuloRef:       p.ArticuloRef,
 		tipo:              p.Tipo,
-		description:       p.Description,
+		description:       normalizarNFC(p.Description),
 		etapaDesde:        p.EtapaDesde,
 		etapaHasta:        p.EtapaHasta,
+		ubicacionDesde:    p.UbicacionDesde,
+		ubicacionHasta:    p.UbicacionHasta,
 		usuario:           usuario,
 		rolDecisor:        p.RolDecisor,
 		gpsLat:            p.GPSLat,
@@ -98,7 +121,36 @@ func newEvento(p EventoParams) (*Evento, error) {
 		createdAt:         p.CreatedAt,
 		deviceCreatedAt:   p.DeviceCreatedAt,
 		claveIdempotencia: parsed.String(),
+		huella:            p.Huella,
+		distanciaEntregaM: p.DistanciaEntregaM,
+		auditoriaGPS:      p.AuditoriaGPS,
 	}, nil
+}
+
+// espacioDeEventos is the fixed namespace under which the derived keys of a
+// multi-event command are minted. It exists so that Entregar can write one
+// event per article without every one of them carrying the command's single
+// CLAVE_IDEMPOTENCIA: the column is UNIQUE, and two articles delivered by the
+// same call would otherwise collide on the second INSERT.
+var espacioDeEventos = uuid.MustParse("6f6b0a7c-1f2e-5a3d-9b4c-7d8e9f0a1b2c")
+
+// claveDerivada mints the idempotency key of an extra event inside a command
+// that already owns una clave. It is a UUIDv5 of the command's key and a
+// discriminator, so it is deterministic: the same retry of the same command
+// produces the same keys and the UNIQUE index still answers "ya lo hice"
+// instead of writing the delivery twice. The caller keeps the original key for
+// the event its command is named after, which is the one the app's replay
+// lookup reads (revisarClave compares TIPO against it).
+//
+// Both pieces are normalized NFC, like every other string in the domain. The
+// app already hands in a canonical UUID and the discriminators are built from
+// canonical UUIDs, so for real callers this is defense in depth: two spellings
+// of the same key must never mint two different derived keys.
+func claveDerivada(clave, discriminator string) string {
+	clave = normalizarNFC(clave)
+	discriminator = normalizarNFC(discriminator)
+
+	return uuid.NewSHA1(espacioDeEventos, []byte(clave+"\x00"+discriminator)).String()
 }
 
 // gpsValido reports whether the event's coordinates are acceptable. They are
@@ -129,12 +181,17 @@ type HydrateEventoParams struct {
 	Description       string
 	EtapaDesde        *Etapa
 	EtapaHasta        *Etapa
+	UbicacionDesde    *Ubicacion
+	UbicacionHasta    *Ubicacion
 	Usuario           string
 	RolDecisor        *RolDecisor
 	GPSLat, GPSLon    *float64
 	CreatedAt         time.Time
 	DeviceCreatedAt   time.Time
 	ClaveIdempotencia string
+	Huella            string
+	DistanciaEntregaM *float64
+	AuditoriaGPS      *AuditoriaGPS
 }
 
 // HydrateEvento rebuilds an Evento from a persisted row without any
@@ -148,6 +205,8 @@ func HydrateEvento(p HydrateEventoParams) *Evento {
 		description:       p.Description,
 		etapaDesde:        p.EtapaDesde,
 		etapaHasta:        p.EtapaHasta,
+		ubicacionDesde:    p.UbicacionDesde,
+		ubicacionHasta:    p.UbicacionHasta,
 		usuario:           p.Usuario,
 		rolDecisor:        p.RolDecisor,
 		gpsLat:            p.GPSLat,
@@ -155,6 +214,9 @@ func HydrateEvento(p HydrateEventoParams) *Evento {
 		createdAt:         p.CreatedAt,
 		deviceCreatedAt:   p.DeviceCreatedAt,
 		claveIdempotencia: p.ClaveIdempotencia,
+		huella:            p.Huella,
+		distanciaEntregaM: p.DistanciaEntregaM,
+		auditoriaGPS:      p.AuditoriaGPS,
 	}
 }
 
@@ -179,6 +241,14 @@ func (e *Evento) EtapaDesde() *Etapa { return e.etapaDesde }
 // EtapaHasta returns the destination stage for stage-bearing events, if any.
 func (e *Evento) EtapaHasta() *Etapa { return e.etapaHasta }
 
+// UbicacionDesde returns the origin location for location-bearing events, if
+// any. A move that does not change where the item is leaves it nil.
+func (e *Evento) UbicacionDesde() *Ubicacion { return e.ubicacionDesde }
+
+// UbicacionHasta returns the destination location for location-bearing events,
+// if any.
+func (e *Evento) UbicacionHasta() *Ubicacion { return e.ubicacionHasta }
+
 // Usuario returns the actor who registered the event.
 func (e *Evento) Usuario() string { return e.usuario }
 
@@ -199,3 +269,17 @@ func (e *Evento) DeviceCreatedAt() time.Time { return e.deviceCreatedAt }
 
 // ClaveIdempotencia returns the idempotency key.
 func (e *Evento) ClaveIdempotencia() string { return e.claveIdempotencia }
+
+// Huella returns the fingerprint of the request that produced the event, or
+// empty when none was recorded. The replay check compares it against the
+// fingerprint of the incoming request.
+func (e *Evento) Huella() string { return e.huella }
+
+// DistanciaEntregaM returns, on folio_cerrado, the meters between the
+// delivery GPS and the farthest pickup GPS; nil on every other event and when
+// the audit did not apply.
+func (e *Evento) DistanciaEntregaM() *float64 { return e.distanciaEntregaM }
+
+// AuditoriaGPS returns, on folio_cerrado, the outcome of the delivery audit;
+// nil on every other event.
+func (e *Evento) AuditoriaGPS() *AuditoriaGPS { return e.auditoriaGPS }

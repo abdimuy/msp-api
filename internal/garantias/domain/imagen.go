@@ -22,32 +22,51 @@ import (
 type Imagen struct {
 	id          uuid.UUID
 	eventoID    uuid.UUID
+	tipo        TipoImagen
 	ruta        string
 	description string
 	subidaPor   string
+	huella      string
 	createdAt   time.Time
 }
 
-// NewImagenParams carries the inputs to NewImagen. The id is generated here
-// with uuid.New() and the timestamp comes from the service's Clock: the
-// database is a dummy store and never invents an identity or a date
-// (CLAUDE.md §1).
+// NewImagenParams carries the inputs to NewImagen. The timestamp comes from
+// the service's Clock: the database is a dummy store and never invents an
+// identity or a date (CLAUDE.md §1).
+//
+// ID is optional. Nil means "generate one here with uuid.New()". A caller
+// that needs the upload to be idempotent passes the ID it already has (the
+// Idempotency-Key of the upload, or a key derived from the command for the
+// delivery signature), so a retry lands on the same primary key instead of
+// creating a second row. An explicit uuid.Nil is refused.
+//
+// Tipo is mandatory: there is no implicit default, a signature must say it is
+// one. Huella is the fingerprint of the request content (see huellaValida);
+// empty is allowed.
 type NewImagenParams struct {
+	ID          *uuid.UUID
 	EventoID    uuid.UUID
+	Tipo        TipoImagen
 	Ruta        string
 	Description string
 	SubidaPor   string
+	Huella      string
 	CreatedAt   time.Time
 }
 
 // HydrateImagenParams is the persisted shape used to rebuild evidence over
 // Firebird.
+//
+// Tipo comes already resolved by the repository: a NULL TIPO (rows written
+// before migración 000071) is read as TipoImagenEvidencia there, not here.
 type HydrateImagenParams struct {
 	ID          uuid.UUID
 	EventoID    uuid.UUID
+	Tipo        TipoImagen
 	Ruta        string
 	Description string
 	SubidaPor   string
+	Huella      string
 	CreatedAt   time.Time
 }
 
@@ -56,24 +75,37 @@ type HydrateImagenParams struct {
 // excuse for it. Every length mirrors the column width so a fat name or a
 // path that fits nowhere fails in Go, not on the Firebird write.
 func NewImagen(p NewImagenParams) (*Imagen, error) {
+	id := uuid.New()
+	if p.ID != nil {
+		if *p.ID == uuid.Nil {
+			return nil, ErrImagenIDInvalido
+		}
+		id = *p.ID
+	}
 	if p.EventoID == uuid.Nil {
 		return nil, ErrImagenEventoObligatorio
 	}
-	ruta := strings.TrimSpace(p.Ruta)
+	if !p.Tipo.IsValid() {
+		return nil, ErrTipoImagenInvalido
+	}
+	if !huellaValida(p.Huella) {
+		return nil, ErrHuellaInvalida
+	}
+	ruta := normalizarNFC(strings.TrimSpace(p.Ruta))
 	if !rutaRelativa(ruta) {
 		return nil, ErrImagenRutaInvalida
 	}
 	if utf8.RuneCountInString(ruta) > 500 {
 		return nil, ErrImagenRutaMuyLarga
 	}
-	subidaPor := strings.TrimSpace(p.SubidaPor)
+	subidaPor := normalizarNFC(strings.TrimSpace(p.SubidaPor))
 	if subidaPor == "" {
 		return nil, ErrImagenSubidaPorObligatorio
 	}
 	if utf8.RuneCountInString(subidaPor) > 64 {
 		return nil, ErrImagenSubidaPorMuyLargo
 	}
-	description := strings.TrimSpace(p.Description)
+	description := normalizarNFC(strings.TrimSpace(p.Description))
 	if utf8.RuneCountInString(description) > 500 {
 		return nil, ErrImagenDescriptionMuyLarga
 	}
@@ -81,11 +113,13 @@ func NewImagen(p NewImagenParams) (*Imagen, error) {
 		return nil, ErrImagenCreatedAtObligatorio
 	}
 	return &Imagen{
-		id:          uuid.New(),
+		id:          id,
 		eventoID:    p.EventoID,
+		tipo:        p.Tipo,
 		ruta:        ruta,
 		description: description,
 		subidaPor:   subidaPor,
+		huella:      p.Huella,
 		createdAt:   p.CreatedAt,
 	}, nil
 }
@@ -96,9 +130,11 @@ func HydrateImagen(p HydrateImagenParams) *Imagen {
 	return &Imagen{
 		id:          p.ID,
 		eventoID:    p.EventoID,
+		tipo:        p.Tipo,
 		ruta:        p.Ruta,
 		description: p.Description,
 		subidaPor:   p.SubidaPor,
+		huella:      p.Huella,
 		createdAt:   p.CreatedAt,
 	}
 }
@@ -125,6 +161,13 @@ func (i *Imagen) ID() uuid.UUID { return i.id }
 
 // EventoID returns the event the evidence hangs from.
 func (i *Imagen) EventoID() uuid.UUID { return i.eventoID }
+
+// Tipo returns what the image proves: evidence or the delivery signature.
+func (i *Imagen) Tipo() TipoImagen { return i.tipo }
+
+// Huella returns the fingerprint of the request that uploaded the image, or
+// empty when none was recorded.
+func (i *Imagen) Huella() string { return i.huella }
 
 // Ruta returns the blob path relative to STORAGE_DIR.
 func (i *Imagen) Ruta() string { return i.ruta }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/abdimuy/msp-api/internal/garantias/domain"
 	"github.com/abdimuy/msp-api/internal/garantias/infra/garfb"
+	"github.com/abdimuy/msp-api/internal/garantias/ports/outbound"
 	"github.com/abdimuy/msp-api/internal/platform/fbtestutil"
 	"github.com/abdimuy/msp-api/internal/platform/firebird"
 )
@@ -42,7 +43,9 @@ func ejecutarLecturasPublicas(
 	ctx context.Context,
 	t *testing.T,
 	garantias *garfb.GarantiaRepo,
+	bandeja *garfb.BandejaRepo,
 	eventos *garfb.EventoRepo,
+	imagenes *garfb.ImagenRepo,
 	folios *garfb.FolioGenerator,
 ) {
 	t.Helper()
@@ -56,8 +59,20 @@ func ejecutarLecturasPublicas(
 		_, err = garantias.Obtener(ctx, id)
 		require.ErrorIs(t, err, domain.ErrGarantiaNoEncontrada)
 
+		_, _, err = garantias.ObtenerDetalle(ctx, id)
+		require.ErrorIs(t, err, domain.ErrGarantiaNoEncontrada)
+
 		_, err = garantias.ObtenerPorFolio(ctx, folio)
 		require.ErrorIs(t, err, domain.ErrGarantiaNoEncontrada)
+
+		_, err = bandeja.Listar(
+			ctx,
+			outbound.ListarGarantiasFiltros{},
+			outbound.Paginacion{
+				Limite: 20,
+			},
+		)
+		require.NoError(t, err)
 
 		lista, err := eventos.ListarPorGarantia(ctx, id)
 		require.NoError(t, err)
@@ -70,6 +85,10 @@ func ejecutarLecturasPublicas(
 		require.NoError(t, err)
 		require.Nil(t, evento)
 
+		listaImagenes, err := imagenes.ListarPorEvento(ctx, id)
+		require.NoError(t, err)
+		require.Empty(t, listaImagenes)
+
 		_, err = folios.Siguiente(ctx)
 		require.NoError(t, err)
 	}
@@ -80,7 +99,9 @@ func TestLecturasPublicas_NoDejanTransaccionesAbiertas(t *testing.T) {
 	ctx := context.Background()
 
 	garantias := garfb.NewGarantiaRepo(pool)
+	bandeja := garfb.NewBandejaRepo(pool)
 	eventos := garfb.NewEventoRepo(pool)
+	imagenes := garfb.NewImagenRepo(pool)
 	folios := garfb.NewFolioGenerator(pool)
 
 	time.Sleep(200 * time.Millisecond)
@@ -88,12 +109,14 @@ func TestLecturasPublicas_NoDejanTransaccionesAbiertas(t *testing.T) {
 	antes, err := contarTransaccionesDelProceso(ctx, pool)
 	require.NoError(t, err)
 
-	// 15 lecturas públicas sin una transacción creada por el caller.
+	// 24 lecturas públicas sin una transacción creada por el caller.
 	ejecutarLecturasPublicas(
 		ctx,
 		t,
 		garantias,
+		bandeja,
 		eventos,
+		imagenes,
 		folios,
 	)
 
@@ -104,7 +127,7 @@ func TestLecturasPublicas_NoDejanTransaccionesAbiertas(t *testing.T) {
 
 	require.Equal(t, antes, despues)
 
-	// Control: las mismas 15 lecturas dentro de RunInReadTx.
+	// Control: las mismas 24 lecturas dentro de RunInReadTx.
 	err = firebird.RunInReadTx(
 		ctx,
 		pool.DB,
@@ -113,7 +136,9 @@ func TestLecturasPublicas_NoDejanTransaccionesAbiertas(t *testing.T) {
 				readCtx,
 				t,
 				garantias,
+				bandeja,
 				eventos,
+				imagenes,
 				folios,
 			)
 

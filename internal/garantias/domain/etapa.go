@@ -1,5 +1,7 @@
 package domain
 
+import "slices"
+
 // Etapa represents the stage of a warranty item (the article's lifecycle step).
 type Etapa string
 
@@ -34,6 +36,25 @@ const (
 	EtapaDesarmado   Etapa = "desarmado"
 	EtapaMerma       Etapa = "merma"
 )
+
+// etapasOrdenadas lists every stage once, in the lifecycle order the design
+// presents (the declaration order above). It is the stable order the screen
+// catalog and SiguientesPorAvanzar hand out; kept next to the constants so
+// adding a stage forces this list to be updated too (R11).
+var etapasOrdenadas = []Etapa{
+	EtapaRegistrado, EtapaPendienteRecoleccion, EtapaRecolectado, EtapaEnRevision,
+	EtapaOrdenGenerada, EtapaEnviadoProveedor, EtapaDictamenRecibido,
+	EtapaReparadoProveedor, EtapaEsperaRespuestaCliente,
+	EtapaEnTaller, EtapaReparadoTaller,
+	EtapaCambioAutorizado, EtapaListoEntrega, EtapaEntregado,
+	EtapaReingresadoInventario,
+	EtapaStandby, EtapaSegundaMano, EtapaDesarmado, EtapaMerma,
+}
+
+// Etapas returns every article stage in a stable order, as a fresh slice the
+// caller may keep or reorder. It exposes the catalog without handing out the
+// internal slice, so the frontend does not reimplement the machine (R11).
+func Etapas() []Etapa { return slices.Clone(etapasOrdenadas) }
 
 // ParseEtapa validates and returns an Etapa.
 // Returns ErrEtapaInvalida if s is not one of the 19 recognized stages.
