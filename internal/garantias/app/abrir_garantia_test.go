@@ -22,6 +22,12 @@ var (
 	permCerrar     = domain.PermisoCerrar
 )
 
+// nombreIdentity is the caller's name the fake Identity returns. It is
+// deliberately absent from every seeded folio and event (those keep "Juan"), so
+// an actor that reads AbiertoPor or a stored row instead of Identity is caught
+// by the name alone.
+const nombreIdentity = "Itzel Domínguez Ochoa"
+
 func setupService() (*app.Service, *fakeGarantiaRepo, *fakeEventoRepo, *fakeFolioGen, *fakeTxRunner, *fakeIdentity, *fakeClock, *registrador) {
 	grepo := newFakeGarantiaRepo()
 	erepo := newFakeEventoRepo()
@@ -32,7 +38,7 @@ func setupService() (*app.Service, *fakeGarantiaRepo, *fakeEventoRepo, *fakeFoli
 	tx := &fakeTxRunner{}
 	tx.onCommit = grepo.commit
 	tx.onRollback = grepo.rollback
-	id := &fakeIdentity{usuario: outbound.Usuario{ID: "u1", Nombre: "Juan"}}
+	id := &fakeIdentity{usuario: outbound.Usuario{ID: "u1", Nombre: nombreIdentity}}
 	clk := &fakeClock{now: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)}
 	svc := app.NewService(app.Deps{
 		GarantiaRepo:   grepo,
@@ -72,7 +78,7 @@ func TestAbrirGarantia_CaminoFeliz(t *testing.T) {
 	if len(grepo.created) != 1 {
 		t.Errorf("created = %d", len(grepo.created))
 	}
-	if g.AbiertoPor() != "Juan" {
+	if g.AbiertoPor() != nombreIdentity {
 		t.Errorf("AbiertoPor = %q, want el nombre que trae Identity", g.AbiertoPor())
 	}
 }

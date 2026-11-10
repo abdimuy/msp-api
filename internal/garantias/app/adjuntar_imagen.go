@@ -93,8 +93,8 @@ func (s *Service) registrarImagenAdjunta(
 		}
 
 		existente, err := s.imagenes.Obtener(txCtx, imagenID)
-		switch {
-		case err == nil:
+		// if en vez de switch: mismo motivo que revisarClave.
+		if err == nil {
 			if !imagenCoincideReintento(
 				existente,
 				cmd.EventoID,
@@ -105,13 +105,11 @@ func (s *Service) registrarImagenAdjunta(
 
 			resultado = existente
 			return nil
-
-		case errors.Is(err, domain.ErrImagenNoEncontrada):
-			// La clave todavía no tiene imagen.
-
-		default:
+		}
+		if !errors.Is(err, domain.ErrImagenNoEncontrada) {
 			return err
 		}
+		// La clave todavía no tiene imagen: se sigue con el alta.
 
 		nueva, err := domain.NewImagen(domain.NewImagenParams{
 			ID:          &imagenID,

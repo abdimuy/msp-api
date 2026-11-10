@@ -2,6 +2,7 @@ package domain_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -238,5 +239,38 @@ func TestR10_ListadosSonCopias(t *testing.T) {
 	segundo := g.ArticulosModificadosForRepo()
 	if len(segundo) != 1 || segundo[0] == nil {
 		t.Fatalf("ArticulosModificadosForRepo() shares its backing array between calls: %v", segundo)
+	}
+}
+
+// ahoraT5 is the only clock the T5/T6 mutators receive; the hydrated article
+// starts at fixed. The dirty flag alone is not enough: those mutants keep
+// setting it while dropping MarkUpdatedAt, so these tests read the stamp.
+var ahoraT5 = fixed.Add(2 * time.Hour)
+
+// TestMarcarNoDevuelto_MueveUpdatedAtDelArticulo cubre el mutante T5: la
+// bandera de modificado se sigue poniendo, pero el artículo debe llevar la hora
+// del mutador.
+func TestMarcarNoDevuelto_MueveUpdatedAtDelArticulo(t *testing.T) {
+	t.Parallel()
+	g, a := hidratarFolio(t, hidratarParams{etapa: domain.EtapaEsperaRespuestaCliente})
+
+	if err := g.MarcarNoDevuelto(a.ID(), actorDecisor("decisor"), ahoraT5); err != nil {
+		t.Fatalf("MarcarNoDevuelto: %v", err)
+	}
+	if got := a.UpdatedAt(); !got.Equal(ahoraT5) {
+		t.Fatalf("UpdatedAt() del artículo = %v, want %v (marcó modificado pero no movió la hora)", got, ahoraT5)
+	}
+}
+
+// TestMoverArticulo_MueveUpdatedAtDelArticulo cubre el mutante T6.
+func TestMoverArticulo_MueveUpdatedAtDelArticulo(t *testing.T) {
+	t.Parallel()
+	g, a := hidratarFolio(t, hidratarParams{etapa: domain.EtapaEnRevision, ubicacion: domain.UbicacionAlmacenRevision})
+
+	if err := g.MoverArticulo(a.ID(), domain.UbicacionTaller, actor("juan"), ahoraT5); err != nil {
+		t.Fatalf("MoverArticulo: %v", err)
+	}
+	if got := a.UpdatedAt(); !got.Equal(ahoraT5) {
+		t.Fatalf("UpdatedAt() del artículo = %v, want %v (marcó modificado pero no movió la hora)", got, ahoraT5)
 	}
 }

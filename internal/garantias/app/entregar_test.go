@@ -294,7 +294,7 @@ func TestEntregar_GuardaLaFirma(t *testing.T) {
 	if img.ID() != domain.FirmaImagenID(k) {
 		t.Errorf("id de la firma = %s, want el derivado de la clave %s", img.ID(), domain.FirmaImagenID(k))
 	}
-	if img.SubidaPor() != "Juan" {
+	if img.SubidaPor() != nombreIdentity {
 		t.Errorf("subidaPor = %q, want el usuario de Identity", img.SubidaPor())
 	}
 	if !strings.HasPrefix(img.Ruta(), "garantias/firmas/") {
@@ -343,6 +343,39 @@ func TestEntregar_ErrorDescartaElBlob(t *testing.T) {
 	}
 	if n := grepo.storage.total(); n != 0 {
 		t.Errorf("el blob rechazado debe borrarse: quedan %d (%v)", n, grepo.storage.claves())
+	}
+	if grepo.storage.storeCalls != 1 || grepo.storage.deleteCalls != 1 {
+		t.Errorf("store/delete = %d/%d, want 1/1", grepo.storage.storeCalls, grepo.storage.deleteCalls)
+	}
+}
+
+// TestEntregar_ClaveInvalidaDescartaElBlob: the key is validated by
+// ejecutarFolio, after the blob was written, so the cleanup must delete the
+// file even though the command never reached the folio. The image id for that
+// key is uuid.Nil (see firmaIDDe), which matches no row.
+func TestEntregar_ClaveInvalidaDescartaElBlob(t *testing.T) {
+	t.Parallel()
+	svc, grepo, _, _, tx, _, clk, _ := setupService()
+	s := sembrar(t, grepo, domain.EstadoFolioListoEntrega, cliente(), domain.EtapaListoEntrega)
+	lat, lon := gpsPrueba()
+
+	_, err := svc.Entregar(context.Background(), app.EntregarCmd{
+		GarantiaID:        s.g.ID(),
+		Firma:             firmaPNGPrueba(),
+		FirmaContentType:  "image/png",
+		ClaveIdempotencia: "no-es-un-uuid",
+		DeviceCreatedAt:   clk.Now(),
+		GPSLat:            lat,
+		GPSLon:            lon,
+	})
+	if !errors.Is(err, domain.ErrEventoClaveIdempotenciaInvalida) {
+		t.Fatalf("want ErrEventoClaveIdempotenciaInvalida, got %v", err)
+	}
+	if tx.calls != 0 {
+		t.Errorf("la clave invalida se rechaza antes de la transaccion: tx=%d", tx.calls)
+	}
+	if n := grepo.storage.total(); n != 0 {
+		t.Errorf("el blob de la clave invalida debe borrarse: quedan %d (%v)", n, grepo.storage.claves())
 	}
 	if grepo.storage.storeCalls != 1 || grepo.storage.deleteCalls != 1 {
 		t.Errorf("store/delete = %d/%d, want 1/1", grepo.storage.storeCalls, grepo.storage.deleteCalls)

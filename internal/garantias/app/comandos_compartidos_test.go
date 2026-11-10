@@ -501,41 +501,116 @@ func TestComandos_CandadoAntesDeLaClave(t *testing.T) {
 	}
 }
 
+// semillaIdentidad is the state each shared command needs to actually mutate
+// the folio, so the event it writes exists to be inspected. Every command's own
+// test covers its happy path in detail; here the point is only that the name on
+// the event came from Identity.
+type semillaIdentidad struct {
+	estado domain.EstadoFolio
+	ops    opcionesSemilla
+	etapas []domain.Etapa
+}
+
+func semillasIdentidad() map[string]semillaIdentidad {
+	proveedor := conRuta(piso(), domain.RutaReparacionProveedor)
+	return map[string]semillaIdentidad{
+		"AgregarArticulo": {
+			domain.EstadoFolioEnProceso, piso(),
+			[]domain.Etapa{domain.EtapaEnRevision},
+		},
+		"AvanzarArticulo": {
+			domain.EstadoFolioEnProceso, piso(),
+			[]domain.Etapa{domain.EtapaRegistrado},
+		},
+		"IniciarProceso": {
+			domain.EstadoFolioAbierto, piso(),
+			[]domain.Etapa{domain.EtapaRegistrado},
+		},
+		"RegistrarDiagnostico": {
+			domain.EstadoFolioEnProceso, piso(),
+			[]domain.Etapa{domain.EtapaEnRevision},
+		},
+		"RegistrarDictamen": {
+			domain.EstadoFolioEnProceso, proveedor,
+			[]domain.Etapa{domain.EtapaDictamenRecibido},
+		},
+		"AutorizarCambioFisico": {
+			domain.EstadoFolioEnProceso, piso(),
+			[]domain.Etapa{domain.EtapaEnTaller},
+		},
+		"MarcarNoDevuelto": {
+			domain.EstadoFolioEnProceso, piso(),
+			[]domain.Etapa{domain.EtapaEsperaRespuestaCliente},
+		},
+		"RegistrarDesenlace": {
+			domain.EstadoFolioEnProceso, piso(),
+			[]domain.Etapa{domain.EtapaStandby},
+		},
+		"MoverArticulo": {
+			domain.EstadoFolioEnProceso, piso(),
+			[]domain.Etapa{domain.EtapaEnRevision},
+		},
+		"MarcarListoEntrega": {
+			domain.EstadoFolioEnProceso, cliente(),
+			[]domain.Etapa{domain.EtapaListoEntrega},
+		},
+		"Entregar": {
+			domain.EstadoFolioListoEntrega, cliente(),
+			[]domain.Etapa{domain.EtapaListoEntrega},
+		},
+		"Cerrar": {
+			domain.EstadoFolioEntregado, cliente(),
+			[]domain.Etapa{domain.EtapaEntregado},
+		},
+		"Cancelar": {
+			domain.EstadoFolioEnProceso, piso(),
+			[]domain.Etapa{domain.EtapaEnRevision},
+		},
+	}
+}
+
 // TestComandos_UsuarioSaleDeIdentity proves the actor name is the one Identity
-// returns ("Juan"), never something the command brought: the pending events are
-// the only witness, and they are checked on the raw aggregate Guardar received.
+// returns, never something the command or the stored folio brought. The seeded
+// folios say "Juan" on AbiertoPor and every seeded event says "Juan" too, while
+// Identity answers "Itzel Domínguez Ochoa": a command that copies the folio's
+// opener instead of asking Identity fails by name. It covers the thirteen shared
+// commands plus AbrirGarantia, the one that creates its own folio.
 func TestComandos_UsuarioSaleDeIdentity(t *testing.T) {
 	t.Parallel()
-	t.Run("AvanzarArticulo", func(t *testing.T) {
+	semillas := semillasIdentidad()
+	for _, c := range comandosCompartidos() {
+		si, ok := semillas[c.nombre]
+		if !ok {
+			t.Fatalf("%s no tiene una semilla para la prueba de identidad", c.nombre)
+		}
+		t.Run(c.nombre, func(t *testing.T) {
+			t.Parallel()
+			svc, grepo, _, _, _, _, clk, _ := setupService()
+			s := sembrar(t, grepo, si.estado, si.ops, si.etapas...)
+
+			if _, err := c.ejecutar(svc, s.g, s.primero(), clave(), clk.Now()); err != nil {
+				t.Fatalf("%s: %v", c.nombre, err)
+			}
+			usuarioEventos(t, grepo.lastSaved, nombreIdentity)
+		})
+	}
+
+	t.Run("AbrirGarantia", func(t *testing.T) {
 		t.Parallel()
 		svc, grepo, _, _, _, _, clk, _ := setupService()
-		s := sembrar(t, grepo, domain.EstadoFolioEnProceso, piso(), domain.EtapaRegistrado)
 
-		if _, err := svc.AvanzarArticulo(context.Background(), app.AvanzarArticuloCmd{
-			GarantiaID:        s.g.ID(),
-			ArticuloID:        s.primero(),
-			EtapaDestino:      domain.EtapaEnRevision,
+		g, err := svc.AbrirGarantia(context.Background(), app.AbrirGarantiaCmd{
+			Origen:            domain.OrigenFolioPiso,
+			Description:       "mueble",
 			ClaveIdempotencia: clave(),
 			DeviceCreatedAt:   clk.Now(),
-		}); err != nil {
-			t.Fatalf("AvanzarArticulo: %v", err)
+		})
+		if err != nil {
+			t.Fatalf("AbrirGarantia: %v", err)
 		}
-		usuarioEventos(t, grepo.lastSaved, "Juan")
-	})
-	t.Run("AgregarArticulo", func(t *testing.T) {
-		t.Parallel()
-		svc, grepo, _, _, _, _, clk, _ := setupService()
-		s := sembrar(t, grepo, domain.EstadoFolioEnProceso, piso(), domain.EtapaEnRevision)
-
-		if _, err := svc.AgregarArticulo(context.Background(), app.AgregarArticuloCmd{
-			GarantiaID:        s.g.ID(),
-			Clave:             "B",
-			Description:       "articulo B",
-			ClaveIdempotencia: clave(),
-			DeviceCreatedAt:   clk.Now(),
-		}); err != nil {
-			t.Fatalf("AgregarArticulo: %v", err)
+		if g.AbiertoPor() != nombreIdentity {
+			t.Errorf("AbiertoPor = %q, want %q", g.AbiertoPor(), nombreIdentity)
 		}
-		usuarioEventos(t, grepo.lastSaved, "Juan")
+		usuarioEventos(t, grepo.lastCreated, nombreIdentity)
 	})
 }

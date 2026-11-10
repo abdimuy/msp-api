@@ -172,16 +172,21 @@ func (s *Service) ejecutarFolio(
 // garantiaID is uuid.Nil for AbrirGarantia, which has no folio yet: the key is
 // the only thing that can identify the twin, so the folio check is skipped.
 func revisarClave(vista *domain.Evento, garantiaID uuid.UUID, huella string) (bool, error) {
-	switch {
-	case vista == nil:
+	// Las guardas van en if y no en switch a propósito: gremlins v0.6.0 no ve
+	// la condición de un `case` como cubierta (el bloque de cobertura empieza
+	// después de los dos puntos) y reportaba estos mutantes como NOT COVERED
+	// aunque las pruebas los matan. Con if, el bloque que termina en la llave
+	// cubre la condición y el mutante se evalúa.
+	if vista == nil {
 		return false, nil
-	case garantiaID != uuid.Nil && vista.GarantiaID() != garantiaID:
-		return false, domain.ErrClaveIdempotenciaDeOtroFolio
-	case huella != "" && vista.Huella() == huella:
-		return true, nil
-	default:
-		return false, domain.ErrClaveIdempotenciaMismatch
 	}
+	if garantiaID != uuid.Nil && vista.GarantiaID() != garantiaID {
+		return false, domain.ErrClaveIdempotenciaDeOtroFolio
+	}
+	if huella != "" && vista.Huella() == huella {
+		return true, nil
+	}
+	return false, domain.ErrClaveIdempotenciaMismatch
 }
 
 // resolverDuplicada runs after the rollback caused by a duplicate key: the

@@ -272,6 +272,53 @@ func TestEntregar_ReintentoMismaFirma_200SinBlobHuerfano(t *testing.T) {
 	require.Len(t, fakes.eventos.eventosConClave(claveEjemplo), 1)
 }
 
+// TestEntregar_ReintentoMismoContenidoOtroCliente_200 es el guardián de la
+// normalización de la huella de entregar: el reintento de la misma entrega no
+// puede volverse un 409 porque otro cliente etiquete igual el archivo o escriba
+// el mismo instante con otro offset. Revertir huellaDeEntregar a huellaDe
+// (mutante T11) deja las dos segundas peticiones en 409.
+func TestEntregar_ReintentoMismoContenidoOtroCliente_200(t *testing.T) {
+	t.Parallel()
+
+	casos := map[string]struct{ primera, segunda entregaMultipart }{
+		"otro_content_type": {
+			primera: entregaMultipart{firmaContentType: "image/png"},
+			segunda: entregaMultipart{firmaContentType: "application/octet-stream"},
+		},
+		"mismo_instante_otro_offset": {
+			primera: entregaMultipart{campos: []campoFormulario{
+				{nombre: "device_created_at", valor: "2026-11-10T18:00:00Z"},
+			}},
+			segunda: entregaMultipart{campos: []campoFormulario{
+				{nombre: "device_created_at", valor: "2026-11-10T12:00:00-06:00"},
+			}},
+		},
+	}
+
+	for nombre, caso := range casos {
+		t.Run(nombre, func(t *testing.T) {
+			t.Parallel()
+
+			fakes := nuevoRouterCompleto("entregar-garantia")
+
+			primera := enviarEjemplo(fakes.router, ejemploEntregaCon(t, caso.primera), claveEjemplo)
+			require.Equal(t, http.StatusOK, primera.Code, primera.Body.String())
+
+			segunda := enviarEjemplo(fakes.router, ejemploEntregaCon(t, caso.segunda), claveEjemplo)
+			require.Equal(t, http.StatusOK, segunda.Code, segunda.Body.String())
+			assertCuerpoGarantia(t, segunda)
+
+			// El reintento escribe y borra su propio blob, pero no agrega fila
+			// ni evento: la entrega quedó una sola vez.
+			require.Len(t, fakes.storage.guardados, 2)
+			require.Len(t, fakes.storage.borrados, 1)
+			require.Equal(t, 1, fakes.repositorio.guardados)
+			require.Len(t, fakes.imagenes.registradas, 1)
+			require.Len(t, fakes.eventos.eventosConClave(claveEjemplo), 1)
+		})
+	}
+}
+
 func TestEntregar_ReintentoOtraFirma_409YBorrarElBlob(t *testing.T) {
 	t.Parallel()
 
