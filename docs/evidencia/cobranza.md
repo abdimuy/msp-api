@@ -600,7 +600,7 @@ entre 25 y 40 m.
 ### E-COB-060 · Un reintento de un pago con imagen borra el comprobante original
 
 - **Nivel:** MEDIDO · **Estado:** VIGENTE
-- **Medido:** 2026-11-11, entorno local de pruebas (`f622305`)
+- **Medido:** 2026-11-11, máquina de desarrollo (`joaov@VAZHER`, Ubuntu sobre WSL2 en Windows), SHA `72270ff`
 - **Cómo:**
   ```
   go test -run TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal -v ./internal/cobranza/app/
@@ -616,7 +616,7 @@ entre 25 y 40 m.
   ok      github.com/abdimuy/msp-api/internal/cobranza/app        0.015s
   ```
 - **Control positivo:**
-  - Prueba en rojo al comentar temporalmente `s.cleanupBlobs(ctx, storedKeys)`:
+  - Prueba en rojo al comentar temporalmente `s.cleanupBlobs(ctx, storedKeys)` del caso `errIdempotentReplay` (`crear_pago_con_imagenes.go:132`) sobre el SHA `72270ff`:
     ```
     === RUN   TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal
     === PAUSE TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal
@@ -631,7 +631,7 @@ entre 25 y 40 m.
     FAIL    github.com/abdimuy/msp-api/internal/cobranza/app        0.017s
     FAIL
     ```
-  - Prueba en verde al restaurar `s.cleanupBlobs(ctx, storedKeys)`:
+  - Prueba en verde al restaurar `s.cleanupBlobs(ctx, storedKeys)` sobre el mismo SHA `72270ff`:
     ```
     === RUN   TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal
     === PAUSE TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal
@@ -643,6 +643,6 @@ entre 25 y 40 m.
 - **Vive en:** `crear_pago_con_imagenes.go:123-133` y `cobranzahttp/multipart_helpers.go:36-42`
 - **Guardada por:** `TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal`
 - **Qué falta:** El conteo de producción con la herramienta, que lo corre el dueño.
-- **Caduca si:** La ruta del comprobante deja de ser estable o el teléfono deja de mandar `id_`.
+- **Caduca si:** La ruta del comprobante deja de ser estable o el teléfono deja de mandar `id_<n>`.
 
 
