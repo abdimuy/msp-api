@@ -88,7 +88,11 @@ func newSvcConRealStorage(
 	return svc
 }
 
-// Evidencia E-COB-019: documenta que el reintento borra el comprobante original.
+// TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal valida el comportamiento
+// actual del sistema (E-COB-060): un reintento idempotente de un pago con imagen borra
+// el comprobante fisico original.
+// ADVERTENCIA: Esta prueba se pondra roja con el arreglo en la Tarea 2 y ahi se invertira
+// para exigir que el comprobante original se conserve.
 func TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
@@ -141,9 +145,9 @@ func TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal(t *testing.T)
 	require.NotNil(t, secondPago)
 	assert.Equal(t, firstPago.ID(), secondPago.ID(), "debe retornar el pago existente")
 
-	// 3. Verificar que el archivo físico YA NO EXISTE (documentación del defecto E-COB-019).
+	// 3. Verificar que el archivo físico YA NO EXISTE (documentación del defecto E-COB-060).
 	_, statErr := os.Stat(targetPath)
-	require.Error(t, statErr, "Evidencia E-COB-019: os.Stat debe devolver error porque el archivo físico ya no existe tras el reintento debido al borrado de cleanupBlobs")
+	require.Error(t, statErr, "Evidencia E-COB-060: os.Stat debe devolver error porque el archivo físico ya no existe tras el reintento debido al borrado de cleanupBlobs")
 	require.True(t, errors.Is(statErr, os.ErrNotExist) || os.IsNotExist(statErr))
 }
 

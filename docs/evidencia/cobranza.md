@@ -40,7 +40,7 @@ Los números son correlativos y **nunca se reutilizan ni se renumeran**. Lo
 refutado **no se borra**: cambia de estado a REFUTADA y se queda, con la fecha y
 con la condición que lo volvería cierto.
 
-**Siguiente identificador libre: `E-COB-020`.**
+**Siguiente identificador libre: `E-COB-061`.**
 
 ---
 
@@ -597,17 +597,27 @@ entre 25 y 40 m.
 - **Caduca si:** cambia la generación de teléfonos de la flota, o el GPS pasa a
   guardarse con otra precisión
 
-### E-COB-019
-- **Qué se afirmó:** "un reintento de un pago con imagen borra el archivo original".
-- **Nivel:** MEDIDO en dev.
-  - Fecha: 2026-11-05
-  - Comando: `go run ./scripts/medicion/fotos-pagos-faltantes/main.go`
-  - Salida:
-    ```
-    Total de filas: 0
-    Con archivo: 0
-    Sin archivo: 0
-    ```
-- **Qué falta:** el conteo de producción, que lo corre el dueño.
+### E-COB-060 · Un reintento de un pago con imagen borra el comprobante original
+
+- **Nivel:** MEDIDO · **Estado:** VIGENTE
+- **Medido:** [FECHA_ACTUAL_Y_ENTORNO] (`[SHA_AQUI]`)
+- **Cómo:**
+  ```
+  go test -run TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal -v ./internal/cobranza/app/
+  ```
+  ```
+  [SALIDA_LITERAL]
+  ```
+- **Control positivo:**
+  ```
+  [SALIDA_ROJA_AQUI]
+  ```
+  ```
+  [SALIDA_VERDE_AQUI]
+  ```
+- **Vive en:** `crear_pago_con_imagenes.go:123-133` y `cobranzahttp/multipart_helpers.go:36-42`
+- **Guardada por:** `TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal`
+- **Qué falta:** El conteo de producción con la herramienta, que lo corre el dueño.
+- **Caduca si:** La ruta del comprobante deja de ser estable o el teléfono deja de mandar `id_`.
 
 

@@ -1,5 +1,5 @@
 // Package main provee un script de solo lectura para medir si faltan comprobantes fisicos
-// asociados a los registros en la base de datos de pagos.
+// asociados a los registros en la base de datos de pagos (E-COB-060).
 //
 //nolint:misspell // El script utiliza vocabulario en español.
 package main
@@ -10,15 +10,23 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
 	"time"
 
 	_ "github.com/nakagami/firebirdsql"
+
+	"github.com/abdimuy/msp-api/internal/platform/firebird"
 )
 
-var errConfig = errors.New("FB_DATABASE (o FIREBIRD_DSN) es obligatorio")
+var (
+	errConfig             = errors.New("FB_DATABASE (o FIREBIRD_DSN) es obligatorio")
+	errStorageDirVacio    = errors.New("la variable de entorno STORAGE_DIR es obligatoria y no puede estar vacia")
+	errStorageDirNoExiste = errors.New("el directorio especificado en STORAGE_DIR no existe")
+	errStorageDirNoEsDir  = errors.New("la ruta especificada en STORAGE_DIR no es un directorio")
+)
 
 // RegistroImagen representa una fila de la tabla MSP_PAGOS_IMAGENES.
 type RegistroImagen struct {
@@ -28,12 +36,49 @@ type RegistroImagen struct {
 	CreatedAt  time.Time
 }
 
-// ResultadoConteo almacena los totales y el detalle de archivos faltantes.
+// ErrorRevision registra un fallo distinto a fs.ErrNotExist al inspeccionar un archivo.
+type ErrorRevision struct {
+	Registro RegistroImagen
+	Err      error
+}
+
+// ResultadoConteo almacena los totales, el detalle de archivos faltantes y los errores de lectura.
 type ResultadoConteo struct {
-	Total      int
-	ConArchivo int
-	SinArchivo int
-	Faltantes  []RegistroImagen
+	Total          int
+	ConArchivo     int
+	SinArchivo     int
+	ErrorAlRevisar int
+	Faltantes      []RegistroImagen
+	Errores        []ErrorRevision
+}
+
+// ValidarStorageDir verifica que STORAGE_DIR exista, no este vacia y apunte a un directorio
+// existente, e imprime la ruta absoluta resuelta en la primera linea de la salida estandar.
+func ValidarStorageDir(storageDir string, w io.Writer) (string, error) {
+	if storageDir == "" {
+		return "", errStorageDirVacio
+	}
+
+	absDir, err := filepath.Abs(storageDir)
+	if err != nil {
+		return "", fmt.Errorf("error resolviendo la ruta absoluta de STORAGE_DIR: %w", err)
+	}
+
+	//nolint:gosec // la ruta viene de STORAGE_DIR
+	info, err := os.Stat(absDir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("%w: %s", errStorageDirNoExiste, absDir)
+		}
+		return "", fmt.Errorf("error al verificar STORAGE_DIR (%s): %w", absDir, err)
+	}
+
+	if !info.IsDir() {
+		return "", fmt.Errorf("%w: %s", errStorageDirNoEsDir, absDir)
+	}
+
+	_, _ = fmt.Fprintln(w, absDir)
+	return absDir, nil
 }
 
 // ContarArchivos itera los registros comprobando con os.Stat si cada archivo
@@ -44,11 +89,19 @@ func ContarArchivos(storageDir string, registros []RegistroImagen) ResultadoCont
 	}
 	for _, reg := range registros {
 		rutaLimpia := filepath.Clean(filepath.Join(storageDir, reg.StorageKey))
-		if _, err := os.Stat(rutaLimpia); err == nil {
+		_, err := os.Stat(rutaLimpia)
+		switch {
+		case err == nil:
 			res.ConArchivo++
-		} else {
+		case errors.Is(err, fs.ErrNotExist):
 			res.SinArchivo++
 			res.Faltantes = append(res.Faltantes, reg)
+		default:
+			res.ErrorAlRevisar++
+			res.Errores = append(res.Errores, ErrorRevision{
+				Registro: reg,
+				Err:      err,
+			})
 		}
 	}
 	return res
@@ -65,10 +118,18 @@ func LeerRegistros(ctx context.Context, db *sql.DB) ([]RegistroImagen, error) {
 
 	var registros []RegistroImagen
 	for rows.Next() {
-		var r RegistroImagen
-		if err := rows.Scan(&r.ID, &r.PagoID, &r.StorageKey, &r.CreatedAt); err != nil {
+		var (
+			r            RegistroImagen
+			createdAtRaw any
+		)
+		if err := rows.Scan(&r.ID, &r.PagoID, &r.StorageKey, &createdAtRaw); err != nil {
 			return nil, fmt.Errorf("error al escanear fila: %w", err)
 		}
+		createdAt, err := firebird.ScanUTCTime(createdAtRaw)
+		if err != nil {
+			return nil, fmt.Errorf("error al convertir CREATED_AT: %w", err)
+		}
+		r.CreatedAt = createdAt
 		registros = append(registros, r)
 	}
 	if err := rows.Err(); err != nil {
@@ -82,12 +143,21 @@ func ImprimirReporte(w io.Writer, res ResultadoConteo) {
 	_, _ = fmt.Fprintf(w, "Total de filas: %d\n", res.Total)
 	_, _ = fmt.Fprintf(w, "ConArchivo: %d\n", res.ConArchivo)
 	_, _ = fmt.Fprintf(w, "Sin archivo: %d\n", res.SinArchivo)
+	_, _ = fmt.Fprintf(w, "Error al revisar: %d\n", res.ErrorAlRevisar)
 
 	if len(res.Faltantes) > 0 {
 		_, _ = fmt.Fprintf(w, "\nDetalle de faltantes:\n")
 		for _, f := range res.Faltantes {
 			_, _ = fmt.Fprintf(w, "ID: %s, Pago: %s, Fecha: %s, Ruta: %s\n",
 				f.ID, f.PagoID, f.CreatedAt.Format(time.RFC3339), f.StorageKey)
+		}
+	}
+
+	if len(res.Errores) > 0 {
+		_, _ = fmt.Fprintf(w, "\nDetalle de errores al revisar:\n")
+		for _, e := range res.Errores {
+			_, _ = fmt.Fprintf(w, "ID: %s, Pago: %s, Fecha: %s, Ruta: %s, Error: %v\n",
+				e.Registro.ID, e.Registro.PagoID, e.Registro.CreatedAt.Format(time.RFC3339), e.Registro.StorageKey, e.Err)
 		}
 	}
 }
@@ -124,9 +194,9 @@ func armarDSN() (string, error) {
 }
 
 func run() error {
-	storageDir := os.Getenv("STORAGE_DIR")
-	if storageDir == "" {
-		storageDir = "./var/uploads"
+	storageDir, err := ValidarStorageDir(os.Getenv("STORAGE_DIR"), os.Stdout)
+	if err != nil {
+		return err
 	}
 
 	dsn, err := armarDSN()
@@ -161,6 +231,6 @@ func run() error {
 func main() {
 	if err := run(); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "Fallo critico: %v\n", err)
-		os.Exit(2)
+		os.Exit(1)
 	}
 }

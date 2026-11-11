@@ -1,6 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,24 +20,125 @@ func TestMain_ReglaDeOro_NoContieneMutaciones(t *testing.T) {
 		t.Fatal("no se pudo determinar la ruta de main_test.go")
 	}
 
-	mainPath := filepath.Join(filepath.Dir(filename), "main.go")
-	data, err := os.ReadFile(mainPath)
+	dir := filepath.Dir(filename)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		t.Fatalf("no se pudo leer main.go: %v", err)
+		t.Fatalf("no se pudo leer el directorio del paquete: %v", err)
 	}
 
-	contenido := string(data)
 	cadenasProhibidas := []string{
-		"DELETE",
-		"UPDATE",
-		"INSERT",
-		"os.Remove",
+		"delete",
+		"update",
+		"insert",
+		"os.remove",
+		"exec",
 	}
 
-	for _, prohibida := range cadenasProhibidas {
-		if strings.Contains(contenido, prohibida) {
-			t.Fatalf("REGLA DE ORO VIOLADA: main.go contiene la cadena prohibida %q", prohibida)
+	metodosProhibidos := []string{
+		"Exec",
+		"ExecContext",
+		"Remove",
+		"RemoveAll",
+	}
+
+	archivosRevisados := 0
+	fset := token.NewFileSet()
+
+	for _, entry := range entries {
+		nombre := entry.Name()
+		if entry.IsDir() || filepath.Ext(nombre) != ".go" || strings.HasSuffix(nombre, "_test.go") {
+			continue
 		}
+		archivosRevisados++
+
+		rutaArchivo := filepath.Join(dir, nombre)
+		data, err := os.ReadFile(rutaArchivo)
+		if err != nil {
+			t.Fatalf("no se pudo leer %s: %v", nombre, err)
+		}
+
+		contenidoLower := strings.ToLower(string(data))
+		for _, prohibida := range cadenasProhibidas {
+			if strings.Contains(contenidoLower, strings.ToLower(prohibida)) {
+				t.Fatalf("REGLA DE ORO VIOLADA: %s contiene la cadena prohibida %q (case-insensitive)", nombre, prohibida)
+			}
+		}
+
+		fileAST, err := parser.ParseFile(fset, rutaArchivo, data, 0)
+		if err != nil {
+			t.Fatalf("no se pudo parsear el AST de %s: %v", nombre, err)
+		}
+
+		ast.Inspect(fileAST, func(n ast.Node) bool {
+			sel, ok := n.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			for _, metodo := range metodosProhibidos {
+				if strings.EqualFold(sel.Sel.Name, metodo) {
+					t.Fatalf("REGLA DE ORO VIOLADA: %s invoca o referencia el metodo prohibido %q", nombre, sel.Sel.Name)
+				}
+			}
+			return true
+		})
+	}
+
+	if archivosRevisados == 0 {
+		t.Fatal("no se encontro ningun archivo .go de produccion para revisar")
+	}
+}
+
+func TestStorageDir_FallaSiNoExisteOVacio(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	if _, err := ValidarStorageDir("", &buf); err == nil {
+		t.Fatal("esperaba error cuando STORAGE_DIR esta vacio, pero fue nil")
+	}
+
+	rutaInexistente := filepath.Join(t.TempDir(), "directorio-que-no-existe")
+	if _, err := ValidarStorageDir(rutaInexistente, &buf); err == nil {
+		t.Fatalf("esperaba error cuando STORAGE_DIR no existe (%s), pero fue nil", rutaInexistente)
+	}
+}
+
+func TestStorageDir_FallaSiNoEsDirectorio(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	archivoPath := filepath.Join(tempDir, "archivo.txt")
+	if err := os.WriteFile(archivoPath, []byte("contenido"), 0o600); err != nil {
+		t.Fatalf("no se pudo crear archivo de prueba: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if _, err := ValidarStorageDir(archivoPath, &buf); err == nil {
+		t.Fatalf("esperaba error cuando STORAGE_DIR apunta a un archivo (%s), pero fue nil", archivoPath)
+	}
+}
+
+func TestStorageDir_ImprimeRutaAbsolutaResuelta(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	rutaConRelativo := filepath.Join(tempDir, ".")
+	esperadaAbs, err := filepath.Abs(rutaConRelativo)
+	if err != nil {
+		t.Fatalf("error calculando filepath.Abs: %v", err)
+	}
+
+	var buf bytes.Buffer
+	resuelta, err := ValidarStorageDir(rutaConRelativo, &buf)
+	if err != nil {
+		t.Fatalf("no esperaba error con directorio valido, obtenido: %v", err)
+	}
+	if resuelta != esperadaAbs {
+		t.Errorf("esperaba ruta resuelta %q, obtenido %q", esperadaAbs, resuelta)
+	}
+
+	primeraLinea := strings.Split(strings.TrimSpace(buf.String()), "\n")[0]
+	if primeraLinea != esperadaAbs {
+		t.Errorf("esperaba en la primera linea %q, obtenido %q", esperadaAbs, primeraLinea)
 	}
 }
 

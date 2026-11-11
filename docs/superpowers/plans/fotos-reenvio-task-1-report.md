@@ -1,6 +1,6 @@
 # Reporte Tarea 1: Medición de borrado de comprobantes al reintentar pago
 
-**Commit base (SHA):** `f2bd21ba74dbbbb634cbee230bcccac60b0af9aa`
+**Commit base (SHA):** `[SHA_ACTUAL]`
 
 ## 1. Verificación Inicial (Día 1)
 
@@ -29,7 +29,9 @@ ok      github.com/abdimuy/msp-api/internal/cobranza/infra/ventfb       (cached)
 
 ## 2. Prueba del Defecto y Control Positivo (Día 2)
 
-Se creó la prueba `TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal` (Evidencia: **E-COB-019**) que documenta el comportamiento actual (borrado del archivo en reintento).
+Se creó la prueba `TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal` (Evidencia: **E-COB-060**) que documenta el comportamiento actual (borrado del archivo en reintento).
+
+**Nota sobre el Storage de la prueba:** Se utilizó `localTestStorage` (escribiendo físicamente sobre `t.TempDir()`) en lugar del `FilesystemProvider` real porque el linter `depguard` prohíbe importar infraestructura (`infra`) desde el paquete de aplicación (`app`).
 
 **Prueba inicial en verde (demostrando el defecto):**
 
@@ -54,7 +56,7 @@ Al comentar temporalmente la línea `s.cleanupBlobs(ctx, storedKeys)` (simulando
                 Error Trace:    /mnt/c/Users/User/Documents/msp-api/internal/cobranza/app/crear_pago_con_imagenes_reintento_test.go:137
                 Error:          Should be true
                 Test:           TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal
-                Messages:       Evidencia E-COB-019: el archivo físico ya no debe existir tras el reintento debido al borrado de cleanupBlobs
+                Messages:       Evidencia E-COB-060: el archivo físico ya no debe existir tras el reintento debido al borrado de cleanupBlobs
 --- FAIL: TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal (0.00s)
 FAIL
 FAIL    github.com/abdimuy/msp-api/internal/cobranza/app        0.017s
@@ -95,6 +97,7 @@ ok      github.com/abdimuy/msp-api/scripts/medicion/fotos-pagos-faltantes       
 Total de filas: 0
 Con archivo: 0
 Sin archivo: 0
+Error al revisar: 0
 
 ```
 
@@ -104,7 +107,7 @@ Sin archivo: 0
 
 Revisión del código de otros módulos para identificar si comparten el mismo defecto.
 
-* **Ventas:** \[LEÍDO\] **Sí presenta el problema.** Se encuentra en `internal/ventas/app/crear_venta_con_imagenes.go:101`. Si la persistencia en base de datos falla por clave primaria duplicada (reintento), se desencadena el borrado de las imágenes.
+* **Ventas:** \[INFERIDO\] Se encuentra el flujo de limpieza en `internal/ventas/app/crear_venta_con_imagenes.go:101` y la ruta del archivo es estable (`venthttp/multipart.go:24-30`). Sin embargo, **no está demostrado** que un reintento llegue vivo hasta `storeAllImagenBlobs`, ya que puede ser detenido antes por las validaciones de stock/cargo o por el middleware de idempotencia de la capa HTTP.
 
 * **Visitas:** \[LEÍDO\] **No presenta el problema.** Verificado en `internal/visitas/app/registrar_visita_con_imagenes.go:110-117`.
 
@@ -115,8 +118,6 @@ Revisión del código de otros módulos para identificar si comparten el mismo d
 * **No se crearon pruebas para Ventas ni Visitas:** La revisión de estos módulos fue estrictamente estática (lectura de código).
 
 * **No se implementó ninguna corrección (fix):** Se mantuvo estrictamente el alcance de medición y documentación del defecto según las instrucciones.
-
-## 6. Verificación de Reglas (Pre-PR)
 
 ## 6. Verificación de Reglas (Pre-PR)
 
