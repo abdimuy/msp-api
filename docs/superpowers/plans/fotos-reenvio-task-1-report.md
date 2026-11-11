@@ -1,6 +1,6 @@
 # Reporte Tarea 1: Medición de borrado de comprobantes al reintentar pago
 
-**Commit base (SHA):** `[SHA_ACTUAL]`
+**Commit base (SHA):** `f622305`
 
 ## 1. Verificación Inicial (Día 1)
 
@@ -41,7 +41,7 @@ Se creó la prueba `TestCrearPagoConImagenes_Reintento_BorraElComprobanteOrigina
 === CONT  TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal
 --- PASS: TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal (0.00s)
 PASS
-ok      github.com/abdimuy/msp-api/internal/cobranza/app        0.019s
+ok      github.com/abdimuy/msp-api/internal/cobranza/app        0.015s
 
 ```
 
@@ -52,11 +52,11 @@ Al comentar temporalmente la línea `s.cleanupBlobs(ctx, storedKeys)` (simulando
 === RUN   TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal
 === PAUSE TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal
 === CONT  TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal
-    crear_pago_con_imagenes_reintento_test.go:137:
-                Error Trace:    /mnt/c/Users/User/Documents/msp-api/internal/cobranza/app/crear_pago_con_imagenes_reintento_test.go:137
-                Error:          Should be true
+    crear_pago_con_imagenes_reintento_test.go:150:
+                Error Trace:    /mnt/c/Users/joaov/Documents/msp-api/internal/cobranza/app/crear_pago_con_imagenes_reintento_test.go:150
+                Error:          An error is expected but got nil.
                 Test:           TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal
-                Messages:       Evidencia E-COB-060: el archivo físico ya no debe existir tras el reintento debido al borrado de cleanupBlobs
+                Messages:       Evidencia E-COB-060: os.Stat debe devolver error porque el archivo físico ya no existe tras el reintento debido al borrado de cleanupBlobs
 --- FAIL: TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal (0.00s)
 FAIL
 FAIL    github.com/abdimuy/msp-api/internal/cobranza/app        0.017s
@@ -79,11 +79,17 @@ ok      github.com/abdimuy/msp-api/internal/cobranza/app        0.016s
 
 ## 3. Script de Medición (Día 3)
 
-**Pruebas de la herramienta (Regla de oro y control positivo):**
+**Pruebas de la herramienta (Regla de oro, validación de `STORAGE_DIR` y control positivo):**
 
 ```
 === RUN   TestMain_ReglaDeOro_NoContieneMutaciones
 --- PASS: TestMain_ReglaDeOro_NoContieneMutaciones (0.00s)
+=== RUN   TestStorageDir_FallaSiNoExisteOVacio
+--- PASS: TestStorageDir_FallaSiNoExisteOVacio (0.00s)
+=== RUN   TestStorageDir_FallaSiNoEsDirectorio
+--- PASS: TestStorageDir_FallaSiNoEsDirectorio (0.00s)
+=== RUN   TestStorageDir_ImprimeRutaAbsolutaResuelta
+--- PASS: TestStorageDir_ImprimeRutaAbsolutaResuelta (0.00s)
 === RUN   TestContarArchivos_ControlPositivo_ReportaFaltante
 --- PASS: TestContarArchivos_ControlPositivo_ReportaFaltante (0.00s)
 PASS
@@ -91,11 +97,44 @@ ok      github.com/abdimuy/msp-api/scripts/medicion/fotos-pagos-faltantes       
 
 ```
 
+**Control Positivo de la Guarda Anti-Escritura (Mutante `db.Exec("delete from MSP_PAGOS_IMAGENES")`):**
+
+Parche temporal aplicado sobre `scripts/medicion/fotos-pagos-faltantes/main.go`:
+
+```diff
+--- a/scripts/medicion/fotos-pagos-faltantes/main.go
++++ b/scripts/medicion/fotos-pagos-faltantes/main.go
+@@ -110,6 +110,7 @@
+ // LeerRegistros consulta la base de datos para obtener las fotos de pagos registradas.
+ func LeerRegistros(ctx context.Context, db *sql.DB) ([]RegistroImagen, error) {
++	_, _ = db.Exec("delete from MSP_PAGOS_IMAGENES")
+ 	const consulta = "SELECT ID, PAGO_ID, STORAGE_KEY, CREATED_AT FROM MSP_PAGOS_IMAGENES"
+ 	rows, err := db.QueryContext(ctx, consulta)
+ 	if err != nil {
+```
+
+Salida en rojo al correr la guarda anti-escritura con el mutante inyectado:
+
+```
+joaov@VAZHER:/mnt/c/Users/joaov/Documents/msp-api$ go clean -testcache && go test -run TestMain_ReglaDeOro_NoContieneMutaciones -v ./scripts/medicion/fotos-pagos-faltantes/
+=== RUN   TestMain_ReglaDeOro_NoContieneMutaciones
+=== PAUSE TestMain_ReglaDeOro_NoContieneMutaciones
+=== CONT  TestMain_ReglaDeOro_NoContieneMutaciones
+    main_test.go:63: REGLA DE ORO VIOLADA: main.go contiene la cadena prohibida "delete" (case-insensitive)
+    main_test.go:63: REGLA DE ORO VIOLADA: main.go contiene la cadena prohibida "exec" (case-insensitive)
+    main_test.go:79: REGLA DE ORO VIOLADA: main.go invoca o referencia el metodo prohibido "Exec"
+--- FAIL: TestMain_ReglaDeOro_NoContieneMutaciones (0.01s)
+FAIL
+FAIL    github.com/abdimuy/msp-api/scripts/medicion/fotos-pagos-faltantes       0.024s
+FAIL
+```
+
 **Ejecución contra dev (Mueblera Firebird):**
 
 ```
+/mnt/c/Users/joaov/Documents/msp-api/var/uploads
 Total de filas: 0
-Con archivo: 0
+ConArchivo: 0
 Sin archivo: 0
 Error al revisar: 0
 
@@ -122,7 +161,7 @@ Revisión del código de otros módulos para identificar si comparten el mismo d
 ## 6. Verificación de Reglas (Pre-PR)
 
 ```
-user@MSP:/mnt/c/Users/User/Documents/msp-api\$ gofmt -l ./internal/cobranza ./scripts/medicion
+joaov@VAZHER:/mnt/c/Users/joaov/Documents/msp-api$ gofmt -l ./internal/cobranza ./scripts/medicion
 go vet ./internal/cobranza/... ./scripts/medicion/...
 golangci-lint run ./internal/cobranza/... ./scripts/medicion/...
 go clean -testcache
@@ -137,5 +176,6 @@ ok      github.com/abdimuy/msp-api/internal/cobranza/infra/microsip     1.029s
 ok      github.com/abdimuy/msp-api/internal/cobranza/infra/ventfb       7.856s
 ?       github.com/abdimuy/msp-api/internal/cobranza/ports/outbound     [no test files]
 ok      github.com/abdimuy/msp-api/scripts/medicion/fotos-pagos-faltantes       1.029s
-
 ```
+
+

@@ -600,21 +600,46 @@ entre 25 y 40 m.
 ### E-COB-060 · Un reintento de un pago con imagen borra el comprobante original
 
 - **Nivel:** MEDIDO · **Estado:** VIGENTE
-- **Medido:** [FECHA_ACTUAL_Y_ENTORNO] (`[SHA_AQUI]`)
+- **Medido:** 2026-11-11, entorno local de pruebas (`f622305`)
 - **Cómo:**
   ```
   go test -run TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal -v ./internal/cobranza/app/
   ```
   ```
-  [SALIDA_LITERAL]
+  joaov@VAZHER:/mnt/c/Users/joaov/Documents/msp-api$ go clean -testcache
+  go test -run TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal -v ./internal/cobranza/app/
+  === RUN   TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal
+  === PAUSE TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal
+  === CONT  TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal
+  --- PASS: TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal (0.00s)
+  PASS
+  ok      github.com/abdimuy/msp-api/internal/cobranza/app        0.015s
   ```
 - **Control positivo:**
-  ```
-  [SALIDA_ROJA_AQUI]
-  ```
-  ```
-  [SALIDA_VERDE_AQUI]
-  ```
+  - Prueba en rojo al comentar temporalmente `s.cleanupBlobs(ctx, storedKeys)`:
+    ```
+    === RUN   TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal
+    === PAUSE TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal
+    === CONT  TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal
+        crear_pago_con_imagenes_reintento_test.go:150:
+                    Error Trace:    /mnt/c/Users/joaov/Documents/msp-api/internal/cobranza/app/crear_pago_con_imagenes_reintento_test.go:150
+                    Error:          An error is expected but got nil.
+                    Test:           TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal
+                    Messages:       Evidencia E-COB-060: os.Stat debe devolver error porque el archivo físico ya no existe tras el reintento debido al borrado de cleanupBlobs
+    --- FAIL: TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal (0.00s)
+    FAIL
+    FAIL    github.com/abdimuy/msp-api/internal/cobranza/app        0.017s
+    FAIL
+    ```
+  - Prueba en verde al restaurar `s.cleanupBlobs(ctx, storedKeys)`:
+    ```
+    === RUN   TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal
+    === PAUSE TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal
+    === CONT  TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal
+    --- PASS: TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal (0.00s)
+    PASS
+    ok      github.com/abdimuy/msp-api/internal/cobranza/app        0.016s
+    ```
 - **Vive en:** `crear_pago_con_imagenes.go:123-133` y `cobranzahttp/multipart_helpers.go:36-42`
 - **Guardada por:** `TestCrearPagoConImagenes_Reintento_BorraElComprobanteOriginal`
 - **Qué falta:** El conteo de producción con la herramienta, que lo corre el dueño.

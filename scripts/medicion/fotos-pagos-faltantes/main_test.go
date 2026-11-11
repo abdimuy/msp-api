@@ -60,7 +60,7 @@ func TestMain_ReglaDeOro_NoContieneMutaciones(t *testing.T) {
 		contenidoLower := strings.ToLower(string(data))
 		for _, prohibida := range cadenasProhibidas {
 			if strings.Contains(contenidoLower, strings.ToLower(prohibida)) {
-				t.Fatalf("REGLA DE ORO VIOLADA: %s contiene la cadena prohibida %q (case-insensitive)", nombre, prohibida)
+				t.Errorf("REGLA DE ORO VIOLADA: %s contiene la cadena prohibida %q (case-insensitive)", nombre, prohibida)
 			}
 		}
 
@@ -76,7 +76,7 @@ func TestMain_ReglaDeOro_NoContieneMutaciones(t *testing.T) {
 			}
 			for _, metodo := range metodosProhibidos {
 				if strings.EqualFold(sel.Sel.Name, metodo) {
-					t.Fatalf("REGLA DE ORO VIOLADA: %s invoca o referencia el metodo prohibido %q", nombre, sel.Sel.Name)
+					t.Errorf("REGLA DE ORO VIOLADA: %s invoca o referencia el metodo prohibido %q", nombre, sel.Sel.Name)
 				}
 			}
 			return true
