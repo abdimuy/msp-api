@@ -101,6 +101,14 @@ func tablaSeguridad(t *testing.T) []seguridadOperacion {
 		},
 		{
 			ejemplo: ejemploOperacion{
+				OperationID: "obtener-catalogos",
+				Method:      http.MethodGet,
+				Path:        "/garantias/catalogos",
+			},
+			permiso: domain.PermisoLeer,
+		},
+		{
+			ejemplo: ejemploOperacion{
 				OperationID: "obtener-garantia",
 				Method:      http.MethodGet,
 				Path: "/garantias/" +
@@ -341,7 +349,40 @@ func TestSeguridad_TablaCoincideConOpenAPI(t *testing.T) {
 		}
 	}
 
+	const operacionesEsperadas = 19
+
+	idsEsperados := []string{
+		"abrir-garantia",
+		"adjuntar-imagen",
+		"agregar-articulo",
+		"autorizar-cambio-fisico",
+		"avanzar-articulo",
+		"cancelar-garantia",
+		"cerrar-garantia",
+		"entregar-garantia",
+		"iniciar-proceso",
+		"listar-garantias",
+		"marcar-listo-entrega",
+		"marcar-no-devuelto",
+		"mover-articulo",
+		"obtener-catalogos",
+		"obtener-garantia",
+		"obtener-imagen",
+		"registrar-desenlace",
+		"registrar-diagnostico",
+		"registrar-dictamen",
+	}
+
+	require.Len(t, idsEsperados, operacionesEsperadas)
+	require.Len(t, openAPI, operacionesEsperadas)
+
+	for _, id := range idsEsperados {
+		_, existe := openAPI[id]
+		require.True(t, existe, "falta operationId: %s", id)
+	}
+
 	tabla := tablaSeguridad(t)
+	require.Len(t, tabla, operacionesEsperadas)
 	require.Len(t, openAPI, len(tabla))
 
 	vistas := make(map[string]bool, len(tabla))

@@ -89,6 +89,15 @@ func ejecutarLecturasPublicas(
 		require.NoError(t, err)
 		require.Empty(t, listaImagenes)
 
+		_, err = imagenes.Obtener(ctx, uuid.New())
+		require.ErrorIs(t, err, domain.ErrImagenNoEncontrada)
+
+		imagenesPorEventos, err := imagenes.ListarPorEventos(
+			ctx, []uuid.UUID{id},
+		)
+		require.NoError(t, err)
+		require.Empty(t, imagenesPorEventos)
+
 		_, err = folios.Siguiente(ctx)
 		require.NoError(t, err)
 	}
@@ -109,7 +118,7 @@ func TestLecturasPublicas_NoDejanTransaccionesAbiertas(t *testing.T) {
 	antes, err := contarTransaccionesDelProceso(ctx, pool)
 	require.NoError(t, err)
 
-	// 24 lecturas públicas sin una transacción creada por el caller.
+	// 30 lecturas públicas sin una transacción creada por el caller.
 	ejecutarLecturasPublicas(
 		ctx,
 		t,

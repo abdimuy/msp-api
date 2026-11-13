@@ -88,7 +88,7 @@ func TestGarantiaRepo_Candado_Commit(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// This is the only test that commits, so it must clean up its rows.
+	// This test commits rows, so it must clean them up afterward.
 	t.Cleanup(func() {
 		cleanupErr := txManager.RunInTx(
 			context.Background(),
