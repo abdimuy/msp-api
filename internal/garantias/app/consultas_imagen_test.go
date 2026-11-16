@@ -424,3 +424,72 @@ func TestConsultas_ObtenerImagen_ErrorStorageSePropaga(t *testing.T) {
 
 	require.ErrorIs(t, err, errStorage)
 }
+
+// TestConsultas_ObtenerImagen_PermisosNoAccedenAlStorage
+// comprueba la autorización desde app, no sólo desde HTTP.
+func TestConsultas_ObtenerImagen_PermisosNoAccedenAlStorage(t *testing.T) {
+	t.Parallel()
+
+	casos := []struct {
+		nombre        string
+		identity      *fakeConsultaIdentity
+		errorEsperado error
+	}{
+		{
+			nombre: "sin usuario",
+			identity: &fakeConsultaIdentity{
+				usuarioErr: domain.ErrUsuarioNoAutenticado,
+			},
+			errorEsperado: domain.ErrUsuarioNoAutenticado,
+		},
+		{
+			nombre: "sin permiso leer",
+			identity: &fakeConsultaIdentity{
+				usuario: outbound.Usuario{
+					ID:     "usuario-1",
+					Nombre: "Operador",
+				},
+				permitido: false,
+			},
+			errorEsperado: domain.ErrPermisoDenegado,
+		},
+	}
+
+	for _, caso := range casos {
+		t.Run(caso.nombre, func(t *testing.T) {
+			t.Parallel()
+
+			garantias := &fakeAdjuntoGarantiaRepo{}
+			imagenes := &fakeAdjuntoImagenRepo{}
+			storage := &fakeAdjuntoStorage{}
+
+			consultas := app.NewConsultas(app.ConsultasDeps{
+				Garantias: garantias,
+				Imagenes:  imagenes,
+				Storage:   storage,
+				Identity:  caso.identity,
+			})
+
+			_, err := consultas.ObtenerImagen(
+				context.Background(),
+				uuid.New(),
+				uuid.New(),
+				uuid.New(),
+			)
+
+			require.ErrorIs(t, err, caso.errorEsperado)
+			require.Equal(t, 1, caso.identity.usuarioCalls)
+
+			if errors.Is(caso.errorEsperado, domain.ErrPermisoDenegado) {
+				require.Equal(t, 1, caso.identity.permisoCalls)
+				require.Equal(t, domain.PermisoLeer, caso.identity.ultimoPermiso)
+			} else {
+				require.Zero(t, caso.identity.permisoCalls)
+			}
+
+			require.Zero(t, garantias.calls)
+			require.Zero(t, imagenes.calls)
+			require.Zero(t, storage.calls)
+		})
+	}
+}

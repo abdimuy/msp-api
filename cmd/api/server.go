@@ -378,10 +378,7 @@ func provideRootHandler(
 		// Garantías — autenticación común y autorización dentro de app.
 		// No usa el middleware idempotency del API: el módulo implementa su
 		// propia idempotencia de dominio mediante ClaveIdempotencia.
-		r.Group(func(r chi.Router) {
-			r.Use(skipAuthForPublicDocs(authn.Handler))
-			garhttp.MountRouter(r, garantiasHTTP)
-		})
+		montarGarantias(r, authn.Handler, garantiasHTTP)
 
 		// Desempeño de cobradores — solo lectura, authn únicamente (sin
 		// idempotencia ni captura de intents: no hay escrituras). desempeno:ver
@@ -442,6 +439,18 @@ func provideRootHandler(
 	})
 
 	return RootHandler(r)
+}
+
+// montarGarantias es el montaje compartido por producción y las pruebas HTTP.
+func montarGarantias(
+	r chi.Router,
+	authn func(http.Handler) http.Handler,
+	deps garhttp.Deps,
+) {
+	r.Group(func(r chi.Router) {
+		r.Use(skipAuthForPublicDocs(authn))
+		garhttp.MountRouter(r, deps)
+	})
 }
 
 // provideHTTPServer wraps the assembled root handler in an *http.Server with

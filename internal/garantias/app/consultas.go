@@ -221,3 +221,8 @@ func (c *Consultas) autorizarLectura(ctx context.Context) error {
 
 	return nil
 }
+
+// AutorizarCatalogos valida el permiso de lectura para consultar catalogos.
+func (c *Consultas) AutorizarCatalogos(ctx context.Context) error {
+	return c.autorizarLectura(ctx)
+}

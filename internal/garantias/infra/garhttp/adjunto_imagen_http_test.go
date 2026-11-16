@@ -262,6 +262,7 @@ func TestAdjuntarImagenHTTP_CaminoFeliz(t *testing.T) {
 	require.Equal(t, "evidencia", respuesta["tipo"])
 	require.Equal(t, "foto del daño", respuesta["descripcion"])
 	require.Equal(t, "Ruben", respuesta["subida_por"])
+	require.Equal(t, now.Format(time.RFC3339), respuesta["created_at"])
 	require.Equal(
 		t,
 		"/garantias/"+garantiaID.String()+
@@ -432,4 +433,182 @@ func TestAdjuntarImagenHTTP_MayorA10MB_422(t *testing.T) {
 	)
 	require.Contains(t, rec.Body.String(), "warranty_image_too_large")
 	require.Zero(t, storage.storeCalls)
+}
+
+// TestAdjuntarImagenHTTP_NoEsImagen_422 rechaza contenido no permitido.
+func TestAdjuntarImagenHTTP_NoEsImagen_422(t *testing.T) {
+	t.Parallel()
+
+	garantiaID := uuid.New()
+	eventoID := uuid.New()
+
+	identity := &fakeHTTPIdentity{
+		usuario:   outbound.Usuario{ID: "usuario-1", Nombre: "Operador"},
+		permitido: true,
+	}
+	eventos := &fakeHTTPEventoRepo{
+		eventos: []*domain.Evento{adjuntoHTTPEvento(eventoID, garantiaID)},
+	}
+	imagenes := &fakeAdjuntoHTTPImagenRepo{}
+	storage := &fakeAdjuntoHTTPStorage{}
+	tx := &fakeAdjuntoHTTPTx{}
+
+	r := adjuntoHTTPRouter(
+		identity, eventos, imagenes, storage, tx,
+		fakeAdjuntoHTTPClock{now: time.Now().UTC()},
+	)
+
+	body, contentType := adjuntoHTTPMultipart(t, []byte("no soy una imagen"), "archivo invalido")
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/garantias/"+garantiaID.String()+"/eventos/"+eventoID.String()+"/imagenes",
+		body,
+	)
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Idempotency-Key", uuid.NewString())
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	require.Zero(t, storage.storeCalls)
+	require.Zero(t, imagenes.registrar)
+}
+
+// TestAdjuntarImagenHTTP_EventoOtraGarantia_404 evita adjuntar a otro folio.
+
+// fakeEventoFiltradoHTTP respeta el ID de garantía en ListarPorGarantia.
+type fakeEventoFiltradoHTTP struct {
+	*fakeHTTPEventoRepo
+}
+
+func (f *fakeEventoFiltradoHTTP) ListarPorGarantia(
+	ctx context.Context,
+	garantiaID uuid.UUID,
+) ([]*domain.Evento, error) {
+	eventos, err := f.fakeHTTPEventoRepo.ListarPorGarantia(ctx, garantiaID)
+	if err != nil {
+		return nil, err
+	}
+
+	var filtrados []*domain.Evento
+	for _, evento := range eventos {
+		if evento != nil && evento.GarantiaID() == garantiaID {
+			filtrados = append(filtrados, evento)
+		}
+	}
+	return filtrados, nil
+}
+
+func TestAdjuntarImagenHTTP_EventoOtraGarantia_404(t *testing.T) {
+	t.Parallel()
+
+	garantiaSolicitada := uuid.New()
+	garantiaDelEvento := uuid.New()
+	eventoID := uuid.New()
+
+	identity := &fakeHTTPIdentity{
+		usuario:   outbound.Usuario{ID: "usuario-1", Nombre: "Operador"},
+		permitido: true,
+	}
+	eventos := &fakeEventoFiltradoHTTP{
+		fakeHTTPEventoRepo: &fakeHTTPEventoRepo{
+			eventos: []*domain.Evento{
+				adjuntoHTTPEvento(eventoID, garantiaDelEvento),
+			},
+		},
+	}
+	imagenes := &fakeAdjuntoHTTPImagenRepo{}
+	storage := &fakeAdjuntoHTTPStorage{}
+	tx := &fakeAdjuntoHTTPTx{}
+
+	r := adjuntoHTTPRouter(
+		identity, eventos, imagenes, storage, tx,
+		fakeAdjuntoHTTPClock{now: time.Now().UTC()},
+	)
+
+	body, contentType := adjuntoHTTPMultipart(t, adjuntoHTTPPNG(), "foto")
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/garantias/"+garantiaSolicitada.String()+"/eventos/"+eventoID.String()+"/imagenes",
+		body,
+	)
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Idempotency-Key", uuid.NewString())
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+	require.Zero(t, imagenes.registrar)
+}
+
+// TestAdjuntarImagenHTTP_MismaClaveOtrosBytes_409 comprueba que
+// una clave usada no acepta una imagen diferente.
+func TestAdjuntarImagenHTTP_MismaClaveOtrosBytes_409(t *testing.T) {
+	t.Parallel()
+
+	garantiaID := uuid.New()
+	eventoID := uuid.New()
+	clave := uuid.NewString()
+
+	identity := &fakeHTTPIdentity{
+		usuario: outbound.Usuario{
+			ID:     "usuario-1",
+			Nombre: "Operador",
+		},
+		permitido: true,
+	}
+
+	eventos := &fakeHTTPEventoRepo{
+		eventos: []*domain.Evento{
+			adjuntoHTTPEvento(eventoID, garantiaID),
+		},
+	}
+	imagenes := &fakeAdjuntoHTTPImagenRepo{}
+	storage := &fakeAdjuntoHTTPStorage{}
+	tx := &fakeAdjuntoHTTPTx{}
+
+	router := adjuntoHTTPRouter(
+		identity, eventos, imagenes, storage, tx,
+		fakeAdjuntoHTTPClock{now: time.Now().UTC()},
+	)
+
+	enviar := func(contenido []byte) *httptest.ResponseRecorder {
+		t.Helper()
+
+		body, contentType := adjuntoHTTPMultipart(
+			t, contenido, "foto del daño",
+		)
+
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/garantias/"+garantiaID.String()+
+				"/eventos/"+eventoID.String()+"/imagenes",
+			body,
+		)
+		req.Header.Set("Content-Type", contentType)
+		req.Header.Set("Idempotency-Key", clave)
+
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+
+	primera := enviar(adjuntoHTTPPNG())
+	require.Equal(t, http.StatusOK, primera.Code, primera.Body.String())
+	require.Equal(t, 1, imagenes.registrar)
+
+	imagenOriginal := imagenes.imagen
+	require.NotNil(t, imagenOriginal)
+
+	otrosBytes := append(adjuntoHTTPPNG(), []byte("-modificada")...)
+	segunda := enviar(otrosBytes)
+
+	require.Equal(t, http.StatusConflict, segunda.Code, segunda.Body.String())
+	require.Contains(t, segunda.Body.String(), "warranty_idempotency_key_mismatch")
+
+	require.Equal(t, 1, imagenes.registrar,
+		"el reintento incorrecto no debe registrar otra imagen")
+	require.Equal(t, imagenOriginal.ID(), imagenes.imagen.ID())
 }

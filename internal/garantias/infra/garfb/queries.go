@@ -189,19 +189,16 @@ INSERT INTO MSP_GA_EVENTO (
 	CLAVE_IDEMPOTENCIA,
 	HUELLA,
 	DISTANCIA_ENTREGA_M,
-	AUDITORIA_GPS
+	AUDITORIA_GPS,
+	ORDEN_EVENTO
 ) VALUES (
-	?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+	?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+	NEXT VALUE FOR GEN_MSP_GA_EVENTO_ORDEN
 )`
 
-// listarEventosPorGarantiaSQL returns the folio timeline in the order the port
-// promises: device time, then creation time, then insertion order. The ID is a
-// random UUID, so using it as the last key would scatter events that share both
-// timestamps in an arbitrary order. RDB$DB_KEY points at the physical slot the
-// row was written to, which on this append-only table is the order the command
-// wrote them in. It is a physical address, not a logical sequence: a rebuilt
-// table or a sweep could renumber it, so a causal sequence column would be the
-// durable fix; until then it is the only ordering key the schema offers.
+// listarEventosPorGarantiaSQL devuelve el historial ordenado por fecha
+// del dispositivo, fecha de creación y secuencia lógica de inserción.
+// ORDEN_EVENTO resuelve los empates sin depender de posiciones físicas.
 const listarEventosPorGarantiaSQL = `
 SELECT
 	ID,
@@ -225,7 +222,7 @@ SELECT
 	AUDITORIA_GPS
 FROM MSP_GA_EVENTO
 WHERE GARANTIA_ID = ?
-ORDER BY DEVICE_CREATED_AT, CREATED_AT, RDB$DB_KEY`
+ORDER BY DEVICE_CREATED_AT, CREATED_AT, ORDEN_EVENTO`
 
 const obtenerEventoPorClaveIdempotenciaSQL = `
 SELECT

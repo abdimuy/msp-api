@@ -1338,6 +1338,70 @@ WHERE ID = ?`,
 		)
 		require.NoError(t, err)
 
+		// Control positivo: un único artículo satisface ambos filtros.
+		numeroPositivo, err := folios.Siguiente(ctx)
+		require.NoError(t, err)
+
+		folioPositivo, err := domain.NewFolio(numeroPositivo)
+		require.NoError(t, err)
+
+		clientePositivo := 880011
+		ventaPositiva := 880012
+
+		positivo, err := domain.AbrirGarantia(domain.AbrirGarantiaParams{
+			Folio:          folioPositivo,
+			Origen:         origen,
+			ClienteID:      &clientePositivo,
+			VentaID:        &ventaPositiva,
+			EstadoCuenta:   &estadoCuenta,
+			Description:    "Control positivo del filtro combinado",
+			Calle:          "Avenida Juárez",
+			NumeroExterior: "101",
+			Colonia:        "Centro",
+			Localidad:      "Puebla",
+			Ciudad:         "Puebla",
+			CodigoPostal:   "72000",
+			AbiertoPor:     "ruben",
+			Now:            base.Add(5 * time.Minute),
+			Actor: domain.ActorParams{
+				Usuario:           "ruben",
+				ClaveIdempotencia: uuid.NewString(),
+				DeviceCreatedAt:   base.Add(5 * time.Minute),
+			},
+		})
+		require.NoError(t, err)
+
+		articuloPositivoID := 880111
+		err = positivo.AgregarArticulo(
+			domain.AgregarArticuloParams{
+				ArticuloID:  &articuloPositivoID,
+				Clave:       "MISMO-POS",
+				Description: "Artículo que cumple ambos filtros",
+			},
+			domain.ActorParams{
+				Usuario:           "ruben",
+				ClaveIdempotencia: uuid.NewString(),
+				DeviceCreatedAt:   base.Add(6 * time.Minute),
+			},
+			base.Add(6*time.Minute),
+		)
+		require.NoError(t, err)
+		require.NoError(t, garantiaRepo.Crear(ctx, positivo))
+
+		articulosPositivos := positivo.ArticulosForRepo()
+		require.Len(t, articulosPositivos, 1)
+
+		_, err = q.ExecContext(
+			ctx,
+			`UPDATE MSP_GA_ARTICULO
+SET ETAPA = ?, UBICACION = ?
+WHERE ID = ?`,
+			string(domain.EtapaEnRevision),
+			string(domain.UbicacionDomicilioCliente),
+			articulosPositivos[0].ID().String(),
+		)
+		require.NoError(t, err)
+
 		etapa := domain.EtapaEnRevision
 		ubicacion := domain.UbicacionDomicilioCliente
 
@@ -1355,8 +1419,14 @@ WHERE ID = ?`,
 		)
 		require.NoError(t, err)
 
-		// Los filtros deben coincidir sobre EL MISMO artículo.
-		// Un artículo cumple etapa y otro ubicación, así que el folio no entra.
-		require.Empty(t, pagina.Items)
+		// Comparamos sólo los folios sembrados por esta prueba.
+		encontrados := make(map[uuid.UUID]bool)
+		for _, item := range pagina.Items {
+			encontrados[item.ID()] = true
+		}
+		require.False(t, encontrados[g.ID()],
+			"el folio con artículos cruzados no debe aparecer")
+		require.True(t, encontrados[positivo.ID()],
+			"el folio cuyo artículo cumple ambos filtros debe aparecer")
 	})
 }

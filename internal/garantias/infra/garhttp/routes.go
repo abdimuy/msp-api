@@ -141,6 +141,21 @@ func registerOperations(api huma.API, handlers *Handlers) {
 	}, handlers.ListarGarantias)
 
 	huma.Register(api, huma.Operation{
+		OperationID:   "obtener-catalogos",
+		Method:        http.MethodGet,
+		Path:          "/garantias/catalogos",
+		Summary:       "Obtener catálogos de garantías",
+		Description:   "Devuelve etapas, ubicaciones, estados, tipos de evento y transiciones.",
+		Tags:          []string{"garantias"},
+		Security:      security,
+		DefaultStatus: http.StatusOK,
+		Errors: []int{
+			http.StatusUnauthorized,
+			http.StatusForbidden,
+		},
+	}, handlers.ObtenerCatalogos)
+
+	huma.Register(api, huma.Operation{
 		OperationID:   "obtener-garantia",
 		Method:        http.MethodGet,
 		Path:          "/garantias/{id}",

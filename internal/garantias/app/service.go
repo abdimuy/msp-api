@@ -172,16 +172,16 @@ func (s *Service) ejecutarFolio(
 // garantiaID is uuid.Nil for AbrirGarantia, which has no folio yet: the key is
 // the only thing that can identify the twin, so the folio check is skipped.
 func revisarClave(vista *domain.Evento, garantiaID uuid.UUID, huella string) (bool, error) {
-	switch {
-	case vista == nil:
+	if vista == nil {
 		return false, nil
-	case garantiaID != uuid.Nil && vista.GarantiaID() != garantiaID:
-		return false, domain.ErrClaveIdempotenciaDeOtroFolio
-	case huella != "" && vista.Huella() == huella:
-		return true, nil
-	default:
-		return false, domain.ErrClaveIdempotenciaMismatch
 	}
+	if garantiaID != uuid.Nil && vista.GarantiaID() != garantiaID {
+		return false, domain.ErrClaveIdempotenciaDeOtroFolio
+	}
+	if huella != "" && vista.Huella() == huella {
+		return true, nil
+	}
+	return false, domain.ErrClaveIdempotenciaMismatch
 }
 
 // resolverDuplicada runs after the rollback caused by a duplicate key: the
