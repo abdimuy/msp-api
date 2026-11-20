@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net/http"
 	"reflect"
 )
 
@@ -44,4 +45,24 @@ func huellaDe(cmd any) string {
 	_, _ = h.Write([]byte{0})
 	_, _ = h.Write(contenido)
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// huellaDeEntregar is the fingerprint of a delivery retry, normalized so the
+// same delivery from another client cannot look like different content.
+//
+// FirmaContentType is whatever the transport declared for the file part; the
+// bytes are the signature. Retries from a client that labels the same file
+// differently must still replay, so the declared type is replaced by the one
+// the bytes actually carry (the same DetectContentType guardarBlob already
+// applies). DeviceCreatedAt is the same instant written with another UTC
+// offset by another phone or timezone; hashing it as instant means the offset
+// does not matter. Both fields live on a copy: the caller's command is never
+// mutated.
+func huellaDeEntregar(cmd EntregarCmd) string {
+	copia := cmd
+	copia.DeviceCreatedAt = copia.DeviceCreatedAt.UTC()
+	if len(copia.Firma) > 0 {
+		copia.FirmaContentType = http.DetectContentType(copia.Firma)
+	}
+	return huellaDe(copia)
 }

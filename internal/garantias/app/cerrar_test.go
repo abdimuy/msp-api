@@ -216,3 +216,75 @@ func TestCerrar_ErrorAlLeerLaLinea(t *testing.T) {
 		t.Errorf("no debe escribir: saved=%d created=%d", len(grepo.saved), len(grepo.created))
 	}
 }
+
+// TestCerrar_RecoleccionSinGPSNoParticipa: a pickup event without both
+// coordinates is not a place and must not enter the audit. With the timeline
+// holding only that pickup, the delivery has nothing to compare against, so the
+// result is no_aplica — and the command must not dereference the nil pointers.
+// Removing the lat/lon guard turns this test into a panic.
+func TestCerrar_RecoleccionSinGPSNoParticipa(t *testing.T) {
+	t.Parallel()
+	svc, grepo, erepo, _, _, _, clk, _ := setupService()
+	s := sembrar(t, grepo, domain.EstadoFolioEntregado, cliente(), domain.EtapaEntregado)
+	erepo.addEvento(eventoPunto(s.g.ID(), domain.TipoEventoFolioEntregado, 19.4326, -99.1332, nil, clk.Now()))
+	recolectado := domain.EtapaRecolectado
+	erepo.addEvento(domain.HydrateEvento(domain.HydrateEventoParams{
+		ID:              uuid.New(),
+		GarantiaID:      s.g.ID(),
+		Tipo:            domain.TipoEventoEtapaAvanzada,
+		Usuario:         "Juan",
+		EtapaHasta:      &recolectado,
+		CreatedAt:       clk.Now(),
+		DeviceCreatedAt: clk.Now(),
+		// GPSLat/GPSLon deliberately nil: the phone saved the pickup without a
+		// fix. The audit must skip it, never read through the nil.
+	}))
+
+	if _, err := svc.Cerrar(context.Background(), app.CerrarCmd{
+		GarantiaID:        s.g.ID(),
+		ClaveIdempotencia: clave(),
+		DeviceCreatedAt:   clk.Now(),
+	}); err != nil {
+		t.Fatalf("Cerrar: %v", err)
+	}
+	ev := eventoEscrito(t, grepo)
+	if ev.AuditoriaGPS() == nil || *ev.AuditoriaGPS() != domain.AuditoriaGPSNoAplica {
+		t.Errorf("auditoria = %v, want no_aplica: la recoleccion sin GPS no cuenta", ev.AuditoriaGPS())
+	}
+	if ev.DistanciaEntregaM() != nil {
+		t.Errorf("distancia = %v, want nil", ev.DistanciaEntregaM())
+	}
+}
+
+// TestCerrar_SoloLaRecoleccionEsPuntoDeComparacion: an etapa_avanzada that does
+// not reach recolectado is a place, but not a pickup: only the advances to
+// recolectado are compared against the delivery. The folio is delivered in
+// Coyoacan and picked up at the same corner, but one of its articles went
+// through a workshop in Guadalajara; if that stop entered the audit, a delivery
+// without a hitch would be flagged as a 460 km deviation. Removing the etapa
+// check —or joining the two conditions of the else if with || instead of &&—
+// turns this test red.
+func TestCerrar_SoloLaRecoleccionEsPuntoDeComparacion(t *testing.T) {
+	t.Parallel()
+	svc, grepo, erepo, _, _, _, clk, _ := setupService()
+	s := sembrar(t, grepo, domain.EstadoFolioEntregado, cliente(), domain.EtapaEntregado)
+	erepo.addEvento(eventoPunto(s.g.ID(), domain.TipoEventoFolioEntregado, 19.4326, -99.1332, nil, clk.Now()))
+	erepo.addEvento(eventoRecoleccion(s.g.ID(), 19.4326, -99.1332, clk.Now()))
+	taller := domain.EtapaEnTaller
+	erepo.addEvento(eventoPunto(s.g.ID(), domain.TipoEventoEtapaAvanzada, 20.6597, -103.3496, &taller, clk.Now()))
+
+	if _, err := svc.Cerrar(context.Background(), app.CerrarCmd{
+		GarantiaID:        s.g.ID(),
+		ClaveIdempotencia: clave(),
+		DeviceCreatedAt:   clk.Now(),
+	}); err != nil {
+		t.Fatalf("Cerrar: %v", err)
+	}
+	ev := eventoEscrito(t, grepo)
+	if ev.AuditoriaGPS() == nil || *ev.AuditoriaGPS() != domain.AuditoriaGPSSinDesvio {
+		t.Errorf("auditoria = %v, want sin_desvio: el paso por el taller no es una recoleccion", ev.AuditoriaGPS())
+	}
+	if d := ev.DistanciaEntregaM(); d == nil || *d > 1 {
+		t.Errorf("distancia = %v, want ~0: solo cuenta la recoleccion del mismo punto", d)
+	}
+}

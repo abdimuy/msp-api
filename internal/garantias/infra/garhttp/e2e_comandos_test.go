@@ -68,6 +68,23 @@ type entornoE2EHTTP struct {
 	pool      *firebird.Pool
 	storage   string
 	clk       *relojHTTP
+	// avance separa el sello de cada comando. Con el reloj congelado todos los
+	// eventos comparten DEVICE_CREATED_AT y CREATED_AT, y el desempate cae en
+	// RDB$DB_KEY: una dirección física cuyos huecos reutilizan las
+	// transacciones que otras pruebas revierten, así que el orden deja de ser
+	// el de escritura. La prueba de que eso importa es el gate de Windows, que
+	// falló con folio_listo_entrega como último evento.
+	avance time.Duration
+}
+
+// marcaDeDispositivo devuelve un sello distinto para cada comando: el teléfono
+// sella el comando una vez y reenvía esos mismos bytes, así que el reintento
+// reutiliza la marca que devolvió esta llamada, no pide otra.
+func (e *entornoE2EHTTP) marcaDeDispositivo() time.Time {
+	marca := e.clk.Now().Add(e.avance)
+	e.avance += time.Second
+
+	return marca
 }
 
 // nuevoEntornoE2EHTTP monta el módulo completo sobre Firebird real y un
@@ -128,7 +145,7 @@ func nuevoEntornoE2EHTTP(t *testing.T, pool *firebird.Pool) *entornoE2EHTTP {
 // usa toda la historia.
 func (e *entornoE2EHTTP) cuerpo(extras map[string]any) map[string]any {
 	cuerpo := map[string]any{
-		"device_created_at": e.clk.Now().Format(time.RFC3339),
+		"device_created_at": e.marcaDeDispositivo().Format(time.RFC3339),
 	}
 
 	for campo, valor := range extras {
@@ -174,13 +191,15 @@ func (e *entornoE2EHTTP) jsonOK(
 	return folioDeRespuesta(t, e.json(ctx, t, ruta, clave, cuerpo))
 }
 
-// entrega envía el multipart de entregar-garantia.
+// entrega envía el multipart de entregar-garantia con el sello que el
+// llamador fijó para esa entrega.
 func (e *entornoE2EHTTP) entrega(
 	ctx context.Context,
 	t *testing.T,
 	garantiaID, clave string,
 	lat, lon float64,
 	firma []byte,
+	marca time.Time,
 ) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -188,7 +207,7 @@ func (e *entornoE2EHTTP) entrega(
 
 	writer := multipart.NewWriter(&cuerpo)
 
-	require.NoError(t, writer.WriteField("device_created_at", e.clk.Now().Format(time.RFC3339)))
+	require.NoError(t, writer.WriteField("device_created_at", marca.Format(time.RFC3339)))
 	require.NoError(t, writer.WriteField("gps_lat", strconv.FormatFloat(lat, 'f', 6, 64)))
 	require.NoError(t, writer.WriteField("gps_lon", strconv.FormatFloat(lon, 'f', 6, 64)))
 
@@ -419,19 +438,22 @@ func TestE2EHTTP_PisoEntregaCierraYReintenta(t *testing.T) {
 		// cierre. La firma viaja en el multipart.
 		claveEntrega := clave()
 		lat, lon := 19.4326, -99.1332
+		// La marca se pide una vez: los tres intentos son el mismo comando y
+		// el tercero sólo cambia la firma, que es lo que debe dar 409.
+		marcaEntrega := ent.marcaDeDispositivo()
 
-		primera := ent.entrega(ctx, t, id, claveEntrega, lat, lon, firmaJPEGDePrueba)
+		primera := ent.entrega(ctx, t, id, claveEntrega, lat, lon, firmaJPEGDePrueba, marcaEntrega)
 		folioDeRespuesta(t, primera)
 
 		if tarea10AplicadaHTTP(ctx, t, ent.pool) {
 			// Misma clave y mismo cuerpo: repetición, 200 y una sola fila.
-			segunda := ent.entrega(ctx, t, id, claveEntrega, lat, lon, firmaJPEGDePrueba)
+			segunda := ent.entrega(ctx, t, id, claveEntrega, lat, lon, firmaJPEGDePrueba, marcaEntrega)
 			folioDeRespuesta(t, segunda)
 
 			// Misma clave y otra firma: la clave es la misma, el contenido no.
 			otraFirma := append(append([]byte{}, firmaJPEGDePrueba...), 0x00)
 
-			tercera := ent.entrega(ctx, t, id, claveEntrega, lat, lon, otraFirma)
+			tercera := ent.entrega(ctx, t, id, claveEntrega, lat, lon, otraFirma, marcaEntrega)
 			require.Equal(t, http.StatusConflict, tercera.Code, tercera.Body.String())
 			require.Contains(t, tercera.Body.String(), domain.ErrClaveIdempotenciaMismatch.Code)
 
@@ -548,7 +570,7 @@ func TestE2EHTTP_ClientePorProveedorConDesvio(t *testing.T) {
 		// La entrega cae en Puebla, lejos del punto de recolección en CDMX.
 		latEntrega, lonEntrega := 19.0414, -98.2063
 
-		folioDeRespuesta(t, ent.entrega(ctx, t, id, clave(), latEntrega, lonEntrega, firmaJPEGDePrueba))
+		folioDeRespuesta(t, ent.entrega(ctx, t, id, clave(), latEntrega, lonEntrega, firmaJPEGDePrueba, ent.marcaDeDispositivo()))
 
 		const justificacion = "el cliente recogió en la sucursal de Puebla"
 
@@ -665,7 +687,7 @@ func TestE2EHTTP_ClientePorTallerSinDesvio(t *testing.T) {
 		// La entrega cae a metros de la recolección: sin desvío.
 		latEntrega, lonEntrega := 19.0415, -98.2064
 
-		folioDeRespuesta(t, ent.entrega(ctx, t, id, clave(), latEntrega, lonEntrega, firmaJPEGDePrueba))
+		folioDeRespuesta(t, ent.entrega(ctx, t, id, clave(), latEntrega, lonEntrega, firmaJPEGDePrueba, ent.marcaDeDispositivo()))
 
 		ent.jsonOK(ctx, t, "/garantias/"+id+"/cerrar", clave(), ent.cuerpo(map[string]any{
 			"gps_lat": latEntrega,

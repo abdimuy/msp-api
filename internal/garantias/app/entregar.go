@@ -47,7 +47,7 @@ func (s *Service) Entregar(ctx context.Context, cmd EntregarCmd) (*domain.Garant
 	if len(cmd.Firma) == 0 {
 		return nil, domain.ErrFirmaRequerida
 	}
-	huella := huellaDe(cmd)
+	huella := huellaDeEntregar(cmd)
 	// The image id comes from the canonical key, exactly like the domain
 	// derives it. An invalid key yields uuid.Nil on purpose: the blob is still
 	// written and then discarded after ejecutarFolio fails with the key

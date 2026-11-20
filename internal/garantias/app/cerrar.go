@@ -57,11 +57,12 @@ func puntosDeAuditoria(eventos []*domain.Evento) (*domain.PuntoGPS, []domain.Pun
 			continue
 		}
 		punto := domain.PuntoGPS{Lat: *lat, Lon: *lon}
-		switch {
-		case e.Tipo() == domain.TipoEventoFolioEntregado:
+		// if/else if y no switch: mismo motivo que revisarClave, la cobertura
+		// de un `case` no cubre la condición para gremlins v0.6.0.
+		if e.Tipo() == domain.TipoEventoFolioEntregado {
 			entrega = &punto
-		case e.Tipo() == domain.TipoEventoEtapaAvanzada &&
-			e.EtapaHasta() != nil && *e.EtapaHasta() == domain.EtapaRecolectado:
+		} else if e.Tipo() == domain.TipoEventoEtapaAvanzada &&
+			e.EtapaHasta() != nil && *e.EtapaHasta() == domain.EtapaRecolectado {
 			recolecciones = append(recolecciones, punto)
 		}
 	}
